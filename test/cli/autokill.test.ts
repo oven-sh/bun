@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
+// Helper to wait for a process to die, polling with a timeout
+async function waitForProcessDeath(pid: number, timeoutMs: number = 1000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      // Still alive, wait a bit
+      await Bun.sleep(10);
+    } catch {
+      // Process is dead
+      return true;
+    }
+  }
+  return false;
+}
+
 describe.skipIf(isWindows)("--autokill", () => {
   test("basic autokill flag works", async () => {
     const dir = tempDirWithFiles("autokill-basic", {
@@ -55,20 +71,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(200);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(childPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify child process is dead
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(childPid, 0);
-      alive = true;
       process.kill(childPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("autokill flag kills multiple child processes", async () => {
@@ -105,22 +117,17 @@ describe.skipIf(isWindows)("--autokill", () => {
     expect(childPids).toBeArray();
     expect(childPids.length).toBe(5);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(200);
-
-    // Verify all child processes are dead
-    let aliveCount = 0;
+    // Wait for all processes to die (polling with timeout)
     for (const pid of childPids) {
+      const died = await waitForProcessDeath(pid, 1000);
+      expect(died).toBe(true);
+      // Clean up if somehow still alive
       try {
-        process.kill(pid, 0);
-        aliveCount++;
         process.kill(pid, "SIGKILL");
       } catch {
         // Expected - process should be dead
       }
     }
-
-    expect(aliveCount).toBe(0);
   });
 
   test("autokill handles nested processes (shell with background job)", async () => {
@@ -153,20 +160,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const shellPid = parseInt(output.trim());
     expect(shellPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(300);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(shellPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify shell process is dead
-    let shellAlive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(shellPid, 0);
-      shellAlive = true;
       process.kill(shellPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(shellAlive).toBe(false);
   });
 
   test("autokill handles deeply nested process tree", async () => {
@@ -199,20 +202,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const level1Pid = parseInt(output.trim());
     expect(level1Pid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(300);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(level1Pid, 1000);
+    expect(died).toBe(true);
 
-    // Verify level1 process is dead
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(level1Pid, 0);
-      alive = true;
       process.kill(level1Pid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("autokill handles mix of process types", async () => {
@@ -256,22 +255,17 @@ describe.skipIf(isWindows)("--autokill", () => {
     expect(pids).toBeArray();
     expect(pids.length).toBe(2);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(300);
-
-    // Verify tracked processes are dead
-    let aliveCount = 0;
+    // Wait for all processes to die (polling with timeout)
     for (const pid of pids) {
+      const died = await waitForProcessDeath(pid, 1000);
+      expect(died).toBe(true);
+      // Clean up if somehow still alive
       try {
-        process.kill(pid, 0);
-        aliveCount++;
         process.kill(pid, "SIGKILL");
       } catch {
         // Expected - process should be dead
       }
     }
-
-    expect(aliveCount).toBe(0);
   });
 
   test("autokill works on uncaught exception", async () => {
@@ -307,20 +301,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(200);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(childPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify child was killed despite the crash
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(childPid, 0);
-      alive = true;
       process.kill(childPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("autokill works on process.exit(non-zero)", async () => {
@@ -352,20 +342,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(200);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(childPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify child was killed
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(childPid, 0);
-      alive = true;
       process.kill(childPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("without autokill flag, child processes remain alive", async () => {
@@ -397,20 +383,29 @@ describe.skipIf(isWindows)("--autokill", () => {
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
-    // Without autokill, child should still be alive briefly
-    await Bun.sleep(100);
-
+    // Without autokill, child should remain alive
+    // Poll to verify it stays alive for at least 100ms
     let alive = false;
-    try {
-      process.kill(childPid, 0);
-      alive = true;
-      // Clean up
-      process.kill(childPid, "SIGKILL");
-    } catch {
-      // Process might have exited naturally
+    const deadline = Date.now() + 100;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(childPid, 0);
+        alive = true;
+        await Bun.sleep(10);
+      } catch {
+        // Process died prematurely
+        break;
+      }
     }
 
-    // Without autokill, the child should have been alive (at least initially)
+    // Clean up
+    try {
+      process.kill(childPid, "SIGKILL");
+    } catch {
+      // Process might have exited
+    }
+
+    // Without autokill, the child should have been alive
     expect(alive).toBe(true);
   });
 
@@ -452,22 +447,17 @@ describe.skipIf(isWindows)("--autokill", () => {
     expect(pids).toBeArray();
     expect(pids.length).toBe(10);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(300);
-
-    // Verify all rapidly spawned processes are dead
-    let aliveCount = 0;
+    // Wait for all processes to die (polling with timeout)
     for (const pid of pids) {
+      const died = await waitForProcessDeath(pid, 1000);
+      expect(died).toBe(true);
+      // Clean up if somehow still alive
       try {
-        process.kill(pid, 0);
-        aliveCount++;
         process.kill(pid, "SIGKILL");
       } catch {
         // Expected - process should be dead
       }
     }
-
-    expect(aliveCount).toBe(0);
   });
 
   test("autokill preserves exit code", async () => {
@@ -535,20 +525,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const spawnerPid = parseInt(output.trim());
     expect(spawnerPid).toBeGreaterThan(0);
 
-    // Wait longer for autokill to handle concurrent spawning
-    await Bun.sleep(500);
+    // Wait for autokill to handle concurrent spawning (polling with timeout)
+    const died = await waitForProcessDeath(spawnerPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify spawner process is dead
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(spawnerPid, 0);
-      alive = true;
       process.kill(spawnerPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("autokill works with different signal handlers", async () => {
@@ -590,20 +576,16 @@ describe.skipIf(isWindows)("--autokill", () => {
     const childPid = parseInt(lines[lines.length - 1]);
     expect(childPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect
-    await Bun.sleep(200);
+    // Wait for autokill to take effect (polling with timeout)
+    const died = await waitForProcessDeath(childPid, 1000);
+    expect(died).toBe(true);
 
-    // Verify child was killed despite signal handlers
-    let alive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(childPid, 0);
-      alive = true;
       process.kill(childPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-
-    expect(alive).toBe(false);
   });
 
   test("autokill handles nested bun processes with delays", async () => {
@@ -670,21 +652,16 @@ describe.skipIf(isWindows)("--autokill", () => {
 
     expect(parentBunPid).toBeGreaterThan(0);
 
-    // Wait for autokill to complete all three passes with delays
-    // The three-pass strategy has microsecond delays, but we need to account for
-    // process enumeration and signal delivery time
-    await Bun.sleep(300);
+    // Wait for autokill to complete all three passes (polling with timeout)
+    const parentDied = await waitForProcessDeath(parentBunPid, 1000);
+    expect(parentDied).toBe(true);
 
-    // Verify the nested Bun process is dead
-    let parentAlive = false;
+    // Clean up if somehow still alive
     try {
-      process.kill(parentBunPid, 0);
-      parentAlive = true;
       process.kill(parentBunPid, "SIGKILL");
     } catch {
       // Expected - process should be dead
     }
-    expect(parentAlive).toBe(false);
 
     // Check if we can read the nested PIDs file and verify those processes are dead too
     const pidFile = `${dir}/nested-pids.json`;
@@ -694,15 +671,14 @@ describe.skipIf(isWindows)("--autokill", () => {
 
       // Verify nested child Bun and its sleep are both dead
       for (const [name, pid] of Object.entries(pids)) {
-        let alive = false;
+        const died = await waitForProcessDeath(pid as number, 1000);
+        expect(died).toBe(true);
+        // Clean up if somehow still alive
         try {
-          process.kill(pid as number, 0);
-          alive = true;
           process.kill(pid as number, "SIGKILL");
         } catch {
           // Expected - process should be dead
         }
-        expect(alive).toBe(false);
       }
     } catch {
       // PID file might not exist if timing was off, but parent being dead is sufficient

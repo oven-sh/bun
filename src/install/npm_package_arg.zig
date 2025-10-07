@@ -1599,13 +1599,11 @@ pub const TestingAPIs = struct {
     const jsc = bun.jsc;
 };
 
+const PathResolver = @import("../bun.js/node/path.zig");
 const hgi = @import("./hosted_git_info.zig");
-const validate_npm_package_name = @import("./validate_npm_package_name.zig");
 const std = @import("std");
+const validate_npm_package_name = @import("./validate_npm_package_name.zig");
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
 const Semver = bun.Semver;
-const PercentEncoding = @import("../url.zig").PercentEncoding;
-const PathResolver = @import("../bun.js/node/path.zig");
-
-const debug = bun.Output.scoped(.npm_package_arg, .visible);

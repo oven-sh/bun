@@ -1349,6 +1349,7 @@ fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*j
 
 const debug = bun.Output.scoped(.hosted_git_info, .visible);
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const jsc = bun.jsc;

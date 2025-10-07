@@ -1626,6 +1626,11 @@ pub fn reloadProcess(
     __reload_in_progress__.store(true, .monotonic);
     __reload_in_progress__on_current_thread = true;
 
+    // Kill all child processes before reloading to ensure clean state
+    if (Global.autokill_enabled) {
+        sys.autokill.killAllChildProcesses();
+    }
+
     if (clear_terminal) {
         Output.flush();
         Output.disableBuffering();

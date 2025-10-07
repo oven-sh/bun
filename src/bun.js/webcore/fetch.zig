@@ -108,6 +108,7 @@ pub const FetchTasklet = struct {
     // custom checkServerIdentity
     check_server_identity: jsc.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
+    upgraded_connection: bool = false,
     // Custom Hostname
     hostname: ?[]u8 = null,
     is_waiting_body: bool = false,
@@ -301,6 +302,8 @@ pub const FetchTasklet = struct {
         this.abort_reason.deinit();
         this.check_server_identity.deinit();
         this.clearAbortSignal();
+        // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
+        this.clearSink();
     }
 
     pub fn deinit(this: *FetchTasklet) void {
@@ -342,6 +345,13 @@ pub const FetchTasklet = struct {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    stream.abort(this.global_this);
+                    return;
+                }
+            }
+
             const globalThis = this.global_this;
             this.ref(); // lets only unref when sink is done
             // +1 because the task refs the sink
@@ -406,14 +416,14 @@ pub const FetchTasklet = struct {
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
-                const scheduled_response_buffer = this.scheduled_response_buffer.list;
+                const scheduled_response_buffer = &this.scheduled_response_buffer.list;
 
                 const chunk = scheduled_response_buffer.items;
 
                 if (this.result.has_more) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -423,16 +433,9 @@ pub const FetchTasklet = struct {
                     defer prev.deinit();
                     buffer_reset = false;
                     this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
-                    this.scheduled_response_buffer = .{
-                        .allocator = bun.default_allocator,
-                        .list = .{
-                            .items = &.{},
-                            .capacity = 0,
-                        },
-                    };
                     readable.ptr.Bytes.onData(
                         .{
-                            .owned_and_done = bun.ByteList.initConst(chunk),
+                            .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
                         },
                         bun.default_allocator,
                     );
@@ -455,7 +458,7 @@ pub const FetchTasklet = struct {
                         if (this.result.has_more) {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary = bun.ByteList.initConst(chunk),
+                                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                                 },
                                 bun.default_allocator,
                             );
@@ -467,7 +470,7 @@ pub const FetchTasklet = struct {
                             readable.value.ensureStillAlive();
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary_and_done = bun.ByteList.initConst(chunk),
+                                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                                 },
                                 bun.default_allocator,
                             );
@@ -862,15 +865,22 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
-    pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
+    pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
         const this = bun.cast(*FetchTasklet, ctx);
-        if (this.http) |http_| {
-            http_.enableBodyStreaming();
-        }
         if (this.signal_store.aborted.load(.monotonic)) {
             return jsc.WebCore.DrainResult{
                 .aborted = {},
             };
+        }
+
+        if (this.http) |http_| {
+            http_.enableResponseBodyStreaming();
+
+            // If the server sent the headers and the response body in two separate socket writes
+            // and if the server doesn't close the connection by itself
+            // and doesn't send any follow-up data
+            // then we must make sure the HTTP thread flushes.
+            bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -920,7 +930,7 @@ pub const FetchTasklet = struct {
                     .size_hint = this.getSizeHint(),
                     .task = this,
                     .global = this.global_this,
-                    .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
+                    .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                 },
             };
@@ -971,7 +981,7 @@ pub const FetchTasklet = struct {
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {
-            http_.enableBodyStreaming();
+            http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
@@ -1069,6 +1079,7 @@ pub const FetchTasklet = struct {
             .memory_reporter = fetch_options.memory_reporter,
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
+            .upgraded_connection = fetch_options.upgraded_connection,
         };
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();
@@ -1181,26 +1192,42 @@ pub const FetchTasklet = struct {
     pub fn resumeRequestDataStream(this: *FetchTasklet) void {
         // deref when done because we ref inside onWriteRequestDataDrain
         defer this.deref();
+        log("resumeRequestDataStream", .{});
         if (this.sink) |sink| {
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    // already aborted; nothing to drain
+                    return;
+                }
+            }
             sink.drain();
         }
     }
 
-    pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
+    pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
-        if (this.request_body_streaming_buffer) |buffer| {
-            const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
-            const stream_buffer = buffer.acquire();
-            var needs_schedule = false;
-            defer if (needs_schedule) {
-                // wakeup the http thread to write the data
-                http.http_thread.scheduleRequestWrite(this.http.?, .data);
-            };
-            defer buffer.release();
+        if (this.signal) |signal| {
+            if (signal.aborted()) {
+                return .done;
+            }
+        }
+        const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
+        const stream_buffer = thread_safe_stream_buffer.acquire();
+        defer thread_safe_stream_buffer.release();
+        const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
 
-            // dont have backpressure so we will schedule the data to be written
-            // if we have backpressure the onWritable will drain the buffer
-            needs_schedule = stream_buffer.isEmpty();
+        var needs_schedule = false;
+        defer if (needs_schedule) {
+            // wakeup the http thread to write the data
+            http.http_thread.scheduleRequestWrite(this.http.?, .data);
+        };
+
+        // dont have backpressure so we will schedule the data to be written
+        // if we have backpressure the onWritable will drain the buffer
+        needs_schedule = stream_buffer.isEmpty();
+        if (this.upgraded_connection) {
+            bun.handleOom(stream_buffer.write(data));
+        } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             var formated_size_buffer: [18]u8 = undefined;
             const formated_size = std.fmt.bufPrint(
@@ -1214,16 +1241,14 @@ pub const FetchTasklet = struct {
             stream_buffer.writeAssumeCapacity(formated_size);
             stream_buffer.writeAssumeCapacity(data);
             stream_buffer.writeAssumeCapacity("\r\n");
-
-            // pause the stream if we hit the high water mark
-            return stream_buffer.size() >= highWaterMark;
         }
-        return false;
+
+        // pause the stream if we hit the high water mark
+        return if (stream_buffer.size() >= highWaterMark) .backpressure else .want_more;
     }
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        this.clearSink();
         defer this.deref();
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
@@ -1234,9 +1259,16 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
+            if (!this.upgraded_connection) {
+                // If is not upgraded we need to send the terminating chunk
+                const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
+                const stream_buffer = thread_safe_stream_buffer.acquire();
+                defer thread_safe_stream_buffer.release();
+                bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
+            }
             if (this.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
-                http.http_thread.scheduleRequestWrite(http_, .endChunked);
+                http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }
     }
@@ -1271,6 +1303,7 @@ pub const FetchTasklet = struct {
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
+        upgraded_connection: bool = false,
     };
 
     pub fn queue(
@@ -1312,7 +1345,7 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} has_more={} bytes={}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
+        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
@@ -1494,6 +1527,7 @@ pub fn Bun__fetch_(
     var memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
+    var upgraded_connection = false;
     var allocator = memory_reporter.wrap(bun.default_allocator);
     errdefer bun.default_allocator.destroy(memory_reporter);
     defer {
@@ -2198,6 +2232,15 @@ pub fn Bun__fetch_(
                 }
             }
 
+            if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Upgrade)) |_upgrade| {
+                const upgrade = _upgrade.toSlice(bun.default_allocator);
+                defer upgrade.deinit();
+                const slice = upgrade.slice();
+                if (!bun.strings.eqlComptime(slice, "h2") and !bun.strings.eqlComptime(slice, "h2c")) {
+                    upgraded_connection = true;
+                }
+            }
+
             break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
         }
 
@@ -2333,7 +2376,7 @@ pub fn Bun__fetch_(
         }
     }
 
-    if (!method.hasRequestBody() and body.hasBody()) {
+    if (!method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
         const err = globalThis.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
@@ -2651,6 +2694,7 @@ pub fn Bun__fetch_(
             .ssl_config = ssl_config,
             .hostname = hostname,
             .memory_reporter = memory_reporter,
+            .upgraded_connection = upgraded_connection,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
         },
@@ -2732,6 +2776,7 @@ const JSType = jsc.C.JSType;
 const Body = jsc.WebCore.Body;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
 
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;

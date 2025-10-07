@@ -72,9 +72,6 @@ pub const BunObject = struct {
     pub const inspect = toJSLazyPropertyCallback(Bun.getInspect);
     pub const origin = toJSLazyPropertyCallback(Bun.getOrigin);
     pub const semver = toJSLazyPropertyCallback(Bun.getSemver);
-    pub const stderr = toJSLazyPropertyCallback(Bun.getStderr);
-    pub const stdin = toJSLazyPropertyCallback(Bun.getStdin);
-    pub const stdout = toJSLazyPropertyCallback(Bun.getStdout);
     pub const unsafe = toJSLazyPropertyCallback(Bun.getUnsafe);
     pub const S3Client = toJSLazyPropertyCallback(Bun.getS3ClientConstructor);
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
@@ -139,9 +136,6 @@ pub const BunObject = struct {
         @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
         @export(&BunObject.inspect, .{ .name = lazyPropertyCallbackName("inspect") });
         @export(&BunObject.origin, .{ .name = lazyPropertyCallbackName("origin") });
-        @export(&BunObject.stderr, .{ .name = lazyPropertyCallbackName("stderr") });
-        @export(&BunObject.stdin, .{ .name = lazyPropertyCallbackName("stdin") });
-        @export(&BunObject.stdout, .{ .name = lazyPropertyCallbackName("stdout") });
         @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
         @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
         @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
@@ -187,6 +181,12 @@ pub const BunObject = struct {
         @export(&BunObject.zstdCompress, .{ .name = callbackName("zstdCompress") });
         @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
         // --- Callbacks ---
+
+        // --- LazyProperty initializers ---
+        @export(&createBunStdin, .{ .name = "BunObject__createBunStdin" });
+        @export(&createBunStderr, .{ .name = "BunObject__createBunStderr" });
+        @export(&createBunStdout, .{ .name = "BunObject__createBunStdout" });
+        // --- LazyProperty initializers ---
 
         // --- Getters ---
         @export(&BunObject.main, .{ .name = "BunObject_getter_main" });
@@ -557,39 +557,6 @@ pub fn getCWD(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
 
 pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
-}
-
-pub fn getStdin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdin();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStderr(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stderr();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStdout(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdout();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
 }
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1042,7 +1009,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             &config,
             &args,
             .{
-                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .allow_bake_config = bun.FeatureFlags.bake(),
                 .is_fetch_required = true,
                 .has_user_routes = false,
             },
@@ -1309,6 +1276,7 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
+
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);
 }
@@ -1327,7 +1295,9 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const valkey = jsc.API.Valkey.create(globalThis, &.{.js_undefined}) catch |err| {
+    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+
+    var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1335,7 +1305,18 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
         return .zero;
     };
 
-    return valkey.toJS(globalThis);
+    const as_js = valkey.toJS(globalThis);
+
+    valkey.this_value = jsc.JSRef.initWeak(as_js);
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return as_js;
 }
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1366,7 +1347,6 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         const input_blob = file.blob(globalThis);
         const blob = jsc.WebCore.Blob.new(input_blob.dupeWithContentType(true));
-        blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
         try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
@@ -1609,7 +1589,7 @@ pub const JSZlib = struct {
                     return globalThis.throwError(err, "Zlib error") catch return .zero;
                 };
 
-                reader.readAll() catch {
+                reader.readAll(true) catch {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
@@ -1847,7 +1827,7 @@ pub const JSZstd = struct {
             output = try allocator.realloc(output, compressed_size);
         }
 
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     pub fn decompressSync(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1882,7 +1862,7 @@ pub const JSZstd = struct {
         // mimalloc doesn't care about the self-reported size of the slice.
         output.len = actual_size;
 
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     // --- Async versions ---
@@ -1971,6 +1951,7 @@ pub const JSZstd = struct {
 
         pub fn runFromJS(this: *ZstdJob) void {
             defer this.deinit();
+
             if (this.vm.isShuttingDown()) {
                 return;
             }
@@ -1984,7 +1965,7 @@ pub const JSZstd = struct {
             }
 
             const output_slice = this.output;
-            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice);
             this.output = &[_]u8{};
             promise.resolve(globalThis, buffer_value);
         }
@@ -2067,6 +2048,37 @@ comptime {
 }
 
 const string = []const u8;
+
+// LazyProperty initializers for stdin/stderr/stdout
+pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdin();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stderr();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdout();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    return blob.toJS(globalThis);
+}
 
 const Braces = @import("../../shell/braces.zig");
 const Which = @import("../../which.zig");

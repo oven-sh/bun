@@ -3,11 +3,16 @@ pub const z_allocator = basic.z_allocator;
 pub const freeWithoutSize = basic.freeWithoutSize;
 pub const mimalloc = @import("./allocators/mimalloc.zig");
 pub const MimallocArena = @import("./allocators/MimallocArena.zig");
-pub const AllocationScope = @import("./allocators/AllocationScope.zig");
+
+pub const allocation_scope = @import("./allocators/allocation_scope.zig");
+pub const AllocationScope = allocation_scope.AllocationScope;
+pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
+
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
 pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
 pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
+pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -224,11 +229,16 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 this.data[index] = item;
                 return &this.data[index];
             }
+
+            pub fn deinit(this: *OverflowBlock) void {
+                if (this.prev) |p| p.deinit();
+                bun.default_allocator.destroy(this);
+            }
         };
 
         const Self = @This();
 
-        allocator: Allocator,
+        allocator: std.mem.Allocator,
         mutex: Mutex = .{},
         head: *OverflowBlock,
         tail: OverflowBlock,
@@ -257,6 +267,12 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.head.deinit();
+            bun.default_allocator.destroy(instance);
+            loaded = false;
         }
 
         pub fn isOverflowing() bool {
@@ -316,7 +332,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         backing_buf: [count * item_length]u8,
         backing_buf_used: u64,
         overflow_list: Overflow,
-        allocator: Allocator,
+        allocator: std.mem.Allocator,
         slice_buf: [count][]const u8,
         slice_buf_used: u16,
         mutex: Mutex = .{},
@@ -343,6 +359,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *const Self) void {
+            _ = self;
+            bun.default_allocator.destroy(instance);
+            loaded = false;
         }
 
         pub inline fn isOverflowing() bool {
@@ -499,7 +521,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         index: IndexMap,
         overflow_list: Overflow,
-        allocator: Allocator,
+        allocator: std.mem.Allocator,
         mutex: Mutex = .{},
         backing_buf: [count]ValueType,
         backing_buf_used: u16,
@@ -523,6 +545,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.index.deinit(self.allocator);
+            bun.default_allocator.destroy(instance);
+            loaded = false;
         }
 
         pub fn isOverflowing() bool {
@@ -648,6 +676,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             // }
 
         }
+
+        pub fn values(self: *Self) []ValueType {
+            return (&self.backing_buf)[0..self.backing_buf_used];
+        }
     };
     if (!store_keys) {
         return BSSMapType;
@@ -677,6 +709,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.map.deinit();
+            bun.default_allocator.destroy(instance);
+            instance_loaded = false;
         }
 
         pub fn isOverflowing() bool {
@@ -770,35 +808,120 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
     };
 }
 
-pub fn isDefault(allocator: Allocator) bool {
+/// Checks whether `allocator` is the default allocator.
+pub fn isDefault(allocator: std.mem.Allocator) bool {
     return allocator.vtable == c_allocator.vtable;
 }
 
-/// Allocate memory for a value of type `T` using the provided allocator, and initialize the memory
-/// with `value`.
-///
-/// If `allocator` is `bun.default_allocator`, this will internally use `bun.tryNew` to benefit from
-/// the added assertions.
-pub fn create(comptime T: type, allocator: Allocator, value: T) OOM!*T {
-    if ((comptime Environment.allow_assert) and isDefault(allocator)) {
-        return bun.tryNew(T, value);
-    }
-    const ptr = try allocator.create(T);
-    ptr.* = value;
-    return ptr;
+// The following functions operate on generic allocators. A generic allocator is a type that
+// satisfies the `GenericAllocator` interface:
+//
+// ```
+// const GenericAllocator = struct {
+//     // Required.
+//     pub fn allocator(self: Self) std.mem.Allocator;
+//
+//     // Optional, to allow default-initialization. `.{}` will also be tried.
+//     pub fn init() Self;
+//
+//     // Optional, if this allocator owns auxiliary resources that need to be deinitialized.
+//     pub fn deinit(self: *Self) void;
+//
+//     // Optional. Defining a borrowed type makes it clear who owns the allocator and prevents
+//     // `deinit` from being called twice.
+//     pub const Borrowed: type;
+//     pub fn borrow(self: Self) Borrowed;
+// };
+// ```
+//
+// Generic allocators must support being moved. They cannot contain self-references, and they cannot
+// serve allocations from a buffer that exists within the allocator itself (have your allocator type
+// contain a pointer to the buffer instead).
+//
+// As an exception, `std.mem.Allocator` is also treated as a generic allocator, and receives
+// special handling in the following functions to achieve this.
+
+/// Gets the `std.mem.Allocator` for a given generic allocator.
+pub fn asStd(allocator: anytype) std.mem.Allocator {
+    return if (comptime @TypeOf(allocator) == std.mem.Allocator)
+        allocator
+    else
+        allocator.allocator();
 }
 
-/// Free memory previously allocated by `create`.
+/// A borrowed version of an allocator.
 ///
-/// The memory must have been allocated by the `create` function in this namespace, not
-/// directly by `allocator.create`.
-pub fn destroy(allocator: Allocator, ptr: anytype) void {
-    if ((comptime Environment.allow_assert) and isDefault(allocator)) {
-        bun.destroy(ptr);
-    } else {
-        allocator.destroy(ptr);
-    }
+/// Some allocators have a `deinit` method that would be invalid to call multiple times (e.g.,
+/// `AllocationScope` and `MimallocArena`).
+///
+/// If multiple structs or functions need access to the same allocator, we want to avoid simply
+/// passing the allocator by value, as this could easily lead to `deinit` being called multiple
+/// times if we forget who really owns the allocator.
+///
+/// Passing a pointer is not always a good approach, as this results in a performance penalty for
+/// zero-sized allocators, and adds another level of indirection in all cases.
+///
+/// This function allows allocators that have a concept of being "owned" to define a "borrowed"
+/// version of the allocator. If no such type is defined, it is assumed the allocator does not
+/// own any data, and `Borrowed(Allocator)` is simply the same as `Allocator`.
+pub fn Borrowed(comptime Allocator: type) type {
+    return if (comptime @hasDecl(Allocator, "Borrowed"))
+        Allocator.Borrowed
+    else
+        Allocator;
 }
+
+/// Borrows an allocator.
+///
+/// See `Borrowed` for the rationale.
+pub fn borrow(allocator: anytype) Borrowed(@TypeOf(allocator)) {
+    return if (comptime @hasDecl(@TypeOf(allocator), "Borrowed"))
+        allocator.borrow()
+    else
+        allocator;
+}
+
+/// A type that behaves like `?Allocator`. This function will either return `?Allocator` itself,
+/// or an optimized type that behaves like `?Allocator`.
+///
+/// Use `initNullable` and `unpackNullable` to work with the returned type.
+pub fn Nullable(comptime Allocator: type) type {
+    return if (comptime Allocator == std.mem.Allocator)
+        NullableAllocator
+    else if (comptime @hasDecl(Allocator, "Nullable"))
+        Allocator.Nullable
+    else
+        ?Allocator;
+}
+
+/// Creates a `Nullable(Allocator)` from an optional `Allocator`.
+pub fn initNullable(comptime Allocator: type, allocator: ?Allocator) Nullable(Allocator) {
+    return if (comptime Allocator == std.mem.Allocator or @hasDecl(Allocator, "Nullable"))
+        .init(allocator)
+    else
+        allocator;
+}
+
+/// Turns a `Nullable(Allocator)` back into an optional `Allocator`.
+pub fn unpackNullable(comptime Allocator: type, allocator: Nullable(Allocator)) ?Allocator {
+    return if (comptime Allocator == std.mem.Allocator or @hasDecl(Allocator, "Nullable"))
+        .get()
+    else
+        allocator;
+}
+
+/// The default allocator. This is a zero-sized type whose `allocator` method returns
+/// `bun.default_allocator`.
+///
+/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+pub const Default = struct {
+    pub fn allocator(self: Default) std.mem.Allocator {
+        _ = self;
+        return c_allocator;
+    }
+
+    pub const deinit = void;
+};
 
 const basic = if (bun.use_mimalloc)
     @import("./allocators/basic.zig")
@@ -807,7 +930,6 @@ else
 
 const Environment = @import("./env.zig");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const OOM = bun.OOM;

@@ -717,7 +717,6 @@ pub const Value = union(Tag) {
                     },
                     .none, .getBlob => {
                         var blob = Blob.new(new.use());
-                        blob.allocator = bun.default_allocator;
                         if (headers) |fetch_headers| {
                             if (fetch_headers.fastGet(.ContentType)) |content_type| {
                                 var content_slice = content_type.toSlice(bun.default_allocator);
@@ -761,7 +760,7 @@ pub const Value = union(Tag) {
         switch (this.*) {
             .Blob => {
                 const new_blob = this.Blob;
-                assert(new_blob.allocator == null); // owned by Body
+                assert(!new_blob.isHeapAllocated()); // owned by Body
                 this.* = .{ .Used = {} };
                 return new_blob;
             },
@@ -1080,7 +1079,7 @@ pub fn extract(
 
     body.value = try Value.fromJS(globalThis, value);
     if (body.value == .Blob) {
-        assert(body.value.Blob.allocator == null); // owned by Body
+        assert(!body.value.Blob.isHeapAllocated()); // owned by Body
     }
     return body;
 }
@@ -1289,14 +1288,13 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             var blob = Blob.new(value.use());
-            blob.allocator = bun.default_allocator;
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        var content_slice = content_type.toSlice(blob.allocator.?);
+                        var content_slice = content_type.toSlice(bun.default_allocator);
                         defer content_slice.deinit();
                         var allocated = false;
-                        const mimeType = MimeType.init(content_slice.slice(), blob.allocator.?, &allocated);
+                        const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
                         blob.content_type = mimeType.value;
                         blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
@@ -1441,8 +1439,8 @@ pub const ValueBufferer = struct {
         defer {
             if (stream_needs_deinit) {
                 switch (stream_) {
-                    .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                    .owned => |*owned| owned.listManaged(allocator).deinit(),
+                    .owned_and_done => |*owned| owned.deinit(allocator),
+                    .owned => |*owned| owned.deinit(allocator),
                     else => unreachable,
                 }
             }
@@ -1503,7 +1501,7 @@ pub const ValueBufferer = struct {
         var globalThis = sink.global;
         buffer_stream.* = ArrayBufferSink.JSSink{
             .sink = ArrayBufferSink{
-                .bytes = bun.ByteList.init(&.{}),
+                .bytes = bun.ByteList.empty,
                 .allocator = allocator,
                 .next = null,
             },

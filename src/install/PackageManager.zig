@@ -1,9 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
-
 cache_directory_path: stringZ = "",
-temp_dir_: ?std.fs.Dir = null,
-temp_dir_path: stringZ = "",
-temp_dir_name: string = "",
 root_dir: *Fs.FileSystem.DirEntry,
 allocator: std.mem.Allocator,
 log: *logger.Log,
@@ -155,6 +151,7 @@ pub const Subcommand = enum {
     audit,
     info,
     why,
+    scan,
 
     // bin,
     // hash,
@@ -462,7 +459,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
 
-        var node_gyp_tempdir = tempdir.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+        var node_gyp_tempdir = tempdir.handle.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
                 Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
@@ -515,17 +512,17 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         // Add our node-gyp tempdir to the path
         const existing_path = manager.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + manager.temp_dir_name.len + 1 + manager.node_gyp_tempdir_name.len);
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(strings.withoutTrailingSlash(manager.temp_dir_name));
+        try PATH.appendSlice(strings.withoutTrailingSlash(tempdir.name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(manager.node_gyp_tempdir_name);
         try manager.env.map.put("PATH", PATH.items);
 
         const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-            strings.withoutTrailingSlash(manager.temp_dir_name),
+            strings.withoutTrailingSlash(tempdir.name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(manager.node_gyp_tempdir_name),
             std.fs.path.sep_str,
@@ -580,7 +577,10 @@ pub fn init(
     if (comptime Environment.isWindows) {
         _ = Path.pathToPosixBuf(u8, top_level_dir_no_trailing_slash, &cwd_buf);
     } else {
-        @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        // Avoid memcpy alias when source and dest are the same
+        if (cwd_buf[0..].ptr != top_level_dir_no_trailing_slash.ptr) {
+            bun.copy(u8, cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        }
     }
 
     var original_package_json_path_buf = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1));
@@ -701,7 +701,7 @@ pub fn init(
                     const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                     defer ctx.allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);
-                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &package_json_cwd_buf);
+                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &root_package_json_path_buf);
                     const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                     initializeStore();
                     const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
@@ -771,7 +771,7 @@ pub fn init(
     bun.copy(u8, &cwd_buf, fs.top_level_dir);
     cwd_buf[fs.top_level_dir.len] = 0;
     fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
-    package_json_cwd = try bun.getFdPath(.fromStdFile(root_package_json_file), &package_json_cwd_buf);
+    root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
 
     const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
@@ -875,6 +875,14 @@ pub fn init(
     };
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
+
+    {
+        // make sure folder packages can find the root package without creating a new one
+        var normalized: bun.AbsPath(.{ .sep = .posix }) = .from(root_package_json_path);
+        defer normalized.deinit();
+        try manager.folders.put(manager.allocator, FolderResolution.hash(normalized.slice()), .{ .package_id = 0 });
+    }
+
     jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
@@ -1108,8 +1116,8 @@ pub fn initWithRuntimeOnce(
     }
 }
 var cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd: string = "";
+var root_package_json_path_buf: bun.PathBuffer = undefined;
+pub var root_package_json_path: [:0]const u8 = "";
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -1242,6 +1250,8 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+
+pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
 
 const string = []const u8;
 const stringZ = [:0]const u8;

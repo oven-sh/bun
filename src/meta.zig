@@ -195,6 +195,8 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
     });
 }
 
+pub const TaggedUnion = @import("./meta/tagged_union.zig").TaggedUnion;
+
 pub fn hasStableMemoryLayout(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {
@@ -301,11 +303,10 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 4 and
+        if (tyinfo.@"struct".fields.len == 3 and
             std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
             std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
+            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like SmallList

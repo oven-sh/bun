@@ -33,26 +33,26 @@ function setTimeout(after = 1, value, options = {}) {
       validateNumber(after, "delay");
     }
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   try {
     validateObject(options, "options");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   const { signal, ref: reference = true } = options;
   try {
     validateAbortSignal(signal, "options.signal");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   try {
     validateBoolean(reference, "options.ref");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
+    return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -77,21 +77,21 @@ function setImmediate(value, options = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   const { signal, ref: reference = true } = options;
   try {
     validateAbortSignal(signal, "options.signal");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   try {
     validateBoolean(reference, "options.ref");
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.$reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
+    return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -124,7 +124,7 @@ function setInterval(after = 1, value, options = {}) {
   } catch (error) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(error);
+        return Promise.$reject(error);
       },
     });
   }
@@ -133,7 +133,7 @@ function setInterval(after = 1, value, options = {}) {
   } catch (error) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(error);
+        return Promise.$reject(error);
       },
     });
   }
@@ -143,7 +143,7 @@ function setInterval(after = 1, value, options = {}) {
   } catch (error) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(error);
+        return Promise.$reject(error);
       },
     });
   }
@@ -152,14 +152,14 @@ function setInterval(after = 1, value, options = {}) {
   } catch (error) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(error);
+        return Promise.$reject(error);
       },
     });
   }
   if (signal?.aborted) {
     return asyncIterator({
       next: function () {
-        return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
+        return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
       },
     });
   }
@@ -217,7 +217,7 @@ function setInterval(after = 1, value, options = {}) {
       return: function () {
         clearInterval(interval);
         signal?.removeEventListener("abort", onCancel);
-        return Promise.resolve({});
+        return Promise.$resolve({});
       },
     });
   } catch {

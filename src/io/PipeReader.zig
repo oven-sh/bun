@@ -198,7 +198,7 @@ const PosixBufferedReader = struct {
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
-            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), false).unwrap() catch |err| {
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), .unknown_size).unwrap() catch |err| {
                 bun.Output.debugWarn("error reading from memfd\n{}", .{err});
                 return this.buffer();
             };
@@ -1072,14 +1072,14 @@ pub const WindowsBufferedReader = struct {
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
-                    if (tty == &Source.stdin_tty) {
-                        Source.stdin_tty = undefined;
-                        Source.stdin_tty_init = false;
+                    if (Source.StdinTTY.isStdinTTY(tty)) {
+                        // Node only ever closes stdin on process exit.
+                    } else {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
                     }
 
-                    tty.data = tty;
                     this.flags.is_paused = true;
-                    tty.close(onTTYClose);
                 },
             }
             this.source = null;

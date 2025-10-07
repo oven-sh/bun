@@ -181,12 +181,15 @@ pub const HelpCommand = struct {
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\  <b><blue>info<r>      <d>{s:<16}<r>     Display package metadata from the registry
+        \\  <b><blue>why<r>       <d>{s:<16}<r>     Explain why a package is installed
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
         \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+        \\
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
     ;
@@ -212,11 +215,27 @@ pub const HelpCommand = struct {
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_add_filler[(package_add_i + 2) % packages_to_add_filler.len],
+            packages_to_add_filler[(package_add_i + 3) % packages_to_add_filler.len],
             packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {
             .explicit => {
+                if (comptime Environment.isDebug) {
+                    if (bun.argv.len == 1) {
+                        if (bun.Output.isAIAgent()) {
+                            if (bun.getenvZ("npm_lifecycle_event")) |event| {
+                                if (bun.strings.hasPrefixComptime(event, "bd")) {
+                                    // claude gets very confused by the help menu
+                                    // let's give claude some self confidence.
+                                    Output.println("BUN COMPILED SUCCESSFULLY! 🎉", .{});
+                                    Global.exit(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
@@ -323,12 +342,20 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        concurrent: bool = false,
+        randomize: bool = false,
+        seed: ?u32 = null,
+        concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
+        max_concurrency: u32 = 20,
 
-        file_reporter: ?TestCommand.FileReporter = null,
+        reporters: struct {
+            dots: bool = false,
+            junit: bool = false,
+        } = .{},
         reporter_outfile: ?[]const u8 = null,
     };
 
@@ -380,6 +407,8 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: bool = false,
+        if_present: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -400,6 +429,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
@@ -583,7 +613,7 @@ pub const Command = struct {
             RootCommandMatcher.case("auth") => .ReservedCommand,
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
@@ -659,8 +689,8 @@ pub const Command = struct {
                     };
                     global_cli_ctx = &context_data;
 
-                    // If no compile_exec_argv, set offset normally
-                    offset_for_passthrough = if (bun.argv.len > 1) 1 else 0;
+                    // If no compile_exec_argv, skip executable name if present
+                    offset_for_passthrough = @min(1, bun.argv.len);
 
                     break :brk global_cli_ctx;
                 };
@@ -815,7 +845,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -854,7 +884,7 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);

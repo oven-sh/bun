@@ -51,9 +51,9 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
-
+const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
@@ -2725,11 +2725,9 @@ class ServerHttp2Session extends Http2Session {
       return -1;
     },
   };
-
   #onRead(data: Buffer) {
     this.#parser?.read(data);
   }
-
   #onClose() {
     const parser = this.#parser;
     if (parser) {
@@ -2739,11 +2737,9 @@ class ServerHttp2Session extends Http2Session {
     }
     this.close();
   }
-
   #onError(error: Error) {
     this.destroy(error);
   }
-
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
@@ -2751,14 +2747,12 @@ class ServerHttp2Session extends Http2Session {
     }
     this.emit("timeout");
   }
-
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
       parser.flush();
     }
   }
-
   altsvc(alt: string, originOrStream) {
     const MAX_LENGTH = 16382;
     const parser = this.#parser;
@@ -3929,6 +3923,19 @@ function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
+
+Object.defineProperty(connect, promisify.custom, {
+  __proto__: null,
+  value: function (authority, options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = connect(authority, options, () => {
+      server.removeListener("error", reject);
+      return resolve(server);
+    });
+    server.once("error", reject);
+    return promise;
+  },
+});
 
 export default {
   constants,

@@ -44,9 +44,18 @@ pub const StandaloneModuleGraph = struct {
         };
     }
 
-    pub fn isBunStandaloneFilePath(str: []const u8) bool {
+    pub fn isBunStandaloneFilePathCanonicalized(str: []const u8) bool {
         return bun.strings.hasPrefixComptime(str, base_path) or
             (Environment.isWindows and bun.strings.hasPrefixComptime(str, base_public_path));
+    }
+
+    pub fn isBunStandaloneFilePath(str: []const u8) bool {
+        if (Environment.isWindows) {
+            // On Windows, remove NT path prefixes before checking
+            const canonicalized = strings.withoutNTPrefix(u8, str);
+            return isBunStandaloneFilePathCanonicalized(canonicalized);
+        }
+        return isBunStandaloneFilePathCanonicalized(str);
     }
 
     pub fn entryPoint(this: *const StandaloneModuleGraph) *File {
@@ -190,7 +199,6 @@ pub const StandaloneModuleGraph = struct {
                 store.ref();
 
                 const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
-                b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
@@ -422,6 +430,27 @@ pub const StandaloneModuleGraph = struct {
                     break :brk .{};
                 }
             };
+
+            if (comptime bun.Environment.is_canary or bun.Environment.isDebug) {
+                if (bun.getenvZ("BUN_FEATURE_FLAG_DUMP_CODE")) |dump_code_dir| {
+                    const buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
+                    const dest_z = bun.path.joinAbsStringBufZ(dump_code_dir, buf, &.{dest_path}, .auto);
+
+                    // Scoped block to handle dump failures without skipping module emission
+                    dump: {
+                        const file = bun.sys.File.makeOpen(dest_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                        defer file.close();
+                        file.writeAll(output_file.value.buffer.bytes).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                    }
+                }
+            }
 
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
@@ -715,7 +744,8 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer pe_file.deinit();
-                pe_file.addBunSection(bytes) catch |err| {
+                // Always strip authenticode when adding .bun section for --compile
+                pe_file.addBunSection(bytes, .strip_always) catch |err| {
                     Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
@@ -980,26 +1010,53 @@ pub const StandaloneModuleGraph = struct {
         }
 
         if (Environment.isWindows) {
-            var outfile_buf: bun.OSPathBuffer = undefined;
-            const outfile_slice = brk: {
-                const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
-                bun.assert(outfile_w.ptr == &outfile_buf);
-                const outfile_buf_u16 = bun.reinterpretSlice(u16, &outfile_buf);
-                outfile_buf_u16[outfile_w.len] = 0;
-                break :brk outfile_buf_u16[0..outfile_w.len :0];
+            // Get the current path of the temp file
+            var temp_buf: bun.PathBuffer = undefined;
+            const temp_path = bun.getFdPath(fd, &temp_buf) catch |err| {
+                return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get temp file path: {s}", .{@errorName(err)}) catch "Failed to get temp file path");
             };
 
-            bun.windows.moveOpenedFileAtLoose(fd, .fromStdDir(root_dir), outfile_slice, true).unwrap() catch |err| {
-                _ = bun.windows.deleteOpenedFile(fd);
-                if (err == error.EISDIR) {
-                    return CompileResult.fail(std.fmt.allocPrint(allocator, "{s} is a directory. Please choose a different --outfile or delete the directory", .{outfile}) catch "outfile is a directory");
-                } else {
-                    return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to move executable to result path: {s}", .{@errorName(err)}) catch "failed to move executable");
-                }
+            // Build the absolute destination path
+            // On Windows, we need an absolute path for MoveFileExW
+            // Get the current working directory and join with outfile
+            var cwd_buf: bun.PathBuffer = undefined;
+            const cwd_path = bun.getcwd(&cwd_buf) catch |err| {
+                return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get current directory: {s}", .{@errorName(err)}) catch "Failed to get current directory");
             };
+            const dest_path = if (std.fs.path.isAbsolute(outfile))
+                outfile
+            else
+                bun.path.joinAbsString(cwd_path, &[_][]const u8{outfile}, .auto);
 
+            // Convert paths to Windows UTF-16
+            var temp_buf_w: bun.OSPathBuffer = undefined;
+            var dest_buf_w: bun.OSPathBuffer = undefined;
+            const temp_w = bun.strings.toWPathNormalized(&temp_buf_w, temp_path);
+            const dest_w = bun.strings.toWPathNormalized(&dest_buf_w, dest_path);
+
+            // Ensure null termination
+            const temp_buf_u16 = bun.reinterpretSlice(u16, &temp_buf_w);
+            const dest_buf_u16 = bun.reinterpretSlice(u16, &dest_buf_w);
+            temp_buf_u16[temp_w.len] = 0;
+            dest_buf_u16[dest_w.len] = 0;
+
+            // Close the file handle before moving (Windows requires this)
             fd.close();
             fd = bun.invalid_fd;
+
+            // Move the file using MoveFileExW
+            if (bun.windows.kernel32.MoveFileExW(temp_buf_u16[0..temp_w.len :0].ptr, dest_buf_u16[0..dest_w.len :0].ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
+                const err = bun.windows.Win32Error.get();
+                if (err.toSystemErrno()) |sys_err| {
+                    if (sys_err == .EISDIR) {
+                        return CompileResult.fail(std.fmt.allocPrint(allocator, "{s} is a directory. Please choose a different --outfile or delete the directory", .{outfile}) catch "outfile is a directory");
+                    } else {
+                        return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to move executable to {s}: {s}", .{ dest_path, @tagName(sys_err) }) catch "failed to move executable");
+                    }
+                } else {
+                    return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to move executable to {s}", .{dest_path}) catch "failed to move executable");
+                }
+            }
 
             // Set Windows icon and/or metadata using unified function
             if (windows_options.icon != null or
@@ -1009,25 +1066,9 @@ pub const StandaloneModuleGraph = struct {
                 windows_options.description != null or
                 windows_options.copyright != null)
             {
-                // Need to get the full path to the executable
-                var full_path_buf: bun.OSPathBuffer = undefined;
-                const full_path = brk: {
-                    // Get the directory path
-                    var dir_buf: bun.PathBuffer = undefined;
-                    const dir_path = bun.getFdPath(bun.FD.fromStdDir(root_dir), &dir_buf) catch |err| {
-                        return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get directory path: {s}", .{@errorName(err)}) catch "Failed to get directory path");
-                    };
-
-                    // Join with the outfile name
-                    const full_path_str = bun.path.joinAbsString(dir_path, &[_][]const u8{outfile}, .auto);
-                    const full_path_w = bun.strings.toWPathNormalized(&full_path_buf, full_path_str);
-                    const buf_u16 = bun.reinterpretSlice(u16, &full_path_buf);
-                    buf_u16[full_path_w.len] = 0;
-                    break :brk buf_u16[0..full_path_w.len :0];
-                };
-
+                // The file has been moved to dest_path
                 bun.windows.rescle.setWindowsMetadata(
-                    full_path.ptr,
+                    dest_buf_u16[0..dest_w.len :0].ptr,
                     windows_options.icon,
                     windows_options.title,
                     windows_options.publisher,

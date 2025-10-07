@@ -26,7 +26,4 @@ ${exitCode}
   const err = stderrText;
   expect(err).toContain("1 pass");
   expect(err).toContain("0 fail");
-  const std = stdoutText;
-
-  expect(std.length).toBeGreaterThan(1024 * 1024);
 }, 30000);

@@ -733,24 +733,27 @@ fn overwritePackageInNodeModulesFolder(
     cache_dir_subpath: []const u8,
     node_modules_folder_path: []const u8,
 ) !void {
-    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
-    defer dest_subpath.deinit();
     {
-        switch (bun.sys.lstat(dest_subpath.sliceZ())) {
+        var dest_subpath: bun.RelPath(.{ .sep = .auto }) = .from(node_modules_folder_path);
+        defer dest_subpath.deinit();
+
+        var link_buf: bun.PathBuffer = undefined;
+        switch (bun.sys.readlink(dest_subpath.sliceZ(), &link_buf)) {
             .err => {},
-            .result => |stat| {
-                if (bun.S.ISLNK(stat.mode)) {
-                    bun.sys.unlink(dest_subpath.sliceZ()).unwrap() catch {};
-                    bun.sys.mkdir(dest_subpath.sliceZ(), 0o755).unwrap() catch {};
-                }
+            .result => {
+                bun.sys.unlink(dest_subpath.sliceZ()).unwrap() catch {};
+                bun.sys.mkdir(dest_subpath.sliceZ(), 0o755).unwrap() catch {};
             },
         }
     }
 
+    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
+    defer dest_subpath.deinit();
+
     const src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = src_path: {
         if (comptime Environment.isWindows) {
             var path_buf: bun.WPathBuffer = undefined;
-            const abs_path = try bun.getFdPathW(.from(cache_dir), &path_buf);
+            const abs_path = try bun.getFdPathW(.fromStdDir(cache_dir), &path_buf);
 
             var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(abs_path);
             src_path.append(cache_dir_subpath);

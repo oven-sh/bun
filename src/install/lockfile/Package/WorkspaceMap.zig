@@ -128,7 +128,7 @@ pub fn processNamesArray(
             return error.InvalidPackageJSON;
         };
 
-        if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
+        if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.' or strings.eqlComptime(input_path, "./")) continue;
 
         if (glob.detectGlobSyntax(input_path)) {
             bun.handleOom(workspace_globs.append(input_path));

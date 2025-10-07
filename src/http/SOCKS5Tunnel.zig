@@ -82,17 +82,7 @@
 /// // After socket is connected to SOCKS5 proxy
 /// tunnel.start(is_ssl, socket);
 /// ```
-
 const SOCKS5Tunnel = @This();
-
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const Output = bun.Output;
-const Environment = bun.Environment;
-
-const HTTPClient = bun.http;
-const NewHTTPContext = bun.http.NewHTTPContext;
 
 const log = Output.scoped(.socks5_tunnel, .visible);
 
@@ -638,10 +628,7 @@ fn sendConnectRequest(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) !void {
-    log("SOCKS5Tunnel.sendConnectRequest target={s}:{}", .{
-        this.config.target_hostname,
-        this.config.target_port
-    });
+    log("SOCKS5Tunnel.sendConnectRequest target={s}:{}", .{ this.config.target_hostname, this.config.target_port });
 
     var request = std.ArrayList(u8).init(this.allocator);
     defer request.deinit();
@@ -810,3 +797,12 @@ fn deinit(this: *SOCKS5Tunnel) void {
     this.read_buffer.deinit();
     this.allocator.destroy(this);
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+const strings = bun.strings;
+
+const HTTPClient = bun.http;
+const NewHTTPContext = bun.http.NewHTTPContext;

@@ -14,17 +14,17 @@
  * 6. Protocol compliance (proper handshake sequence)
  */
 
+import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import net from "node:net";
 import { once } from "node:events";
-import type { Server } from "bun";
+import net from "node:net";
 
 // SOCKS5 Protocol Constants (RFC 1928)
 const SOCKS5_VERSION = 0x05;
 const AUTH_NONE = 0x00;
 const AUTH_USERNAME_PASSWORD = 0x02;
-const AUTH_NO_ACCEPTABLE = 0xFF;
+const AUTH_NO_ACCEPTABLE = 0xff;
 const CMD_CONNECT = 0x01;
 const ATYP_IPV4 = 0x01;
 const ATYP_DOMAIN = 0x03;
@@ -64,11 +64,11 @@ async function createSOCKS5ProxyServer(options: SOCKS5ProxyOptions = {}) {
 
   const log: string[] = [];
 
-  const server = net.createServer((clientSocket) => {
+  const server = net.createServer(clientSocket => {
     let authenticated = !requireAuth;
     let currentStep: "greeting" | "auth" | "request" = "greeting";
 
-    clientSocket.on("data", (data) => {
+    clientSocket.on("data", data => {
       try {
         if (currentStep === "greeting") {
           // Step 1: Client greeting
@@ -246,8 +246,12 @@ async function createSOCKS5ProxyServer(options: SOCKS5ProxyOptions = {}) {
               REP_CONNECTION_REFUSED,
               0x00,
               ATYP_IPV4,
-              0, 0, 0, 0, // BND.ADDR (0.0.0.0)
-              0, 0, // BND.PORT (0)
+              0,
+              0,
+              0,
+              0, // BND.ADDR (0.0.0.0)
+              0,
+              0, // BND.PORT (0)
             ]);
             clientSocket.write(response);
             clientSocket.end();
@@ -264,8 +268,12 @@ async function createSOCKS5ProxyServer(options: SOCKS5ProxyOptions = {}) {
               REP_SUCCESS,
               0x00,
               ATYP_IPV4,
-              0, 0, 0, 0, // BND.ADDR (could be actual bind address)
-              0, 0, // BND.PORT (could be actual bind port)
+              0,
+              0,
+              0,
+              0, // BND.ADDR (could be actual bind address)
+              0,
+              0, // BND.PORT (could be actual bind port)
             ]);
             clientSocket.write(response);
 
@@ -274,17 +282,10 @@ async function createSOCKS5ProxyServer(options: SOCKS5ProxyOptions = {}) {
             destSocket.pipe(clientSocket);
           });
 
-          destSocket.on("error", (err) => {
+          destSocket.on("error", err => {
             if (logRequests) log.push(`Connection error: ${err.message}`);
             // Send server failure response
-            const response = Buffer.from([
-              SOCKS5_VERSION,
-              REP_SERVER_FAILURE,
-              0x00,
-              ATYP_IPV4,
-              0, 0, 0, 0,
-              0, 0,
-            ]);
+            const response = Buffer.from([SOCKS5_VERSION, REP_SERVER_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]);
             clientSocket.write(response);
             clientSocket.end();
           });
@@ -418,7 +419,7 @@ describe("SOCKS5 Proxy - Authentication", () => {
     await expect(
       fetch(`http://localhost:${httpServer.port}/test`, {
         proxy: wrongAuthUrl,
-      })
+      }),
     ).rejects.toThrow();
   });
 
@@ -429,7 +430,7 @@ describe("SOCKS5 Proxy - Authentication", () => {
     await expect(
       fetch(`http://localhost:${httpServer.port}/test`, {
         proxy: noAuthUrl,
-      })
+      }),
     ).rejects.toThrow();
   });
 });
@@ -468,7 +469,7 @@ describe("SOCKS5 Proxy - Error Handling", () => {
       await expect(
         fetch(`http://localhost:${httpServer.port}/test`, {
           proxy: failServer.url,
-        })
+        }),
       ).rejects.toThrow();
     } finally {
       failServer.server.close();
@@ -479,13 +480,13 @@ describe("SOCKS5 Proxy - Error Handling", () => {
     await expect(
       fetch(`http://localhost:${httpServer.port}/test`, {
         proxy: "socks5://invalid-host-that-does-not-exist:1080",
-      })
+      }),
     ).rejects.toThrow();
   });
 
   test("should handle proxy connection timeout", async () => {
     // Create a server that accepts connections but never responds
-    const timeoutServer = net.createServer((socket) => {
+    const timeoutServer = net.createServer(socket => {
       // Accept but never send greeting response
       socket.on("data", () => {});
     });
@@ -499,7 +500,7 @@ describe("SOCKS5 Proxy - Error Handling", () => {
       await expect(
         fetch(`http://localhost:${httpServer.port}/test`, {
           proxy: `socks5://localhost:${port}`,
-        })
+        }),
       ).rejects.toThrow();
     } finally {
       timeoutServer.close();
@@ -567,11 +568,7 @@ describe("SOCKS5 Proxy - Environment Variables", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      server.stdout.text(),
-      server.stderr.text(),
-      server.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([server.stdout.text(), server.stderr.text(), server.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("200");
@@ -597,11 +594,7 @@ describe("SOCKS5 Proxy - Environment Variables", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      server.stdout.text(),
-      server.stderr.text(),
-      server.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([server.stdout.text(), server.stderr.text(), server.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("200");

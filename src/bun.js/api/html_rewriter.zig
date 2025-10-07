@@ -490,11 +490,12 @@ pub const HTMLRewriter = struct {
             result.setUrl(original.getUrl().clone());
 
             const value = original.getBodyValue();
+            const owned_readable_stream = original.getBodyReadableStream(sink.global);
             sink.ref();
             sink.bodyValueBufferer = jsc.WebCore.Body.ValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
             response_js_value.ensureStillAlive();
 
-            sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
+            sink.bodyValueBufferer.?.run(value, owned_readable_stream) catch |buffering_error| {
                 defer sink.deref();
                 return switch (buffering_error) {
                     error.StreamAlreadyUsed => {

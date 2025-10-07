@@ -33,7 +33,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
 
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*);
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*, JSC::EncodedJSValue);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -213,7 +213,7 @@ public:
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
         int arg_was_jsx = 0;
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx, JSValue::encode(instance));
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
@@ -243,7 +243,7 @@ public:
         Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr, JSValue::encode(instance));
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());

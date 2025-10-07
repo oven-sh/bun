@@ -365,6 +365,7 @@ pub const FetchTasklet = struct {
         const globalThis = this.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         var buffer_reset = true;
+        log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
         defer {
             if (buffer_reset) {
                 this.scheduled_response_buffer.reset();
@@ -416,6 +417,7 @@ pub const FetchTasklet = struct {
         }
 
         if (this.readable_stream_ref.get(globalThis)) |readable| {
+            log("onBodyReceived readable_stream_ref", .{});
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
@@ -448,68 +450,65 @@ pub const FetchTasklet = struct {
         }
 
         if (this.getCurrentResponse()) |response| {
-            var body = response.getBodyValue();
-            if (body.* == .Locked) {
-                if (body.Locked.readable.get(globalThis)) |readable| {
-                    if (readable.ptr == .Bytes) {
-                        readable.ptr.Bytes.size_hint = this.getSizeHint();
+            log("onBodyReceived Current Response", .{});
+            const sizeHint = this.getSizeHint();
+            response.setSizeHint(sizeHint);
+            if (response.getBodyReadableStream(globalThis)) |readable| {
+                log("onBodyReceived CurrentResponse BodyReadableStream", .{});
+                if (readable.ptr == .Bytes) {
+                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
-                        const scheduled_response_buffer = this.scheduled_response_buffer.list;
+                    const chunk = scheduled_response_buffer.items;
 
-                        const chunk = scheduled_response_buffer.items;
-
-                        if (this.result.has_more) {
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                                },
-                                bun.default_allocator,
-                            );
-                        } else {
-                            var prev = body.Locked.readable;
-                            body.Locked.readable = .{};
-                            readable.value.ensureStillAlive();
-                            prev.deinit();
-                            readable.value.ensureStillAlive();
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                                },
-                                bun.default_allocator,
-                            );
-                        }
-
-                        return;
+                    if (this.result.has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    } else {
+                        readable.value.ensureStillAlive();
+                        response.detachReadableStream(globalThis);
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
                     }
-                } else {
-                    body.Locked.size_hint = this.getSizeHint();
+
+                    return;
                 }
-                // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-                buffer_reset = false;
-                if (!this.result.has_more) {
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                    this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+            }
 
-                    // done resolve body
-                    var old = body.*;
-                    const body_value = Body.Value{
-                        .InternalBlob = .{
-                            .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                        },
-                    };
-                    body.* = body_value;
+            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
+            buffer_reset = false;
+            if (!this.result.has_more) {
+                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                const body = response.getBodyValue();
+                // done resolve body
+                var old = body.*;
+                const body_value = Body.Value{
+                    .InternalBlob = .{
+                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                    },
+                };
+                body.* = body_value;
+                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
-                    this.scheduled_response_buffer = .{
-                        .allocator = this.memory_reporter.allocator(),
-                        .list = .{
-                            .items = &.{},
-                            .capacity = 0,
-                        },
-                    };
+                this.scheduled_response_buffer = .{
+                    .allocator = this.memory_reporter.allocator(),
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
 
-                    if (old == .Locked) {
-                        old.resolve(body, this.global_this, response.getFetchHeaders());
-                    }
+                if (old == .Locked) {
+                    log("onBodyReceived old.resolve", .{});
+                    old.resolve(body, this.global_this, response.getFetchHeaders());
                 }
             }
         }
@@ -2102,21 +2101,25 @@ pub fn Bun__fetch_(
         }
 
         if (request) |req| {
-            if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
+            const bodyValue = req.getBodyValue();
+            if (bodyValue.* == .Used or (bodyValue.* == .Locked and (bodyValue.Locked.action != .none or bodyValue.Locked.isDisturbed(Request, globalThis, first_arg)))) {
                 return globalThis.ERR(.BODY_ALREADY_USED, "Request body already used", .{}).throw();
             }
 
-            if (req.body.value == .Locked) {
-                if (req.body.value.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+            if (bodyValue.* == .Locked) {
+                if (req.getBodyReadableStream(globalThis)) |readable| {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis) };
                 }
-                const readable = try req.body.value.toReadableStream(globalThis);
-                if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+                if (bodyValue.Locked.readable.has()) {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
+                }
+                const readable = try bodyValue.toReadableStream(globalThis);
+                if (!readable.isEmptyOrUndefinedOrNull() and bodyValue.* == .Locked and bodyValue.Locked.readable.has()) {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
                 }
             }
 
-            break :extract_body FetchTasklet.HTTPRequestBody{ .AnyBlob = req.body.value.useAsAnyBlob() };
+            break :extract_body FetchTasklet.HTTPRequestBody{ .AnyBlob = bodyValue.useAsAnyBlob() };
         }
 
         if (request_init_object) |req| {

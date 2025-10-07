@@ -17,6 +17,7 @@ pub const fromJSDirect = js.fromJSDirect;
 /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
+#js_ref: jsc.JSRef = .empty(),
 
 // We must report a consistent value for this
 #reported_estimated_size: usize = 0,
@@ -102,15 +103,74 @@ pub fn calculateEstimatedByteSize(this: *Response) void {
         @sizeOf(Response);
 }
 
+fn checkBodyStreamRef(this: *Response, globalObject: *JSGlobalObject) void {
+    if (this.#js_ref.tryGet()) |js_value| {
+        if (this.#body.value == .Locked) {
+            if (this.#body.value.Locked.readable.get(globalObject)) |stream| {
+                // we dont hold a strong reference to the stream we will guard it in js.gc.stream
+                // so we avoid cycled references
+                // anyone using Response should not use Locked.readable directly because it dont always owns it
+                // the owner will be always the Response object it self
+                stream.value.ensureStillAlive();
+                js.gc.stream.set(js_value, globalObject, stream.value);
+                this.#body.value.Locked.readable.deinit();
+                this.#body.value.Locked.readable = .{};
+            }
+        }
+    }
+}
 pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
-    return js.toJSUnchecked(globalObject, this);
+    const js_value = js.toJSUnchecked(globalObject, this);
+    this.#js_ref = .initWeak(js_value);
+
+    this.checkBodyStreamRef(globalObject);
+    return js_value;
 }
 
-pub fn getBodyValue(
+pub inline fn getBodyValue(
     this: *Response,
 ) *Body.Value {
     return &this.#body.value;
+}
+
+pub inline fn getBodyReadableStream(
+    this: *Response,
+    globalObject: *JSGlobalObject,
+) ?jsc.WebCore.ReadableStream {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        if (js.gc.stream.get(js_ref)) |stream| {
+            // JS is always source of truth for the stream
+            return jsc.WebCore.ReadableStream.fromJS(stream, globalObject) catch |err| {
+                _ = globalObject.takeException(err);
+                return null;
+            };
+        }
+    }
+    if (this.#body.value == .Locked) {
+        return this.#body.value.Locked.readable.get(globalObject);
+    }
+    return null;
+}
+pub inline fn detachReadableStream(this: *Response, globalObject: *jsc.JSGlobalObject) void {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        js.gc.stream.clear(js_ref, globalObject);
+    }
+    if (this.#body.value == .Locked) {
+        var old = this.#body.value.Locked.readable;
+        old.deinit();
+        this.#body.value.Locked.readable = .{};
+    }
+}
+pub inline fn setSizeHint(this: *Response, size_hint: Blob.SizeType) void {
+    if (this.#body.value == .Locked) {
+        this.#body.value.Locked.size_hint = size_hint;
+        if (this.#body.value.Locked.readable.get(this.#body.value.Locked.global)) |readable| {
+            if (readable.ptr == .Bytes) {
+                readable.ptr.Bytes.size_hint = size_hint;
+            }
+        }
+    }
 }
 
 pub export fn jsFunctionRequestOrResponseHasBodyValue(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
@@ -123,7 +183,7 @@ pub export fn jsFunctionRequestOrResponseHasBodyValue(_: *jsc.JSGlobalObject, ca
     if (this_value.as(Response)) |response| {
         return jsc.JSValue.jsBoolean(!response.#body.value.isDefinitelyEmpty());
     } else if (this_value.as(Request)) |request| {
-        return jsc.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
+        return jsc.JSValue.jsBoolean(!request.getBodyValue().isDefinitelyEmpty());
     }
 
     return .false;
@@ -140,7 +200,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
         if (this_value.as(Response)) |response| {
             break :brk &response.#body.value;
         } else if (this_value.as(Request)) |request| {
-            break :brk &request.body.value;
+            break :brk request.getBodyValue();
         }
 
         return .js_undefined;
@@ -335,6 +395,8 @@ pub fn doClone(
         }
     }
 
+    this.checkBodyStreamRef(globalThis);
+
     return js_wrapper;
 }
 
@@ -346,7 +408,18 @@ pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
 ) bun.JSError!Response {
-    var body = try this.#body.clone(globalThis);
+    var body = brk: {
+        if (this.#js_ref.tryGet()) |js_ref| {
+            if (js.gc.stream.get(js_ref)) |stream| {
+                var readable = try jsc.WebCore.ReadableStream.fromJS(stream, globalThis);
+                if (readable != null) {
+                    break :brk try this.#body.cloneWithReadableStream(globalThis, &readable.?);
+                }
+            }
+        }
+
+        break :brk try this.#body.clone(globalThis);
+    };
     errdefer body.deinit(bun.default_allocator);
     var _init = try this.#init.clone(globalThis);
     errdefer _init.deinit(bun.default_allocator);
@@ -394,6 +467,7 @@ pub fn unref(this: *Response) void {
 pub fn finalize(
     this: *Response,
 ) callconv(.C) void {
+    this.#js_ref.finalize();
     this.unref();
 }
 
@@ -581,10 +655,12 @@ pub fn constructError(
         },
     );
 
-    return response.toJS(globalThis);
+    const js_value = response.toJS(globalThis);
+    response.#js_ref = .initWeak(js_value);
+    return js_value;
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, js_this: jsc.JSValue) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -601,6 +677,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                         .value = .{ .Empty = {} },
                     },
                     .#url = bun.String.empty,
+                    .#js_ref = .initWeak(js_this),
                 };
 
                 const credentials = blob.store.?.data.s3.getCredentials();
@@ -658,6 +735,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     var response = bun.new(Response, Response{
         .#body = body,
         .#init = _init,
+        .#js_ref = .initWeak(js_this),
     });
 
     if (response.#body.value == .Blob and
@@ -669,7 +747,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     response.calculateEstimatedByteSize();
-
+    response.checkBodyStreamRef(globalThis);
     return response;
 }
 

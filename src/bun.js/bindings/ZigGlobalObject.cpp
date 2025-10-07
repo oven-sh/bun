@@ -1240,6 +1240,9 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
     }
 }
+
+void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
@@ -1257,7 +1260,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
@@ -1287,7 +1290,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,

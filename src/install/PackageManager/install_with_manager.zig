@@ -775,7 +775,7 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        const linker = switch (manager.options.node_linker) {
+        const linker: Options.NodeLinker = switch (manager.options.node_linker) {
             .hoisted => .hoisted,
             .isolated => .isolated,
             .auto => linker: {

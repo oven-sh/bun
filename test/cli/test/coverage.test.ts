@@ -122,9 +122,7 @@ test("should call both functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
-(pass) should call both functions
----------------|---------|---------|-------------------
+"---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |  100.00 |  100.00 |
@@ -187,9 +185,7 @@ test("should call only some functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
-(pass) should call only some functions
----------------|---------|---------|-------------------
+"---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |   75.00 |   83.33 |
@@ -252,9 +248,7 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
-(pass) should call all functions
---------------|---------|---------|-------------------
+"--------------|---------|---------|-------------------
 File          | % Funcs | % Lines | Uncovered Line #s
 --------------|---------|---------|-------------------
 All files     |  100.00 |  100.00 |
@@ -319,11 +313,7 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"main.test.ts:
-(pass) should call all functions
-
-src/feature.spec.ts:
-----------------|---------|---------|-------------------
+"----------------|---------|---------|-------------------
 File            | % Funcs | % Lines | Uncovered Line #s
 ----------------|---------|---------|-------------------
 All files       |  100.00 |  100.00 |
@@ -387,7 +377,7 @@ FNF:1
 FNH:1
 DA:2,11
 DA:3,17
-LF:5
+LF:2
 LH:2
 end_of_record
 TN:
@@ -401,7 +391,7 @@ DA:6,42
 DA:7,39
 DA:8,36
 DA:9,2
-LF:10
+LF:7
 LH:7
 end_of_record"
 `);
@@ -440,9 +430,7 @@ test("should pass", () => {
 "3 | coveragePathIgnorePatterns = 123
                                  ^
 error: coveragePathIgnorePatterns must be a string or array of strings
-    at <dir>/bunfig.toml:3:30
-
-Invalid Bunfig: failed to load bunfig"
+    at <dir>/bunfig.toml:3:30"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -479,9 +467,7 @@ test("should pass", () => {
 "3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
                                                    ^
 error: coveragePathIgnorePatterns array must contain only strings
-    at <dir>/bunfig.toml:3:48
-
-Invalid Bunfig: failed to load bunfig"
+    at <dir>/bunfig.toml:3:48"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -521,9 +507,7 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
-(pass) should call function
----------------|---------|---------|-------------------
+"---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |  100.00 |  100.00 |
@@ -574,9 +558,7 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
-(pass) should call function
------------|---------|---------|-------------------
+"-----------|---------|---------|-------------------
 File       | % Funcs | % Lines | Uncovered Line #s
 -----------|---------|---------|-------------------
 All files  |    0.00 |    0.00 |

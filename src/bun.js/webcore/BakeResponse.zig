@@ -105,11 +105,8 @@ pub fn constructRender(
     defer path_utf8.deinit();
 
     // Create a Response with Render body
-    const response = bun.new(Response, Response{
-        .body = Body{
-            .value = .Empty,
-        },
-        .init = Response.Init{
+    const response = bun.new(Response, Response.init(
+        .{
             .status_code = 200,
             .headers = headers: {
                 var headers = bun.webcore.FetchHeaders.createEmpty();
@@ -117,7 +114,10 @@ pub fn constructRender(
                 break :headers headers;
             },
         },
-    });
+        .{ .value = .Empty },
+        bun.String.empty,
+        false,
+    ));
 
     const response_js = toJSForSSR(response, globalThis, .render);
     response_js.ensureStillAlive();

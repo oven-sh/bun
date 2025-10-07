@@ -677,9 +677,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
 
                 if (this.response_ptr) |response| {
-                    if (response.body.value == .Locked) {
-                        var strong_readable = response.body.value.Locked.readable;
-                        response.body.value.Locked.readable = .{};
+                    const bodyValue = response.getBodyValue();
+                    if (bodyValue.* == .Locked) {
+                        var strong_readable = bodyValue.Locked.readable;
+                        bodyValue.Locked.readable = .{};
                         defer strong_readable.deinit();
                         if (strong_readable.get(globalThis)) |readable| {
                             readable.abort(globalThis);
@@ -1214,7 +1215,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
 
                             // TODO: should this timeout?
-                            this.response_ptr.?.body.value = .{
+                            const bodyValue = this.response_ptr.?.getBodyValue();
+                            bodyValue.* = .{
                                 .Locked = .{
                                     .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
                                     .global = globalThis,
@@ -1454,10 +1456,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
             // not content-length or transfer-encoding so we need to respect the body
-            response.body.value.toBlobIfPossible();
-            switch (response.body.value) {
+            const bodyValue = response.getBodyValue();
+            bodyValue.toBlobIfPossible();
+            switch (bodyValue.*) {
                 .InternalBlob, .WTFStringImpl => {
-                    var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
+                    var blob = bodyValue.useAsAnyBlobAllowNonUTF8String();
                     defer blob.detach();
                     const size = blob.size();
                     this.renderMetadata();
@@ -1559,9 +1562,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
                     return;
                 } else {
-                    response.body.value.toBlobIfPossible();
+                    const bodyValue = response.getBodyValue();
+                    bodyValue.toBlobIfPossible();
 
-                    switch (response.body.value) {
+                    switch (bodyValue.*) {
                         .Blob => |*blob| {
                             if (blob.needsToReadFile()) {
                                 response_value.protect();
@@ -1618,8 +1622,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
                             return;
                         }
-                        response.body.value.toBlobIfPossible();
-                        switch (response.body.value) {
+                        const bodyValue = response.getBodyValue();
+                        bodyValue.toBlobIfPossible();
+                        switch (bodyValue.*) {
                             .Blob => |*blob| {
                                 if (blob.needsToReadFile()) {
                                     fulfilled_value.protect();
@@ -1659,14 +1664,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (req.response_ptr) |resp| {
                 assert(req.server != null);
-
-                if (resp.body.value == .Locked) {
-                    const global = resp.body.value.Locked.global;
-                    if (resp.body.value.Locked.readable.get(global)) |stream| {
+                const bodyValue = resp.getBodyValue();
+                if (bodyValue.* == .Locked) {
+                    const global = bodyValue.Locked.global;
+                    if (bodyValue.Locked.readable.get(global)) |stream| {
                         stream.done(global);
                     }
-                    resp.body.value.Locked.readable.deinit();
-                    resp.body.value = .{ .Used = {} };
+                    bodyValue.Locked.readable.deinit();
+                    bodyValue.* = .{ .Used = {} };
                 }
             }
 
@@ -1714,12 +1719,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (req.response_ptr) |resp| {
-                if (resp.body.value == .Locked) {
-                    if (resp.body.value.Locked.readable.get(globalThis)) |stream| {
+                const bodyValue = resp.getBodyValue();
+                if (bodyValue.* == .Locked) {
+                    if (bodyValue.Locked.readable.get(globalThis)) |stream| {
                         stream.done(globalThis);
                     }
-                    resp.body.value.Locked.readable.deinit();
-                    resp.body.value = .{ .Used = {} };
+                    bodyValue.Locked.readable.deinit();
+                    bodyValue.* = .{ .Used = {} };
                 }
             }
 
@@ -1990,7 +1996,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
             var response = this.response_ptr.?;
-            this.doRenderWithBody(&response.body.value);
+            this.doRenderWithBody(response.getBodyValue());
         }
 
         pub fn renderProductionError(this: *RequestContext, status: u16) void {
@@ -2162,8 +2168,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     ctx.flags.response_protected = false;
                     ctx.response_ptr = response;
 
-                    response.body.value.toBlobIfPossible();
-                    switch (response.body.value) {
+                    const bodyValue = response.getBodyValue();
+                    bodyValue.toBlobIfPossible();
+                    switch (bodyValue.*) {
                         .Blob => |*blob| {
                             if (blob.needsToReadFile()) {
                                 fulfilled_value.protect();
@@ -2216,14 +2223,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 status;
 
             const content_type, const needs_content_type, const content_type_needs_free = getContentType(
-                response.init.headers,
+                response.getInitHeaders(),
                 &this.blob,
                 this.allocator,
             );
             defer if (content_type_needs_free) content_type.deinit(this.allocator);
             var has_content_disposition = false;
             var has_content_range = false;
-            if (response.init.headers) |headers_| {
+            if (response.swapInitHeaders()) |headers_| {
+                defer headers_.deref();
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
                 needs_content_range = needs_content_range and has_content_range;
@@ -2233,8 +2241,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 this.doWriteStatus(status);
                 this.doWriteHeaders(headers_);
-                response.init.headers = null;
-                headers_.deref();
             } else if (needs_content_range) {
                 status = 206;
                 this.doWriteStatus(status);

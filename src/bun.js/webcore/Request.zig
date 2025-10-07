@@ -619,29 +619,31 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
             if (value.asDirect(Response)) |response| {
                 if (!fields.contains(.method)) {
-                    req.method = response.init.method;
+                    req.method = response.getMethod();
                     fields.insert(.method);
                 }
 
                 if (!fields.contains(.headers)) {
-                    if (response.init.headers) |headers| {
+                    if (response.getInitHeaders()) |headers| {
                         req._headers = try headers.cloneThis(globalThis);
                         fields.insert(.headers);
                     }
                 }
 
                 if (!fields.contains(.url)) {
-                    if (!response.url.isEmpty()) {
-                        req.url = response.url.dupeRef();
+                    const url = response.getUrl();
+                    if (!url.isEmpty()) {
+                        req.url = url.dupeRef();
                         fields.insert(.url);
                     }
                 }
 
                 if (!fields.contains(.body)) {
-                    switch (response.body.value) {
+                    const bodyValue = response.getBodyValue();
+                    switch (bodyValue.*) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = try response.body.value.clone(globalThis);
+                            req.body.value = try bodyValue.clone(globalThis);
                             fields.insert(.body);
                         },
                     }

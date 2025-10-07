@@ -399,14 +399,14 @@ pub const FetchTasklet = struct {
             }
             // if we are buffering resolve the promise
             if (this.getCurrentResponse()) |response| {
-                response.body.value.toErrorInstance(err, globalThis);
                 need_deinit = false; // body value now owns the error
-                const body = response.body;
-                if (body.value == .Locked) {
-                    if (body.value.Locked.promise) |promise_| {
-                        const promise = promise_.asAnyPromise().?;
-                        promise.reject(globalThis, response.body.value.Error.toJS(globalThis));
-                    }
+                const body = response.getBodyValue();
+                if (body.* == .Locked and body.Locked.promise != null) {
+                    const promise = body.Locked.promise.?.asAnyPromise().?;
+                    body.toErrorInstance(err, globalThis);
+                    promise.reject(globalThis, body.Error.toJS(globalThis));
+                } else {
+                    body.toErrorInstance(err, globalThis);
                 }
             }
             return;
@@ -445,9 +445,9 @@ pub const FetchTasklet = struct {
         }
 
         if (this.getCurrentResponse()) |response| {
-            var body = &response.body;
-            if (body.value == .Locked) {
-                if (body.value.Locked.readable.get(globalThis)) |readable| {
+            var body = response.getBodyValue();
+            if (body.* == .Locked) {
+                if (body.Locked.readable.get(globalThis)) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.size_hint = this.getSizeHint();
 
@@ -463,8 +463,8 @@ pub const FetchTasklet = struct {
                                 bun.default_allocator,
                             );
                         } else {
-                            var prev = body.value.Locked.readable;
-                            body.value.Locked.readable = .{};
+                            var prev = body.Locked.readable;
+                            body.Locked.readable = .{};
                             readable.value.ensureStillAlive();
                             prev.deinit();
                             readable.value.ensureStillAlive();
@@ -479,7 +479,7 @@ pub const FetchTasklet = struct {
                         return;
                     }
                 } else {
-                    response.body.value.Locked.size_hint = this.getSizeHint();
+                    body.Locked.size_hint = this.getSizeHint();
                 }
                 // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
                 buffer_reset = false;
@@ -488,13 +488,13 @@ pub const FetchTasklet = struct {
                     this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
 
                     // done resolve body
-                    var old = body.value;
+                    var old = body.*;
                     const body_value = Body.Value{
                         .InternalBlob = .{
                             .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
                         },
                     };
-                    response.body.value = body_value;
+                    body.* = body_value;
 
                     this.scheduled_response_buffer = .{
                         .allocator = this.memory_reporter.allocator(),
@@ -505,7 +505,7 @@ pub const FetchTasklet = struct {
                     };
 
                     if (old == .Locked) {
-                        old.resolve(&response.body.value, this.global_this, response.getFetchHeaders());
+                        old.resolve(body, this.global_this, response.getFetchHeaders());
                     }
                 }
             }
@@ -962,18 +962,18 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
-        return Response{
-            .url = bun.String.createAtomIfPossible(metadata.url),
-            .redirected = this.result.redirected,
-            .init = .{
+        return Response.init(
+            .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                 .status_code = @as(u16, @truncate(http_response.status_code)),
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
             },
-            .body = .{
+            Body{
                 .value = this.toBodyValue(),
             },
-        };
+            bun.String.createAtomIfPossible(metadata.url),
+            this.result.redirected,
+        );
     }
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
@@ -1001,7 +1001,7 @@ pub const FetchTasklet = struct {
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
         if (this.native_response) |response| {
-            const body = response.body;
+            const body = response.getBodyValue();
             // Three scenarios:
             //
             // 1. We are streaming, in which case we should not ignore the body.
@@ -1011,12 +1011,12 @@ pub const FetchTasklet = struct {
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if (body.value != .Locked or this.readable_stream_ref.held.has()) {
+            if (body.* != .Locked or this.readable_stream_ref.held.has()) {
                 // Scenario 1 or 3.
                 return;
             }
 
-            if (body.value.Locked.promise) |promise| {
+            if (body.Locked.promise) |promise| {
                 if (promise.isEmptyOrUndefinedOrNull()) {
                     // Scenario 2b.
                     this.ignoreRemainingResponseBody();
@@ -1428,21 +1428,17 @@ fn dataURLResponse(
         blob.content_type_allocated = true;
     }
 
-    var response = bun.new(
-        Response,
-        Response{
-            .body = Body{
-                .value = .{
-                    .Blob = blob,
-                },
-            },
-            .init = Response.Init{
-                .status_code = 200,
-                .status_text = bun.String.createAtomASCII("OK"),
-            },
-            .url = data_url.url.dupeRef(),
+    var response = bun.new(Response, Response.init(
+        .{
+            .status_code = 200,
+            .status_text = bun.String.createAtomASCII("OK"),
         },
-    );
+        Body{
+            .value = .{ .Blob = blob },
+        },
+        data_url.url.dupeRef(),
+        false,
+    ));
 
     return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
 }
@@ -2355,15 +2351,16 @@ pub fn Bun__fetch_(
             );
         };
 
-        const response = bun.new(Response, Response{
-            .body = Body{
-                .value = .{ .Blob = blob_to_use },
-            },
-            .init = Response.Init{
+        const response = bun.new(Response, Response.init(
+            Response.Init{
                 .status_code = 200,
             },
-            .url = url_string.clone(),
-        });
+            Body{
+                .value = .{ .Blob = blob_to_use },
+            },
+            url_string.clone(),
+            false,
+        ));
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
@@ -2538,19 +2535,29 @@ pub fn Bun__fetch_(
                     const global = self.global;
                     switch (result) {
                         .success => {
-                            const response = bun.new(Response, Response{
-                                .body = .{ .value = .Empty },
-                                .redirected = false,
-                                .init = .{ .method = .PUT, .status_code = 200 },
-                                .url = bun.String.createAtomIfPossible(self.url.href),
-                            });
+                            const response = bun.new(Response, Response.init(
+                                Response.Init{
+                                    .method = .PUT,
+                                    .status_code = 200,
+                                },
+                                Body{
+                                    .value = .Empty,
+                                },
+                                bun.String.createAtomIfPossible(self.url.href),
+                                false,
+                            ));
                             const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);
                         },
                         .failure => |err| {
-                            const response = bun.new(Response, Response{
-                                .body = .{
+                            const response = bun.new(Response, Response.init(
+                                .{
+                                    .method = .PUT,
+                                    .status_code = 500,
+                                    .status_text = bun.String.createAtomIfPossible(err.code),
+                                },
+                                .{
                                     .value = .{
                                         .InternalBlob = .{
                                             .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
@@ -2558,14 +2565,10 @@ pub fn Bun__fetch_(
                                         },
                                     },
                                 },
-                                .redirected = false,
-                                .init = .{
-                                    .method = .PUT,
-                                    .status_code = 500,
-                                    .status_text = bun.String.createAtomIfPossible(err.code),
-                                },
-                                .url = bun.String.createAtomIfPossible(self.url.href),
-                            });
+                                bun.String.createAtomIfPossible(self.url.href),
+                                false,
+                            ));
+
                             const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
                             self.promise.resolve(global, response_js);

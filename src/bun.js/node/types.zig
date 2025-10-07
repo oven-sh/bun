@@ -98,9 +98,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                     }
 
                     if (value.as(jsc.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        const bodyValue = response.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };

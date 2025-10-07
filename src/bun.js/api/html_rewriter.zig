@@ -174,7 +174,8 @@ pub const HTMLRewriter = struct {
 
     pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: jsc.JSValue) bun.JSError!JSValue {
         if (response_value.as(Response)) |response| {
-            if (response.body.value == .Used) {
+            const body_value = response.getBodyValue();
+            if (body_value.* == .Used) {
                 return global.throwInvalidArguments("Response body already used", .{});
             }
             const out = try this.beginTransform(global, response);
@@ -198,12 +199,14 @@ pub const HTMLRewriter = struct {
         if (kind != .other) {
             {
                 const body_value = try jsc.WebCore.Body.extract(global, response_value);
-                const resp = bun.new(Response, Response{
-                    .init = .{
+                const resp = bun.new(Response, Response.init(
+                    .{
                         .status_code = 200,
                     },
-                    .body = body_value,
-                });
+                    body_value,
+                    bun.String.empty,
+                    false,
+                ));
                 defer resp.finalize();
                 const out_response_value = try this.beginTransform(global, resp);
                 // Check if the returned value is an error and throw it properly
@@ -212,7 +215,7 @@ pub const HTMLRewriter = struct {
                 }
                 out_response_value.ensureStillAlive();
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
-                var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
+                var blob = out_response.getBodyValue().useAsAnyBlobAllowNonUTF8String();
 
                 defer {
                     _ = Response.js.dangerouslySetPtr(out_response_value, null);
@@ -415,11 +418,11 @@ pub const HTMLRewriter = struct {
                 .response = undefined,
             });
             defer sink.deref();
-            var result = bun.new(Response, .{
-                .init = .{
+            var result = bun.new(Response, Response.init(
+                .{
                     .status_code = 200,
                 },
-                .body = .{
+                .{
                     .value = .{
                         .Locked = .{
                             .global = global,
@@ -427,11 +430,13 @@ pub const HTMLRewriter = struct {
                         },
                     },
                 },
-            });
+                bun.String.empty,
+                false,
+            ));
 
             sink.response = result;
             var sink_error: jsc.JSValue = .zero;
-            const input_size = original.body.len();
+            const input_size = original.getBodyLen();
             var vm = global.bunVM();
 
             // Since we're still using vm.waitForPromise, we have to also
@@ -467,20 +472,22 @@ pub const HTMLRewriter = struct {
                 return createLOLHTMLError(global);
             };
 
-            result.init.method = original.init.method;
-            result.init.status_code = original.init.status_code;
-            result.init.status_text = original.init.status_text.clone();
+            result.setInit(
+                original.getMethod(),
+                original.getInitStatusCode(),
+                original.getInitStatusText().clone(),
+            );
 
             // https://github.com/oven-sh/bun/issues/3334
-            if (original.init.headers) |headers| {
-                result.init.headers = try headers.cloneThis(global);
+            if (original.getInitHeaders()) |_headers| {
+                result.setInitHeaders(try _headers.cloneThis(global));
             }
 
             // Hold off on cloning until we're actually done.
             const response_js_value = sink.response.toJS(sink.global);
             sink.response_value.set(global, response_js_value);
 
-            result.url = original.url.clone();
+            result.setUrl(original.getUrl().clone());
 
             const value = original.getBodyValue();
             sink.ref();
@@ -522,21 +529,22 @@ pub const HTMLRewriter = struct {
         pub fn onFinishedBuffering(sink: *BufferOutputSink, bytes: []const u8, js_err: ?jsc.WebCore.Body.Value.ValueError, is_async: bool) void {
             defer sink.deref();
             if (js_err) |err| {
-                if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                    sink.response.body.value.Locked.promise == null)
+                const sinkBodyValue = sink.response.getBodyValue();
+                if (sinkBodyValue.* == .Locked and @intFromPtr(sinkBodyValue.Locked.task) == @intFromPtr(sink) and
+                    sinkBodyValue.Locked.promise == null)
                 {
-                    sink.response.body.value.Locked.readable.deinit();
-                    sink.response.body.value = .{ .Empty = {} };
+                    sinkBodyValue.Locked.readable.deinit();
+                    sinkBodyValue.* = .{ .Empty = {} };
                     // is there a pending promise?
                     // we will need to reject it
-                } else if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                    sink.response.body.value.Locked.promise != null)
+                } else if (sinkBodyValue.* == .Locked and @intFromPtr(sinkBodyValue.Locked.task) == @intFromPtr(sink) and
+                    sinkBodyValue.Locked.promise != null)
                 {
-                    sink.response.body.value.Locked.onReceiveValue = null;
-                    sink.response.body.value.Locked.task = null;
+                    sinkBodyValue.Locked.onReceiveValue = null;
+                    sinkBodyValue.Locked.task = null;
                 }
                 if (is_async) {
-                    sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global);
+                    sinkBodyValue.toErrorInstance(err.dupe(sink.global), sink.global);
                 } else {
                     var ret_err = createLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
@@ -566,7 +574,7 @@ pub const HTMLRewriter = struct {
 
             sink.rewriter.?.write(bytes) catch {
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -577,7 +585,7 @@ pub const HTMLRewriter = struct {
                 if (!is_async) response.finalize();
                 sink.response = undefined;
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -590,8 +598,9 @@ pub const HTMLRewriter = struct {
         pub const Sync = enum { suspended, pending, done };
 
         pub fn done(this: *BufferOutputSink) void {
-            var prev_value = this.response.body.value;
-            this.response.body.value = jsc.WebCore.Body.Value{
+            const bodyValue = this.response.getBodyValue();
+            var prev_value = bodyValue.*;
+            bodyValue.* = jsc.WebCore.Body.Value{
                 .InternalBlob = .{
                     .bytes = this.bytes.list.toManaged(bun.default_allocator),
                 },
@@ -606,7 +615,7 @@ pub const HTMLRewriter = struct {
             };
 
             prev_value.resolve(
-                &this.response.body.value,
+                bodyValue,
                 this.global,
                 null,
             );

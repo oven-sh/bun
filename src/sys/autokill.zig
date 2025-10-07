@@ -19,33 +19,53 @@ pub fn killAllChildProcesses() void {
 
     // Pass 1: SIGTERM to allow graceful cleanup
     // Give processes a chance to handle cleanup work before forced termination
-    const children_term = getChildPids(current_pid, current_pid) catch &[_]c_int{};
-    defer if (children_term.len > 0) bun.default_allocator.free(children_term);
-    var seen_term = std.AutoHashMap(c_int, void).init(bun.default_allocator);
-    defer seen_term.deinit();
-    for (children_term) |child| {
-        killProcessTreeRecursive(child, &seen_term, current_pid, .sigterm) catch {};
+    {
+        const children = getChildPids(current_pid, current_pid) catch &[_]c_int{};
+        defer if (children.len > 0) bun.default_allocator.free(children);
+
+        // Bail out early if no children to kill
+        if (children.len == 0) return;
+
+        var seen = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+        defer seen.deinit();
+        for (children) |child| {
+            killProcessTreeRecursive(child, &seen, current_pid, .sigterm) catch {};
+        }
     }
 
-    // Brief delay to allow processes to handle SIGTERM
-    std.time.sleep(10 * std.time.ns_per_ms);
+    // Brief delay to allow processes to handle SIGTERM (500 microseconds)
+    std.time.sleep(500 * std.time.ns_per_us);
 
     // Pass 2: SIGSTOP to freeze entire tree and minimize reparenting races
-    const children_stop = getChildPids(current_pid, current_pid) catch &[_]c_int{};
-    defer if (children_stop.len > 0) bun.default_allocator.free(children_stop);
-    var seen_stop = std.AutoHashMap(c_int, void).init(bun.default_allocator);
-    defer seen_stop.deinit();
-    for (children_stop) |child| {
-        killProcessTreeRecursive(child, &seen_stop, current_pid, .sigstop) catch {};
+    // Get fresh child list in case some exited from SIGTERM
+    {
+        const children = getChildPids(current_pid, current_pid) catch &[_]c_int{};
+        defer if (children.len > 0) bun.default_allocator.free(children);
+
+        // All processes may have exited from SIGTERM, bail out if so
+        if (children.len == 0) return;
+
+        var seen = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+        defer seen.deinit();
+        for (children) |child| {
+            killProcessTreeRecursive(child, &seen, current_pid, .sigstop) catch {};
+        }
     }
 
     // Pass 3: SIGKILL to force termination of any remaining processes
-    const children_kill = getChildPids(current_pid, current_pid) catch &[_]c_int{};
-    defer if (children_kill.len > 0) bun.default_allocator.free(children_kill);
-    var seen_kill = std.AutoHashMap(c_int, void).init(bun.default_allocator);
-    defer seen_kill.deinit();
-    for (children_kill) |child| {
-        killProcessTreeRecursive(child, &seen_kill, current_pid, .sigkill) catch {};
+    // Get fresh child list in case some exited from SIGSTOP
+    {
+        const children = getChildPids(current_pid, current_pid) catch &[_]c_int{};
+        defer if (children.len > 0) bun.default_allocator.free(children);
+
+        // All processes may have exited from SIGSTOP, bail out if so
+        if (children.len == 0) return;
+
+        var seen = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+        defer seen.deinit();
+        for (children) |child| {
+            killProcessTreeRecursive(child, &seen, current_pid, .sigkill) catch {};
+        }
     }
 }
 

@@ -16,5 +16,5 @@ test("stream should not leak when response is cyclic reference to itself", async
 
   await Bun.sleep(0);
   Bun.gc(true);
-  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(2);
+  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(4);
 });

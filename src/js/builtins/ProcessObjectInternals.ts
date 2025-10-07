@@ -110,8 +110,14 @@ export function getStdinStream(
 
   function own() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
+
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
+
+    console.error("[ProcessObjectInternals] resume() called, source?.setFlowing =", typeof source?.setFlowing);
+    $debug("resume(); source.setFlowing =", typeof source?.setFlowing);
+    source?.setFlowing?.(true);
+
     shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -121,6 +127,10 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+
+    console.error("[ProcessObjectInternals] pause() called, source?.setFlowing =", typeof source?.setFlowing);
+    $debug("pause(); source.setFlowing =", typeof source?.setFlowing);
+    source?.setFlowing?.(false);
 
     if (reader) {
       try {
@@ -184,18 +194,12 @@ export function getStdinStream(
 
   const originalPause = stream.pause;
   stream.pause = function () {
-    console.error("[ProcessObjectInternals] pause() called, source?.setFlowing =", typeof source?.setFlowing);
-    $debug("pause(); source.setFlowing =", typeof source?.setFlowing);
-    source?.setFlowing?.(false);
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
-    console.error("[ProcessObjectInternals] resume() called, source?.setFlowing =", typeof source?.setFlowing);
-    $debug("resume(); source.setFlowing =", typeof source?.setFlowing);
     own();
-    source?.setFlowing?.(true);
     return originalResume.$call(this);
   };
 

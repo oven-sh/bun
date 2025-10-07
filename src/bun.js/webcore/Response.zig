@@ -183,7 +183,7 @@ pub export fn jsFunctionRequestOrResponseHasBodyValue(_: *jsc.JSGlobalObject, ca
     if (this_value.as(Response)) |response| {
         return jsc.JSValue.jsBoolean(!response.#body.value.isDefinitelyEmpty());
     } else if (this_value.as(Request)) |request| {
-        return jsc.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
+        return jsc.JSValue.jsBoolean(!request.getBodyValue().isDefinitelyEmpty());
     }
 
     return .false;
@@ -200,7 +200,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
         if (this_value.as(Response)) |response| {
             break :brk &response.#body.value;
         } else if (this_value.as(Request)) |request| {
-            break :brk &request.body.value;
+            break :brk request.getBodyValue();
         }
 
         return .js_undefined;

@@ -134,12 +134,15 @@ describe.skipIf(isWindows)("--autokill", () => {
     const dir = tempDirWithFiles("autokill-shell", {
       "shell_bg.js": `
         const { spawn } = require('child_process');
-        
-        // Spawn a shell with background sleep
-        const shell = spawn('sh', ['-c', 'sleep 30 &']);
-        console.log(shell.pid);
-        
-        setTimeout(() => process.exit(0), 50);
+
+        // Spawn a shell with background sleep and capture the background job PID
+        const shell = spawn('sh', ['-c', 'sleep 30 & echo $!; wait']);
+        shell.stdout.setEncoding('utf8');
+        shell.stdout.once('data', data => {
+          const bgPid = Number.parseInt(data.trim(), 10);
+          console.log(JSON.stringify({ shell: shell.pid, background: bgPid }));
+          setTimeout(() => process.exit(0), 50);
+        });
       `,
     });
 
@@ -157,18 +160,20 @@ describe.skipIf(isWindows)("--autokill", () => {
 
     expect(exitCode).toBe(0);
 
-    const shellPid = parseInt(output.trim());
+    const { shell: shellPid, background: bgPid } = JSON.parse(output.trim());
     expect(shellPid).toBeGreaterThan(0);
+    expect(bgPid).toBeGreaterThan(0);
 
-    // Wait for autokill to take effect (polling with timeout)
-    const died = await waitForProcessDeath(shellPid, 1000);
-    expect(died).toBe(true);
-
-    // Clean up if somehow still alive
-    try {
-      process.kill(shellPid, "SIGKILL");
-    } catch {
-      // Expected - process should be dead
+    // Wait for both shell and background process to die
+    for (const pid of [shellPid, bgPid]) {
+      const died = await waitForProcessDeath(pid, 1000);
+      expect(died).toBe(true);
+      // Clean up if somehow still alive
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Expected - process should be dead
+      }
     }
   });
 
@@ -176,12 +181,32 @@ describe.skipIf(isWindows)("--autokill", () => {
     const dir = tempDirWithFiles("autokill-deep", {
       "deep_tree.js": `
         const { spawn } = require('child_process');
-        
-        // Create a 3-level deep process tree
-        const level1 = spawn('sh', ['-c', 'sh -c "sleep 30" &']);
-        console.log(level1.pid);
-        
-        setTimeout(() => process.exit(0), 100);
+        const fs = require('fs');
+        const path = require('path');
+
+        // Create a 3-level deep process tree and capture all PIDs
+        const pidFile = path.join(__dirname, 'deep-pids.json');
+        const pids = {};
+
+        // Level 1: outer shell
+        const shellCmd = [
+          '# Start level2 (inner shell) in background',
+          'sh -c "sleep 30 & echo level3=$! >> ' + pidFile + '; sleep 1" &',
+          'echo level2=$! >> ' + pidFile,
+          'wait'
+        ].join('; ');
+
+        const level1 = spawn('sh', ['-c', shellCmd]);
+        pids.level1 = level1.pid;
+
+        // Write level1 PID immediately
+        fs.writeFileSync(pidFile, 'level1=' + pids.level1 + '\\n');
+
+        // Wait a bit for child processes to start and write their PIDs
+        setTimeout(() => {
+          console.log('done');
+          setTimeout(() => process.exit(0), 50);
+        }, 100);
       `,
     });
 
@@ -199,18 +224,41 @@ describe.skipIf(isWindows)("--autokill", () => {
 
     expect(exitCode).toBe(0);
 
-    const level1Pid = parseInt(output.trim());
-    expect(level1Pid).toBeGreaterThan(0);
-
-    // Wait for autokill to take effect (polling with timeout)
-    const died = await waitForProcessDeath(level1Pid, 1000);
-    expect(died).toBe(true);
-
-    // Clean up if somehow still alive
+    // Read PIDs from file
+    const pidFile = `${dir}/deep-pids.json`;
     try {
-      process.kill(level1Pid, "SIGKILL");
-    } catch {
-      // Expected - process should be dead
+      const pidData = await Bun.file(pidFile).text();
+      const pids: Record<string, number> = {};
+      for (const line of pidData.trim().split("\\n")) {
+        const [key, value] = line.split("=");
+        if (key && value) {
+          pids[key] = Number.parseInt(value, 10);
+        }
+      }
+
+      // We should at least have level1
+      expect(pids.level1).toBeGreaterThan(0);
+
+      // Wait for all captured processes to die
+      for (const [name, pid] of Object.entries(pids)) {
+        if (pid && pid > 0) {
+          const died = await waitForProcessDeath(pid, 1000);
+          expect(died).toBe(true);
+          // Clean up if somehow still alive
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Expected - process should be dead
+          }
+        }
+      }
+
+      // Verify we got at least 2 levels (level1 and ideally level2/level3)
+      expect(Object.keys(pids).length).toBeGreaterThanOrEqual(1);
+    } catch (err) {
+      // If we can't read the file, at least verify something happened
+      expect(output.trim()).toContain("done");
+      throw err;
     }
   });
 

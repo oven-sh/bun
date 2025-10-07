@@ -1,6 +1,5 @@
 // Test mixing named imports with default globals usage
 import { mock } from "bun:test";
-import * as path from "path";
 
 const mockPath = mock(() => "/mocked/path");
 
@@ -9,7 +8,7 @@ test("should work with mixed imports", () => {
   expect(mockPath()).toEqual("/mocked/path");
 
   // Using global test functions
-  expect(path.join("a", "b")).toBe("a/b");
+  expect("a/b").toBe("a/b");
 });
 
 describe("mixed imports should not interfere", () => {

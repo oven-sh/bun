@@ -741,7 +741,11 @@ fn overwritePackageInNodeModulesFolder(
         switch (bun.sys.readlink(dest_subpath.sliceZ(), &link_buf)) {
             .err => {},
             .result => {
-                bun.sys.unlink(dest_subpath.sliceZ()).unwrap() catch {};
+                bun.sys.unlinkat(FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {
+                    if (comptime Environment.isWindows) {
+                        bun.sys.rmdirat(FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {};
+                    }
+                };
                 bun.sys.mkdir(dest_subpath.sliceZ(), 0o755).unwrap() catch {};
             },
         }

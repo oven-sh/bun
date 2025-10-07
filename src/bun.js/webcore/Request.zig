@@ -1004,12 +1004,12 @@ pub fn cloneInto(
             if (js.gc.stream.get(js_ref)) |stream| {
                 var readable = try jsc.WebCore.ReadableStream.fromJS(stream, globalThis);
                 if (readable != null) {
-                    break :brk try this.#body.cloneWithReadableStream(globalThis, &readable.?);
+                    break :brk try this.#body.value.cloneWithReadableStream(globalThis, &readable.?);
                 }
             }
         }
 
-        break :brk try this.#body.clone(globalThis);
+        break :brk try this.#body.value.clone(globalThis);
     };
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);

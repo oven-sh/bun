@@ -448,68 +448,61 @@ pub const FetchTasklet = struct {
         }
 
         if (this.getCurrentResponse()) |response| {
-            var body = response.getBodyValue();
-            if (body.* == .Locked) {
-                if (body.Locked.readable.get(globalThis)) |readable| {
-                    if (readable.ptr == .Bytes) {
-                        readable.ptr.Bytes.size_hint = this.getSizeHint();
+            const sizeHint = this.getSizeHint();
+            response.setSizeHint(sizeHint);
+            if (response.getBodyReadableStream(globalThis)) |readable| {
+                if (readable.ptr == .Bytes) {
+                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
-                        const scheduled_response_buffer = this.scheduled_response_buffer.list;
+                    const chunk = scheduled_response_buffer.items;
 
-                        const chunk = scheduled_response_buffer.items;
-
-                        if (this.result.has_more) {
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                                },
-                                bun.default_allocator,
-                            );
-                        } else {
-                            var prev = body.Locked.readable;
-                            body.Locked.readable = .{};
-                            readable.value.ensureStillAlive();
-                            prev.deinit();
-                            readable.value.ensureStillAlive();
-                            readable.ptr.Bytes.onData(
-                                .{
-                                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                                },
-                                bun.default_allocator,
-                            );
-                        }
-
-                        return;
+                    if (this.result.has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    } else {
+                        readable.value.ensureStillAlive();
+                        response.detachReadableStream(globalThis);
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
                     }
-                } else {
-                    body.Locked.size_hint = this.getSizeHint();
+
+                    return;
                 }
-                // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-                buffer_reset = false;
-                if (!this.result.has_more) {
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                    this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+            }
 
-                    // done resolve body
-                    var old = body.*;
-                    const body_value = Body.Value{
-                        .InternalBlob = .{
-                            .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                        },
-                    };
-                    body.* = body_value;
+            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
+            buffer_reset = false;
+            if (!this.result.has_more) {
+                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                const body = response.getBodyValue();
+                // done resolve body
+                var old = body.*;
+                const body_value = Body.Value{
+                    .InternalBlob = .{
+                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                    },
+                };
+                body.* = body_value;
 
-                    this.scheduled_response_buffer = .{
-                        .allocator = this.memory_reporter.allocator(),
-                        .list = .{
-                            .items = &.{},
-                            .capacity = 0,
-                        },
-                    };
+                this.scheduled_response_buffer = .{
+                    .allocator = this.memory_reporter.allocator(),
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
 
-                    if (old == .Locked) {
-                        old.resolve(body, this.global_this, response.getFetchHeaders());
-                    }
+                if (old == .Locked) {
+                    old.resolve(body, this.global_this, response.getFetchHeaders());
                 }
             }
         }

@@ -85,6 +85,7 @@ export default [
         fn: "constructError",
       },
     },
+    values: ["stream"],
     proto: {
       url: {
         getter: "getURL",

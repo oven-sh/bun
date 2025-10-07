@@ -22,6 +22,12 @@ pub fn clone(this: *Body, globalThis: *JSGlobalObject) bun.JSError!Body {
     };
 }
 
+pub fn cloneWithReadableStream(this: *Body, globalThis: *JSGlobalObject, readable: ?*jsc.WebCore.ReadableStream) bun.JSError!Body {
+    return Body{
+        .value = try this.value.cloneWithReadableStream(globalThis, readable),
+    };
+}
+
 pub fn writeFormat(this: *Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
 
@@ -964,20 +970,34 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn tee(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
+    pub fn tee(this: *Value, globalThis: *jsc.JSGlobalObject, owned_readable: ?*jsc.WebCore.ReadableStream) bun.JSError!Value {
         var locked = &this.Locked;
+        if (owned_readable) |readable| {
+            if (readable.isDisturbed(globalThis)) {
+                return Value{ .Used = {} };
+            }
 
-        if (locked.readable.isDisturbed(globalThis)) {
-            return Value{ .Used = {} };
-        }
+            if (try readable.tee(globalThis)) |new_readable| {
+                return Value{
+                    .Locked = .{
+                        .readable = jsc.WebCore.ReadableStream.Strong.init(new_readable[1], globalThis),
+                        .global = globalThis,
+                    },
+                };
+            }
+        } else {
+            if (locked.readable.isDisturbed(globalThis)) {
+                return Value{ .Used = {} };
+            }
 
-        if (try locked.readable.tee(globalThis)) |readable| {
-            return Value{
-                .Locked = .{
-                    .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
-                    .global = globalThis,
-                },
-            };
+            if (try locked.readable.tee(globalThis)) |readable| {
+                return Value{
+                    .Locked = .{
+                        .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
+                        .global = globalThis,
+                    },
+                };
+            }
         }
         if (locked.promise != null or locked.action != .none or locked.readable.has()) {
             return Value{ .Used = {} };
@@ -1032,10 +1052,14 @@ pub const Value = union(Tag) {
     }
 
     pub fn clone(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
+        return this.cloneWithReadableStream(globalThis, null);
+    }
+
+    pub fn cloneWithReadableStream(this: *Value, globalThis: *jsc.JSGlobalObject, readable: ?*jsc.WebCore.ReadableStream) bun.JSError!Value {
         this.toBlobIfPossible();
 
         if (this.* == .Locked) {
-            return this.tee(globalThis);
+            return this.tee(globalThis, readable);
         }
 
         if (this.* == .InternalBlob) {
@@ -1048,10 +1072,6 @@ pub const Value = union(Tag) {
                 ),
             };
         }
-
-        // if (this.* == .InlineBlob) {
-        //     return this.*;
-        // }
 
         if (this.* == .Blob) {
             return Value{ .Blob = this.Blob.dupe() };
@@ -1372,7 +1392,7 @@ pub const ValueBufferer = struct {
         return this;
     }
 
-    pub fn run(sink: *@This(), value: *jsc.WebCore.Body.Value) !void {
+    pub fn run(sink: *@This(), value: *jsc.WebCore.Body.Value, owned_readable_stream: ?jsc.WebCore.ReadableStream) !void {
         value.toBlobIfPossible();
 
         switch (value.*) {
@@ -1410,7 +1430,7 @@ pub const ValueBufferer = struct {
                 return;
             },
             .Locked => {
-                try sink.bufferLockedBodyValue(value);
+                try sink.bufferLockedBodyValue(value, owned_readable_stream);
             },
         }
     }
@@ -1563,12 +1583,23 @@ pub const ValueBufferer = struct {
         return error.PipeFailed;
     }
 
-    fn bufferLockedBodyValue(sink: *@This(), value: *jsc.WebCore.Body.Value) !void {
+    fn bufferLockedBodyValue(sink: *@This(), value: *jsc.WebCore.Body.Value, owned_readable_stream: ?jsc.WebCore.ReadableStream) !void {
         assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable.get(sink.global)) |stream| {
-            // keep the stream alive until we're done with it
-            sink.readable_stream_ref = locked.readable;
+        const readable_stream = brk: {
+            if (locked.readable.get(sink.global)) |stream| {
+                // keep the stream alive until we're done with it
+                sink.readable_stream_ref = locked.readable;
+                break :brk stream;
+            }
+            if (owned_readable_stream) |stream| {
+                // response owns the stream, so we hold a strong reference to it
+                sink.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, sink.global);
+                break :brk stream;
+            }
+            break :brk null;
+        };
+        if (readable_stream) |stream| {
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
@@ -1616,7 +1647,7 @@ pub const ValueBufferer = struct {
             const readable = try value.toReadableStream(sink.global);
             readable.ensureStillAlive();
             readable.protect();
-            return try sink.bufferLockedBodyValue(value);
+            return try sink.bufferLockedBodyValue(value, null);
         }
         // is safe to wait it buffer
         locked.task = @ptrCast(sink);

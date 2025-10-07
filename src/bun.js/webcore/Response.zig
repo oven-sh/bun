@@ -17,6 +17,7 @@ pub const fromJSDirect = js.fromJSDirect;
 /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
+#js_ref: jsc.JSRef = .empty(),
 
 // We must report a consistent value for this
 #reported_estimated_size: usize = 0,
@@ -104,13 +105,64 @@ pub fn calculateEstimatedByteSize(this: *Response) void {
 
 pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
-    return js.toJSUnchecked(globalObject, this);
+    const js_value = js.toJSUnchecked(globalObject, this);
+    this.#js_ref = .initWeak(js_value);
+
+    if (this.getBodyReadableStream(globalObject)) |stream| {
+        // we dont hold a strong reference to the stream we will guard it in js.gc.stream
+        // so we avoid cycled references
+        // anyone using Response should not use Locked.readable directly because it dont always owns it
+        // the owner will be always the Response object it self
+        stream.value.ensureStillAlive();
+        this.detachReadableStream(globalObject);
+        js.gc.stream.set(js_value, globalObject, stream.value);
+    }
+    return js_value;
 }
 
-pub fn getBodyValue(
+pub inline fn getBodyValue(
     this: *Response,
 ) *Body.Value {
     return &this.#body.value;
+}
+
+pub inline fn getBodyReadableStream(
+    this: *Response,
+    globalObject: *JSGlobalObject,
+) ?jsc.WebCore.ReadableStream {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        if (js.gc.stream.get(js_ref)) |stream| {
+            // JS is always source of truth for the stream
+            return jsc.WebCore.ReadableStream.fromJS(stream, globalObject) catch |err| {
+                _ = globalObject.takeException(err);
+                return null;
+            };
+        }
+    }
+    if (this.#body.value == .Locked) {
+        return this.#body.value.Locked.readable.get(globalObject);
+    }
+    return null;
+}
+pub inline fn detachReadableStream(this: *Response, globalObject: *jsc.JSGlobalObject) void {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        js.gc.stream.clear(js_ref, globalObject);
+    }
+    if (this.#body.value == .Locked) {
+        var old = this.#body.value.Locked.readable;
+        old.deinit();
+        this.#body.value.Locked.readable = .{};
+    }
+}
+pub inline fn setSizeHint(this: *Response, size_hint: Blob.SizeType) void {
+    if (this.#body.value == .Locked) {
+        this.#body.value.Locked.size_hint = size_hint;
+        if (this.#body.value.Locked.readable.get(this.#body.value.Locked.global)) |readable| {
+            if (readable.ptr == .Bytes) {
+                readable.ptr.Bytes.size_hint = size_hint;
+            }
+        }
+    }
 }
 
 pub export fn jsFunctionRequestOrResponseHasBodyValue(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
@@ -346,7 +398,17 @@ pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
 ) bun.JSError!Response {
-    var body = try this.#body.clone(globalThis);
+    var body = brk: {
+        if (this.#js_ref.tryGet()) |js_ref| {
+            if (js.gc.stream.get(js_ref)) |stream| {
+                var readable = try jsc.WebCore.ReadableStream.fromJS(stream, globalThis);
+                if (readable != null) {
+                    break :brk try this.#body.cloneWithReadableStream(globalThis, &readable.?);
+                }
+            }
+        }
+        break :brk try this.#body.clone(globalThis);
+    };
     errdefer body.deinit(bun.default_allocator);
     var _init = try this.#init.clone(globalThis);
     errdefer _init.deinit(bun.default_allocator);
@@ -394,6 +456,7 @@ pub fn unref(this: *Response) void {
 pub fn finalize(
     this: *Response,
 ) callconv(.C) void {
+    this.#js_ref.finalize();
     this.unref();
 }
 
@@ -581,7 +644,9 @@ pub fn constructError(
         },
     );
 
-    return response.toJS(globalThis);
+    const js_value = response.toJS(globalThis);
+    response.#js_ref = .initWeak(js_value);
+    return js_value;
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {

@@ -677,15 +677,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
 
                 if (this.response_ptr) |response| {
-                    const bodyValue = response.getBodyValue();
-                    if (bodyValue.* == .Locked) {
-                        var strong_readable = bodyValue.Locked.readable;
-                        bodyValue.Locked.readable = .{};
-                        defer strong_readable.deinit();
-                        if (strong_readable.get(globalThis)) |readable| {
-                            readable.abort(globalThis);
-                            any_js_calls = true;
-                        }
+                    if (response.getBodyReadableStream(globalThis)) |stream| {
+                        stream.value.ensureStillAlive();
+                        response.detachReadableStream(globalThis);
+                        stream.abort(globalThis);
+                        any_js_calls = true;
                     }
                 }
             }
@@ -1091,7 +1087,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn doRenderWithBodyLocked(this: *anyopaque, value: *jsc.WebCore.Body.Value) void {
-            doRenderWithBody(bun.cast(*RequestContext, this), value);
+            doRenderWithBody(bun.cast(*RequestContext, this), value, null);
         }
 
         fn renderWithBlobFromBodyValue(this: *RequestContext) void {
@@ -1664,13 +1660,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (req.response_ptr) |resp| {
                 assert(req.server != null);
+                const globalThis = req.server.?.globalThis;
                 const bodyValue = resp.getBodyValue();
-                if (bodyValue.* == .Locked) {
-                    const global = bodyValue.Locked.global;
-                    if (bodyValue.Locked.readable.get(global)) |stream| {
-                        stream.done(global);
-                    }
-                    bodyValue.Locked.readable.deinit();
+                if (resp.getBodyReadableStream(globalThis)) |stream| {
+                    stream.value.ensureStillAlive();
+                    resp.detachReadableStream(globalThis);
+
+                    stream.done(globalThis);
                     bodyValue.* = .{ .Used = {} };
                 }
             }
@@ -1720,11 +1716,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (req.response_ptr) |resp| {
                 const bodyValue = resp.getBodyValue();
-                if (bodyValue.* == .Locked) {
-                    if (bodyValue.Locked.readable.get(globalThis)) |stream| {
-                        stream.done(globalThis);
-                    }
-                    bodyValue.Locked.readable.deinit();
+                if (resp.getBodyReadableStream(globalThis)) |stream| {
+                    stream.value.ensureStillAlive();
+                    resp.detachReadableStream(globalThis);
+                    stream.done(globalThis);
                     bodyValue.* = .{ .Used = {} };
                 }
             }
@@ -1802,7 +1797,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             req.endStream(req.shouldCloseConnection());
         }
 
-        pub fn doRenderWithBody(this: *RequestContext, value: *jsc.WebCore.Body.Value) void {
+        pub fn doRenderWithBody(this: *RequestContext, value: *jsc.WebCore.Body.Value, owned_readable: ?jsc.WebCore.ReadableStream) void {
             this.drainMicrotasks();
 
             // If a ReadableStream can trivially be converted to a Blob, do so.
@@ -1832,11 +1827,20 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     if (this.isAbortedOrEnded()) {
                         return;
                     }
-
-                    if (lock.readable.get(globalThis)) |stream_| {
-                        const stream: jsc.WebCore.ReadableStream = stream_;
-                        // we hold the stream alive until we're done with it
-                        this.readable_stream_ref = lock.readable;
+                    const readable_stream = brk: {
+                        if (lock.readable.get(globalThis)) |stream| {
+                            // we hold the stream alive until we're done with it
+                            this.readable_stream_ref = lock.readable;
+                            break :brk stream;
+                        }
+                        if (owned_readable) |stream| {
+                            // response owns the stream, so we hold a strong reference to it
+                            this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
+                            break :brk stream;
+                        }
+                        break :brk null;
+                    };
+                    if (readable_stream) |stream| {
                         value.* = .{ .Used = {} };
 
                         if (stream.isLocked(globalThis)) {
@@ -1915,7 +1919,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         // someone else is waiting for the stream or waiting for `onStartStreaming`
                         const readable = value.toReadableStream(globalThis) catch return; // TODO: properly propagate exception upwards
                         readable.ensureStillAlive();
-                        this.doRenderWithBody(value);
+                        this.doRenderWithBody(value, null);
                         return;
                     }
 
@@ -1996,7 +2000,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
             var response = this.response_ptr.?;
-            this.doRenderWithBody(response.getBodyValue());
+            this.doRenderWithBody(response.getBodyValue(), response.getBodyReadableStream(this.server.?.globalThis));
         }
 
         pub fn renderProductionError(this: *RequestContext, status: u16) void {

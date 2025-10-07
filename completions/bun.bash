@@ -2,23 +2,13 @@
 
 _file_arguments() {
     local extensions="${1}"
-    # shellcheck disable=SC2064 # current state of `globstar` is needed
-    trap "$(shopt -p globstar)" RETURN
-    shopt -s globstar
 
-    # the following two `readarray` assumes that filenames has no newline characters in it,
-    # otherwise they will be splitted into separate completions. the only safe way to permit
-    # newlines in filenames is to use `find` with `-regexptype posix-extended` and `-print0`,
-    # then `readarray -t -d '' ...`.
-    if [[ -z "${cur_word}" ]]; then
-        readarray -t COMPREPLY <<<"$(compgen -fG -X "${extensions}" -- "${cur_word}")";
-    else
-        readarray -t COMPREPLY <<<"$(compgen -f -X "${extensions}" -- "${cur_word}")";
-    fi
-    # if pathname expansion above produces no matching files, then
-    # `compgen` output single newline character `\n`, resulting in
-    # singleton `COMPREPLY` with empty string, let us mitigate this.
-    [[ -z ${COMPREPLY[0]} ]] && COMPREPLY=()
+    # requires "findutils" package
+    readarray -t -d '' COMPREPLY < <(
+        find . -regextype posix-extended -maxdepth 1 \
+            -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' | \
+        sed -z 's|\n|\$'\''\\n'\''|g' # this is "s|\n|$'\n'|g" expression, it replaces \n with $'\n'.
+    )
 }
 
 _long_short_completion() {
@@ -133,9 +123,9 @@ _bun_completions() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config)      _file_arguments "!*.toml" && return;;
-        --bunfile)        _file_arguments "!*.bun" && return;;
-        --server-bunfile) _file_arguments "!*.server.bun" && return;;
+        -c|--config)      _file_arguments ".+\.toml$" && return;;
+        --bunfile)        _file_arguments ".+\.bun$" && return;;
+        --server-bunfile) _file_arguments ".+\.server\.bun$" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
@@ -184,7 +174,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            _file_arguments ".+\.(js|ts|jsx|tsx|mjs|cjs)$";
             # shellcheck disable=SC2207 # idem.
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;

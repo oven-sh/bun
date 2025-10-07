@@ -62,6 +62,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
+  AGENT: "false",
 };
 
 const ciEnv = { ...bunEnv };

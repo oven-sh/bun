@@ -29,6 +29,9 @@
 export function readableStreamReaderGenericInitialize(reader: ReadableStreamDefaultReader, stream: ReadableStream) {
   $putByIdDirectPrivate(reader, "ownerReadableStream", stream);
   $putByIdDirectPrivate(stream, "reader", reader);
+
+  stream.$bunNativePtr?.setFlowing?.(true);
+
   if ($getByIdDirectPrivate(stream, "state") === $streamReadable)
     $putByIdDirectPrivate(reader, "closedPromiseCapability", $newPromiseCapability(Promise));
   else if ($getByIdDirectPrivate(stream, "state") === $streamClosed)
@@ -1760,6 +1763,8 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
+    stream.$bunNativePtr.setFlowing?.(false);
+
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);

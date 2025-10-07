@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
 
 test("stream should not leak when response is cyclic reference to itself", async () => {
   function leak() {

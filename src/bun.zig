@@ -1627,7 +1627,8 @@ pub fn reloadProcess(
     __reload_in_progress__on_current_thread = true;
 
     // Kill all child processes before reloading to ensure clean state
-    if (Global.autokill_enabled) {
+    // Skip during crash handler (may_return=true) to avoid allocations/syscalls in compromised state
+    if (!may_return and Global.autokill_enabled) {
         sys.autokill.killAllChildProcesses();
     }
 

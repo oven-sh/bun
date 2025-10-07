@@ -68,6 +68,7 @@ export default [
   define({
     name: "Response",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     JSType: "0b11101110",

@@ -875,8 +875,8 @@ pub const CommandLineReporter = struct {
                             },
                         }
                         buntest.reporter.?.last_printed_dot = true;
-                    } else if ((Output.isAIAgent() or (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) and (comptime result.basicResult()) != .fail) {
-                        // when using AI agents or --only-failures, only print failures
+                    } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
+                        // when using --only-failures, only print failures
                     } else {
                         buntest.bun_test_root.onBeforePrint();
 
@@ -1364,6 +1364,8 @@ pub const TestCommand = struct {
         }
         if (ctx.test_options.reporters.only_failures) {
             reporter.reporters.only_failures = true;
+        } else if (Output.isAIAgent()) {
+            reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
         js_ast.Expr.Data.Store.create();

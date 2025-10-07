@@ -189,6 +189,7 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     else
         this.upgrade_context.sec_websocket_key;
 
+    this.flags.upgraded = true;
     _ = this.raw_response.upgrade(*ServerWebSocket, ws, websocket_key, sec_websocket_protocol_value, sec_websocket_extensions_value, upgrade_ctx);
 
     return true;

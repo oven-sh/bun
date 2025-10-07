@@ -44,7 +44,7 @@ _read_scripts_in_package_json() {
     local working_dir="${PWD}";
 
     for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
+        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[((line + 1))]}";
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
@@ -56,10 +56,10 @@ _read_scripts_in_package_json() {
         local scripts_rem="${scripts}";
         while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
-            package_json_compreply+=( "$script_name" );
-            case "$script_name" in
-                ( "$cur_word"* )
-                    COMPREPLY+=( "$script_name" );
+            package_json_compreply+=( "${script_name}" );
+            case "${script_name}" in
+                ( "${cur_word}"* )
+                    COMPREPLY+=( "${script_name}" );
                 ;;
             esac
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
@@ -211,7 +211,7 @@ _bun_completions() {
             [[ -z "${cur_word}" ]] && {
                 declare -A comp_reply_associative
                     for comp in "${COMPREPLY[@]}"; do
-                        comp_reply_associative["$comp"]="$comp"
+                        comp_reply_associative["$comp"]="${comp}"
                     done
                 [[ -z "${comp_reply_associative["${prev}"]}" ]] && {
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
@@ -220,7 +220,7 @@ _bun_completions() {
                             *" ${COMP_WORDS[(( COMP_CWORD - 2 ))]} "*)
                                 return
                             ;;
-                          esac
+                        esac
                     }
                     unset COMPREPLY;
                 }

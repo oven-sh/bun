@@ -575,11 +575,10 @@ pub const WriteFileWindows = struct {
     pub fn toSystemError(this: *WriteFileWindows) ?jsc.SystemError {
         if (this.err) |err| {
             var sys_err = err;
-            if (this.owned_fd) {
-                sys_err = sys_err.withPath(this.file_blob.store.?.data.file.pathlike.path.slice());
-            } else {
-                sys_err = sys_err.withFd(this.file_blob.store.?.data.file.pathlike.fd);
-            }
+            sys_err = switch (this.file_blob.store.?.data.file.pathlike) {
+                .path => |path| sys_err.withPath(path.slice()),
+                .fd => |fd| sys_err.withFd(fd),
+            };
 
             return sys_err.toSystemError();
         }

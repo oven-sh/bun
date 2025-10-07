@@ -2184,6 +2184,8 @@ const SQL: typeof Bun.SQL = function SQL(
         return queryOrOptions;
       }
       const table = queryOrOptions.table;
+      // Escape table identifier with same logic as copyFrom to handle schema-qualified names
+      const tableName = '"' + String(table).replaceAll('"', '""').replaceAll(".", '"."') + '"';
       const cols = (queryOrOptions.columns ?? [])
         .map(c => '"' + String(c).replaceAll('"', '""').replaceAll(".", '"."') + '"')
         .join(", ");
@@ -2193,7 +2195,7 @@ const SQL: typeof Bun.SQL = function SQL(
           : queryOrOptions.format === "binary"
             ? " (FORMAT BINARY)"
             : "";
-      return `COPY "${String(table).replaceAll('"', '""')}"${cols ? ` (${cols})` : ""} TO STDOUT${fmt}`;
+      return `COPY ${tableName}${cols ? ` (${cols})` : ""} TO STDOUT${fmt}`;
     };
 
     return {

@@ -452,7 +452,8 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         }
         auto& stack_frame = e_stack[0];
         auto source_url = stack_frame.sourceURL(vm);
-        if (source_url.isEmpty()) {
+        // Treat empty, [unknown], and [source:*] placeholders as missing source URLs
+        if (source_url.isEmpty() || source_url == "[unknown]"_s || source_url.startsWith("[source:"_s)) {
             // copy what Node does: https://github.com/nodejs/node/blob/afe3909483a2d5ae6b847055f544da40571fb28d/lib/vm.js#L94
             source_url = "evalmachine.<anonymous>"_s;
         }

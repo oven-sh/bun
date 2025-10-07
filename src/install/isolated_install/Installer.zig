@@ -68,13 +68,15 @@ pub const Installer = struct {
                 const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
 
                 if (patch_info == .patch) {
-                    this.applyPackagePatch(entry_id, patch_info.patch) catch |err| {
+                    var log: bun.logger.Log = .init(this.manager.allocator);
+                    this.applyPackagePatch(entry_id, patch_info.patch, &log);
+                    if (log.hasErrors()) {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
                         entry_steps[entry_id.get()].store(.done, .monotonic);
-                        this.onTaskFail(entry_id, .{ .patching = err });
+                        this.onTaskFail(entry_id, .{ .patching = log });
                         continue;
-                    };
+                    }
                 }
 
                 this.startTask(entry_id);
@@ -82,7 +84,7 @@ pub const Installer = struct {
         }
     }
 
-    pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch) !void {
+    pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch, log: *bun.logger.Log) void {
         const store = this.store;
         const entry_node_ids = store.entries.items(.node_id);
         const node_id = entry_node_ids[entry_id.get()];
@@ -95,7 +97,11 @@ pub const Installer = struct {
             patch.name_and_version_hash,
         );
         defer patch_task.deinit();
-        try patch_task.apply();
+        bun.handleOom(patch_task.apply());
+
+        if (patch_task.callback.apply.logger.hasErrors()) {
+            bun.handleOom(patch_task.callback.apply.logger.cloneToWithRecycled(log, true));
+        }
     }
 
     /// Called from main thread
@@ -131,11 +137,12 @@ pub const Installer = struct {
                     pkg_res.fmt(string_buf, .auto),
                 });
             },
-            .patching => |patch_err| {
-                Output.err(patch_err, "failed to patch package: {s}@{}", .{
+            .patching => |patch_log| {
+                Output.errGeneric("failed to patch package: {s}@{}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
+                patch_log.print(Output.errorWriter()) catch {};
             },
             else => {},
         }
@@ -344,7 +351,7 @@ pub const Installer = struct {
             symlink_dependencies: sys.Error,
             run_scripts: anyerror,
             binaries: anyerror,
-            patching: anyerror,
+            patching: bun.logger.Log,
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
@@ -352,7 +359,7 @@ pub const Installer = struct {
                     .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
                     .binaries => |err| .{ .binaries = err },
                     .run_scripts => |err| .{ .run_scripts = err },
-                    .patching => |err| .{ .patching = err },
+                    .patching => |log| .{ .patching = log },
                 };
             }
         };

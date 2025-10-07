@@ -225,7 +225,7 @@ pub const PatchTask = struct {
     // 4. Apply patches to pkg in temp dir
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
-    pub fn apply(this: *PatchTask) !void {
+    pub fn apply(this: *PatchTask) bun.OOM!void {
         var log = &this.callback.apply.logger;
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);

@@ -842,13 +842,15 @@ pub fn installIsolatedPackages(
 
                     if (!missing_from_cache) {
                         if (patch_info == .patch) {
-                            installer.applyPackagePatch(entry_id, patch_info.patch) catch |err| {
+                            var patch_log: bun.logger.Log = .init(manager.allocator);
+                            installer.applyPackagePatch(entry_id, patch_info.patch, &patch_log);
+                            if (patch_log.hasErrors()) {
                                 // monotonic is okay because we haven't started the task yet (it isn't running
                                 // on another thread)
                                 entry_steps[entry_id.get()].store(.done, .monotonic);
-                                installer.onTaskFail(entry_id, .{ .patching = err });
+                                installer.onTaskFail(entry_id, .{ .patching = patch_log });
                                 continue;
-                            };
+                            }
                         }
                         installer.startTask(entry_id);
                         continue;

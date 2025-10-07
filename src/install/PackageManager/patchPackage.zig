@@ -770,7 +770,8 @@ fn overwritePackageInNodeModulesFolder(
     };
     defer src_path.deinit();
 
-    const cached_package_folder = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+    var cached_package_folder = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+    defer cached_package_folder.close();
 
     const ignore_directories: []const bun.OSPathSlice = &.{
         comptime bun.OSPathLiteral("node_modules"),

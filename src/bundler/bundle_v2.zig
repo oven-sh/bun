@@ -1454,7 +1454,7 @@ pub const BundleV2 = struct {
                     if (path.len > 0 and
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !jsc.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
+                        !jsc.ModuleLoader.HardcodedModule.Alias.has(path, .node, .{}) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -3143,7 +3143,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun, .{ .rewrite_jest_for_tests = this.transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
                     // into a non-node module resolver that doesn't support
@@ -3156,22 +3156,6 @@ pub const BundleV2 = struct {
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
                     continue;
-                }
-
-                if (this.transpiler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
-                        import_record.path.text = "bun:test";
-                        import_record.tag = .builtin;
-                        import_record.source_index = .invalid;
-                        import_record.is_external_without_side_effects = true;
-                        continue;
-                    }
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {

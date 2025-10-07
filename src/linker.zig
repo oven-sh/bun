@@ -142,7 +142,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target, .{ .rewrite_jest_for_tests = linker.options.rewrite_jest_for_tests })) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -157,22 +157,6 @@ pub const Linker = struct {
 
                             if (had_resolve_errors) return error.ResolveMessage;
                             continue;
-                        }
-
-                        // TODO: this is technical debt
-                        if (linker.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.text = "bun:test";
-                                import_record.tag = .builtin;
-                                import_record.is_external_without_side_effects = true;
-                                continue;
-                            }
                         }
 
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {

@@ -2110,6 +2110,9 @@ pub fn Bun__fetch_(
                 if (req.getBodyReadableStream(globalThis)) |readable| {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis) };
                 }
+                if (bodyValue.Locked.readable.has()) {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
+                }
                 const readable = try bodyValue.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and bodyValue.* == .Locked and bodyValue.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };

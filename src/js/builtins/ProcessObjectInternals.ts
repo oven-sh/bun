@@ -114,7 +114,7 @@ export function getStdinStream(
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
 
-    console.error("[ProcessObjectInternals] resume() called, source?.setFlowing =", typeof source?.setFlowing);
+    console.error("[ProcessObjectInternals] own() called, source?.setFlowing =", typeof source?.setFlowing);
     $debug("resume(); source.setFlowing =", typeof source?.setFlowing);
     source?.setFlowing?.(true);
 
@@ -128,7 +128,7 @@ export function getStdinStream(
   function disown() {
     $debug("unref();");
 
-    console.error("[ProcessObjectInternals] pause() called, source?.setFlowing =", typeof source?.setFlowing);
+    console.error("[ProcessObjectInternals] disown() called, source?.setFlowing =", typeof source?.setFlowing);
     $debug("pause(); source.setFlowing =", typeof source?.setFlowing);
     source?.setFlowing?.(false);
 

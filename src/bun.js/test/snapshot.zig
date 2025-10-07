@@ -3,6 +3,13 @@ pub const Snapshots = struct {
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
     pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
 
+    /// Tracks the location of each snapshot in the file for in-place updates
+    pub const SnapshotLocation = struct {
+        start_offset: usize, // Start of the exports[...] line
+        end_offset: usize, // End of the line including newline
+    };
+    pub const LocationsHashMap = std.HashMap(usize, SnapshotLocation, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
+
     allocator: std.mem.Allocator,
     update_snapshots: bool,
     total: usize = 0,
@@ -12,6 +19,7 @@ pub const Snapshots = struct {
 
     file_buf: *std.ArrayList(u8),
     values: *ValuesHashMap,
+    locations: *LocationsHashMap,
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
@@ -80,6 +88,77 @@ pub const Snapshots = struct {
 
         const name_hash = bun.hash(name_with_counter);
         if (this.values.get(name_hash)) |expected| {
+            // If we're updating snapshots and the value has changed, update it in place
+            if (this.update_snapshots and !strings.eqlLong(expected, target_value, true)) {
+                if (this.locations.get(name_hash)) |location| {
+                    // Update the snapshot in place
+                    // Check if the original snapshot starts with a newline to preserve formatting
+                    const has_leading_newline = location.start_offset > 0 and
+                        (this.file_buf.items[location.start_offset] == '\n' or
+                            this.file_buf.items[location.start_offset] == '\r');
+
+                    const new_snapshot_line = if (has_leading_newline)
+                        try std.fmt.allocPrint(
+                            this.allocator,
+                            "\nexports[`{}`] = `{}`;\n",
+                            .{
+                                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                                strings.formatEscapes(target_value, .{ .quote_char = '`' }),
+                            },
+                        )
+                    else
+                        try std.fmt.allocPrint(
+                            this.allocator,
+                            "exports[`{}`] = `{}`;\n",
+                            .{
+                                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                                strings.formatEscapes(target_value, .{ .quote_char = '`' }),
+                            },
+                        );
+                    defer this.allocator.free(new_snapshot_line);
+
+                    // Replace the old snapshot with the new one in the buffer
+                    const old_len = location.end_offset - location.start_offset;
+                    const new_len = new_snapshot_line.len;
+
+                    // Create a new buffer with the updated content
+                    var new_buf = try std.ArrayList(u8).initCapacity(this.allocator, this.file_buf.items.len - old_len + new_len);
+                    defer new_buf.deinit();
+
+                    // Copy everything before the snapshot
+                    try new_buf.appendSlice(this.file_buf.items[0..location.start_offset]);
+                    // Copy the new snapshot
+                    try new_buf.appendSlice(new_snapshot_line);
+                    // Copy everything after the snapshot
+                    try new_buf.appendSlice(this.file_buf.items[location.end_offset..]);
+
+                    // Replace the file buffer
+                    this.file_buf.clearRetainingCapacity();
+                    try this.file_buf.appendSlice(new_buf.items);
+
+                    const size_diff: isize = @as(isize, @intCast(new_len)) - @as(isize, @intCast(old_len));
+
+                    // Update all locations after this one to account for size change
+                    var loc_iter = this.locations.iterator();
+                    while (loc_iter.next()) |entry| {
+                        if (entry.value_ptr.start_offset > location.start_offset) {
+                            entry.value_ptr.start_offset = @intCast(@as(isize, @intCast(entry.value_ptr.start_offset)) + size_diff);
+                            entry.value_ptr.end_offset = @intCast(@as(isize, @intCast(entry.value_ptr.end_offset)) + size_diff);
+                        }
+                    }
+
+                    // Update this location
+                    this.locations.put(name_hash, .{
+                        .start_offset = location.start_offset,
+                        .end_offset = location.start_offset + new_len,
+                    }) catch {};
+
+                    // Update the value in the hashmap
+                    this.allocator.free(expected);
+                    try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
+                }
+                return null;
+            }
             return expected;
         }
 
@@ -95,6 +174,7 @@ pub const Snapshots = struct {
 
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
+        const snapshot_start = this.file_buf.items.len;
         try this.file_buf.writer().print(
             "\nexports[`{}`] = `{}`;\n",
             .{
@@ -102,9 +182,15 @@ pub const Snapshots = struct {
                 strings.formatEscapes(target_value, .{ .quote_char = '`' }),
             },
         );
+        const snapshot_end = this.file_buf.items.len;
 
         this.added += 1;
         try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
+        // Track the location of this new snapshot
+        try this.locations.put(name_hash, .{
+            .start_offset = snapshot_start,
+            .end_offset = snapshot_end,
+        });
         return null;
     }
 
@@ -172,6 +258,30 @@ pub const Snapshots = struct {
                                     bun.copy(u8, value_clone, value);
                                     const name_hash = bun.hash(key);
                                     try this.values.put(name_hash, value_clone);
+
+                                    // Track the location of this snapshot for in-place updates
+                                    const stmt_start: usize = @intCast(stmt.loc.start);
+                                    // Find the end of this statement by looking for the semicolon
+                                    var stmt_end = stmt_start;
+                                    while (stmt_end < this.file_buf.items.len and this.file_buf.items[stmt_end] != ';') {
+                                        stmt_end += 1;
+                                    }
+                                    // Include the semicolon
+                                    if (stmt_end < this.file_buf.items.len) stmt_end += 1;
+                                    // Include exactly one trailing newline if present
+                                    if (stmt_end < this.file_buf.items.len and this.file_buf.items[stmt_end] == '\n') {
+                                        stmt_end += 1;
+                                    } else if (stmt_end < this.file_buf.items.len and this.file_buf.items[stmt_end] == '\r') {
+                                        stmt_end += 1;
+                                        // Handle \r\n
+                                        if (stmt_end < this.file_buf.items.len and this.file_buf.items[stmt_end] == '\n') {
+                                            stmt_end += 1;
+                                        }
+                                    }
+                                    try this.locations.put(name_hash, .{
+                                        .start_offset = stmt_start,
+                                        .end_offset = stmt_end,
+                                    });
                                 }
                             }
                         }
@@ -185,6 +295,13 @@ pub const Snapshots = struct {
     pub fn writeSnapshotFile(this: *Snapshots) !void {
         if (this._current_file) |_file| {
             var file = _file;
+            // Seek to the beginning and truncate to ensure clean write
+            file.file.seekTo(0) catch {
+                return error.FailedToWriteSnapshotFile;
+            };
+            file.file.setEndPos(0) catch {
+                return error.FailedToWriteSnapshotFile;
+            };
             file.file.writeAll(this.file_buf.items) catch {
                 return error.FailedToWriteSnapshotFile;
             };
@@ -196,6 +313,8 @@ pub const Snapshots = struct {
                 this.allocator.free(value.*);
             }
             this.values.clearAndFree();
+
+            this.locations.clearAndFree();
 
             var count_key_itr = this.counts.keyIterator();
             while (count_key_itr.next()) |key| {
@@ -512,8 +631,7 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-            var flags: i32 = bun.O.CREAT | bun.O.RDWR;
-            if (this.update_snapshots) flags |= bun.O.TRUNC;
+            const flags: i32 = bun.O.CREAT | bun.O.RDWR;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return .initErr(err),
@@ -525,21 +643,17 @@ pub const Snapshots = struct {
             };
             errdefer file.file.close();
 
-            if (this.update_snapshots) {
+            const length = try file.file.getEndPos();
+            if (length == 0) {
                 try this.file_buf.appendSlice(file_header);
             } else {
-                const length = try file.file.getEndPos();
-                if (length == 0) {
-                    try this.file_buf.appendSlice(file_header);
-                } else {
-                    const buf = try this.allocator.alloc(u8, length);
-                    _ = try file.file.preadAll(buf, 0);
-                    if (comptime bun.Environment.isWindows) {
-                        try file.file.seekTo(0);
-                    }
-                    try this.file_buf.appendSlice(buf);
-                    this.allocator.free(buf);
+                const buf = try this.allocator.alloc(u8, length);
+                _ = try file.file.preadAll(buf, 0);
+                if (comptime bun.Environment.isWindows) {
+                    try file.file.seekTo(0);
                 }
+                try this.file_buf.appendSlice(buf);
+                this.allocator.free(buf);
             }
 
             try this.parseFile(file);

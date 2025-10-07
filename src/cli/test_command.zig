@@ -1318,6 +1318,7 @@ pub const TestCommand = struct {
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
+        var snapshot_locations = Snapshots.LocationsHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
@@ -1345,6 +1346,7 @@ pub const TestCommand = struct {
                     .update_snapshots = ctx.test_options.update_snapshots,
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
+                    .locations = &snapshot_locations,
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },

@@ -1956,8 +1956,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.flags.upgraded) {
-                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                if (!node_response.flags.upgraded and node_response.raw_response != null) {
+                    const raw_response = node_response.raw_response.?;
+                    if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
                         node_response.setOnAbortedHandler();
                     }
                     // If we ended the response without attaching an ondata handler, we discard the body read stream

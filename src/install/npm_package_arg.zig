@@ -1328,8 +1328,7 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
     else blk: {
         // Always strip committish from fetchSpec by creating temp hosted without it
         const temp_hosted = hgi.HostedGitInfo{
-            .type = hosted.type,
-            .domain = hosted.domain,
+            .host_provider = hosted.host_provider,
             .committish = null, // Always strip committish for fetchSpec
             .project = hosted.project,
             .user = hosted.user,

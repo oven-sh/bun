@@ -891,6 +891,23 @@ pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: an
     return self.len >= alt.len and eqlComptimeCheckLenWithType(T, self[0..rhs.len], rhs, false);
 }
 
+pub fn hasSuffixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    const rhs = comptime switch (T) {
+        u8 => alt,
+        u16 => switch (bun.meta.Item(@TypeOf(alt))) {
+            u16 => alt,
+            else => w(alt),
+        },
+        else => @compileError("Unsupported type given to hasSuffixComptimeType"),
+    };
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(
+        T,
+        self[self.len - rhs.len ..],
+        rhs,
+        false,
+    );
+}
+
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
@@ -1548,6 +1565,14 @@ pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte
 pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: anytype) []const T {
     return if (hasPrefixComptimeType(T, buffer, prefix))
         buffer[prefix.len..]
+    else
+        buffer;
+}
+
+/// suffix is of type []const u8 or []const u16
+pub fn trimSuffixComptime(comptime T: type, buffer: []const T, comptime suffix: anytype) []const T {
+    return if (hasSuffixComptimeType(buffer, suffix))
+        buffer[0 .. buffer.len - suffix.len]
     else
         buffer;
 }

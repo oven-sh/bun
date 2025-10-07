@@ -3,19 +3,10 @@ pub const Snapshots = struct {
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
     pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
 
-    allocator: std.mem.Allocator,
-    update_snapshots: bool,
-    total: usize = 0,
-    added: usize = 0,
-    passed: usize = 0,
-    failed: usize = 0,
-
-    file_buf: *std.ArrayList(u8),
-    values: *ValuesHashMap,
-    counts: *bun.StringHashMap(usize),
-    _current_file: ?File = null,
-    snapshot_dir_path: ?string = null,
-    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    pub const SnapshotUpdate = struct {
+        name: []const u8, // owned
+        value: ?[]const u8, // owned, null means keep existing
+    };
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -39,6 +30,23 @@ pub const Snapshots = struct {
         id: TestRunner.File.ID,
         file: std.fs.File,
     };
+
+    allocator: std.mem.Allocator,
+    update_snapshots: bool,
+    total: usize = 0,
+    added: usize = 0,
+    passed: usize = 0,
+    failed: usize = 0,
+
+    file_buf: *std.ArrayList(u8),
+    values: *ValuesHashMap,
+    counts: *bun.StringHashMap(usize),
+    _current_file: ?File = null,
+    snapshot_dir_path: ?string = null,
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+
+    // Track snapshot updates when update_snapshots is true
+    snapshot_updates: *std.AutoHashMap(usize, SnapshotUpdate),
 
     pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
         this.total += 1;
@@ -80,6 +88,19 @@ pub const Snapshots = struct {
 
         const name_hash = bun.hash(name_with_counter);
         if (this.values.get(name_hash)) |expected| {
+            // Snapshot exists. If update_snapshots is true, track that we matched it
+            if (this.update_snapshots) {
+                // Check if value changed
+                const new_value = if (!strings.eqlLong(target_value, expected, true))
+                    try this.allocator.dupe(u8, target_value)
+                else
+                    null;
+
+                try this.snapshot_updates.put(name_hash, .{
+                    .name = try this.allocator.dupe(u8, name_with_counter),
+                    .value = new_value,
+                });
+            }
             return expected;
         }
 
@@ -91,6 +112,14 @@ pub const Snapshots = struct {
                     return error.SnapshotCreationNotAllowedInCI;
                 }
             }
+        }
+
+        // Track new snapshot when update_snapshots is true
+        if (this.update_snapshots) {
+            try this.snapshot_updates.put(name_hash, .{
+                .name = try this.allocator.dupe(u8, name_with_counter),
+                .value = try this.allocator.dupe(u8, target_value),
+            });
         }
 
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
@@ -182,12 +211,206 @@ pub const Snapshots = struct {
         }
     }
 
-    pub fn writeSnapshotFile(this: *Snapshots) !void {
-        if (this._current_file) |_file| {
-            var file = _file;
+    fn mergeSnapshotUpdates(this: *Snapshots, file: File) !void {
+        // Parse the original file to understand its structure
+        const vm = VirtualMachine.get();
+        const opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .js);
+        var temp_log = logger.Log.init(this.allocator);
+
+        const test_file = Jest.runner.?.files.get(file.id);
+        const test_filename = test_file.source.path.name.filename;
+        const dir_path = test_file.source.path.name.dirWithTrailingSlash();
+
+        var snapshot_file_path_buf: bun.PathBuffer = undefined;
+        var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
+        bun.copy(u8, remain, dir_path);
+        remain = remain[dir_path.len..];
+        bun.copy(u8, remain, snapshots_dir_name);
+        remain = remain[snapshots_dir_name.len..];
+        bun.copy(u8, remain, test_filename);
+        remain = remain[test_filename.len..];
+        bun.copy(u8, remain, ".snap");
+        remain = remain[".snap".len..];
+        remain[0] = 0;
+        const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
+
+        const source = &logger.Source.initPathString(snapshot_file_path, this.file_buf.items);
+
+        var parser = try js_parser.Parser.init(
+            opts,
+            &temp_log,
+            source,
+            vm.transpiler.options.define,
+            this.allocator,
+        );
+
+        const parse_result = try parser.parse();
+        var ast = if (parse_result == .ast) parse_result.ast else {
+            // If parsing fails, just write what we have
             file.file.writeAll(this.file_buf.items) catch {
                 return error.FailedToWriteSnapshotFile;
             };
+            return;
+        };
+        defer ast.deinit();
+
+        // Build the new file content
+        var result = std.ArrayList(u8).init(this.allocator);
+        defer result.deinit();
+        try result.appendSlice(file_header);
+
+        if (ast.exports_ref.isNull()) {
+            // No exports, just write new snapshots
+            for (this.file_buf.items[file_header.len..]) |byte| {
+                try result.append(byte);
+            }
+        } else {
+            const exports_ref = ast.exports_ref;
+
+            // Process each statement, updating or keeping as needed
+            for (ast.parts.slice()) |part| {
+                for (part.stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_expr => |expr| {
+                            if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                                const left = expr.value.data.e_binary.left;
+                                if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                    const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                    var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                    if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
+                                        const key = index.slice(this.allocator);
+                                        defer if (!index.isUTF8()) this.allocator.free(key);
+
+                                        const name_hash = bun.hash(key);
+                                        if (this.snapshot_updates.get(name_hash)) |update| {
+                                            // This snapshot was touched during the test run
+                                            if (update.value) |new_value| {
+                                                // Value was updated, write new value
+                                                try result.writer().print(
+                                                    "\nexports[`{}`] = `{}`;\n",
+                                                    .{
+                                                        strings.formatEscapes(key, .{ .quote_char = '`' }),
+                                                        strings.formatEscapes(new_value, .{ .quote_char = '`' }),
+                                                    },
+                                                );
+                                            } else {
+                                                // Value was accessed but unchanged, keep original
+                                                var value_string = expr.value.data.e_binary.right.data.e_string;
+                                                const value = value_string.slice(this.allocator);
+                                                defer if (!value_string.isUTF8()) this.allocator.free(value);
+                                                try result.writer().print(
+                                                    "\nexports[`{}`] = `{}`;\n",
+                                                    .{
+                                                        strings.formatEscapes(key, .{ .quote_char = '`' }),
+                                                        strings.formatEscapes(value, .{ .quote_char = '`' }),
+                                                    },
+                                                );
+                                            }
+                                        } else {
+                                            // This snapshot was not touched, preserve it
+                                            var value_string = expr.value.data.e_binary.right.data.e_string;
+                                            const value = value_string.slice(this.allocator);
+                                            defer if (!value_string.isUTF8()) this.allocator.free(value);
+                                            try result.writer().print(
+                                                "\nexports[`{}`] = `{}`;\n",
+                                                .{
+                                                    strings.formatEscapes(key, .{ .quote_char = '`' }),
+                                                    strings.formatEscapes(value, .{ .quote_char = '`' }),
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+
+            // Add any new snapshots that weren't in the original file
+            var update_itr = this.snapshot_updates.iterator();
+            while (update_itr.next()) |entry| {
+                const name_hash = entry.key_ptr.*;
+                const update = entry.value_ptr.*;
+
+                // Check if this hash was already in the original file
+                var found_in_original = false;
+                for (ast.parts.slice()) |part| {
+                    for (part.stmts) |stmt| {
+                        switch (stmt.data) {
+                            .s_expr => |expr| {
+                                if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                                    const left = expr.value.data.e_binary.left;
+                                    if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                        const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                        var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                        if (target.ref.eql(exports_ref)) {
+                                            const key = index.slice(this.allocator);
+                                            defer if (!index.isUTF8()) this.allocator.free(key);
+                                            if (bun.hash(key) == name_hash) {
+                                                found_in_original = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                    if (found_in_original) break;
+                }
+
+                // If this is a new snapshot, add it
+                if (!found_in_original) {
+                    if (update.value) |new_value| {
+                        try result.writer().print(
+                            "\nexports[`{}`] = `{}`;\n",
+                            .{
+                                strings.formatEscapes(update.name, .{ .quote_char = '`' }),
+                                strings.formatEscapes(new_value, .{ .quote_char = '`' }),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        // Write the result to the file
+        file.file.seekTo(0) catch {
+            return error.FailedToWriteSnapshotFile;
+        };
+        file.file.writeAll(result.items) catch {
+            return error.FailedToWriteSnapshotFile;
+        };
+        if (result.items.len < this.file_buf.items.len) {
+            file.file.setEndPos(result.items.len) catch {
+                return error.FailedToWriteSnapshotFile;
+            };
+        }
+    }
+
+    pub fn writeSnapshotFile(this: *Snapshots) !void {
+        if (this._current_file) |_file| {
+            var file = _file;
+
+            if (this.update_snapshots and this.snapshot_updates.count() > 0) {
+                // When updating snapshots, merge changes instead of replacing the whole file
+                try this.mergeSnapshotUpdates(file);
+            } else {
+                // Normal write path (no updates or not in update mode)
+                file.file.seekTo(0) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+                file.file.writeAll(this.file_buf.items) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+                file.file.setEndPos(this.file_buf.items.len) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+            }
+
             file.file.close();
             this.file_buf.clearAndFree();
 
@@ -202,6 +425,16 @@ pub const Snapshots = struct {
                 this.allocator.free(key.*);
             }
             this.counts.clearAndFree();
+
+            // Clear snapshot updates
+            var update_itr = this.snapshot_updates.valueIterator();
+            while (update_itr.next()) |update| {
+                this.allocator.free(update.name);
+                if (update.value) |value| {
+                    this.allocator.free(value);
+                }
+            }
+            this.snapshot_updates.clearAndFree();
         }
     }
 
@@ -512,8 +745,8 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-            var flags: i32 = bun.O.CREAT | bun.O.RDWR;
-            if (this.update_snapshots) flags |= bun.O.TRUNC;
+            // Don't truncate - we need to read existing snapshots for comparison
+            const flags: i32 = bun.O.CREAT | bun.O.RDWR;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return .initErr(err),
@@ -525,21 +758,18 @@ pub const Snapshots = struct {
             };
             errdefer file.file.close();
 
-            if (this.update_snapshots) {
+            // Read the existing file to load snapshots for comparison
+            const length = try file.file.getEndPos();
+            if (length == 0) {
                 try this.file_buf.appendSlice(file_header);
             } else {
-                const length = try file.file.getEndPos();
-                if (length == 0) {
-                    try this.file_buf.appendSlice(file_header);
-                } else {
-                    const buf = try this.allocator.alloc(u8, length);
-                    _ = try file.file.preadAll(buf, 0);
-                    if (comptime bun.Environment.isWindows) {
-                        try file.file.seekTo(0);
-                    }
-                    try this.file_buf.appendSlice(buf);
-                    this.allocator.free(buf);
+                const buf = try this.allocator.alloc(u8, length);
+                _ = try file.file.preadAll(buf, 0);
+                if (comptime bun.Environment.isWindows) {
+                    try file.file.seekTo(0);
                 }
+                try this.file_buf.appendSlice(buf);
+                this.allocator.free(buf);
             }
 
             try this.parseFile(file);

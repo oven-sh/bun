@@ -20,7 +20,7 @@ else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
-set(ZIG_COMMIT "55fdbfa0c86be86b68d43a4ba761e6909eb0d7b2")
+set(ZIG_COMMIT "eaf75ea1c996b5d697a35345c39da5faf76157a4")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -37,6 +37,12 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(DEFAULT_ZIG_OPTIMIZE "Debug")
 else()
   unsupported(CMAKE_BUILD_TYPE)
+endif()
+
+# Since Bun 1.1, Windows has been built using ReleaseSafe.
+# This catches more crashes by initializing undefined memory to 0xaa.
+if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
+  set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 endif()
 
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|ReleaseSmall|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})

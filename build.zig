@@ -607,6 +607,11 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // https://github.com/ziglang/zig/issues/17430
     obj.root_module.pic = true;
 
+    // ReleaseSafe initializes undefined memory to 0xaa to catch bugs
+    if (opts.optimize == .ReleaseSafe) {
+        obj.root_module.no_init_undefined = true;
+    }
+
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;

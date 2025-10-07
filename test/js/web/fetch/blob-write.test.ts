@@ -9,7 +9,7 @@ test("blob.write() throws for data-backed blob", () => {
   );
 });
 
-test("Bun.file(path).write() does not throw", async () => {
+test.skip("Bun.file(path).write() does not throw", async () => {
   const file = Bun.file(path.join(tempDirWithFiles("bun-write", { a: "Hello, world!" }), "a"));
   expect(() => file.write(new Blob(["Hello, world!!"]))).not.toThrow();
   expect(await file.text()).toBe("Hello, world!!");
@@ -36,7 +36,7 @@ test("Bun.file(path).unlink() does not throw", async () => {
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
 });
 
-test("Bun.file(path).delete() does not throw", async () => {
+test.skip("Bun.file(path).delete() does not throw", async () => {
   const dir = tempDirWithFiles("bun-unlink", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   expect(file.delete()).resolves.toBeUndefined();

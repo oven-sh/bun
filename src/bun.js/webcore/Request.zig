@@ -294,7 +294,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
                 try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
             }
         } else if (this.#body.value == .Locked) {
-            if (this.#body.value.Locked.readable.get(this.#body.value.Locked.global)) |stream| {
+            if (this.getBodyReadableStream(formatter.globalThis)) |stream| {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);

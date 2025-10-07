@@ -988,20 +988,20 @@ pub const Value = union(Tag) {
                     },
                 };
             }
-        } else {
-            if (locked.readable.isDisturbed(globalThis)) {
-                return Value{ .Used = {} };
-            }
-
-            if (try locked.readable.tee(globalThis)) |readable| {
-                return Value{
-                    .Locked = .{
-                        .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
-                        .global = globalThis,
-                    },
-                };
-            }
         }
+        if (locked.readable.isDisturbed(globalThis)) {
+            return Value{ .Used = {} };
+        }
+
+        if (try locked.readable.tee(globalThis)) |readable| {
+            return Value{
+                .Locked = .{
+                    .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
+                    .global = globalThis,
+                },
+            };
+        }
+
         if (locked.promise != null or locked.action != .none or locked.readable.has()) {
             return Value{ .Used = {} };
         }

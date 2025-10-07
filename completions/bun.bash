@@ -1,9 +1,10 @@
 #! /usr/bin/env bash
 
 _file_arguments() {
-    local extensions="${1}"
+    local extensions="${1}";
+    local cur_word="${2}";
     # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
-    local re_escape_sed='[]~$"'"'"'`><()[{}=|*?;&#\]'
+    local re_escape_sed='[]~$"'"'"'`><()[{}=|*?;&#\]';
 
     # requires "findutils" package
     readarray -t -d '' COMPREPLY < <(
@@ -15,7 +16,8 @@ _file_arguments() {
 
 _long_short_completion() {
     local wordlist="${1}";
-    local short_options="${2}"
+    local short_options="${2}";
+    local cur_word="${3}";
 
     [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
         # shellcheck disable=SC2207 # the `wordlist` is constant and has no whitespace characters inside each word
@@ -34,6 +36,8 @@ _read_scripts_in_package_json() {
     local package_json;
     local line=0;
     local working_dir="${PWD}";
+    local cur_word="${1}";
+    local prev="${2}";
 
     for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
         [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[((line + 1))]}";
@@ -48,7 +52,7 @@ _read_scripts_in_package_json() {
         local scripts_rem="${scripts}";
         # escape all bash specials _except_ " (quote) and \ (backslash)
         # since they ar already escaped in package.json: ]~$'`><()[{}=|*?;&#
-        local re_escape_bash='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]'
+        local re_escape_bash='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]';
         while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
             package_json_compreply+=( "${script_name}" );
@@ -92,8 +96,9 @@ _read_scripts_in_package_json() {
 
 
 _subcommand_comp_reply() {
-    local cur_word="${1}"
-    local sub_commands="${2}"
+    local sub_commands="${1}";
+    local cur_word="${2}";
+    local prev="${3}";
     local regexp_subcommand="^[dbcriauh]";
     [[ "${prev}" =~ ${regexp_subcommand} ]] && {
         # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
@@ -123,14 +128,14 @@ _bun_completions() {
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
-    cur_word="${COMP_WORDS[${COMP_CWORD}]}";
-    prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
+    local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
+    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config)      _file_arguments ".+\.toml$" && return;;
-        --bunfile)        _file_arguments ".+\.bun$" && return;;
-        --server-bunfile) _file_arguments ".+\.server\.bun$" && return;;
+        -c|--config)      _file_arguments ".+\.toml$" "${cur_word}" && return;;
+        --bunfile)        _file_arguments ".+\.bun$" "${cur_word}" && return;;
+        --server-bunfile) _file_arguments ".+\.server\.bun$" "${cur_word}" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
@@ -152,7 +157,7 @@ _bun_completions() {
             return;;
         -l|--loader)
             [[ "${cur_word}" =~ (:) ]] && {
-                local cut_colon_forward="${cur_word%%:*}"
+                local cut_colon_forward="${cur_word%%:*}";
                 readarray -t COMPREPLY <<<"$(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}")";
             }
             return;;
@@ -163,12 +168,14 @@ _bun_completions() {
         add|a)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
+                "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${cur_word}";
             return;;
         remove|rm|i|install|link|unlink)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${cur_word}";
             return;;
         create|c)
             # shellcheck disable=SC2207 # the literal string of space separated flags is used, there are no flags containing whitespace character
@@ -179,14 +186,15 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments ".+\.(js|ts|jsx|tsx|mjs|cjs)$";
+            _file_arguments ".+\.(js|ts|jsx|tsx|mjs|cjs)$" "${cur_word}";
             # shellcheck disable=SC2207 # idem.
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
-            _read_scripts_in_package_json;
+            _read_scripts_in_package_json "${cur_word}" "${prev}";
             return;;
         pm)
             _long_short_completion \
-                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
+                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}" \
+                "${cur_word}";
             # shellcheck disable=SC2207 # the literal space-separated string of subcommands is used, no subcommand containing the space character exists
             COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
@@ -194,10 +202,10 @@ _bun_completions() {
             declare -g replaced_script;
             _long_short_completion \
                 "${GLOBAL_OPTIONS[*]}" \
-                "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
-
-            _read_scripts_in_package_json;
-            _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
+                "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
+                "${cur_word}";
+            _read_scripts_in_package_json "${cur_word}" "${prev}";
+            _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${prev}";
 
             # determine if completion should be continued
             # when the current word is an empty string

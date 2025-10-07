@@ -6,6 +6,7 @@ column_format_codes: []u16 = &[_]u16{},
 pub fn deinit(this: *@This()) void {
     if (this.column_format_codes.len > 0) {
         bun.default_allocator.free(this.column_format_codes);
+        this.column_format_codes = &[_]u16{};
     }
 }
 
@@ -14,6 +15,12 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
     const overall_format = try reader.int(u8);
     const column_count: usize = @intCast(@max(try reader.short(), 0));
+
+    // Free existing allocation if reusing this object
+    if (this.column_format_codes.len > 0) {
+        bun.default_allocator.free(this.column_format_codes);
+        this.column_format_codes = &[_]u16{};
+    }
 
     const column_format_codes = try bun.default_allocator.alloc(u16, column_count);
     errdefer bun.default_allocator.free(column_format_codes);

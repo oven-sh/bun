@@ -218,20 +218,21 @@ describe.skipIf(isWindows)("--autokill", () => {
     const dir = tempDirWithFiles("autokill-mixed", {
       "mixed_processes.js": `
         const { spawn, exec } = require('child_process');
-        
+
         const pids = [];
-        
+
         // Direct sleep process
         const sleep1 = spawn('sleep', ['30']);
         pids.push(sleep1.pid);
-        
+
         // Shell with sleep
         const shell = spawn('sh', ['-c', 'sleep 30']);
         pids.push(shell.pid);
-        
+
         // exec sleep (creates intermediate shell)
-        exec('sleep 30');
-        
+        const execChild = exec('sleep 30');
+        pids.push(execChild.pid);
+
         console.log(JSON.stringify(pids));
         setTimeout(() => process.exit(0), 100);
       `,
@@ -253,7 +254,7 @@ describe.skipIf(isWindows)("--autokill", () => {
 
     const pids = JSON.parse(output.trim());
     expect(pids).toBeArray();
-    expect(pids.length).toBe(2);
+    expect(pids.length).toBe(3);
 
     // Wait for all processes to die (polling with timeout)
     for (const pid of pids) {

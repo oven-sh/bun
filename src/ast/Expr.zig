@@ -2579,7 +2579,6 @@ pub const Data = union(Tag) {
             },
             .e_import => |e| {
                 _ = e;
-
             },
             inline .e_identifier,
             .e_import_identifier,

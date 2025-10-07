@@ -650,8 +650,6 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       // Install with isolated linker
       await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
 
-      await $`${bunExe()} patch is-odd`.env(bunEnv).cwd(filedir);
-
       // Patch transitive dependency (is-odd)
       const { stdout: patchStdout } = await $`${bunExe()} patch is-odd@0.1.2`.env(bunEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();

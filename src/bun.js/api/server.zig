@@ -2314,13 +2314,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            var request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            var request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.upgrade_context = upgrade_ctx;
             ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.

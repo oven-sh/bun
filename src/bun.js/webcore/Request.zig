@@ -3,10 +3,10 @@
 const Request = @This();
 
 url: bun.String = bun.String.empty,
-// NOTE(@cirospaciari): renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders and hasFetchHeaders instead
-_headers: ?*FetchHeaders = null,
+
+#headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
-body: *Body.Value.HiveRef,
+#body: *Body.Value.HiveRef,
 method: Method = Method.GET,
 redirect: FetchRedirect = .follow,
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
@@ -36,7 +36,7 @@ pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 pub const WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data");
 
 pub fn memoryCost(this: *const Request) usize {
-    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
+    return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.#body.value.memoryCost();
 }
 
 pub export fn Request__setCookiesOnRequestContext(this: *Request, cookieMap: ?*jsc.WebCore.CookieMap) void {
@@ -110,16 +110,18 @@ pub const InternalJSEventCallback = struct {
 };
 
 pub fn init(
-    url: bun.String,
-    headers: ?*FetchHeaders,
-    body: *Body.Value.HiveRef,
     method: Method,
+    request_context: jsc.API.AnyRequestContext,
+    https: bool,
+    signal: ?*AbortSignal,
+    body: *Body.Value.HiveRef,
 ) Request {
     return Request{
-        .url = url,
-        ._headers = headers,
-        .body = body,
+        .request_context = request_context,
         .method = method,
+        .https = https,
+        .signal = signal,
+        .#body = body,
     };
 }
 
@@ -132,15 +134,15 @@ pub fn getContentType(
         }
     }
 
-    if (this._headers) |headers| {
+    if (this.#headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
         }
     }
 
-    if (this.body.value == .Blob) {
-        if (this.body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.body.value.Blob.content_type);
+    if (this.#body.value == .Blob) {
+        if (this.#body.value.Blob.content_type.len > 0)
+            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
@@ -166,7 +168,7 @@ pub fn getRemoteSocketInfo(this: *Request, globalObject: *jsc.JSGlobalObject) ?j
 }
 
 pub fn calculateEstimatedByteSize(this: *Request) void {
-    this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    this.reported_estimated_size = this.#body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
 }
 
 pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
@@ -199,7 +201,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
+    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;
@@ -231,22 +233,22 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
-        if (this.body.value == .Blob) {
+        if (this.#body.value == .Blob) {
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
-            try this.body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-        } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
+            try this.#body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+        } else if (this.#body.value == .InternalBlob or this.#body.value == .WTFStringImpl) {
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
-            const size = this.body.value.size();
+            const size = this.#body.value.size();
             if (size == 0) {
                 var empty = Blob.initEmpty(undefined);
                 try empty.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
             } else {
                 try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
             }
-        } else if (this.body.value == .Locked) {
-            if (this.body.value.Locked.readable.get(this.body.value.Locked.global)) |stream| {
+        } else if (this.#body.value == .Locked) {
+            if (this.#body.value.Locked.readable.get(this.#body.value.Locked.global)) |stream| {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -259,13 +261,13 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 }
 
 pub fn mimeType(this: *const Request) string {
-    if (this._headers) |headers| {
+    if (this.#headers) |headers| {
         if (try headers.fastGet(.ContentType)) |content_type| {
             return content_type.slice();
         }
     }
 
-    switch (this.body.value) {
+    switch (this.#body.value) {
         .Blob => |blob| {
             if (blob.content_type.len > 0) {
                 return blob.content_type;
@@ -273,9 +275,9 @@ pub fn mimeType(this: *const Request) string {
 
             return MimeType.other.value;
         },
-        .InternalBlob => return this.body.value.InternalBlob.contentType(),
+        .InternalBlob => return this.#body.value.InternalBlob.contentType(),
         .WTFStringImpl => return MimeType.text.value,
-        // .InlineBlob => return this.body.value.InlineBlob.contentType(),
+        // .InlineBlob => return this.#body.value.InlineBlob.contentType(),
         .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
     }
 }
@@ -336,9 +338,9 @@ pub fn getMode(
 }
 
 pub fn finalizeWithoutDeinit(this: *Request) void {
-    if (this._headers) |headers| {
+    if (this.#headers) |headers| {
         headers.deref();
-        this._headers = null;
+        this.#headers = null;
     }
 
     this.url.deref();
@@ -353,7 +355,7 @@ pub fn finalizeWithoutDeinit(this: *Request) void {
 
 pub fn finalize(this: *Request) void {
     this.finalizeWithoutDeinit();
-    _ = this.body.unref();
+    _ = this.#body.unref();
     if (this.weak_ptr_data.onFinalize()) {
         bun.destroy(this);
     }
@@ -371,7 +373,7 @@ pub fn getReferrer(
     this: *Request,
     globalObject: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    if (this._headers) |headers_ref| {
+    if (this.#headers) |headers_ref| {
         if (headers_ref.get("referrer", globalObject)) |referrer| {
             return ZigString.init(referrer).toJS(globalObject);
         }
@@ -527,14 +529,14 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     const vm = globalThis.bunVM();
     const body = try vm.initRequestBodyValue(.{ .Null = {} });
     var req = Request{
-        .body = body,
+        .#body = body,
     };
     defer {
         if (!success) {
             req.finalizeWithoutDeinit();
-            _ = req.body.unref();
+            _ = req.#body.unref();
         }
-        if (req.body != body) {
+        if (req.#body != body) {
             _ = body.unref();
         }
     }
@@ -599,7 +601,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
                 if (!fields.contains(.headers)) {
                     if (try request.cloneHeaders(globalThis)) |headers| {
-                        req._headers = headers;
+                        req.#headers = headers;
                         fields.insert(.headers);
                     }
 
@@ -607,10 +609,10 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 }
 
                 if (!fields.contains(.body)) {
-                    switch (request.body.value) {
+                    switch (request.#body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = try request.body.value.clone(globalThis);
+                            req.#body.value = try request.#body.value.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -625,7 +627,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
                 if (!fields.contains(.headers)) {
                     if (response.getInitHeaders()) |headers| {
-                        req._headers = try headers.cloneThis(globalThis);
+                        req.#headers = try headers.cloneThis(globalThis);
                         fields.insert(.headers);
                     }
                 }
@@ -643,7 +645,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                     switch (bodyValue.*) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = try bodyValue.clone(globalThis);
+                            req.#body.value = try bodyValue.clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -656,7 +658,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (!fields.contains(.body)) {
             if (try value.fastGet(globalThis, .body)) |body_| {
                 fields.insert(.body);
-                req.body.value = try Body.Value.fromJS(globalThis, body_);
+                req.#body.value = try Body.Value.fromJS(globalThis, body_);
             }
 
             if (globalThis.hasException()) return error.JSError;
@@ -705,7 +707,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 if (!explicit_check or (explicit_check and (try value.fastGet(globalThis, .headers)) != null)) {
                     if (response_init.headers) |headers| {
                         if (!fields.contains(.headers)) {
-                            req._headers = headers;
+                            req.#headers = headers;
                             fields.insert(.headers);
                         } else {
                             headers.deref();
@@ -763,12 +765,12 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
     req.url = href;
 
-    if (req.body.value == .Blob and
-        req._headers != null and
-        req.body.value.Blob.content_type.len > 0 and
-        !req._headers.?.fastHas(.ContentType))
+    if (req.#body.value == .Blob and
+        req.#headers != null and
+        req.#body.value.Blob.content_type.len > 0 and
+        !req.#headers.?.fastHas(.ContentType))
     {
-        try req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
+        try req.#headers.?.put(.ContentType, req.#body.value.Blob.content_type, globalThis);
     }
 
     req.calculateEstimatedByteSize();
@@ -788,7 +790,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 pub fn getBodyValue(
     this: *Request,
 ) *Body.Value {
-    return &this.body.value;
+    return &this.#body.value;
 }
 
 pub fn doClone(
@@ -801,14 +803,14 @@ pub fn doClone(
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
-        if (cloned.body.value == .Locked) {
-            if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
+        if (cloned.#body.value == .Locked) {
+            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
                 // If we are teed, then we need to update the cached .body
                 // value to point to the new readable stream
                 // We must do this on both the original and cloned request
                 // but especially the original request since it will have a stale .body value now.
                 js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
+                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
                     js.bodySetCached(this_value, globalThis, other_readable.value);
                 }
             }
@@ -820,7 +822,7 @@ pub fn doClone(
 
 // Returns if the request has headers already cached/set.
 pub fn hasFetchHeaders(this: *Request) bool {
-    return this._headers != null;
+    return this.#headers != null;
 }
 
 /// Sets the headers of the request. This will take ownership of the headers.
@@ -829,11 +831,11 @@ pub fn setFetchHeaders(
     this: *Request,
     headers: ?*FetchHeaders,
 ) void {
-    if (this._headers) |old_headers| {
+    if (this.#headers) |old_headers| {
         old_headers.deref();
     }
 
-    this._headers = headers;
+    this.#headers = headers;
 }
 
 /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
@@ -843,18 +845,18 @@ pub fn ensureFetchHeaders(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) bun.JSError!*FetchHeaders {
-    if (this._headers) |headers| {
+    if (this.#headers) |headers| {
         // headers is already set
         return headers;
     }
 
     if (this.request_context.getRequest()) |req| {
         // we have a request context, so we can get the headers from it
-        this._headers = FetchHeaders.createFromUWS(req);
+        this.#headers = FetchHeaders.createFromUWS(req);
     } else {
         // we don't have a request context, so we need to create an empty headers object
-        this._headers = FetchHeaders.createEmpty();
-        const content_type = switch (this.body.value) {
+        this.#headers = FetchHeaders.createEmpty();
+        const content_type = switch (this.#body.value) {
             .Blob => |blob| blob.content_type,
             .Locked => |locked| if (locked.readable.get(globalThis)) |*readable| switch (readable.ptr) {
                 .Blob => |blob| blob.content_type,
@@ -865,25 +867,25 @@ pub fn ensureFetchHeaders(
 
         if (content_type) |content_type_| {
             if (content_type_.len > 0) {
-                try this._headers.?.put(.ContentType, content_type_, globalThis);
+                try this.#headers.?.put(.ContentType, content_type_, globalThis);
             }
         }
     }
 
-    return this._headers.?;
+    return this.#headers.?;
 }
 
 pub fn getFetchHeadersUnlessEmpty(
     this: *Request,
 ) ?*FetchHeaders {
-    if (this._headers == null) {
+    if (this.#headers == null) {
         if (this.request_context.getRequest()) |req| {
             // we have a request context, so we can get the headers from it
-            this._headers = FetchHeaders.createFromUWS(req);
+            this.#headers = FetchHeaders.createFromUWS(req);
         }
     }
 
-    const headers = this._headers orelse return null;
+    const headers = this.#headers orelse return null;
     if (headers.isEmpty()) {
         return null;
     }
@@ -894,7 +896,7 @@ pub fn getFetchHeadersUnlessEmpty(
 pub fn getFetchHeaders(
     this: *Request,
 ) ?*FetchHeaders {
-    return this._headers;
+    return this.#headers;
 }
 
 /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
@@ -906,13 +908,13 @@ pub fn getHeaders(
 }
 
 pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) bun.JSError!?*FetchHeaders {
-    if (this._headers == null) {
+    if (this.#headers == null) {
         if (this.request_context.getRequest()) |uws_req| {
-            this._headers = FetchHeaders.createFromUWS(uws_req);
+            this.#headers = FetchHeaders.createFromUWS(uws_req);
         }
     }
 
-    if (this._headers) |head| {
+    if (this.#headers) |head| {
         if (head.isEmpty()) {
             return null;
         }
@@ -933,20 +935,20 @@ pub fn cloneInto(
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    var body_ = try this.body.value.clone(globalThis);
+    var body_ = try this.#body.value.clone(globalThis);
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);
     const url = if (preserve_url) req.url else this.url.dupeRef();
     errdefer if (!preserve_url) url.deref();
-    const _headers = try this.cloneHeaders(globalThis);
-    errdefer if (_headers) |_h| _h.deref();
+    const headers = try this.cloneHeaders(globalThis);
+    errdefer if (headers) |_h| _h.deref();
 
     req.* = Request{
-        .body = body,
+        .#body = body,
         .url = url,
         .method = this.method,
         .redirect = this.redirect,
-        ._headers = _headers,
+        .#headers = headers,
     };
 
     if (this.signal) |signal| {

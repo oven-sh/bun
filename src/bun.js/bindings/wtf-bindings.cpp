@@ -27,9 +27,17 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
     int rc;
 
-    do
+    fprintf(stderr, "[uv__tcsetattr] fd=%d how=%d (TCSANOW=%d TCSADRAIN=%d TCSAFLUSH=%d)\n",
+            fd, how, TCSANOW, TCSADRAIN, TCSAFLUSH);
+    fflush(stderr);
+
+    do {
+        fprintf(stderr, "[uv__tcsetattr] calling tcsetattr...\n");
+        fflush(stderr);
         rc = tcsetattr(fd, how, term);
-    while (rc == -1 && errno == EINTR);
+        fprintf(stderr, "[uv__tcsetattr] tcsetattr returned %d, errno=%d\n", rc, errno);
+        fflush(stderr);
+    } while (rc == -1 && errno == EINTR);
 
     if (rc == -1)
         return errno;

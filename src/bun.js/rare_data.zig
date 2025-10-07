@@ -375,28 +375,39 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
+    bun.Output.prettyln("[rare_data] stdin() called", .{});
     bun.analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
+        bun.Output.prettyln("[rare_data] Initializing stdin store", .{});
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(0);
 
+        bun.Output.prettyln("[rare_data] Calling fstat on fd=0", .{});
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
+                bun.Output.prettyln("[rare_data] fstat success, mode={}", .{mode});
             },
-            .err => {},
+            .err => {
+                bun.Output.prettyln("[rare_data] fstat failed", .{});
+            },
         }
+        bun.Output.prettyln("[rare_data] Checking isatty", .{});
+        const is_atty = if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false;
+        bun.Output.prettyln("[rare_data] isatty={}", .{is_atty});
+
         const store = Blob.Store.new(.{
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
                 .file = .{
                     .pathlike = .{ .fd = fd },
-                    .is_atty = if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false,
+                    .is_atty = is_atty,
                     .mode = mode,
                 },
             },
         });
+        bun.Output.prettyln("[rare_data] Store created", .{});
         rare.stdin_store = store;
         break :brk store;
     };

@@ -213,10 +213,9 @@ pub fn runCallbackWithResult(this: *EventLoop, callback: jsc.JSValue, globalObje
 }
 
 fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
-    return this.tickQueueWithCount(virtual_machine) catch {
-        bun.debugAssert(false);
-        return 0;
-    };
+    var counter: u32 = 0;
+    this.tickQueueWithCount(virtual_machine, &counter) catch {};
+    return counter;
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {

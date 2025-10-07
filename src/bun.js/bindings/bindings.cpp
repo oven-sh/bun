@@ -5532,7 +5532,7 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 [[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 {
-    return vm->hasTerminationRequest() || vm->hasExceptionsAfterHandlingTraps();
+    return vm->hasTerminationRequest();
 }
 
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)

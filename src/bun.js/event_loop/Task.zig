@@ -94,10 +94,9 @@ pub const Task = TaggedPointerUnion(.{
     Writev,
 });
 
-pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bun.JSTerminated!u32 {
+pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, counter: *u32) bun.JSTerminated!void {
     var global = this.global;
     const global_vm = global.vm();
-    var counter: u32 = 0;
 
     if (comptime Environment.isDebug) {
         if (this.debug.js_call_count_outside_tick_queue > this.debug.drain_microtasks_count_outside_tick_queue) {
@@ -132,7 +131,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
 
     while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
-        defer counter += 1;
+        defer counter.* += 1;
         switch (task.tag()) {
             @field(Task.Tag, @typeName(ShellAsync)) => {
                 var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
@@ -250,7 +249,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
                 defer transform_task.deinit();
                 transform_task.run();
                 // special case: we return
-                return 0;
+                // hot reload runs immediately so it should not drain microtasks
+                counter.* = 0;
+                return;
             },
             @field(Task.Tag, @typeName(bun.bake.DevServer.HotReloadEvent)) => {
                 const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
@@ -504,11 +505,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             },
         }
 
-        this.drainMicrotasksWithGlobal(global, global_vm) catch return counter;
+        try this.drainMicrotasksWithGlobal(global, global_vm);
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
-    return counter;
 }
 
 pub fn reportErrorOrTerminate(global: *jsc.JSGlobalObject, proof: bun.JSError) bun.JSTerminated!void {

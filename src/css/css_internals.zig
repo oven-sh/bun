@@ -110,7 +110,10 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
             var stylesheet, var extra = ret;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             minify_options.targets.browsers = browsers;
-            _ = stylesheet.minify(alloc, minify_options, &extra).assert();
+            _ = switch (stylesheet.minify(alloc, minify_options, &extra)) {
+                .err => |err| return err.toJSString(alloc, globalThis),
+                .result => |result| result,
+            };
 
             const symbols = bun.ast.Symbol.Map{};
             var local_names = bun.css.LocalsResultsMap{};

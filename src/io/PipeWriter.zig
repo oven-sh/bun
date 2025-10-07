@@ -167,9 +167,8 @@ pub fn PosixPipeWriter(
 }
 
 /// See below for the expected signature of `function_table`. In many cases, the
-/// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
-pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
+/// function table can be the same as `Parent`.
+pub fn PosixBufferedWriter(Parent: type, function_table: type) type {
     return struct {
         const PosixWriter = @This();
         const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
@@ -373,9 +372,8 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 }
 
 /// See below for the expected signature of `function_table`. In many cases, the
-/// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
-pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anytype) type {
+/// function table can be the same as `Parent`.
+pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: type) type {
     return struct {
         const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
         const onError: fn (*Parent, bun.sys.Error) void = function_table.onError;
@@ -935,9 +933,8 @@ fn BaseWindowsPipeWriter(
 }
 
 /// See below for the expected signature of `function_table`. In many cases, the
-/// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
-pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
+/// function table can be the same as `Parent`.
+pub fn WindowsBufferedWriter(Parent: type, function_table: type) type {
     return struct {
         source: ?Source = null,
         owns_fd: bool = true,
@@ -1206,9 +1203,8 @@ pub const StreamBuffer = struct {
 };
 
 /// See below for the expected signature of `function_table`. In many cases, the
-/// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
-pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) type {
+/// function table can be the same as `Parent`.
+pub fn WindowsStreamingWriter(comptime Parent: type, function_table: type) type {
     return struct {
         /// reports the amount written and done means that we dont have any
         /// other pending data to send (but we may send more data)
@@ -1504,8 +1500,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
     };
 }
 
-pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
-pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
+pub const BufferedWriter: fn (type, type) type = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
+pub const StreamingWriter: fn (type, type) type = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
 
 const std = @import("std");
 const Source = @import("./source.zig").Source;

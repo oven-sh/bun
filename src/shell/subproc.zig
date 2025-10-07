@@ -837,7 +837,7 @@ pub const ShellSubprocess = struct {
             .result => |result| result,
         };
 
-        var subprocess = bun.handleOom(event_loop.allocator().create(Subprocess));
+        var subprocess: *Subprocess = bun.handleOom(event_loop.allocator().create(Subprocess));
         out_subproc.* = subprocess;
         subprocess.* = Subprocess{
             .event_loop = event_loop,
@@ -880,19 +880,27 @@ pub const ShellSubprocess = struct {
         }
 
         if (subprocess.stdin == .buffer) {
-            subprocess.stdin.buffer.start().assert();
+            switch (subprocess.stdin.buffer.start()) {
+                .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+                .result => |result| result,
+            }
         }
 
         if (subprocess.stdout == .pipe) {
-            subprocess.stdout.pipe.start(subprocess, event_loop).assert();
+            switch (subprocess.stdout.pipe.start(subprocess, event_loop)) {
+                .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+                .result => |result| result,
+            }
             if (!spawn_args.lazy and subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.readAll();
             }
         }
 
         if (subprocess.stderr == .pipe) {
-            subprocess.stderr.pipe.start(subprocess, event_loop).assert();
-
+            switch (subprocess.stderr.pipe.start(subprocess, event_loop)) {
+                .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+                .result => |result| result,
+            }
             if (!spawn_args.lazy and subprocess.stderr == .pipe) {
                 subprocess.stderr.pipe.readAll();
             }

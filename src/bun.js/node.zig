@@ -85,16 +85,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             .syscall = .access,
         } };
 
-        pub fn assert(this: @This()) ReturnType {
-            switch (this) {
-                .err => |err| {
-                    bun.Output.panic("Unexpected error\n{}", .{err});
-                },
-                .result => |result| return result,
-            }
-        }
-
-        pub inline fn todo() @This() {
+        pub fn todo() @This() {
             if (Environment.allow_assert) {
                 if (comptime ReturnType == void) {
                     @panic("TODO called!");
@@ -123,18 +114,18 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         /// Unwrap the value if it is `result` or use the provided `default_value`
-        pub inline fn unwrapOr(this: @This(), default_value: ReturnType) ReturnType {
+        pub fn unwrapOr(this: @This(), default_value: ReturnType) ReturnType {
             return switch (this) {
                 .result => |v| v,
                 .err => default_value,
             };
         }
 
-        pub inline fn initErr(e: ErrorType) Maybe(ReturnType, ErrorType) {
+        pub fn initErr(e: ErrorType) Maybe(ReturnType, ErrorType) {
             return .{ .err = e };
         }
 
-        pub inline fn initErrWithP(e: bun.sys.SystemErrno, syscall: sys.Tag, file_path: anytype) Maybe(ReturnType, ErrorType) {
+        pub fn initErrWithP(e: bun.sys.SystemErrno, syscall: sys.Tag, file_path: anytype) Maybe(ReturnType, ErrorType) {
             return .{ .err = .{
                 .errno = @intFromEnum(e),
                 .syscall = syscall,
@@ -142,42 +133,42 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             } };
         }
 
-        pub inline fn asErr(this: *const @This()) ?ErrorType {
+        pub fn asErr(this: *const @This()) ?ErrorType {
             if (this.* == .err) return this.err;
             return null;
         }
 
-        pub inline fn asValue(this: *const @This()) ?ReturnType {
+        pub fn asValue(this: *const @This()) ?ReturnType {
             if (this.* == .result) return this.result;
             return null;
         }
 
-        pub inline fn isOk(this: *const @This()) bool {
+        pub fn isOk(this: *const @This()) bool {
             return switch (this.*) {
                 .result => true,
                 .err => false,
             };
         }
 
-        pub inline fn isErr(this: *const @This()) bool {
+        pub fn isErr(this: *const @This()) bool {
             return switch (this.*) {
                 .result => false,
                 .err => true,
             };
         }
 
-        pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
+        pub fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
         }
 
-        pub inline fn mapErr(this: @This(), comptime E: type, err_fn: *const fn (ErrorTypeT) E) Maybe(ReturnType, E) {
+        pub fn mapErr(this: @This(), comptime E: type, err_fn: *const fn (ErrorTypeT) E) Maybe(ReturnType, E) {
             return switch (this) {
                 .result => |v| .{ .result = v },
                 .err => |e| .{ .err = err_fn(e) },
             };
         }
 
-        pub inline fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
+        pub fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
             return switch (ErrorTypeT) {
                 bun.css.BasicParseError => {
                     return switch (this) {

@@ -216,7 +216,10 @@ fn write(this: *IOWriter) enum {
 
     bun.assert(this.writer.handle == .poll);
     if (this.writer.handle.poll.isWatching()) return .suspended;
-    this.writer.start(this.fd, this.flags.pollable).assert();
+    if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e| {
+        this.onError(e);
+        return .failed;
+    }
     return .suspended;
 }
 

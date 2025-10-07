@@ -1416,7 +1416,6 @@ const string = []const u8;
 
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
-const FileCopier = bun.install.FileCopier;
 const Symlinker = @import("./Symlinker.zig").Symlinker;
 
 const bun = @import("bun");
@@ -1437,6 +1436,7 @@ const String = bun.Semver.String;
 const install = bun.install;
 const Bin = install.Bin;
 const DependencyID = install.DependencyID;
+const FileCopier = bun.install.FileCopier;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;

@@ -586,7 +586,6 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const PackageManager = bun.PackageManager;
-const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
 const String = bun.Semver.String;
 const Task = bun.install.Task;

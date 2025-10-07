@@ -19,7 +19,19 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
+  sendCopyData,
+  sendCopyDone,
+  sendCopyFail,
+  awaitWritable,
+  setCopyStreamingMode,
+  setCopyTimeout,
+  setMaxCopyBufferSize,
 } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+
+const copyStartHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection, () => void>();
+const copyChunkHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection, (chunk: any) => void>();
+const copyEndHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection, () => void>();
+const writableHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection, () => void>();
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -308,6 +320,43 @@ initPostgres(
       query.reject(reject as Error);
     } catch {}
   },
+  function onCopyStart(this: $ZigGeneratedClasses.PostgresSQLConnection) {
+    const handler = copyStartHandlers.get(this);
+    if (handler) {
+      copyStartHandlers.delete(this);
+      try {
+        handler();
+      } catch {}
+    }
+  },
+  function onCopyChunk(this: $ZigGeneratedClasses.PostgresSQLConnection, chunk: any) {
+    const handler = copyChunkHandlers.get(this);
+    if (handler) {
+      try {
+        handler(chunk);
+      } catch {}
+    }
+  },
+  function onCopyEnd(this: $ZigGeneratedClasses.PostgresSQLConnection) {
+    const handler = copyEndHandlers.get(this);
+    if (handler) {
+      try {
+        handler();
+      } catch {}
+      // one-shot by default
+      copyChunkHandlers.delete(this);
+      copyEndHandlers.delete(this);
+    }
+  },
+  function onWritable(this: $ZigGeneratedClasses.PostgresSQLConnection) {
+    const handler = writableHandlers.get(this);
+    if (handler) {
+      writableHandlers.delete(this);
+      try {
+        handler();
+      } catch {}
+    }
+  },
 );
 
 export interface PostgresDotZig {
@@ -321,6 +370,9 @@ export interface PostgresDotZig {
       is_last: boolean,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onCopyStart: (this: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onCopyChunk: (this: $ZigGeneratedClasses.PostgresSQLConnection, chunk: any) => void,
+    onCopyEnd: (this: $ZigGeneratedClasses.PostgresSQLConnection) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,
@@ -347,8 +399,33 @@ export interface PostgresDotZig {
     bigint: boolean,
     simple: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLQuery;
+
+  // Low-level COPY helpers (to be called with .call(connection, ...))
+  sendCopyData: (data: string | Uint8Array) => void;
+  sendCopyDone: () => void;
+  sendCopyFail: (message?: string) => void;
+  awaitWritable: () => void;
+  setCopyStreamingMode: (enable: boolean) => void;
+  setCopyTimeout: (ms: number) => void;
+  setMaxCopyBufferSize: (bytes: number) => void;
 }
 
+function onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
+  // kept for internal use; prefer PostgresAdapter.onCopyStart
+  copyStartHandlers.set(connection, handler);
+}
+function copySendData(connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) {
+  // delegate to Zig binding with the connection as thisArg
+  // Zig side currently expects strings; Uint8Array will be coerced by Bun
+  // If binary mode is used later, we can pass bytes directly
+  (sendCopyData as any)(connection, data as any);
+}
+function copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
+  (sendCopyDone as any)(connection);
+}
+function copyFail(connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) {
+  (sendCopyFail as any)(connection, message ?? "");
+}
 const enum SQLCommand {
   insert = 0,
   update = 1,
@@ -693,10 +770,41 @@ class PostgresAdapter
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
+  // Default COPY behavior and guardrails for this adapter instance
+  public copyDefaults: {
+    from: { maxChunkSize: number; maxBytes: number; timeout: number };
+    to: { stream: boolean; maxBytes: number; timeout: number };
+  } = {
+    from: { maxChunkSize: 256 * 1024, maxBytes: 0, timeout: 0 }, // 0 = unlimited
+    to: { stream: true, maxBytes: 0, timeout: 0 }, // 0 = unlimited
+  };
+
+  // Global defaults for new adapters (can be overridden via setGlobalCopyDefaults)
+  static globalCopyDefaults: {
+    from: { maxChunkSize: number; maxBytes: number; timeout: number };
+    to: { stream: boolean; maxBytes: number; timeout: number };
+  } = {
+    from: { maxChunkSize: 256 * 1024, maxBytes: 0, timeout: 0 },
+    to: { stream: true, maxBytes: 0, timeout: 0 },
+  };
+
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
+    // Clone global defaults into this instance
+    this.copyDefaults = {
+      from: {
+        maxChunkSize: PostgresAdapter.globalCopyDefaults.from.maxChunkSize,
+        maxBytes: PostgresAdapter.globalCopyDefaults.from.maxBytes,
+        timeout: PostgresAdapter.globalCopyDefaults.from.timeout,
+      },
+      to: {
+        stream: PostgresAdapter.globalCopyDefaults.to.stream,
+        maxBytes: PostgresAdapter.globalCopyDefaults.to.maxBytes,
+        timeout: PostgresAdapter.globalCopyDefaults.to.timeout,
+      },
+    };
   }
 
   escapeIdentifier(str: string) {
@@ -725,6 +833,195 @@ class PostgresAdapter
   }
   supportsReservedConnections() {
     return true;
+  }
+
+  // Global setter to change defaults for subsequently constructed adapters
+  static setGlobalCopyDefaults(
+    newDefaults: Partial<{
+      from: Partial<{ maxChunkSize: number; maxBytes: number; timeout: number }>;
+      to: Partial<{ stream: boolean; maxBytes: number; timeout: number }>;
+    }>,
+  ) {
+    if (!newDefaults) return;
+    console.debug("[Postgres] setGlobalCopyDefaults", {
+      from: newDefaults.from ?? null,
+      to: newDefaults.to ?? null,
+    });
+    if (newDefaults.from) {
+      if (typeof newDefaults.from.maxChunkSize === "number" && newDefaults.from.maxChunkSize > 0) {
+        PostgresAdapter.globalCopyDefaults.from.maxChunkSize = Math.floor(newDefaults.from.maxChunkSize);
+      }
+      if (typeof newDefaults.from.maxBytes === "number" && newDefaults.from.maxBytes >= 0) {
+        PostgresAdapter.globalCopyDefaults.from.maxBytes = Math.floor(newDefaults.from.maxBytes);
+      }
+      if (typeof newDefaults.from.timeout === "number" && newDefaults.from.timeout >= 0) {
+        PostgresAdapter.globalCopyDefaults.from.timeout = Math.floor(newDefaults.from.timeout);
+      }
+    }
+    if (newDefaults.to) {
+      if (typeof newDefaults.to.stream === "boolean") {
+        PostgresAdapter.globalCopyDefaults.to.stream = newDefaults.to.stream;
+      }
+      if (typeof newDefaults.to.maxBytes === "number" && newDefaults.to.maxBytes >= 0) {
+        PostgresAdapter.globalCopyDefaults.to.maxBytes = Math.floor(newDefaults.to.maxBytes);
+      }
+      if (typeof newDefaults.to.timeout === "number" && newDefaults.to.timeout >= 0) {
+        PostgresAdapter.globalCopyDefaults.to.timeout = Math.floor(newDefaults.to.timeout);
+      }
+    }
+    console.debug("[Postgres] setGlobalCopyDefaults: applied", PostgresAdapter.globalCopyDefaults);
+  }
+
+  // Instance getter to read current defaults (for sql.ts to merge with per-call options)
+  getCopyDefaults() {
+    return this.copyDefaults;
+  }
+
+  // Instance setter to change defaults for this adapter instance
+  setCopyDefaults(
+    newDefaults: Partial<{
+      from: Partial<{ maxChunkSize: number; maxBytes: number; timeout: number }>;
+      to: Partial<{ stream: boolean; maxBytes: number; timeout: number }>;
+    }>,
+  ) {
+    if (!newDefaults) return;
+    console.debug("[Postgres] setCopyDefaults (before)", this.copyDefaults);
+    if (newDefaults.from) {
+      if (typeof newDefaults.from.maxChunkSize === "number" && newDefaults.from.maxChunkSize > 0) {
+        this.copyDefaults.from.maxChunkSize = Math.floor(newDefaults.from.maxChunkSize);
+      }
+      if (typeof newDefaults.from.maxBytes === "number" && newDefaults.from.maxBytes >= 0) {
+        this.copyDefaults.from.maxBytes = Math.floor(newDefaults.from.maxBytes);
+      }
+      if (typeof newDefaults.from.timeout === "number" && newDefaults.from.timeout >= 0) {
+        this.copyDefaults.from.timeout = Math.floor(newDefaults.from.timeout);
+      }
+    }
+    if (newDefaults.to) {
+      if (typeof newDefaults.to.stream === "boolean") {
+        this.copyDefaults.to.stream = newDefaults.to.stream;
+      }
+      if (typeof newDefaults.to.maxBytes === "number" && newDefaults.to.maxBytes >= 0) {
+        this.copyDefaults.to.maxBytes = Math.floor(newDefaults.to.maxBytes);
+      }
+      if (typeof newDefaults.to.timeout === "number" && newDefaults.to.timeout >= 0) {
+        this.copyDefaults.to.timeout = Math.floor(newDefaults.to.timeout);
+      }
+    }
+    console.debug("[Postgres] setCopyDefaults (after)", this.copyDefaults);
+  }
+
+  // Reserved connection helper to set adapter-level defaults
+  setCopyDefaultsFor(
+    connection: PooledPostgresConnection,
+    newDefaults: Partial<{
+      from: Partial<{ maxChunkSize: number; maxBytes: number }>;
+      to: Partial<{ stream: boolean; maxBytes: number }>;
+    }>,
+  ) {
+    console.debug("[Postgres] setCopyDefaultsFor (connection)", {
+      hasConnection: !!connection,
+      newDefaults,
+    });
+    this.setCopyDefaults(newDefaults);
+  }
+
+  // COPY protocol low-level helpers exposed as static methods for internal use
+  static onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
+    copyStartHandlers.set(connection, handler);
+  }
+  static onCopyChunk(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: (chunk: any) => void) {
+    copyChunkHandlers.set(connection, handler);
+  }
+  static onCopyEnd(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
+    copyEndHandlers.set(connection, handler);
+  }
+  static copySendData(connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) {
+    // delegate to Zig binding with the connection as thisArg
+    // Zig side currently expects strings; Uint8Array will be coerced by Bun
+    // If binary mode is used later, we can pass bytes directly
+    (sendCopyData as any)(connection, data as any);
+  }
+  static copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
+    (sendCopyDone as any)(connection);
+  }
+  static copyFail(connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) {
+    (sendCopyFail as any)(connection, message ?? "");
+  }
+  static setCopyStreamingMode(connection: $ZigGeneratedClasses.PostgresSQLConnection, enable: boolean) {
+    (setCopyStreamingMode as any)(connection, !!enable);
+  }
+  static setCopyTimeout(connection: $ZigGeneratedClasses.PostgresSQLConnection, ms: number) {
+    (setCopyTimeout as any)(connection, (ms | 0) >>> 0);
+  }
+  static setMaxCopyBufferSize(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
+    (setMaxCopyBufferSize as any)(connection, (bytes | 0) >>> 0);
+  }
+  static onWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
+    writableHandlers.set(connection, handler);
+  }
+  static awaitWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler?: () => void) {
+    if (handler) {
+      writableHandlers.set(connection, handler);
+    }
+    // Use the connection as thisArg; no explicit callback so the global dispatcher installed by init is used.
+    (awaitWritable as any)(connection);
+  }
+
+  // Instance helpers to control COPY using a pooled connection handle
+  onCopyStartFor(connection: PooledPostgresConnection, handler: () => void) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.onCopyStart(underlying, handler);
+    }
+  }
+  copySendDataFor(connection: PooledPostgresConnection, data: string | Uint8Array) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.copySendData(underlying, data);
+    }
+  }
+  copyDoneFor(connection: PooledPostgresConnection) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.copyDone(underlying);
+    }
+  }
+  copyFailFor(connection: PooledPostgresConnection, message?: string) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.copyFail(underlying, message);
+    }
+  }
+  onWritableFor(connection: PooledPostgresConnection, handler: () => void) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.onWritable(underlying, handler);
+    }
+  }
+  awaitWritableFor(connection: PooledPostgresConnection, handler?: () => void) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.awaitWritable(underlying, handler);
+    }
+  }
+  setCopyStreamingModeFor(connection: PooledPostgresConnection, enable: boolean) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.setCopyStreamingMode(underlying, enable);
+    }
+  }
+  setCopyTimeoutFor(connection: PooledPostgresConnection, ms: number) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.setCopyTimeout(underlying, ms);
+    }
+  }
+  setMaxCopyBufferSizeFor(connection: PooledPostgresConnection, bytes: number) {
+    const underlying = this.getConnectionForQuery(connection);
+    if (underlying) {
+      PostgresAdapter.setMaxCopyBufferSize(underlying, bytes);
+    }
   }
 
   getConnectionForQuery(pooledConnection: PooledPostgresConnection) {

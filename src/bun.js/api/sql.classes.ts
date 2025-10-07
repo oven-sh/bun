@@ -3,6 +3,54 @@ import { ClassDefinition, define } from "../../codegen/class-definitions";
 const types = ["PostgresSQL", "MySQL"];
 const classes: ClassDefinition[] = [];
 for (const type of types) {
+  const proto: any = {
+    close: {
+      fn: "doClose",
+    },
+    connected: {
+      getter: "getConnected",
+    },
+    ref: {
+      fn: "doRef",
+    },
+    unref: {
+      fn: "doUnref",
+    },
+    flush: {
+      fn: "doFlush",
+    },
+    queries: {
+      getter: "getQueries",
+      this: true,
+    },
+    onconnect: {
+      getter: "getOnConnect",
+      setter: "setOnConnect",
+      this: true,
+    },
+    onclose: {
+      getter: "getOnClose",
+      setter: "setOnClose",
+      this: true,
+    },
+  };
+
+  // Add COPY methods only for PostgreSQL
+  if (type === "PostgresSQL") {
+    proto.sendCopyData = {
+      fn: "sendCopyData",
+      length: 1,
+    };
+    proto.sendCopyDone = {
+      fn: "sendCopyDone",
+      length: 0,
+    };
+    proto.sendCopyFail = {
+      fn: "sendCopyFail",
+      length: 1,
+    };
+  }
+
   classes.push(
     define({
       name: `${type}Connection`,
@@ -19,37 +67,7 @@ for (const type of types) {
         //   },
       },
       JSType: "0b11101110",
-      proto: {
-        close: {
-          fn: "doClose",
-        },
-        connected: {
-          getter: "getConnected",
-        },
-        ref: {
-          fn: "doRef",
-        },
-        unref: {
-          fn: "doUnref",
-        },
-        flush: {
-          fn: "doFlush",
-        },
-        queries: {
-          getter: "getQueries",
-          this: true,
-        },
-        onconnect: {
-          getter: "getOnConnect",
-          setter: "setOnConnect",
-          this: true,
-        },
-        onclose: {
-          getter: "getOnClose",
-          setter: "setOnClose",
-          this: true,
-        },
-      },
+      proto,
       values: ["onconnect", "onclose", "queries"],
     }),
   );

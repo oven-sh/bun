@@ -1,4 +1,4 @@
-const CopyOutResponse = @This();
+const CopyBothResponse = @This();
 
 overall_format: u8 = 0,
 column_format_codes: []u16 = &[_]u16{},
@@ -28,7 +28,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     };
 }
 
-pub const decode = DecoderWrap(CopyOutResponse, decodeInternal).decode;
+pub const decode = DecoderWrap(CopyBothResponse, decodeInternal).decode;
 
 const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;

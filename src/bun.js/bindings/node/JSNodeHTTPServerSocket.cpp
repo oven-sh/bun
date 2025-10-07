@@ -319,12 +319,6 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
 }
 
-extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(JSC::EncodedJSValue thisValue, us_socket_t* socket)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->socket = socket;
-}
-
 extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();

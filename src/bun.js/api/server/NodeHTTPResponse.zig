@@ -138,23 +138,6 @@ pub fn resumeSocket(this: *NodeHTTPResponse) void {
     this.raw_response.@"resume"();
 }
 
-const OnBeforeOpen = struct {
-    this: *NodeHTTPResponse,
-    socketValue: jsc.JSValue,
-    globalObject: *jsc.JSGlobalObject,
-
-    pub fn onBeforeOpen(ctx: *OnBeforeOpen, js_websocket: JSValue, socket: *uws.RawWebSocket) void {
-        Bun__setNodeHTTPServerSocketUsSocketValue(ctx.socketValue, socket.asSocket());
-        ServerWebSocket.js.gc.socket.set(js_websocket, ctx.globalObject, ctx.socketValue);
-        ctx.this.flags.upgraded = true;
-        defer ctx.this.poll_ref.unref(ctx.globalObject.bunVM());
-        switch (ctx.this.raw_response) {
-            .SSL => ctx.this.raw_response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
-            .TCP => ctx.this.raw_response = uws.AnyResponse.init(uws.NewApp(false).Response.castRes(@alignCast(@ptrCast(socket)))),
-        }
-    }
-};
-
 pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
     const upgrade_ctx = this.upgrade_context.context orelse return false;
     const ws_handler = this.server.webSocketHandler() orelse return false;
@@ -206,17 +189,6 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     else
         this.upgrade_context.sec_websocket_key;
 
-    var on_before_open = OnBeforeOpen{
-        .this = this,
-        .socketValue = socketValue,
-        .globalObject = this.server.globalThis(),
-    };
-    var on_before_open_ptr = WebSocketServerContext.Handler.OnBeforeOpen{
-        .ctx = &on_before_open,
-        .callback = @ptrCast(&OnBeforeOpen.onBeforeOpen),
-    };
-
-    this.server.webSocketHandler().?.onBeforeOpen = &on_before_open_ptr;
     _ = this.raw_response.upgrade(*ServerWebSocket, ws, websocket_key, sec_websocket_protocol_value, sec_websocket_extensions_value, upgrade_ctx);
 
     return true;
@@ -1174,7 +1146,6 @@ fn deinit(this: *NodeHTTPResponse) void {
 comptime {
     @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
 }
-extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(jsc.JSValue, ?*anyopaque) void;
 
 pub export fn Bun__NodeHTTPResponse_onClose(response: *NodeHTTPResponse, js_value: jsc.JSValue) void {
     response.onAbort(js_value);

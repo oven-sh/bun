@@ -101,7 +101,7 @@ _subcommand_comp_reply() {
     local sub_commands="${2}"
     local regexp_subcommand="^[dbcriauh]";
     [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-        # shellcheck disable=SC2207 # `sub_commands` is constant and has no whispace characters in each subcommand
+        # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
         COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
     }
 }
@@ -139,7 +139,7 @@ _bun_completions() {
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
-                    # shellcheck disable=SC2207 # the literal space separated string is used, each element has no whitspace characrters inside
+                    # shellcheck disable=SC2207 # the literal space separated string is used, each element has no whitespace characters inside
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                 ;;
             esac

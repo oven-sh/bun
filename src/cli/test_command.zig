@@ -1362,6 +1362,9 @@ pub const TestCommand = struct {
         if (ctx.test_options.reporters.dots) {
             reporter.reporters.dots = true;
         }
+        if (ctx.test_options.reporters.only_failures) {
+            reporter.reporters.only_failures = true;
+        }
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();

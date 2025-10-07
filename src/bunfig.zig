@@ -334,6 +334,33 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
 
+                    var randomize_from_config: ?bool = null;
+
+                    if (test_.get("randomize")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        randomize_from_config = expr.data.e_boolean.value;
+                        this.ctx.test_options.randomize = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("seed")) |expr| {
+                        try this.expect(expr, .e_number);
+                        const seed_value = expr.data.e_number.toU32();
+
+                        // Validate that randomize is true when seed is specified
+                        // Either randomize must be set to true in this config, or already enabled
+                        const has_randomize_true = (randomize_from_config orelse this.ctx.test_options.randomize);
+                        if (!has_randomize_true) {
+                            try this.addError(expr.loc, "\"seed\" can only be used when \"randomize\" is true");
+                        }
+
+                        this.ctx.test_options.seed = seed_value;
+                    }
+
+                    if (test_.get("rerunEach")) |expr| {
+                        try this.expect(expr, .e_number);
+                        this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
                     if (test_.get("concurrentTestGlob")) |expr| {
                         switch (expr.data) {
                             .e_string => |str| {

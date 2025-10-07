@@ -284,6 +284,46 @@ junit = "test-results.xml"
 
 This generates a JUnit XML report that can be consumed by CI systems and other tools.
 
+### `test.randomize`
+
+Run tests in random order. Default `false`.
+
+```toml
+[test]
+randomize = true
+```
+
+This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+
+The `--randomize` CLI flag will override this setting when specified.
+
+### `test.seed`
+
+Set the random seed for test randomization. This option requires `randomize` to be `true`.
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+
+The `--seed` CLI flag will override this setting when specified.
+
+### `test.rerunEach`
+
+Re-run each test file a specified number of times. Default `0` (run once).
+
+```toml
+[test]
+rerunEach = 3
+```
+
+This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+
+The `--rerun-each` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.

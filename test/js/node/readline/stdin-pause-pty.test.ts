@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -72,7 +72,7 @@ pub fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type
 
       /// Turn this into a JSPromise that is already rejected.
       pub inline fn reject(this: @This()) jsc.JSValue {
-        return jsc.JSPromise.rejectedPromise(this.globalThis, code.fmt(this.global, fmt, this.args)).toJS();
+        return jsc.JSPromise.rejectedPromise(this.global, code.fmt(this.global, fmt, this.args)).toJS();
       }
   };
 }

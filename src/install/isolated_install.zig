@@ -256,7 +256,7 @@ pub fn installIsolatedPackages(
                     // TODO: double check this
                     // Start with the current package. A package
                     // can satisfy it's own peers.
-                    var curr_id = node_id;
+                    var curr_id = node_parent_ids[node_id.get()];
 
                     visited_parent_node_ids.clearRetainingCapacity();
                     while (curr_id != .invalid) {

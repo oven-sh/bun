@@ -775,7 +775,21 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        switch (manager.options.node_linker) {
+        const linker = switch (manager.options.node_linker) {
+            .hoisted => .hoisted,
+            .isolated => .isolated,
+            .auto => linker: {
+                if (manager.lockfile.workspace_paths.count() > 0) {
+                    break :linker .isolated;
+                }
+                break :linker .hoisted;
+            },
+        };
+
+        switch (linker) {
+            // handled above
+            .auto => unreachable,
+
             .hoisted,
             => break :install_summary try installHoistedPackages(
                 manager,
@@ -787,7 +801,6 @@ pub fn installWithManager(
             ),
 
             .isolated,
-            .auto,
             => break :install_summary installIsolatedPackages(
                 manager,
                 ctx,

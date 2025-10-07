@@ -62,7 +62,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*jsc.WebCore.ByteStream = null,
-        // reference to the readable stream / byte_stream alive
+        /// This keeps the Response body's ReadableStream alive.
         response_body_readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
 
         /// Used in errors

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
-test("only-failures flag should show only failures", async () => {
+test.concurrent("only-failures flag should show only failures", async () => {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/only-failures.fixture.ts", "--only-failures"],
     stdout: "pipe",
@@ -56,7 +56,7 @@ test("only-failures flag should show only failures", async () => {
   `);
 });
 
-test("only-failures flag should work with multiple files", async () => {
+test.concurrent("only-failures flag should work with multiple files", async () => {
   const result = await Bun.spawn({
     cmd: [
       bunExe(),
@@ -76,4 +76,45 @@ test("only-failures flag should work with multiple files", async () => {
   expect(normalizeBunSnapshot(stderr)).toContain("(fail) failing test");
   expect(normalizeBunSnapshot(stderr)).toContain("(fail) another failing test");
   expect(normalizeBunSnapshot(stderr)).not.toContain("(pass)");
+});
+
+test.concurrent("only-failures should work via bunfig.toml", async () => {
+  using dir = tempDir("bunfig-only-failures", {
+    "bunfig.toml": `
+[test]
+onlyFailures = true
+`,
+    "my.test.ts": `
+import { test, expect } from "bun:test";
+
+test("passing test", () => {
+  expect(1 + 1).toBe(2);
+});
+
+test("failing test", () => {
+  expect(1 + 1).toBe(3);
+});
+
+test("another passing test", () => {
+  expect(true).toBe(true);
+});
+`,
+  });
+
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: String(dir),
+  });
+
+  const exitCode = await result.exited;
+  const stderr = await result.stderr.text();
+
+  expect(exitCode).toBe(1);
+  // Should only show the failing test
+  expect(normalizeBunSnapshot(stderr, dir)).toContain("(fail) failing test");
+  // Should not show passing tests
+  expect(normalizeBunSnapshot(stderr, dir)).not.toContain("(pass)");
 });

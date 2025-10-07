@@ -1,5 +1,5 @@
 import { Dequeue } from "bun:internal-for-testing";
-import { describe, expect, test, it, beforeAll, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 
 /**
  * Implements the same API as {@link Dequeue} but uses a simple list as the

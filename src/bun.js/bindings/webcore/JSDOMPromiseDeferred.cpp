@@ -165,13 +165,13 @@ void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandle
     }
 
     auto error = createDOMException(lexicalGlobalObject, WTFMove(exception));
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         handleUncaughtException(scope, lexicalGlobalObject);
         return;
     }
 
     reject(lexicalGlobalObject, error, rejectAsHandled);
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         handleUncaughtException(scope, lexicalGlobalObject);
 }
 
@@ -200,13 +200,13 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
     }
 
     auto error = createDOMException(&lexicalGlobalObject, ec, message);
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         handleUncaughtException(scope, lexicalGlobalObject);
         return;
     }
 
     reject(lexicalGlobalObject, error, rejectAsHandled);
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         handleUncaughtException(scope, lexicalGlobalObject);
 }
 
@@ -225,7 +225,7 @@ void DeferredPromise::reject(const JSC::PrivateName& privateName, RejectAsHandle
 void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSPromise& promise, JSC::CatchScope& catchScope)
 {
     UNUSED_PARAM(lexicalGlobalObject);
-    if (LIKELY(!catchScope.exception()))
+    if (!catchScope.exception()) [[likely]]
         return;
 
     JSValue error = catchScope.exception()->value();

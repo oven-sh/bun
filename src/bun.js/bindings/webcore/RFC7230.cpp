@@ -31,7 +31,7 @@
 
 namespace RFC7230 {
 
-bool isTokenCharacter(UChar c)
+bool isTokenCharacter(char16_t c)
 {
     return isASCIIAlpha(c) || isASCIIDigit(c)
         || c == '!' || c == '#' || c == '$'
@@ -41,7 +41,7 @@ bool isTokenCharacter(UChar c)
         || c == '`' || c == '|' || c == '~';
 }
 
-bool isDelimiter(UChar c)
+bool isDelimiter(char16_t c)
 {
     return c == '(' || c == ')' || c == ','
         || c == '/' || c == ':' || c == ';'
@@ -51,23 +51,23 @@ bool isDelimiter(UChar c)
         || c == '}' || c == '"';
 }
 
-static bool isVisibleCharacter(UChar c)
+static bool isVisibleCharacter(char16_t c)
 {
     return isTokenCharacter(c) || isDelimiter(c);
 }
 
 template<size_t min, size_t max>
-static bool isInRange(UChar c)
+static bool isInRange(char16_t c)
 {
     return c >= min && c <= max;
 }
 
-static bool isOBSText(UChar c)
+static bool isOBSText(char16_t c)
 {
     return isInRange<0x80, 0xFF>(c);
 }
 
-static bool isQuotedTextCharacter(UChar c)
+static bool isQuotedTextCharacter(char16_t c)
 {
     return isTabOrSpace(c)
         || c == 0x21
@@ -76,14 +76,14 @@ static bool isQuotedTextCharacter(UChar c)
         || isOBSText(c);
 }
 
-bool isQuotedPairSecondOctet(UChar c)
+bool isQuotedPairSecondOctet(char16_t c)
 {
     return isTabOrSpace(c)
         || isVisibleCharacter(c)
         || isOBSText(c);
 }
 
-bool isCommentText(UChar c)
+bool isCommentText(char16_t c)
 {
     return isTabOrSpace(c)
         || isInRange<0x21, 0x27>(c)
@@ -116,7 +116,7 @@ bool isValidValue(StringView value)
     bool hadNonWhitespace = false;
 
     for (size_t i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
         switch (state) {
         case State::OptionalWhitespace:
             if (isTabOrSpace(c))

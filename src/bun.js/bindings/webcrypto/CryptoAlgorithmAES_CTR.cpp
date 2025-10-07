@@ -211,9 +211,9 @@ CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockHelper(const Vector<uint
     ASSERT(counterVector.size() == CounterSize);
     ASSERT(counterLength <= CounterSize * 8);
     bool littleEndian = false; // counterVector is stored in big-endian.
-    memcpy(&m_bits.m_hi, counterVector.data(), 8);
+    memcpy(&m_bits.m_hi, counterVector.begin(), 8);
     m_bits.m_hi = flipBytesIfLittleEndian(m_bits.m_hi, littleEndian);
-    memcpy(&m_bits.m_lo, counterVector.data() + 8, 8);
+    memcpy(&m_bits.m_lo, counterVector.begin() + 8, 8);
     m_bits.m_lo = flipBytesIfLittleEndian(m_bits.m_lo, littleEndian);
 }
 
@@ -257,9 +257,9 @@ Vector<uint8_t> CryptoAlgorithmAES_CTR::CounterBlockHelper::counterVectorAfterOv
     bool littleEndian = false; // counterVector is stored in big-endian.
     Vector<uint8_t> counterVector(CounterSize);
     uint64_t hi = flipBytesIfLittleEndian(bits.m_hi, littleEndian);
-    memcpy(counterVector.data(), &hi, 8);
+    memcpy(counterVector.begin(), &hi, 8);
     uint64_t lo = flipBytesIfLittleEndian(bits.m_lo, littleEndian);
-    memcpy(counterVector.data() + 8, &lo, 8);
+    memcpy(counterVector.begin() + 8, &lo, 8);
 
     return counterVector;
 }

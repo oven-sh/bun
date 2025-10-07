@@ -249,6 +249,7 @@ public:
     }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
+
         auto* httpContext = HttpContext<SSL>::create(Loop::get(), options);
         if (!httpContext) {
             return nullptr;
@@ -294,6 +295,22 @@ public:
             us_socket_context_close(SSL, (struct us_socket_context_t *) webSocketContext);
         }
 
+        return std::move(*this);
+    }
+
+    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
+    TemplatedApp &&closeIdle() {
+        auto context = (struct us_socket_context_t *)this->httpContext;
+        struct us_socket_t *s = context->head_sockets;
+        while (s) {
+            HttpResponseData<SSL> *httpResponseData = HttpResponse<SSL>::getHttpResponseDataS(s);
+            httpResponseData->shouldCloseOnceIdle = true;
+            struct us_socket_t *next = s->next;
+            if (httpResponseData->isIdle) {
+                us_socket_close(SSL, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            }
+            s = next;
+        }
         return std::move(*this);
     }
 
@@ -610,8 +627,22 @@ public:
         return std::move(*this);
     }
 
-    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+    void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
         httpContext->getSocketContextData()->onSocketClosed = onClose;
+    }
+    void setOnSocketDrain(HttpContextData<SSL>::OnSocketDrainCallback onDrain) {
+        httpContext->getSocketContextData()->onSocketDrain = onDrain;
+    }
+    void setOnSocketData(HttpContextData<SSL>::OnSocketDataCallback onData) {
+        httpContext->getSocketContextData()->onSocketData = onData;
+    }
+
+    void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
+        httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+    }
+
+    void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
+        httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
     TemplatedApp &&run() {
@@ -620,12 +651,18 @@ public:
     }
 
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {
-        httpContext->getSocketContextData()->usingCustomExpectHandler = value;
+        httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
         return std::move(*this);
     }
 
-    TemplatedApp &&setRequireHostHeader(bool value) {
-        httpContext->getSocketContextData()->requireHostHeader = value;
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+        httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
+        httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
+        httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
         return std::move(*this);
     }
 
@@ -635,4 +672,3 @@ typedef TemplatedApp<false> App;
 typedef TemplatedApp<true> SSLApp;
 
 }
-

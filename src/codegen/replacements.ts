@@ -1,8 +1,8 @@
 import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -253,7 +253,7 @@ export function applyReplacements(src: string, length: number) {
         }
       }
 
-      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
+      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else if (name === "isPromiseFulfilled") {
@@ -305,7 +305,7 @@ export function applyReplacements(src: string, length: number) {
         throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
       }
 
-      const id = registerNativeCall("bind", args[0], args[1], undefined);
+      const id = registerNativeCall("bind", args[0], args[1], null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else {

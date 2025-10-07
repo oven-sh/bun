@@ -175,6 +175,7 @@ Bun.hash.xxHash3("data", 1234);
 Bun.hash.murmur32v3("data", 1234);
 Bun.hash.murmur32v2("data", 1234);
 Bun.hash.murmur64v2("data", 1234);
+Bun.hash.rapidhash("data", 1234);
 ```
 
 ## `Bun.CryptoHasher`
@@ -183,6 +184,7 @@ Bun.hash.murmur64v2("data", 1234);
 
 - `"blake2b256"`
 - `"blake2b512"`
+- `"blake2s256"`
 - `"md4"`
 - `"md5"`
 - `"ripemd160"`

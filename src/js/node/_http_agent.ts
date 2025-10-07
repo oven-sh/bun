@@ -96,14 +96,23 @@ Agent.prototype.createConnection = function () {
 };
 
 Agent.prototype.getName = function (options = kEmptyObject) {
-  let name = `http:${options.host || "localhost"}:`;
-  if (options.port) name += options.port;
+  let name = options.host || "localhost";
   name += ":";
-  if (options.localAddress) name += options.localAddress;
+  if (options.port) {
+    name += options.port;
+  }
+  name += ":";
+  if (options.localAddress) {
+    name += options.localAddress;
+  }
   // Pacify parallel/test-http-agent-getname by only appending
   // the ':' when options.family is set.
-  if (options.family === 4 || options.family === 6) name += `:${options.family}`;
-  if (options.socketPath) name += `:${options.socketPath}`;
+  if (options.family === 4 || options.family === 6) {
+    name += `:${options.family}`;
+  }
+  if (options.socketPath) {
+    name += `:${options.socketPath}`;
+  }
   return name;
 };
 

@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
-import { $ } from "bun";
+import { $, semver } from "bun";
+import { test } from "bun:test";
 import { bunExe } from "harness";
-import { semver } from "bun";
 
 const BUN_EXE = bunExe();
 
@@ -12,7 +11,7 @@ if (process.platform === "linux") {
       throw new Error("objdump executable not found. Please install it.");
     }
 
-    const output = await $`${objdump} -T ${BUN_EXE} | grep GLIBC_`.text();
+    const output = await $`${objdump} -T ${BUN_EXE} | grep GLIBC_`.nothrow().text();
     const lines = output.split("\n");
     const errors = [];
     for (const line of lines) {
@@ -34,7 +33,7 @@ if (process.platform === "linux") {
       throw new Error(`Found glibc symbols > 2.26. This breaks Amazon Linux 2 and Vercel.
 
 ${Bun.inspect.table(errors, { colors: true })}
-To fix this, add it to -Wl,-wrap=symbol in the linker flags and update workaround-missing-symbols.cpp.`);
+To fix this, add it to -Wl,--wrap=symbol in the linker flags and update workaround-missing-symbols.cpp.`);
     }
   });
 

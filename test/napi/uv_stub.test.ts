@@ -1,9 +1,9 @@
-import { beforeAll, describe, expect, afterEach, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { bunEnv, bunExe, makeTree, tempDirWithFiles, isWindows } from "harness";
-import source from "./uv-stub-stuff/plugin.c";
-import goodSource from "./uv-stub-stuff/good_plugin.c";
 import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
+import goodSource from "./uv-stub-stuff/good_plugin.c";
+import source from "./uv-stub-stuff/plugin.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
@@ -75,9 +75,11 @@ describe.if(!isWindows)("uv stubs", () => {
   });
 
   for (const symbol of symbols_to_test) {
-    test(`should crash when calling unsupported uv functions: ${symbol}`, async () => {
-      console.log("GO:", symbol);
-      const { stderr } = await Bun.$`${bunExe()} run index.ts ${symbol}`.cwd(tempdir).throws(false).quiet();
+    test(`unsupported: ${symbol}`, async () => {
+      const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
+        .cwd(tempdir)
+        .throws(false)
+        .quiet();
       const stderrStr = stderr.toString();
       expect(stderrStr).toContain("Bun encountered a crash when running a NAPI module that tried to call");
       expect(stderrStr).toContain(symbol);

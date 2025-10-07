@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { randomInt, randomBytes } from "crypto";
+import { randomBytes, randomInt } from "crypto";
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {

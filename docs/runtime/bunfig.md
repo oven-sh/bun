@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -94,6 +94,7 @@ Bun supports the following loaders:
 - `file`
 - `json`
 - `toml`
+- `yaml`
 - `wasm`
 - `napi`
 - `base64`
@@ -107,6 +108,21 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 ```toml
 telemetry = false
 ```
+
+### `console`
+
+Configure console output behavior.
+
+#### `console.depth`
+
+Set the default depth for `console.log()` object inspection. Default `2`.
+
+```toml
+[console]
+depth = 3
+```
+
+This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
 
 ## Test runner
 
@@ -180,6 +196,24 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coveragePathIgnorePatterns`
+
+Exclude specific files or file patterns from coverage reports using glob patterns. Can be a single string pattern or an array of patterns.
+
+```toml
+[test]
+# Single pattern
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# Multiple patterns
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js"
+]
+```
+
 ### `test.coverageReporter`
 
 By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
@@ -198,6 +232,62 @@ Set path where coverage reports will be saved. Please notice, that it works only
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
+### `test.concurrentTestGlob`
+
+Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+This is useful for:
+
+- Gradually migrating test suites to concurrent execution
+- Running integration tests concurrently while keeping unit tests sequential
+- Separating fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified.
+
+### `test.randomize`
+
+Run tests in random order. Default `false`.
+
+```toml
+[test]
+randomize = true
+```
+
+This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+
+The `--randomize` CLI flag will override this setting when specified.
+
+### `test.seed`
+
+Set the random seed for test randomization. This option requires `randomize` to be `true`.
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+
+The `--seed` CLI flag will override this setting when specified.
+
+### `test.rerunEach`
+
+Re-run each test file a specified number of times. Default `0` (run once).
+
+```toml
+[test]
+rerunEach = 3
+```
+
+This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+
+The `--rerun-each` CLI flag will override this setting when specified.
 
 ## Package manager
 
@@ -354,6 +444,8 @@ dryRun = false
 
 To configure the directory where Bun puts globally installed packages.
 
+Environment variable: `BUN_INSTALL_GLOBAL_DIR`
+
 ```toml
 [install]
 # where `bun install --global` installs packages
@@ -363,6 +455,8 @@ globalDir = "~/.bun/install/global"
 ### `install.globalBinDir`
 
 To configure the directory where Bun installs globally installed binaries and CLIs.
+
+Environment variable: `BUN_INSTALL_BIN`
 
 ```toml
 # where globally-installed package bins are linked
@@ -381,6 +475,17 @@ registry = "https://registry.npmjs.org"
 registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
 registry = "https://username:password@registry.npmjs.org"
+```
+
+### `install.linkWorkspacePackages`
+
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
+
+Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
+
+```toml
+[install]
+linkWorkspacePackages = true
 ```
 
 ### `install.scopes`
@@ -448,6 +553,76 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 [install.lockfile]
 print = "yarn"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash
+$ bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/docs/install/security-scanner-api).
+
+### `install.linker`
+
+Configure the default linker strategy. Default `"hoisted"`.
+
+For complete documentation refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+```toml
+[install]
+linker = "hoisted"
+```
+
+Valid values are:
+
+{% table %}
+
+- Value
+- Description
+
+---
+
+- `"hoisted"`
+- Link dependencies in a shared `node_modules` directory.
+
+---
+
+- `"isolated"`
+- Link dependencies inside each package installation.
+
+{% /table %}
+
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
 
 <!-- ## Debugging -->
 

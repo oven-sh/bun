@@ -27,10 +27,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
-// #include "MessagePort.h"
 #include "WorkerOptions.h"
-// #include "WorkerScriptLoaderClient.h"
-// #include "WorkerType.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/Deque.h>
 #include <wtf/MonotonicTime.h>
@@ -50,7 +47,6 @@ class RTCRtpScriptTransform;
 class RTCRtpScriptTransformer;
 class ScriptExecutionContext;
 class WorkerGlobalScopeProxy;
-// class WorkerScriptLoader;
 
 struct StructuredSerializeOptions;
 struct WorkerOptions;
@@ -68,8 +64,10 @@ public:
     using ThreadSafeRefCounted::ref;
 
     void terminate();
-    bool wasTerminated() const { return m_terminationFlags & TerminatedFlag; }
+    bool wasTerminated() const;
     bool hasPendingActivity() const;
+    bool isClosingOrTerminated() const;
+    bool isOnline() const;
     bool updatePtr();
 
     String identifier() const { return m_identifier; }
@@ -79,22 +77,17 @@ public:
     void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
 
-#if ENABLE(WEB_RTC)
-    void createRTCRtpScriptTransformer(RTCRtpScriptTransform&, MessageWithMessagePorts&&);
-#endif
-
-    // WorkerType type() const
-    // {
-    //     return m_options.type;
-    // }
-
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     static void forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>&);
 
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
-    void dispatchError(WTF::String message);
+    // Fire a 'message' event in the Worker for messages that were sent before the Worker started running
+    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
+    void dispatchErrorWithMessage(WTF::String message);
+    // true if successful
+    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
@@ -108,16 +101,6 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {};
 
-    // void didReceiveResponse(ResourceLoaderIdentifier, const ResourceResponse&) final;
-    // void notifyFinished() final;
-
-    // ActiveDOMObject.
-    // void stop() final;
-    // void suspend(ReasonForSuspension) final;
-    // void resume() final;
-    // const char* activeDOMObjectName() const final;
-    // bool virtualHasPendingActivity() const final;
-
     static void networkStateChanged(bool isOnLine);
 
     static constexpr uint8_t OnlineFlag = 1 << 0;
@@ -125,15 +108,9 @@ private:
     static constexpr uint8_t TerminateRequestedFlag = 1 << 0;
     static constexpr uint8_t TerminatedFlag = 1 << 1;
 
-    // RefPtr<WorkerScriptLoader> m_scriptLoader;
     WorkerOptions m_options;
     String m_identifier;
-    // WorkerGlobalScopeProxy& m_contextProxy; // The proxy outlives the worker to perform thread shutdown.
-    // std::optional<ContentSecurityPolicyResponseHeaders> m_contentSecurityPolicyResponseHeaders;
     MonotonicTime m_workerCreationTime;
-    // bool m_shouldBypassMainWorldContentSecurityPolicy { false };
-    // bool m_isSuspendedForBackForwardCache { false };
-    // JSC::RuntimeFlags m_runtimeFlags;
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;

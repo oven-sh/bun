@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { CSRF, type CSRFAlgorithm } from "bun";
+import { describe, expect, test } from "bun:test";
 describe("Bun.CSRF", () => {
   const secret = "this-is-my-super-secure-secret-key";
 

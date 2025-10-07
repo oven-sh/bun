@@ -1,7 +1,7 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 const {
   validateFunction,
   validateArray,
@@ -43,7 +43,7 @@ const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
-    return Promise.reject(withTranslatedError(error));
+    return Promise.$reject(withTranslatedError(error));
   });
 }
 
@@ -66,14 +66,14 @@ function setServers(servers) {
 }
 
 const getRuntimeDefaultResultOrderOption = $newZigFunction(
-  "dns_resolver.zig",
-  "DNSResolver.getRuntimeDefaultResultOrderOption",
+  "bun.js/api/bun/dns.zig",
+  "Resolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
 function newResolver(options) {
   if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
+    newResolver.zig = $newZigFunction("bun.js/api/bun/dns.zig", "Resolver.newResolver", 1);
   }
   return newResolver.zig(options);
 }
@@ -302,22 +302,28 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns.lookup(hostname, options).then(res => {
-    throwIfEmpty(res);
+  dns
+    .lookup(hostname, options)
+    .then(res => {
+      throwIfEmpty(res);
 
-    if (options.order == "ipv4first") {
-      res.sort((a, b) => a.family - b.family);
-    } else if (options.order == "ipv6first") {
-      res.sort((a, b) => b.family - a.family);
-    }
+      if (options.order == "ipv4first") {
+        res.sort((a, b) => a.family - b.family);
+      } else if (options.order == "ipv6first") {
+        res.sort((a, b) => b.family - a.family);
+      }
 
-    if (options?.all) {
-      callback(null, res.map(mapLookupAll));
-    } else {
-      const [{ address, family }] = res;
-      callback(null, address, family);
-    }
-  }, callback);
+      if (options?.all) {
+        callback(null, res.map(mapLookupAll));
+      } else {
+        const [{ address, family }] = res;
+        callback(null, address, family);
+      }
+    })
+    .catch(err => {
+      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      callback(err, undefined, undefined);
+    });
 }
 
 function lookupService(address, port, callback) {
@@ -401,7 +407,7 @@ var InternalResolver = class Resolver {
           switch (rrtype?.toLowerCase()) {
             case "a":
             case "aaaa":
-              callback(null, hostname, results.map(mapResolveX));
+              callback(null, results.map(mapResolveX));
               break;
             default:
               callback(null, results);
@@ -639,9 +645,7 @@ var InternalResolver = class Resolver {
 function Resolver(options) {
   return new InternalResolver(options);
 }
-Resolver.prototype = {};
-Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
-Object.setPrototypeOf(Resolver, InternalResolver);
+$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,
@@ -732,7 +736,7 @@ const promises = {
 
     if (!hostname) {
       invalidHostname(hostname);
-      return Promise.resolve(
+      return Promise.$resolve(
         options.all
           ? []
           : {
@@ -745,7 +749,7 @@ const promises = {
     const family = isIP(hostname);
     if (family) {
       const obj = { address: hostname, family };
-      return Promise.resolve(options.all ? [obj] : obj);
+      return Promise.$resolve(options.all ? [obj] : obj);
     }
 
     if (options.all) {
@@ -770,7 +774,7 @@ const promises = {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
       }
-      return Promise.reject(withTranslatedError(err));
+      return Promise.$reject(withTranslatedError(err));
     }
   },
 
@@ -788,7 +792,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())));
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
     }
@@ -866,7 +870,7 @@ const promises = {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())),
+            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
           );
         default:
           return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));

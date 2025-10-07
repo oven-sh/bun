@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
-import { randomUUIDv7, RedisClient } from "bun";
-import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, retry, testKey } from "../test-utils";
+import { RedisClient } from "bun";
+import { describe, expect, mock, test } from "bun:test";
+import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
 /**
  * Test suite for connection failures, reconnection, and error handling
@@ -185,8 +185,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       // Explicitly disconnect to trigger onclose
       client.close();
 
-      // Wait a short time for disconnect callbacks to execute
-      await delay(50);
+      // Wait briefly for disconnect callbacks to execute
+      await delay(10);
 
       // onclose should be called regardless of whether the connection succeeded
       expect(client.connected).toBe(false);
@@ -222,8 +222,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       // Disconnect to trigger close handler
       await client.close();
 
-      // Wait a short time for the callbacks to execute
-      await delay(50);
+      // Wait briefly for the callbacks to execute
+      await delay(10);
 
       // First handlers should not have been called because they were replaced
       expect(onconnect1).not.toHaveBeenCalled();

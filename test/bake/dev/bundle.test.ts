@@ -198,15 +198,7 @@ devTest("default export same-scope handling", {
 
     // Since fixture7.ts is not marked as accepting, it will bubble the update
     // to `index.ts`, re-evaluate it and some of the dependencies.
-    c.expectMessage(
-      "TWO",
-      "FOUR",
-      "FIVE",
-      "SEVEN",
-      "EIGHT",
-      "NINE",
-      "ELEVEN",
-    );
+    c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
 devTest("directory cache bust case #17576", {
@@ -244,7 +236,7 @@ devTest("directory cache bust case #17576", {
 });
 devTest("deleting imported file shows error then recovers", {
   skip: [
-    'win32', // unlinkSync is having weird behavior
+    "win32", // unlinkSync is having weird behavior
   ],
   files: {
     "index.html": emptyHtmlFile({
@@ -360,6 +352,7 @@ devTest("import.meta.main", {
   },
 });
 devTest("commonjs forms", {
+  timeoutMultiplier: 2,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -374,32 +367,50 @@ devTest("commonjs forms", {
     `,
   },
   async test(dev) {
+    console.log("Initial");
     await using c = await dev.client("/");
+    console.log("  expecting message");
     await c.expectMessage({ field: {} });
+    console.log("  expecting reload");
     await c.expectReload(async () => {
+      console.log("  writing");
       await dev.write("cjs.js", `exports.field = "1";`);
+      console.log("  now reloading");
     });
+    console.log("  expecting message");
     await c.expectMessage({ field: "1" });
+    console.log("Second");
+    console.log("  expecting reload");
     await c.expectReload(async () => {
+      console.log("  writing");
       await dev.write("cjs.js", `let theExports = exports; theExports.field = "2";`);
     });
+    console.log("  expecting message");
     await c.expectMessage({ field: "2" });
+    console.log("Third");
+    console.log("  expecting reload");
     await c.expectReload(async () => {
+      console.log("  writing");
       await dev.write("cjs.js", `let theModule = module; theModule.exports.field = "3";`);
     });
+    console.log("  expecting message");
     await c.expectMessage({ field: "3" });
+    console.log("Fourth");
     await c.expectReload(async () => {
       await dev.write("cjs.js", `let { exports } = module; exports.field = "4";`);
     });
     await c.expectMessage({ field: "4" });
+    console.log("Fifth");
     await c.expectReload(async () => {
       await dev.write("cjs.js", `var { exports } = module; exports.field = "4.5";`);
     });
     await c.expectMessage({ field: "4.5" });
+    console.log("Sixth");
     await c.expectReload(async () => {
       await dev.write("cjs.js", `let theExports = module.exports; theExports.field = "5";`);
     });
     await c.expectMessage({ field: "5" });
+    console.log("Seventh");
     await c.expectReload(async () => {
       await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
     });

@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const JSON = bun.JSON;
-const Glob = @import("../glob.zig");
-
-const Package = @import("../install/lockfile.zig").Package;
-
 const SKIP_LIST = .{
     // skip hidden directories
     ".",
@@ -33,14 +22,14 @@ fn globIgnoreFn(val: []const u8) bool {
     return false;
 }
 
-const GlobWalker = Glob.GlobWalker(globIgnoreFn, Glob.walk.DirEntryAccessor, false);
+const GlobWalker = glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false);
 
 pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8, root_buf: *bun.PathBuffer) ![]const u8 {
-    bun.JSAst.Expr.Data.Store.create();
-    bun.JSAst.Stmt.Data.Store.create();
+    bun.ast.Expr.Data.Store.create();
+    bun.ast.Stmt.Data.Store.create();
     defer {
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
     }
 
     var workdir = workdir_;
@@ -53,7 +42,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         log.errors = 0;
         log.warnings = 0;
 
-        const json_source = switch (bun.sys.File.toSource(json_path, allocator)) {
+        const json_source = switch (bun.sys.File.toSource(json_path, allocator, .{})) {
             .err => |err| {
                 switch (err.getErrno()) {
                     .NOENT, .ACCES, .PERM => continue,
@@ -188,7 +177,7 @@ pub const FilterSet = struct {
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.walk.matchImpl(self.allocator, filter.pattern, path).matches()) {
+            if (glob.match(filter.pattern, path).matches()) {
                 return true;
             }
         }
@@ -201,7 +190,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.walk.matchImpl(self.allocator, filter.pattern, target).matches()) {
+            if (glob.match(filter.pattern, target).matches()) {
                 return true;
             }
         }
@@ -283,3 +272,14 @@ pub const PackageFilterIterator = struct {
         }
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.json;
+const Output = bun.Output;
+const glob = bun.glob;
+const strings = bun.strings;

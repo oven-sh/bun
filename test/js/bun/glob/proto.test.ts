@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles, tmpdirSync } from "harness";
 import { symlink } from "fs/promises";
+import { tempDirWithFiles } from "harness";
 import path from "path";
 
 test("Object prototype followSymlinks", async () => {

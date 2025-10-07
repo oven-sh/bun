@@ -69,8 +69,11 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
 
 ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
+    if (identifier == 0) {
+        return nullptr;
+    }
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(identifier);
+    return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
 template<bool SSL, bool isServer>
@@ -103,7 +106,7 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
         // but do not reject unauthorized
         opts.reject_unauthorized = false;
         enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts, &err);
+        this->m_ssl_client_websockets_ctx = us_create_bun_ssl_socket_context(loop, sizeof(size_t), opts, &err);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
@@ -379,16 +382,18 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
     reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
+
+// Zig bindings
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
 {
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
-{
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    postTaskOnTimeout(task, timeout);
+    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
 }
 
+extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
+{
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
+    if (!context) return nullptr;
+    return context->globalObject();
 }
+
+} // namespace WebCore

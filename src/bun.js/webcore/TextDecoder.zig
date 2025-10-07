@@ -1,3 +1,5 @@
+const TextDecoder = @This();
+
 // used for utf8 decoding
 buffered: struct {
     buf: [3]u8 = .{0} ** 3,
@@ -16,7 +18,7 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub const js = JSC.Codegen.JSTextDecoder;
+pub const js = jsc.Codegen.JSTextDecoder;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -29,23 +31,23 @@ pub fn finalize(this: *TextDecoder) void {
 
 pub fn getIgnoreBOM(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.ignore_bom);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.ignore_bom);
 }
 
 pub fn getFatal(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.fatal);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.fatal);
 }
 
 pub fn getEncoding(
     this: *TextDecoder,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
 const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -153,7 +155,7 @@ pub fn decodeUTF16(
     return .{ output, saw_error };
 }
 
-pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
     const input_slice = input_slice: {
@@ -170,12 +172,8 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
 
     const stream = stream: {
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].fastGet(globalThis, .stream)) |stream_value| {
-                const stream_bool = stream_value.coerce(bool, globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
-                break :stream stream_bool;
+            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
+                break :stream stream_value.toBoolean();
             }
         }
 
@@ -187,11 +185,13 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     };
 }
 
-pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) bun.JSError!JSValue {
+pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, uint8array: *jsc.JSUint8Array) bun.JSError!JSValue {
     return this.decodeSlice(globalThis, uint8array.slice(), false);
 }
 
-fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+    const TextCodec = @import("../bindings/TextCodec.zig").TextCodec;
+
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
@@ -201,11 +201,11 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
             // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
             // However, this is also what WebKit seems to do.
             //
-            // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
-            const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
-            const bytes = try globalThis.allocator().alloc(u16, out_length);
+            // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
+            const out_length = strings.elementLengthCP1252IntoUTF16([]const u8, buffer_slice);
+            const bytes = try bun.default_allocator.alloc(u16, out_length);
 
-            const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+            const out = strings.copyCP1252IntoUTF16([]u16, bytes, []const u8, buffer_slice);
             return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
         },
         EncodingLabel.@"UTF-8" => {
@@ -273,60 +273,77 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.fromUTF16(decoded.items);
+            var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
         },
+
+        // Handle all other encodings using WebKit's TextCodec
         else => {
-            return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
+            const encoding_name = EncodingLabel.getLabel(this.encoding);
+
+            // Create codec if we don't have one cached
+            // Note: In production, we might want to cache these per-encoding
+            const codec = TextCodec.create(encoding_name) orelse {
+                // Fallback to empty string if codec creation fails
+                return ZigString.init("").toJS(globalThis);
+            };
+            defer codec.deinit();
+
+            // Handle BOM stripping if needed
+            if (!this.ignore_bom) {
+                codec.stripBOM();
+            }
+
+            // Decode the data
+            const result = codec.decode(buffer_slice, flush, this.fatal);
+            defer result.result.deref();
+
+            // Check for errors if fatal mode is enabled
+            if (result.sawError and this.fatal) {
+                return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{encoding_name}).throw();
+            }
+
+            // Return the decoded string
+            return result.result.toJS(globalThis);
         },
     }
 }
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-    var args_ = callframe.arguments_old(2);
-    var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*TextDecoder {
+    const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
 
-    if (arguments.len > 0) {
-        // encoding
-        if (arguments[0].isString()) {
-            var str = try arguments[0].toSlice(globalThis, bun.default_allocator);
-            defer if (str.isAllocated()) str.deinit();
+    if (encoding_value.isString()) {
+        var str = try encoding_value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-            if (EncodingLabel.which(str.slice())) |label| {
-                decoder.encoding = label;
-            } else {
-                return globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
-            }
-        } else if (arguments[0].isUndefined()) {
-            // default to utf-8
-            decoder.encoding = EncodingLabel.@"UTF-8";
+        if (EncodingLabel.which(str.slice())) |label| {
+            decoder.encoding = label;
         } else {
-            return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+            return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
+        }
+    } else if (encoding_value.isUndefined()) {
+        // default to utf-8
+        decoder.encoding = EncodingLabel.@"UTF-8";
+    } else {
+        return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+    }
+
+    if (!options_value.isUndefined()) {
+        if (!options_value.isObject()) {
+            return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
         }
 
-        if (arguments.len >= 2) {
-            const options = arguments[1];
+        if (try options_value.get(globalThis, "fatal")) |fatal| {
+            decoder.fatal = fatal.toBoolean();
+        }
 
-            if (!options.isObject()) {
-                return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
-            }
-
-            if (try options.get(globalThis, "fatal")) |fatal| {
-                if (fatal.isBoolean()) {
-                    decoder.fatal = fatal.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
-                }
-            }
-
-            if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
-                if (ignoreBOM.isBoolean()) {
-                    decoder.ignore_bom = ignoreBOM.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
-                }
+        if (try options_value.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+            if (ignoreBOM.isBoolean()) {
+                decoder.ignore_bom = ignoreBOM.asBoolean();
+            } else {
+                return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
             }
         }
     }
@@ -334,21 +351,15 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return TextDecoder.new(decoder);
 }
 
-const TextDecoder = @This();
-
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
-const string = bun.string;
-const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = JSC.ArrayBuffer;
-const JSUint8Array = JSC.JSUint8Array;
-const ZigString = JSC.ZigString;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const EncodingLabel = JSC.WebCore.EncodingLabel;
+
+const jsc = bun.jsc;
+const ArrayBuffer = jsc.ArrayBuffer;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSUint8Array = jsc.JSUint8Array;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const EncodingLabel = jsc.WebCore.EncodingLabel;

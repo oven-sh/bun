@@ -129,9 +129,30 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto message = argument0.value().isUndefined() ? emptyString() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    String name = "Error"_s;
+    JSValue cause = {};
+
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto name = argument1.value().isUndefined() ? "Error"_s : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
+    if (JSObject* optionsObj = argument1.value().getObject()) {
+        // Get name from options
+        JSValue nameValue = optionsObj->get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!nameValue.isUndefined())
+            name = convert<IDLDOMString>(*lexicalGlobalObject, nameValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        // Get cause from options
+        auto causeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->cause);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (causeValue) {
+            cause = causeValue;
+        }
+    } else if (!argument1.value().isUndefined()) {
+        name = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
     auto object = DOMException::create(WTFMove(message), WTFMove(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -141,6 +162,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (!cause.isEmpty()) {
+        jsValue.getObject()->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
+    }
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMExceptionDOMConstructorConstruct, JSDOMExceptionDOMConstructor::construct);
@@ -247,7 +271,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSDOMExceptionPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMException::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

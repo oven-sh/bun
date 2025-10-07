@@ -31,7 +31,7 @@ export class SocketFramer {
   }
 
   send(socket: Socket, data: string): void {
-    socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
+    socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
     socket.write(socketFramerMessageLengthBuffer);
     socket.write(data);
   }

@@ -1,10 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-const std = @import("std");
-const bun = @import("bun");
-
-const mimalloc = @import("./allocators/mimalloc.zig");
-
 pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;
 
@@ -26,20 +21,12 @@ const Byte = u8;
 const uInt = u32;
 const uLong = u64;
 const Bytef = Byte;
-const charf = u8;
-const intf = c_int;
-const uIntf = uInt;
 const uLongf = uLong;
-const voidpc = ?*const anyopaque;
 const voidpf = ?*anyopaque;
-const voidp = ?*anyopaque;
-const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-const internal = @import("zlib-internal");
-const zStream_struct = @import("zlib-internal").zStream_struct;
 pub const z_stream = @import("zlib-internal").z_stream;
 pub const z_streamp = @import("zlib-internal").z_streamp;
 
@@ -65,7 +52,6 @@ pub const z_streamp = @import("zlib-internal").z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-const DataType = @import("zlib-internal").DataType;
 pub const FlushValue = @import("zlib-internal").FlushValue;
 pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
@@ -223,7 +209,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
             return null;
         }
 
-        pub fn readAll(this: *ZlibReader) !void {
+        pub fn readAll(this: *ZlibReader, is_done: bool) !void {
             while (this.state == State.Uninitialized or this.state == State.Inflating) {
 
                 // Before the call of inflate(), the application should ensure
@@ -261,11 +247,8 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                     this.zlib.next_out = &this.buf;
                 }
 
-                if (this.zlib.avail_in == 0) {
-                    return error.ShortRead;
-                }
-
-                const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+                // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
+                const rc = inflate(&this.zlib, FlushValue.NoFlush);
                 this.state = State.Inflating;
 
                 switch (rc) {
@@ -283,9 +266,22 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                         this.state = State.Error;
                         return error.OutOfMemory;
                     },
+                    ReturnCode.BufError => {
+                        // BufError with avail_in == 0 means we need more input data
+                        if (this.zlib.avail_in == 0) {
+                            if (is_done) {
+                                // Stream is truncated - we're at EOF but decoder needs more data
+                                this.state = State.Error;
+                                return error.ZlibError;
+                            }
+                            // Not at EOF - we can retry with more data
+                            return error.ShortRead;
+                        }
+                        this.state = State.Error;
+                        return error.ZlibError;
+                    },
                     ReturnCode.StreamError,
                     ReturnCode.DataError,
-                    ReturnCode.BufError,
                     ReturnCode.NeedDict,
                     ReturnCode.VersionError,
                     ReturnCode.ErrNo,
@@ -434,7 +430,7 @@ pub const ZlibReaderArrayList = struct {
         return null;
     }
 
-    pub fn readAll(this: *ZlibReader) ZlibError!void {
+    pub fn readAll(this: *ZlibReader, is_done: bool) ZlibError!void {
         defer {
             if (this.list.items.len > this.zlib.total_out) {
                 this.list.shrinkRetainingCapacity(this.zlib.total_out);
@@ -480,11 +476,8 @@ pub const ZlibReaderArrayList = struct {
                 this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
-            if (this.zlib.avail_in == 0) {
-                return error.ShortRead;
-            }
-
-            const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
+            const rc = inflate(&this.zlib, FlushValue.NoFlush);
             this.state = State.Inflating;
 
             switch (rc) {
@@ -496,9 +489,22 @@ pub const ZlibReaderArrayList = struct {
                     this.state = State.Error;
                     return error.OutOfMemory;
                 },
+                ReturnCode.BufError => {
+                    // BufError with avail_in == 0 means we need more input data
+                    if (this.zlib.avail_in == 0) {
+                        if (is_done) {
+                            // Stream is truncated - we're at EOF but decoder needs more data
+                            this.state = State.Error;
+                            return error.ZlibError;
+                        }
+                        // Not at EOF - we can retry with more data
+                        return error.ShortRead;
+                    }
+                    this.state = State.Error;
+                    return error.ZlibError;
+                },
                 ReturnCode.StreamError,
                 ReturnCode.DataError,
-                ReturnCode.BufError,
                 ReturnCode.NeedDict,
                 ReturnCode.VersionError,
                 ReturnCode.ErrNo,
@@ -743,6 +749,8 @@ pub const NodeMode = enum(u8) {
     UNZIP = 7,
     BROTLI_DECODE = 8,
     BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
 };
 
 /// Not for streaming!
@@ -940,3 +948,12 @@ pub const ZlibCompressorArrayList = struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;
+
+const internal = @import("zlib-internal");
+const DataType = @import("zlib-internal").DataType;
+const zStream_struct = @import("zlib-internal").zStream_struct;

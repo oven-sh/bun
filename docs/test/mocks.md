@@ -210,7 +210,7 @@ Understanding how `mock.module()` works helps you use it more effectively:
    - Absolute paths (`'/path/to/module'`)
    - Package names (`'lodash'`)
 
-4. **Import Timing Effects**: 
+4. **Import Timing Effects**:
    - When mocking before first import: No side effects from the original module occur
    - When mocking after import: The original module's side effects have already happened
    - For this reason, using `--preload` is recommended for mocks that need to prevent side effects
@@ -232,15 +232,15 @@ const random2 = mock(() => Math.random());
 test("clearing all mocks", () => {
   random1();
   random2();
-  
+
   expect(random1).toHaveBeenCalledTimes(1);
   expect(random2).toHaveBeenCalledTimes(1);
-  
+
   mock.clearAllMocks();
-  
+
   expect(random1).toHaveBeenCalledTimes(0);
   expect(random2).toHaveBeenCalledTimes(0);
-  
+
   // Note: implementations are preserved
   expect(typeof random1()).toBe("number");
   expect(typeof random2()).toBe("number");
@@ -258,18 +258,18 @@ Using `mock.restore()` can reduce the amount of code in your tests by adding it 
 ```ts
 import { expect, mock, spyOn, test } from "bun:test";
 
-import * as fooModule from './foo.ts';
-import * as barModule from './bar.ts';
-import * as bazModule from './baz.ts';
+import * as fooModule from "./foo.ts";
+import * as barModule from "./bar.ts";
+import * as bazModule from "./baz.ts";
 
-test('foo, bar, baz', () => {
-  const fooSpy = spyOn(fooModule, 'foo');
-  const barSpy = spyOn(barModule, 'bar');
-  const bazSpy = spyOn(bazModule, 'baz');
+test("foo, bar, baz", () => {
+  const fooSpy = spyOn(fooModule, "foo");
+  const barSpy = spyOn(barModule, "bar");
+  const bazSpy = spyOn(bazModule, "baz");
 
-  expect(fooSpy).toBe('foo');
-  expect(barSpy).toBe('bar');
-  expect(bazSpy).toBe('baz');
+  expect(fooSpy).toBe("foo");
+  expect(barSpy).toBe("bar");
+  expect(bazSpy).toBe("baz");
 
   fooSpy.mockImplementation(() => 42);
   barSpy.mockImplementation(() => 43);
@@ -281,9 +281,9 @@ test('foo, bar, baz', () => {
 
   mock.restore();
 
-  expect(fooSpy).toBe('foo');
-  expect(barSpy).toBe('bar');
-  expect(bazSpy).toBe('baz');
+  expect(fooSpy).toBe("foo");
+  expect(barSpy).toBe("bar");
+  expect(bazSpy).toBe("baz");
 });
 ```
 
@@ -297,10 +297,10 @@ import { test, expect } from "bun:test";
 // Using the 'vi' alias similar to Vitest
 test("vitest compatibility", () => {
   const mockFn = vi.fn(() => 42);
-  
+
   mockFn();
   expect(mockFn).toHaveBeenCalled();
-  
+
   // The following functions are available on the vi object:
   // vi.fn
   // vi.spyOn

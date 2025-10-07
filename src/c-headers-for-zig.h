@@ -61,11 +61,9 @@
 #include <winternl.h>
 #endif
 
-#if WINDOWS
-#include <windows.h>
-#include <winternl.h>
-#endif
-
 #undef lstat
 #undef fstat
 #undef stat
+
+#include <zstd.h>
+#include <zstd_errors.h>

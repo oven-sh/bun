@@ -1,21 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const css = @import("./css_parser.zig");
-const Printer = css.Printer;
-const Parser = css.Parser;
-const Result = css.Result;
-const voidWrap = css.voidWrap;
-const generic = css.generic;
-const Delimiters = css.Delimiters;
-const PrintErr = css.PrintErr;
-const Allocator = std.mem.Allocator;
-const implementEql = css.implementEql;
-const TextShadow = css.css_properties.text.TextShadow;
-
 /// This is a type whose items can either be heap-allocated (essentially the
 /// same as a BabyList(T)) or inlined in the struct itself.
 ///
-/// This is type is a performance optimizations for avoiding allocations, especially when you know the list
+/// This is type is a performance optimization for avoiding allocations, especially when you know the list
 /// will commonly have N or fewer items.
 ///
 /// The `capacity` field is used to disambiguate between the two states: - When
@@ -41,7 +27,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             pub fn initCapacity(allocator: Allocator, capacity: u32) HeapData {
                 return .{
                     .len = 0,
-                    .ptr = (allocator.alloc(T, capacity) catch bun.outOfMemory()).ptr,
+                    .ptr = bun.handleOom(allocator.alloc(T, capacity)).ptr,
                 };
             }
         };
@@ -131,12 +117,13 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
                 };
             }
-            defer list.deinitWithAllocator(allocator);
+            var list_ = list;
+            defer list_.deinit(allocator);
             var this: @This() = .{
-                .capacity = list.len,
+                .capacity = list_.len,
                 .data = .{ .inlined = undefined },
             };
-            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            @memcpy(this.data.inlined[0..list_.len], list_.items[0..list_.len]);
             return this;
         }
 
@@ -181,9 +168,15 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return &sl[sl.len - 1];
         }
 
+        pub inline fn lastMut(this: *@This()) ?*T {
+            const sl = this.slice_mut();
+            if (sl.len == 0) return null;
+            return &sl[sl.len - 1];
+        }
+
         pub inline fn toOwnedSlice(this: *const @This(), allocator: Allocator) []T {
             if (this.spilled()) return this.data.heap.ptr[0..this.data.heap.len];
-            return allocator.dupe(T, this.data.inlined[0..this.capacity]) catch bun.outOfMemory();
+            return bun.handleOom(allocator.dupe(T, this.data.inlined[0..this.capacity]));
         }
 
         /// NOTE: If this is inlined then this will refer to stack memory, if
@@ -245,7 +238,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                         break :images images;
                     };
                     if (!images.isEmpty()) {
-                        res.push(allocator, images) catch bun.outOfMemory();
+                        bun.handleOom(res.append(allocator, images));
                     }
                 }
 
@@ -258,7 +251,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);
                             }
-                            r.push(alloc, images) catch bun.outOfMemory();
+                            bun.handleOom(r.append(alloc, images));
                         }
                     }
                 }.helper;
@@ -269,7 +262,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
                 if (prefixes.none) {
                     if (rgb) |r| {
-                        res.push(allocator, r) catch bun.outOfMemory();
+                        bun.handleOom(res.append(allocator, r));
                     }
 
                     if (fallbacks.p3) {
@@ -435,7 +428,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub fn clone(this: *const @This(), allocator: Allocator) @This() {
             var ret = this.*;
             if (!this.spilled()) return ret;
-            ret.data.heap.ptr = (allocator.dupe(T, ret.data.heap.ptr[0..ret.data.heap.len]) catch bun.outOfMemory()).ptr;
+            ret.data.heap.ptr = bun.handleOom(allocator.dupe(T, ret.data.heap.ptr[0..ret.data.heap.len])).ptr;
             return ret;
         }
 
@@ -605,11 +598,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                 allocator.free(ptr[0..length]);
             } else if (new_cap != cap) {
                 const new_alloc: [*]T = if (unspilled) new_alloc: {
-                    const new_alloc = allocator.alloc(T, new_cap) catch bun.outOfMemory();
+                    const new_alloc = bun.handleOom(allocator.alloc(T, new_cap));
                     @memcpy(new_alloc[0..length], ptr[0..length]);
                     break :new_alloc new_alloc.ptr;
                 } else new_alloc: {
-                    break :new_alloc (allocator.realloc(ptr[0..length], new_cap * @sizeOf(T)) catch bun.outOfMemory()).ptr;
+                    break :new_alloc bun.handleOom(allocator.realloc(ptr[0..length], new_cap * @sizeOf(T))).ptr;
                 };
                 this.data = .{ .heap = .{ .ptr = new_alloc, .len = length } };
                 this.capacity = new_cap;
@@ -631,7 +624,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         fn growToHeap(this: *@This(), allocator: Allocator, additional: usize) void {
             bun.assert(!this.spilled());
             const new_size = growCapacity(this.capacity, this.capacity + additional);
-            var slc = allocator.alloc(T, new_size) catch bun.outOfMemory();
+            var slc = bun.handleOom(allocator.alloc(T, new_size));
             @memcpy(slc[0..this.capacity], this.data.inlined[0..this.capacity]);
             this.data = .{ .heap = HeapData{ .len = this.capacity, .ptr = slc.ptr } };
             this.capacity = new_size;
@@ -655,3 +648,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const css = @import("./css_parser.zig");
+const Delimiters = css.Delimiters;
+const Parser = css.Parser;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const generic = css.generic;
+const voidWrap = css.voidWrap;
+const TextShadow = css.css_properties.text.TextShadow;

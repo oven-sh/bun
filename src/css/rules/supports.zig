@@ -1,29 +1,8 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
-const LayerName = css.css_rules.layer.LayerName;
 const Location = css.css_rules.Location;
-const Angle = css.css_values.angle.Angle;
-const FontStyleProperty = css.css_properties.font.FontStyle;
-const FontFamily = css.css_properties.font.FontFamily;
-const FontWeight = css.css_properties.font.FontWeight;
-const FontStretch = css.css_properties.font.FontStretch;
-const CustomProperty = css.css_properties.custom.CustomProperty;
-const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
-const DashedIdent = css.css_values.ident.DashedIdent;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
@@ -192,14 +171,14 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(input.allocator(), in_parens.deepClone(input.allocator())) catch bun.outOfMemory();
+                        bun.handleOom(conditions.append(input.allocator(), in_parens.deepClone(input.allocator())));
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
                             seen_declarations.put(
                                 .{ property_id.withPrefix(css.VendorPrefix{ .none = true }), value },
                                 0,
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
                     }
 
@@ -216,17 +195,17 @@ pub const SupportsCondition = union(enum) {
                                 cond.declaration.property_id.addPrefix(property_id.prefix());
                             }
                         } else {
-                            seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
+                            bun.handleOom(seen_declarations.put(key, conditions.items.len));
                             conditions.append(input.allocator(), SupportsCondition{ .declaration = .{
                                 .property_id = property_id,
                                 .value = value,
-                            } }) catch bun.outOfMemory();
+                            } }) catch |err| bun.handleOom(err);
                         }
                     } else {
                         conditions.append(
                             input.allocator(),
                             condition,
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                 },
                 else => break,
@@ -436,3 +415,8 @@ pub fn SupportsRule(comptime R: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

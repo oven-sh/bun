@@ -15,9 +15,9 @@
  *
  */
 
-import assert from "assert";
 import { validateServiceConfig } from "@grpc/grpc-js/build/src/service-config";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import assert from "assert";
+import { describe, it } from "bun:test";
 
 function createRetryServiceConfig(retryConfig: object): object {
   return {

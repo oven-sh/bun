@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
+import { test } from "bun:test";
 import { bunExe } from "harness";
 
 test("spawn env", async () => {

@@ -19,4 +19,4 @@ await new Promise(resolve => setTimeout(resolve, ms));
 
 ---
 
-See [Docs > API > Utils](https://bun.sh/docs/api/utils) for more useful utilities.
+See [Docs > API > Utils](https://bun.com/docs/api/utils) for more useful utilities.

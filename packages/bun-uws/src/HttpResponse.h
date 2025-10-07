@@ -50,6 +50,11 @@ public:
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
+
+    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
+        return (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+    }
+
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
@@ -104,17 +109,20 @@ public:
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
         if (closeConnection) {
+            /* We can only write the header once */
+            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-            /* HTTP 1.1 must send this back unless the client already sent it to us.
-             * It is a connection close when either of the two parties say so but the
-             * one party must tell the other one so.
-             *
-             * This check also serves to limit writing the header only once. */
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
-                writeHeader("Connection", "close");
+                /* HTTP 1.1 must send this back unless the client already sent it to us.
+                * It is a connection close when either of the two parties say so but the
+                * one party must tell the other one so.
+                *
+                * This check also serves to limit writing the header only once. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    writeHeader("Connection", "close");
+                }
+
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
-
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
         /* if write was called and there was previously no Content-Length header set */
@@ -122,15 +130,14 @@ public:
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            
+
             /* Write the chunked data if there is any (this will not send zero chunks) */
             this->write(data, nullptr);
-            
+
 
             /* Terminating 0 chunk */
-            Super::write("\r\n0\r\n\r\n", 7);
-
-            httpResponseData->markDone();
+            Super::write("0\r\n\r\n", 5);
+            httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
@@ -196,7 +203,7 @@ public:
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
-                httpResponseData->markDone();
+                httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
@@ -236,7 +243,7 @@ public:
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
-    us_socket_t *upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
+    us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             struct us_socket_context_t *webSocketContext) {
 
@@ -309,13 +316,19 @@ public:
         HttpContext<SSL> *httpContext = (HttpContext<SSL> *) us_socket_context(SSL, (struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) getHttpResponseData())->buffer));
-
+        auto* responseData = getHttpResponseData();
+        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
+        
+        auto* socketData = responseData->socketData;
+        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        
         /* Destroy HttpResponseData */
-        getHttpResponseData()->~HttpResponseData();
+        responseData->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
+
+        
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
@@ -327,11 +340,13 @@ public:
         }
 
         /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure));
+        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
+        if (httpContextData->onSocketUpgraded) {
+            httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
+        }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        if (httpContextData->isParsingHttp) {
+        if (httpContextData->flags.isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }
@@ -343,7 +358,7 @@ public:
         us_socket_timeout(SSL, (us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
 
         /* Move construct the UserData right before calling open handler */
-        new (webSocket->getUserData()) UserData(std::move(userData));
+        new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
@@ -453,6 +468,7 @@ public:
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
+            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -529,7 +545,7 @@ public:
             }
             return !has_failed;
         }
-        
+
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
@@ -539,10 +555,10 @@ public:
                 writeMark();
 
                 writeHeader("Transfer-Encoding", "chunked");
+                Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
-            Super::write("\r\n", 2);
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
@@ -570,14 +586,18 @@ public:
             has_failed = has_failed || failed;
             total_written += written;
         }
-        
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            // Write End of Chunked Encoding after data has been written
+            Super::write("\r\n", 2);
+        }
+
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
             *writtenPtr = total_written;
         }
-
         /* If we did not fail the write, accept more */
         return !has_failed;
     }
@@ -728,6 +748,10 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->socketData;
+    }
+    bool isConnectRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        return httpResponseData->isConnectRequest;
     }
 
     void setWriteOffset(uint64_t offset) {

@@ -1,6 +1,4 @@
 // Things that maybe should go in Zig standard library at some point
-const std = @import("std");
-const bun = @import("bun");
 
 pub fn Key(comptime Map: type) type {
     return FieldType(Map.KV, "key").?;
@@ -232,3 +230,6 @@ pub fn fromSlice(
 fn needsAllocator(comptime Fn: anytype) bool {
     return std.meta.fields(std.meta.ArgsTuple(@TypeOf(Fn))).len > 2;
 }
+
+const bun = @import("bun");
+const std = @import("std");

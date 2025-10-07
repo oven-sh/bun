@@ -19,13 +19,19 @@ class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 
     LazyProperty<Process, Structure> m_cpuUsageStructure;
+    LazyProperty<Process, Structure> m_resourceUsageStructure;
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    // Function that looks up "emit" on "process" and calls it with the provided arguments
+    // Only used by internal code via passing to queueNextTick
+    LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    WriteBarrier<Unknown> m_argv;
+    WriteBarrier<Unknown> m_execArgv;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -44,6 +50,7 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
+    bool m_sourceMapsEnabled = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -55,10 +62,21 @@ public:
     template<size_t NumArgs>
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
 
+    // Some Node.js events want to be emitted on the next tick rather than synchronously.
+    // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
+    void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
+
+    static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+
+    JSValue getArgv(JSGlobalObject* globalObject);
+    void setArgv(JSGlobalObject* globalObject, JSValue argv);
+
+    JSValue getExecArgv(JSGlobalObject* globalObject);
+    void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -103,6 +121,7 @@ public:
     }
 
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
+    inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }

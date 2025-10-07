@@ -29,6 +29,10 @@ function generate(name) {
         fn: "dispose",
         length: 0,
       },
+      closeIdleConnections: {
+        fn: "closeIdleConnections",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
         length: 1,
@@ -110,6 +114,10 @@ export default [
       end: {
         fn: "end",
         length: 2,
+      },
+      getBytesWritten: {
+        fn: "getBytesWritten",
+        length: 0,
       },
       flushHeaders: {
         fn: "flushHeaders",

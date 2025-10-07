@@ -16,23 +16,11 @@
 //! Meeting all these constraints without extra memmove traffic during parsing
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
-const CSSString = css.CSSString;
-const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
-
-const Result = css.Result;
-const PrintResult = css.PrintResult;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 const parser = css.selector.parser;
 
@@ -207,3 +195,9 @@ pub fn SelectorBuilder(comptime Impl: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

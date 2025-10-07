@@ -33,16 +33,24 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNapiHandleScopeImpl.get(); },
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNapiHandleScopeImpl; });
     }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    static constexpr JSC::DestructionMode needsDestruction = JSC::DestructionMode::NeedsDestruction;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<NapiHandleScopeImpl*>(cell)->~NapiHandleScopeImpl();
+    }
+    ~NapiHandleScopeImpl() = default;
 
     // Store val in the handle scope
     void append(JSC::JSValue val);

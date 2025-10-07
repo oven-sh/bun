@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const AllocationScope = bun.AllocationScope;
-
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
 /// This structure, in release builds, is the same size as `[]const T`, but
@@ -66,8 +60,10 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []T, allocator: Allocator) Self {
-            if (AllocationScope.downcast(allocator)) |scope|
+            if (allocation_scope.isInstance(allocator)) {
+                const scope = AllocationScope.Borrowed.downcast(allocator);
                 scope.assertOwned(data);
+            }
 
             return .{
                 .ptr = data.ptr,
@@ -147,6 +143,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                 try str.intoOwned(allocator);
             }
             defer str.* = Self.empty;
+            defer if (cow_str_assertions and str.isOwned()) if (str.debug) |d| bun.destroy(d);
             return str.ptr[0..str.flags.len];
         }
 
@@ -221,15 +218,15 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            return std.fmt.formatType(str.slice(), fmt, options, writer, 1);
+        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return try writer.writeAll(str.slice());
         }
 
         /// Free this `Cow`'s allocation if it is owned.
         ///
         /// In debug builds, deinitializing borrowed strings performs debug
         /// checks. In release builds it is a no-op.
-        pub fn deinit(str: Self, allocator: Allocator) void {
+        pub fn deinit(str: *const Self, allocator: Allocator) void {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 bun.assertf(
@@ -273,9 +270,8 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
     };
 }
 
-const cow_str_assertions = Environment.isDebug;
 const DebugData = if (cow_str_assertions) struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
     allocator: Allocator,
     /// number of active borrows
     borrows: usize = 0,
@@ -312,3 +308,13 @@ test CowSlice {
     // borrow is uneffected by str being deinitialized
     try expectEqualStrings(borrow.slice(), "hello");
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const Environment = bun.Environment;
+const cow_str_assertions = Environment.isDebug;
+
+const allocation_scope = bun.allocators.allocation_scope;
+const AllocationScope = allocation_scope.AllocationScope;

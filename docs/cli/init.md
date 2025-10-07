@@ -33,6 +33,11 @@ It creates:
 - an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
 
+AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):
+
+- a `CLAUDE.md` file when Claude CLI is detected (disable with `CLAUDE_CODE_AGENT_RULE_DISABLED` env var)
+- a `.cursor/rules/*.mdc` file to guide [Cursor AI](https://cursor.sh) to use Bun instead of Node.js and npm when Cursor is detected
+
 If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
 
 At the end, it runs `bun install` to install `@types/bun`.
@@ -40,3 +45,32 @@ At the end, it runs `bun install` to install `@types/bun`.
 {% /details %}
 
 {% bunCLIUsage command="init" /%}
+
+## React
+
+The `--react` flag will scaffold a React project:
+
+```bash
+$ bun init --react
+```
+
+The `--react` flag accepts the following values:
+
+- `tailwind` - Scaffold a React project with Tailwind CSS
+- `shadcn` - Scaffold a React project with Shadcn/UI and Tailwind CSS
+
+### React + TailwindCSS
+
+This will create a React project with Tailwind CSS configured with Bun's bundler and dev server.
+
+```bash
+$ bun init --react=tailwind
+```
+
+### React + @shadcn/ui
+
+This will create a React project with shadcn/ui and Tailwind CSS configured with Bun's bundler and dev server.
+
+```bash
+$ bun init --react=shadcn
+```

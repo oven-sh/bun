@@ -25,8 +25,8 @@ server.on('stream', common.mustCall((stream) => {
   });
 }));
 
-server.listen(0, "127.0.0.1", common.mustCall(async () => {
-  const client = h2.connect(`http://127.0.0.1:${server.address().port}`);
+server.listen(0, common.mustCall(() => {
+  const client = h2.connect(`http://localhost:${server.address().port}`);
   const req = client.request();
 
   req.on('headers', common.mustCall((headers, flags) => {
@@ -36,7 +36,7 @@ server.listen(0, "127.0.0.1", common.mustCall(async () => {
 
   assert.strictEqual(req.sentHeaders[':method'], 'GET');
   assert.strictEqual(req.sentHeaders[':authority'],
-                     `127.0.0.1:${server.address().port}`);
+                     `localhost:${server.address().port}`);
   assert.strictEqual(req.sentHeaders[':scheme'], 'http');
   assert.strictEqual(req.sentHeaders[':path'], '/');
   req.resume();

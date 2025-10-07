@@ -1,17 +1,17 @@
 /**
  * This is the public API for `bind.ts` files
  * It is aliased as `import {} from 'bindgen'`
- * @see https://bun.sh/docs/project/bindgen
+ * @see https://bun.com/docs/project/bindgen
  */
 
 import {
-  isType,
   dictionaryImpl,
+  isFunc,
+  isType,
   oneOfImpl,
   registerFunction,
   TypeImpl,
   type TypeKind,
-  isFunc,
 } from "./bindgen-lib-internal";
 
 /** A type definition for argument parsing. See `bindgen.md` for usage details. */
@@ -33,7 +33,8 @@ export type Type<
 
 type TypeFlag = boolean | "opt-nonnull" | null;
 
-interface BaseTypeProps<T, K extends TypeKind> {
+// This needs to be exported to avoid error TS4023.
+export interface BaseTypeProps<T, K extends TypeKind> {
   [isType]: true | [T, K];
   /**
    * Optional means the value may be omitted from a parameter definition.
@@ -334,7 +335,7 @@ interface FuncOptionsWithVariant extends FuncMetadata {
   variants: FuncVariant[];
 }
 type FuncWithoutOverloads = FuncMetadata & FuncVariant;
-type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
+export type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
 
 export interface FuncMetadata {
   /**

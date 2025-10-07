@@ -34,7 +34,7 @@ const proc = Bun.spawn(["cat"], {
   ),
 });
 
-const text = await new Response(proc.stdout).text();
+const text = await proc.stdout.text();
 console.log(text); // "const input = "hello world".repeat(400); ..."
 ```
 
@@ -113,14 +113,34 @@ proc.stdin.flush();
 proc.stdin.end();
 ```
 
+Passing a `ReadableStream` to `stdin` lets you pipe data from a JavaScript `ReadableStream` directly to the subprocess's input:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("Hello from ");
+    controller.enqueue("ReadableStream!");
+    controller.close();
+  },
+});
+
+const proc = Bun.spawn(["cat"], {
+  stdin: stream,
+  stdout: "pipe",
+});
+
+const output = await new Response(proc.stdout).text();
+console.log(output); // "Hello from ReadableStream!"
+```
+
 ## Output streams
 
 You can read results from the subprocess via the `stdout` and `stderr` properties. By default these are instances of `ReadableStream`.
 
 ```ts
 const proc = Bun.spawn(["bun", "--version"]);
-const text = await new Response(proc.stdout).text();
-console.log(text); // => "$BUN_LATEST_VERSION"
+const text = await proc.stdout.text();
+console.log(text); // => "$BUN_LATEST_VERSION\n"
 ```
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:

@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
 import { path } from "../test/common/fixtures";
@@ -39,6 +39,7 @@ describe("crypto.hash", () => {
   [
     "blake2b256",
     "blake2b512",
+    "blake2s256",
     "ripemd160",
     "rmd160",
     "md4",

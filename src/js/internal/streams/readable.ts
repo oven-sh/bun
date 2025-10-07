@@ -2,7 +2,6 @@
 
 const EE = require("node:events");
 const { Stream, prependListener } = require("internal/streams/legacy");
-const { Buffer } = require("node:buffer");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
@@ -260,8 +259,8 @@ ReadableState.prototype[kOnConstructed] = function onConstructed(stream) {
   }
 };
 
-function Readable(options) {
-  if (!(this instanceof Readable)) return Reflect.construct(Readable, [options]);
+function Readable(options): void {
+  if (!(this instanceof Readable)) return new Readable(options);
 
   this._events ??= {
     close: undefined,

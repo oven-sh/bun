@@ -1,4 +1,4 @@
-import type { Socket, ServerWebSocket, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -31,7 +31,7 @@ class SocketFramer {
       $debug("local:", data);
     }
 
-    socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
+    socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
     socket.$write(socketFramerMessageLengthBuffer);
     socket.$write(data);
   }
@@ -483,6 +483,11 @@ async function connectToUnixServer(
 
         socket.data.framer.onData(socket, bytes);
       },
+
+      // Ensure we always drain the socket.
+      // This is necessary due to socket.$write usage.
+      drain: _socket => {},
+
       close: socket => {
         if (socket.data) {
           const { backend, framer } = socket.data;

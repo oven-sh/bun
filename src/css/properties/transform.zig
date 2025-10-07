@@ -1,40 +1,15 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
-const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
-const PropertyId = css.css_properties.PropertyId;
 const Property = css.css_properties.Property;
 
-const ContainerName = css.css_rules.container.ContainerName;
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
 const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
 const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-const Percentage = css.css_values.percentage.Percentage;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
 pub const TransformList = struct {
@@ -48,14 +23,14 @@ pub const TransformList = struct {
         input.skipWhitespace();
         var results = ArrayList(Transform){};
         switch (Transform.parse(input)) {
-            .result => |first| results.append(input.allocator(), first) catch bun.outOfMemory(),
+            .result => |first| bun.handleOom(results.append(input.allocator(), first)),
             .err => |e| return .{ .err = e },
         }
 
         while (true) {
             input.skipWhitespace();
             if (input.tryParse(Transform.parse, .{}).asValue()) |item| {
-                results.append(input.allocator(), item) catch bun.outOfMemory();
+                bun.handleOom(results.append(input.allocator(), item));
             } else {
                 return .{ .result = .{ .v = results } };
             }
@@ -1228,7 +1203,7 @@ pub const TransformHandler = struct {
         const individualProperty = struct {
             fn individualProperty(self: *TransformHandler, allocator: std.mem.Allocator, comptime field: []const u8, val: anytype) void {
                 if (self.transform) |*transform| {
-                    transform.*[0].v.append(allocator, val.toTransform(allocator)) catch bun.outOfMemory();
+                    bun.handleOom(transform.*[0].v.append(allocator, val.toTransform(allocator)));
                 } else {
                     @field(self, field) = val.deepClone(allocator);
                     self.has_any = true;
@@ -1276,7 +1251,7 @@ pub const TransformHandler = struct {
                         Property{ .unparsed = unparsed.getPrefixed(allocator, context.targets, css.prefixes.Feature.transform) }
                     else
                         property.deepClone(allocator);
-                    dest.append(allocator, prop) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, prop));
                 } else return false;
             },
             else => return false,
@@ -1301,19 +1276,25 @@ pub const TransformHandler = struct {
 
         if (transform) |t| {
             const prefix = context.targets.prefixes(t[1], css.prefixes.Feature.transform);
-            dest.append(allocator, Property{ .transform = .{ t[0], prefix } }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(allocator, Property{ .transform = .{ t[0], prefix } }));
         }
 
         if (translate) |t| {
-            dest.append(allocator, Property{ .translate = t }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(allocator, Property{ .translate = t }));
         }
 
         if (rotate) |r| {
-            dest.append(allocator, Property{ .rotate = r }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(allocator, Property{ .rotate = r }));
         }
 
         if (scale) |s| {
-            dest.append(allocator, Property{ .scale = s }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(allocator, Property{ .scale = s }));
         }
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

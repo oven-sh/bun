@@ -1,10 +1,9 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { it as bunIt, test as bunTest, describe, expect } from "bun:test";
+import { appendFile } from "fs/promises";
+import { getSecret, isCI } from "harness";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
-import { appendFile } from "fs/promises";
-import { heapStats } from "bun:jsc";
-import { getSecret, isCI } from "harness";
 
 function* TestIDGenerator(): Generator<number> {
   while (true) {
@@ -19,7 +18,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
     await prisma.user.deleteMany({ where: { testId } });
   } catch {}
 }
-["sqlite", "postgres" /*"mssql", "mongodb"*/].forEach(async type => {
+for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
   let Client: typeof PrismaClient;
 
   const env_name = `TLS_${type.toUpperCase()}_DATABASE_URL`;
@@ -326,4 +325,4 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       }
     });
   });
-});
+}

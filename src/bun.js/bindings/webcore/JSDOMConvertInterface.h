@@ -67,7 +67,7 @@ template<typename T> struct Converter<IDLInterface<T>> : DefaultConverter<IDLInt
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         ReturnType object = JSToWrappedOverloader<T>::toWrapped(lexicalGlobalObject, value);
-        if (UNLIKELY(!object))
+        if (!object) [[unlikely]]
             exceptionThrower(lexicalGlobalObject, scope);
         return object;
     }

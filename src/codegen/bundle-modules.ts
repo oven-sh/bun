@@ -12,14 +12,13 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import ErrorCode from "../bun.js/bindings/ErrorCode";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -43,7 +42,7 @@ const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 const t = new Bun.Transpiler({ loader: "tsx" });
 
 let start = performance.now();
-const silent = process.env.BUN_SILENT === "1";
+const silent = process.env.BUN_SILENT === "1" || process.env.CLAUDECODE;
 function markVerbose(log: string) {
   const now = performance.now();
   console.log(`${log} (${(now - start).toFixed(0)}ms)`);
@@ -76,11 +75,14 @@ async function retry(n, fn) {
   throw err;
 }
 
+const bunRepoRoot = path.join(CMAKE_BUILD_ROOT, "..", "..");
+
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
-    let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+    const file = path.join(BASE, moduleList[i]);
+    let input = fs.readFileSync(file, "utf8");
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -88,14 +90,16 @@ for (let i = 0; i < nativeStartIndex; i++) {
           "Do not use CommonJS module.exports in ESM modules. Use `export default { ... }` instead. See src/js/README.md",
         );
       } else {
-        throw new Error("Internal modules must have at least one ESM export statement. See src/js/README.md");
+        throw new Error(
+          `Internal modules must have at least one ESM export statement in '${path.relative(bunRepoRoot, file)}' — see src/js/README.md`,
+        );
       }
     }
 
     // TODO: there is no reason this cannot be converted automatically.
     // import { ... } from '...' -> `const { ... } = require('...')`
-    const scannedImports = t.scanImports(input);
-    for (const imp of scannedImports) {
+    const scannedImports = t.scan(input);
+    for (const imp of scannedImports.imports) {
       if (imp.kind === "import-statement") {
         var isBuiltin = true;
         try {
@@ -110,12 +114,20 @@ for (let i = 0; i < nativeStartIndex; i++) {
             `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
           );
           err.name = "BunError";
-          err.fileName = moduleList[i];
+          err["fileName"] = moduleList[i];
           throw err;
         }
       }
     }
 
+    if (scannedImports.exports.includes("default") && scannedImports.exports.length > 1) {
+      const err = new Error(
+        `Using \`export default\` AND named exports together in builtin modules is unsupported. See src/js/README.md (from ${moduleList[i]})`,
+      );
+      err.name = "BunError";
+      err["fileName"] = moduleList[i];
+      throw err;
+    }
     let importStatements: string[] = [];
 
     const processed = sliceSourceCode(
@@ -328,14 +340,13 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
+        const moduleName = idToPublicSpecifierOrEnumName(id);
+        const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
+        const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-                id.replace(/\.[mc]?[tj]s$/, ".js"),
-              )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-                .replace(/\.[mc]?[tj]s$/, "")
-                .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`;
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;
@@ -497,6 +508,10 @@ declare module "module" {
 
 `;
 
+    dts += `        (id: "bun"): typeof import("bun");\n`;
+    dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
+    dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
+
     for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
@@ -525,6 +540,27 @@ declare module "module" {
 );
 
 mark("Generate Code");
+
+const evalFiles = new Bun.Glob(path.join(BASE, "eval", "*.ts")).scanSync();
+for (const file of evalFiles) {
+  const {
+    outputs: [output],
+  } = await Bun.build({
+    entrypoints: [file],
+
+    // Shrink it.
+    minify: !debug,
+
+    target: "bun",
+    format: "esm",
+    env: "disable",
+    define: {
+      "process.platform": JSON.stringify(process.platform),
+      "process.arch": JSON.stringify(process.arch),
+    },
+  });
+  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());
+}
 
 if (!silent) {
   console.log("");

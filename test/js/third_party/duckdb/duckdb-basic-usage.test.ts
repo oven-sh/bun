@@ -4,7 +4,7 @@ if (libcFamily == "musl") {
   process.exit(0);
 }
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 // Must be CJS require so that the above code can exit before we attempt to import DuckDB
 const { Database } = require("duckdb");
 

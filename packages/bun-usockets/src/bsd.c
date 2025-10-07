@@ -25,6 +25,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if BUN_DEBUG
+// Debug network traffic logging
+static FILE *debug_recv_file = NULL;
+static FILE *debug_send_file = NULL;
+static int debug_logging_initialized = 0;
+
+static void init_debug_logging() {
+    if (debug_logging_initialized) return;
+    debug_logging_initialized = 1;
+
+    const char *recv_path = getenv("BUN_RECV");
+    const char *send_path = getenv("BUN_SEND");
+    if (recv_path) if (!debug_recv_file) debug_recv_file = fopen(recv_path, "w");
+    if (send_path) if (!debug_send_file) debug_send_file = fopen(send_path, "w");
+}
+#endif
+
 #ifndef _WIN32
 // Necessary for the stdint include
 #ifndef _GNU_SOURCE
@@ -700,6 +717,25 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
             return LIBUS_SOCKET_ERROR;
         }
 
+#ifdef __APPLE__
+        /* A bug in XNU (the macOS kernel) can cause accept() to return a socket but addrlen=0.
+         * This happens when an IPv4 connection is made to an IPv6 dual-stack listener
+         * and the connection is immediately aborted (sends RST packet).
+         * However, there might be buffered data from connectx() before the abort. */
+        if (addr->len == 0) {
+            /* Check if there's any pending data before discarding the socket */
+            char peek_buf[1];
+            ssize_t has_data = recv(accepted_fd, peek_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+            
+            if (has_data <= 0) {
+                /* No data available, socket is truly dead - discard it */
+                bsd_close_socket(accepted_fd);
+                continue; /* Try to accept the next connection */
+            }
+            /* If has_data > 0, let the socket through - there's buffered data to read */
+        }
+#endif
+
         break;
     }
 
@@ -721,9 +757,34 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
             continue;
         }
 
+#if BUN_DEBUG
+        // Debug logging for received data
+        if (ret > 0) {
+            init_debug_logging();
+            if (debug_recv_file) {
+                fwrite(buf, 1, ret, debug_recv_file);
+                fflush(debug_recv_file);
+            }
+        }
+#endif
+
         return ret;
     }
 }
+
+#if !defined(_WIN32)
+ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t ret = recvmsg(fd, msg, flags);
+
+        if (UNLIKELY(IS_EINTR(ret))) {
+            continue;
+        }
+
+        return ret;
+    }
+}
+#endif
 
 #if !defined(_WIN32)
 #include <sys/uio.h>
@@ -748,9 +809,9 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #else
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t written = bsd_send(fd, header, header_length, 0);
+    ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {
-        ssize_t second_write = bsd_send(fd, payload, payload_length, 0);
+        ssize_t second_write = bsd_send(fd, payload, payload_length);
         if (second_write > 0) {
             written += second_write;
         }
@@ -759,7 +820,7 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #endif
 
-ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -767,13 +828,32 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
 #define MSG_NOSIGNAL 0
 #endif
 
-        #ifdef MSG_MORE
-            // for Linux we do not want signals
-            ssize_t rc = send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
-        #else
-            // use TCP_NOPUSH
-            ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
-        #endif
+        // use TCP_NOPUSH
+        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
+
+        if (UNLIKELY(IS_EINTR(rc))) {
+            continue;
+        }
+
+#if BUN_DEBUG
+        // Debug logging for sent data
+        if (rc > 0) {
+            init_debug_logging();
+            if (debug_send_file) {
+                fwrite(buf, 1, rc, debug_send_file);
+                fflush(debug_send_file);
+            }
+        }
+#endif
+
+        return rc;
+    }
+}
+
+#if !defined(_WIN32)
+ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t rc = sendmsg(fd, msg, flags);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -782,6 +862,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
         return rc;
     }
 }
+#endif
 
 int bsd_would_block() {
 #ifdef _WIN32

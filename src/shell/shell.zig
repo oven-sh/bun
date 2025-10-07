@@ -1,25 +1,7 @@
-const bun = @import("bun");
-const std = @import("std");
-const builtin = @import("builtin");
-const Arena = std.heap.ArenaAllocator;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSPromise = bun.JSC.JSPromise;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Which = @import("../which.zig");
-const Braces = @import("./braces.zig");
-const Syscall = @import("../sys.zig");
-const Glob = @import("../glob.zig");
-const ResolvePath = @import("../resolver/resolve_path.zig");
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
-
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
+
+pub const AllocScope = @import("./AllocScope.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
@@ -32,7 +14,10 @@ pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+pub const Yield = @import("./Yield.zig").Yield;
+pub const unreachableState = interpret.unreachableState;
+
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
@@ -47,7 +32,7 @@ pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
-    sys: JSC.SystemError,
+    sys: jsc.SystemError,
     custom: []const u8,
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
@@ -56,7 +41,7 @@ pub const ShellErr = union(enum) {
         return .{
             .sys = switch (@TypeOf(e)) {
                 Syscall.Error => e.toShellSystemError(),
-                JSC.SystemError => e,
+                jsc.SystemError => e,
                 else => @compileError("Invalid `e`: " ++ @typeName(e)),
             },
         };
@@ -71,7 +56,7 @@ pub const ShellErr = union(enum) {
         };
     }
 
-    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
+    pub fn throwJS(this: *const @This(), globalThis: *jsc.JSGlobalObject) bun.JSError {
         defer {
             // basically `transferToJS`. don't want to double deref the sys error
             switch (this.*) {
@@ -89,9 +74,9 @@ pub const ShellErr = union(enum) {
                 return globalThis.throwValue(err);
             },
             .custom => {
-                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
+                const err_value = bun.String.cloneUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
-                // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+                // this.bunVM().allocator.free(jsc.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
                 return globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
@@ -169,13 +154,12 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
-const logsys = bun.Output.scoped(.SYS, true);
+const log = bun.Output.scoped(.SHELL, .hidden);
 
 pub const GlobalJS = struct {
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
 
-    pub inline fn init(g: *JSC.JSGlobalObject) GlobalJS {
+    pub inline fn init(g: *jsc.JSGlobalObject) GlobalJS {
         return .{
             .globalThis = g,
         };
@@ -185,35 +169,35 @@ pub const GlobalJS = struct {
         return this.globalThis.bunVM().allocator;
     }
 
-    pub inline fn eventLoopCtx(this: @This()) *JSC.VirtualMachine {
+    pub inline fn eventLoopCtx(this: @This()) *jsc.VirtualMachine {
         return this.globalThis.bunVM();
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args)) },
         };
     }
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwError(this: @This(), err: bun.sys.Error) void {
-        this.globalThis.throwValue(err.toJSC(this.globalThis));
+        this.globalThis.throwValue(err.toJS(this.globalThis));
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args));
         return .{
             .custom = str,
         };
@@ -228,7 +212,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        this.globalThis.bunVMConcurrently().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(task)));
+        this.globalThis.bunVMConcurrently().enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(task)));
     }
 
     pub inline fn topLevelDir(this: @This()) []const u8 {
@@ -239,8 +223,8 @@ pub const GlobalJS = struct {
         return this.globalThis.bunVM().transpiler.env;
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        const loop = JSC.AbstractVM(this.eventLoopCtx());
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
+        const loop = jsc.AbstractVM(this.eventLoopCtx());
         return loop.platformEventLoop();
     }
 
@@ -250,9 +234,9 @@ pub const GlobalJS = struct {
 };
 
 pub const GlobalMini = struct {
-    mini: *JSC.MiniEventLoop,
+    mini: *jsc.MiniEventLoop,
 
-    pub inline fn init(g: *JSC.MiniEventLoop) @This() {
+    pub inline fn init(g: *jsc.MiniEventLoop) @This() {
         return .{
             .mini = g,
         };
@@ -266,7 +250,7 @@ pub const GlobalMini = struct {
         return this.mini.allocator;
     }
 
-    pub inline fn eventLoopCtx(this: @This()) *JSC.MiniEventLoop {
+    pub inline fn eventLoopCtx(this: @This()) *jsc.MiniEventLoop {
         return this.mini;
     }
 
@@ -274,18 +258,18 @@ pub const GlobalMini = struct {
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args)) },
         };
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
@@ -300,7 +284,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        var anytask = bun.default_allocator.create(JSC.AnyTaskWithExtraContext) catch bun.outOfMemory();
+        var anytask = bun.handleOom(bun.default_allocator.create(jsc.AnyTaskWithExtraContext));
         _ = anytask.from(task, "runFromMainThreadMini");
         this.mini.enqueueTaskConcurrent(anytask);
     }
@@ -310,7 +294,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args));
         return .{
             .custom = str,
         };
@@ -320,13 +304,13 @@ pub const GlobalMini = struct {
         shellerr.throwMini();
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        const loop = JSC.AbstractVM(this.eventLoopCtx());
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
+        const loop = jsc.AbstractVM(this.eventLoopCtx());
         return loop.platformEventLoop();
     }
 };
 
-// const GlobalHandle = if (JSC.EventLoopKind == .js) GlobalJS else GlobalMini;
+// const GlobalHandle = if (jsc.EventLoopKind == .js) GlobalJS else GlobalMini;
 
 pub const AST = struct {
     pub const Script = struct {
@@ -1953,7 +1937,7 @@ pub const Parser = struct {
                 }
                 break :size i;
             };
-            var buf = self.alloc.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(self.alloc.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
                 @memcpy(buf[i .. i + e.msg.len], e.msg);
@@ -2072,6 +2056,10 @@ pub const Token = union(TokenTag) {
             if (bun.Environment.allow_assert) assert(range.start <= range.end);
             return range.end - range.start;
         }
+
+        pub fn slice(range: TextRange, buf: []const u8) []const u8 {
+            return buf[range.start..range.end];
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
@@ -2092,7 +2080,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
-            .Eq => "`+`",
+            .Eq => "`=`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
             // Comment,
@@ -2131,15 +2119,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.len();
                 }
                 break :size i;
             };
-            var buf = arena.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(arena.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + e.msg.len()], e.msg.slice(this.strpool));
+                i += e.msg.len();
             }
             break :str buf;
         };
@@ -2148,7 +2136,7 @@ pub const LexResult = struct {
 };
 pub const LexError = struct {
     /// Allocated with lexer arena
-    msg: []const u8,
+    msg: Token.TextRange,
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2225,17 +2213,17 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         pub fn get_result(self: @This()) LexResult {
             return .{
-                .tokens = self.tokens.items[0..],
-                .strpool = self.strpool.items[0..],
-                .errors = self.errors.items[0..],
+                .tokens = self.tokens.items,
+                .strpool = self.strpool.items,
+                .errors = self.errors.items,
             };
         }
 
         pub fn add_error(self: *@This(), msg: []const u8) void {
             const start = self.strpool.items.len;
-            self.strpool.appendSlice(msg) catch bun.outOfMemory();
+            bun.handleOom(self.strpool.appendSlice(msg));
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            bun.handleOom(self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }));
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -3628,8 +3616,6 @@ pub const CmdEnvIter = struct {
     }
 };
 
-const ExpansionStr = union(enum) {};
-
 pub const Test = struct {
     pub const TestToken = union(TokenTag) {
         // |
@@ -3713,9 +3699,9 @@ pub const Test = struct {
 };
 
 pub fn shellCmdFromJS(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     string_args: JSValue,
-    template_args: *JSC.JSArrayIterator,
+    template_args: *jsc.JSArrayIterator,
     out_jsobjs: *std.ArrayList(JSValue),
     jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
@@ -3723,10 +3709,10 @@ pub fn shellCmdFromJS(
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
-    var string_iter = string_args.arrayIterator(globalThis);
+    var string_iter = try string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
-    while (string_iter.next()) |js_value| {
+    while (try string_iter.next()) |js_value| {
         defer i += 1;
         if (!try builder.appendJSValueStr(js_value, false)) {
             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3734,7 +3720,7 @@ pub fn shellCmdFromJS(
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
-            const template_value = template_args.next() orelse {
+            const template_value = try template_args.next() orelse {
                 return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
             try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
@@ -3744,7 +3730,7 @@ pub fn shellCmdFromJS(
 }
 
 pub fn handleTemplateValue(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     template_value: JSValue,
     out_jsobjs: *std.ArrayList(JSValue),
     out_script: *std.ArrayList(u8),
@@ -3763,7 +3749,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        if (template_value.as(JSC.WebCore.Blob)) |blob| {
+        if (template_value.as(jsc.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 if (store.data == .file) {
                     if (store.data.file.pathlike == .path) {
@@ -3784,7 +3770,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
+        if (try jsc.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
             _ = rstream;
 
             const idx = out_jsobjs.items.len;
@@ -3795,7 +3781,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        if (template_value.as(JSC.WebCore.Response)) |req| {
+        if (template_value.as(jsc.WebCore.Response)) |req| {
             _ = req;
 
             const idx = out_jsobjs.items.len;
@@ -3814,10 +3800,10 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.jsType().isArray()) {
-            var array = template_value.arrayIterator(globalThis);
+            var array = try template_value.arrayIterator(globalThis);
             const last = array.len -| 1;
             var i: u32 = 0;
-            while (array.next()) |arr| : (i += 1) {
+            while (try array.next()) |arr| : (i += 1) {
                 try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
                 if (i < last) {
                     const str = bun.String.static(" ");
@@ -3830,7 +3816,7 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.isObject()) {
-            if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
+            if (try template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
@@ -3847,7 +3833,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        if (template_value.implementsToString(globalThis)) {
+        if (try template_value.implementsToString(globalThis)) {
             if (!try builder.appendJSValueStr(template_value, true)) {
                 return globalThis.throw("Shell script string contains invalid UTF-16", .{});
             }
@@ -3861,13 +3847,13 @@ pub fn handleTemplateValue(
 }
 
 pub const ShellSrcBuilder = struct {
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     outbuf: *std.ArrayList(u8),
     jsstrs_to_escape: *std.ArrayList(bun.String),
     jsstr_ref_buf: [128]u8 = [_]u8{0} ** 128,
 
     pub fn init(
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         outbuf: *std.ArrayList(u8),
         jsstrs_to_escape: *std.ArrayList(bun.String),
     ) ShellSrcBuilder {
@@ -3915,7 +3901,7 @@ pub const ShellSrcBuilder = struct {
         if (!invalid) return false;
         if (allow_escape) {
             if (needsEscapeUtf8AsciiLatin1(utf8)) {
-                const bunstr = bun.String.createUTF8(utf8);
+                const bunstr = bun.String.cloneUTF8(utf8);
                 defer bunstr.deref();
                 try this.appendJSStrRef(bunstr);
                 return true;
@@ -4086,7 +4072,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 return this;
             }
             var this: @This() = .{
-                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+                .heap = bun.handleOom(ByteList.initCapacity(bun.default_allocator, vals.len)),
             };
             this.heap.appendSliceAssumeCapacity(vals);
             return this;
@@ -4111,9 +4097,9 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             len: u32 = 0,
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4153,6 +4139,19 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 },
                 .inlined => {
                     _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn pop(this: *@This()) T {
+            switch (this.*) {
+                .heap => {
+                    return this.heap.pop().?;
+                },
+                .inlined => {
+                    const val = this.inlined.items[this.inlined.len - 1];
+                    this.inlined.len -= 1;
+                    return val;
                 },
             }
         }
@@ -4245,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }
@@ -4278,11 +4277,11 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
-    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        if (comptime bun.Environment.isWindows) return JSValue.false;
+    pub fn disabledOnThisPlatform(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime bun.Environment.isWindows) return .false;
 
         const arguments_ = callframe.arguments_old(1);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
             return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
@@ -4294,18 +4293,18 @@ pub const TestingAPIs = struct {
 
         inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
             if (bun.strings.eqlComptime(utf8str.byteSlice(), @tagName(disabled))) {
-                return JSValue.true;
+                return .true;
             }
         }
-        return JSValue.false;
+        return .false;
     }
 
     pub fn shellLex(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
@@ -4316,7 +4315,7 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
@@ -4369,11 +4368,11 @@ pub const TestingAPIs = struct {
     }
 
     pub fn shellParse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
@@ -4384,7 +4383,7 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
@@ -4428,6 +4427,21 @@ pub const TestingAPIs = struct {
     }
 };
 
+pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
+
+const Syscall = @import("../sys.zig");
+const builtin = @import("builtin");
+
+const bun = @import("bun");
 const assert = bun.assert;
 
-pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const isAllAscii = bun.strings.isAllASCII;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const Allocator = std.mem.Allocator;

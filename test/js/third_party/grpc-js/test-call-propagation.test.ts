@@ -15,10 +15,10 @@
  *
  */
 
-import assert from "node:assert";
 import grpc from "@grpc/grpc-js";
+import { afterAll, afterEach, beforeAll, describe, it } from "bun:test";
+import assert from "node:assert";
 import { loadProtoFile } from "./common.ts";
-import { afterAll, beforeAll, describe, it, afterEach } from "bun:test";
 
 function multiDone(done: () => void, target: number) {
   let count = 0;
@@ -73,7 +73,7 @@ describe("Call propagation", () => {
     proxyServer.forceShutdown();
   });
   describe("Cancellation", () => {
-    it.todo("should work with unary requests", done => {
+    it("should work with unary requests", done => {
       done = multiDone(done, 2);
       // eslint-disable-next-line prefer-const
       let call: grpc.ClientUnaryCall;
@@ -119,7 +119,7 @@ describe("Call propagation", () => {
         done();
       });
     });
-    it.todo("Should work with server streaming requests", done => {
+    it("Should work with server streaming requests", done => {
       done = multiDone(done, 2);
       // eslint-disable-next-line prefer-const
       let call: grpc.ClientReadableStream<unknown>;

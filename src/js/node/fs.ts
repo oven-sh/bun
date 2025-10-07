@@ -1,5 +1,5 @@
 // Hardcoded module "node:fs"
-import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
+import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
@@ -115,6 +115,10 @@ function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
 }
 
+function emitStop(self: StatWatcher) {
+  self.emit("stop");
+}
+
 class StatWatcher extends EventEmitter {
   _handle: StatWatcherHandle | null;
 
@@ -131,7 +135,11 @@ class StatWatcher extends EventEmitter {
   start() {}
 
   stop() {
-    this._handle?.close();
+    if (!this._handle) return;
+
+    process.nextTick(emitStop, this);
+
+    this._handle.close();
     this._handle = null;
   }
 
@@ -525,7 +533,7 @@ var access = function access(path, mode, callback) {
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync() {
+  existsSync = function existsSync(_path: string) {
     try {
       return fs.existsSync.$apply(fs, arguments);
     } catch {
@@ -619,7 +627,12 @@ var access = function access(path, mode, callback) {
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
+{
+  const existsCb = exists;
+  exists[kCustomPromisifiedSymbol] = function exists(path) {
+    return new Promise(resolve => existsCb(path, resolve));
+  };
+}
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
@@ -644,7 +657,7 @@ function watchFile(filename, options, listener) {
   }
 
   if (typeof listener !== "function") {
-    throw new TypeError("listener must be a function");
+    throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
   }
 
   var stat = statWatchers.get(filename);
@@ -718,7 +731,11 @@ const realpathSync: typeof import("node:fs").realpathSync =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
-          encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
+          if (encoding) {
+            (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(
+              encoding,
+            );
+          }
         }
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
@@ -836,7 +853,11 @@ const realpath: typeof import("node:fs").realpath =
         if (options) {
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
-          encoding && (assertEncodingForWindows ?? $newZigFunction("types.zig", "jsAssertEncodingValid", 1))(encoding);
+          if (encoding) {
+            (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(
+              encoding,
+            );
+          }
         }
         if (p instanceof URL) {
           if (p.pathname.indexOf("%00") != -1) {
@@ -1061,7 +1082,7 @@ class Dir {
       return this.read().then(entry => cb(null, entry));
     }
 
-    if (this.#entries) return Promise.resolve(this.#entries.shift() ?? null);
+    if (this.#entries) return Promise.$resolve(this.#entries.shift() ?? null);
 
     return fs
       .readdir(this.#path, {

@@ -11,7 +11,7 @@ it("should log to console correctly", async () => {
     env: bunEnv,
   });
   expect(await exited).toBe(0);
-  const outText = await new Response(stderr).text();
+  const outText = await stderr.text();
   const expectedText = (await file(join(import.meta.dir, "console-timeLog.expected.txt")).text()).replaceAll(
     "\r\n",
     "\n",

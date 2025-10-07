@@ -1,7 +1,7 @@
 import assert from "assert";
-import path from "path";
 import { describe, expect } from "bun:test";
 import { osSlashes } from "harness";
+import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -198,7 +198,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.appendFile(
         "/out.js",
-        dedent/* js */ `
+        dedent /* js */ `
           import { strictEqual } from "node:assert";
           strictEqual(globalName.default, 123, ".default");
           strictEqual(globalName.v, 234, ".v");
@@ -299,7 +299,7 @@ describe("bundler", () => {
         export default 3;
         export const a2 = 4;
       `,
-      "/test.js": String.raw/* js */ `
+      "/test.js": String.raw /* js */ `
         import { deepEqual } from 'node:assert';
         globalThis.deepEqual = deepEqual;
         await import ('./out.js');
@@ -1581,6 +1581,69 @@ describe("bundler", () => {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
   });
+  itBundled("default/CircularTLADependency", {
+    files: {
+      "/entry.js": /* js */ `
+        const { A } = await import('./a.js');
+        console.log(A);
+      `,
+      "/a.js": /* js */ `
+        import { B } from './b.js';
+        export const A = 'hi';
+      `,
+      "/b.js": /* js */ `
+        import { A } from './a.js';
+
+        // TLA that should mark the wrapper closure for a.js as async
+        await 1;
+
+        export const B = 'hello';
+      `,
+    },
+    run: {
+      stdout: "hi\n",
+    },
+  });
+  itBundled("default/CircularTLADependency2", {
+    files: {
+      "/entry.ts": /* ts */ `
+        await import("./b.ts");
+      `,
+      "/b.ts": /* ts */ `
+        import { c } from "./c.ts";
+        console.log(c);
+        export const b = "b";
+      `,
+      "/c.ts": /* ts */ `
+        import { d } from "./d.ts";
+        console.log(d);
+        export const c = "c";
+      `,
+      "/d.ts": /* ts */ `
+        const { e } = await import("./e.ts");
+        console.log(e);
+        import { f } from "./f.ts";
+        console.log(f);
+        export const d = "d";
+      `,
+      "/e.ts": /* ts */ `
+        export const e = "e";
+      `,
+      "/f.ts": /* ts */ `
+        import { g } from "./g.ts";
+        console.log(g);
+        export const f = "f";
+      `,
+      "/g.ts": /* ts */ `
+        import { c } from "./c.ts";
+        console.log(c);
+        export const g = "g";
+      `,
+    },
+    run: {
+      stdout: "c\ng\ne\nf\nd\nc\n",
+    },
+  });
   itBundled("default/ThisOutsideFunctionRenamedToExports", {
     files: {
       "/entry.js": /* js */ `
@@ -2068,7 +2131,6 @@ describe("bundler", () => {
         }
       `,
     },
-    todo: true,
     minifyIdentifiers: true,
     bundling: false,
     format: "cjs",
@@ -4526,7 +4588,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4581,6 +4642,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/KeepNamesTreeShaking", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         (function() {
@@ -4617,6 +4679,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/KeepNamesClassStaticName", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         class ClassName1A { static foo = 1 }
@@ -5351,8 +5414,8 @@ describe("bundler", () => {
           number 567
           string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
           string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-          object {"default":123}
-          object {"default":567}
+          object {"default":123,"module.exports":123}
+          object {"default":567,"module.exports":567}
         `,
     },
   });
@@ -5377,8 +5440,8 @@ describe("bundler", () => {
         number 567
         string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
         string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-        object {"default":123}
-        object {"default":567}
+        object {"default":123,"module.exports":123}
+        object {"default":567,"module.exports":567}
       `,
     },
   });

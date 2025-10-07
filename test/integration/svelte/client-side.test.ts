@@ -1,7 +1,7 @@
-import path from "node:path";
+import { Subprocess } from "bun";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { promises as fs, statSync } from "node:fs";
-import { Subprocess } from "bun";
+import path from "node:path";
 
 const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", ...segs);
 

@@ -159,13 +159,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('response', mustCall((headers, flags) => {
@@ -193,13 +193,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('data', mustNotCall());
@@ -224,13 +224,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('response', mustCall((headers, flags) => {
@@ -259,13 +259,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('response', mustCall((headers, flags) => {
@@ -299,13 +299,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('response', mustCall((headers, flags) => {
@@ -332,13 +332,13 @@ const {
   }));
   server.listen(0, mustCall(() => {
     const { port } = server.address();
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://localhost:${port}`;
     const client = connect(url, mustCall(() => {
       const headers = {
         ':path': '/',
         ':method': 'HEAD',
         ':scheme': 'http',
-        ':authority': `127.0.0.1:${port}`
+        ':authority': `localhost:${port}`
       };
       const request = client.request(headers);
       request.on('response', mustCall((headers, flags) => {

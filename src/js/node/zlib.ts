@@ -1,11 +1,11 @@
 // Hardcoded module "node:zlib"
 
-const assert = require("node:assert");
 const BufferModule = require("node:buffer");
 
 const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);
 const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
 const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
+const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -15,6 +15,7 @@ const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
+const MathMax = Math.max;
 
 const ArrayBufferIsView = ArrayBuffer.isView;
 const isArrayBufferView = ArrayBufferIsView;
@@ -37,9 +38,11 @@ const {
   Z_MIN_CHUNK, Z_MIN_WINDOWBITS, Z_MAX_WINDOWBITS, Z_MIN_LEVEL, Z_MAX_LEVEL, Z_MIN_MEMLEVEL, Z_MAX_MEMLEVEL,
   Z_DEFAULT_CHUNK, Z_DEFAULT_COMPRESSION, Z_DEFAULT_STRATEGY, Z_DEFAULT_WINDOWBITS, Z_DEFAULT_MEMLEVEL, Z_FIXED,
   // Node's compression stream modes (node_zlib_mode)
-  DEFLATE, DEFLATERAW, INFLATE, INFLATERAW, GZIP, GUNZIP, UNZIP, BROTLI_DECODE, BROTLI_ENCODE,
+  DEFLATE, DEFLATERAW, INFLATE, INFLATERAW, GZIP, GUNZIP, UNZIP, BROTLI_DECODE, BROTLI_ENCODE, ZSTD_COMPRESS, ZSTD_DECOMPRESS,
   // Brotli operations (~flush levels)
   BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FLUSH, BROTLI_OPERATION_FINISH, BROTLI_OPERATION_EMIT_METADATA,
+  // Zstd end directives (~flush levels)
+  ZSTD_e_continue, ZSTD_e_flush, ZSTD_e_end,
 } = constants;
 
 // Translation table for return codes.
@@ -132,23 +135,27 @@ function zlibOnError(message, errno, code) {
 const FLUSH_BOUND = [
   [Z_NO_FLUSH, Z_BLOCK],
   [BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_EMIT_METADATA],
+  [ZSTD_e_continue, ZSTD_e_end],
 ];
 const FLUSH_BOUND_IDX_NORMAL = 0;
 const FLUSH_BOUND_IDX_BROTLI = 1;
+const FLUSH_BOUND_IDX_ZSTD = 2;
 
 // The base class for all Zlib-style streams.
 function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   let chunkSize = Z_DEFAULT_CHUNK;
   let maxOutputLength = kMaxLength;
   // The ZlibBase class is not exported to user land, the mode should only be passed in by us.
-  assert(typeof mode === "number");
-  assert(mode >= DEFLATE && mode <= BROTLI_ENCODE);
+  $assert(typeof mode === "number");
+  $assert(mode >= DEFLATE && mode <= ZSTD_DECOMPRESS);
 
   let flushBoundIdx;
-  if (mode !== BROTLI_ENCODE && mode !== BROTLI_DECODE) {
-    flushBoundIdx = FLUSH_BOUND_IDX_NORMAL;
-  } else {
+  if (mode === BROTLI_ENCODE || mode === BROTLI_DECODE) {
     flushBoundIdx = FLUSH_BOUND_IDX_BROTLI;
+  } else if (mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS) {
+    flushBoundIdx = FLUSH_BOUND_IDX_ZSTD;
+  } else {
+    flushBoundIdx = FLUSH_BOUND_IDX_NORMAL;
   }
 
   if (opts) {
@@ -216,7 +223,7 @@ ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
 });
 
 ZlibBase.prototype.reset = function () {
-  assert(this._handle, "zlib binding closed");
+  $assert(this._handle, "zlib binding closed");
   return this._handle.reset();
 };
 
@@ -358,7 +365,7 @@ function processChunkSync(self, chunk, flushFlag) {
         throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
       }
     } else {
-      assert(have === 0, "have should not go down");
+      $assert(have === 0, "have should not go down");
     }
 
     // Exhausted the output buffer, or used all the input create a new one.
@@ -437,7 +444,7 @@ function processCallback() {
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
   } else {
-    assert(have === 0, "have should not go down");
+    $assert(have === 0, "have should not go down");
   }
 
   if (self.destroyed) {
@@ -572,7 +579,7 @@ $toClass(Zlib, "Zlib", ZlibBase);
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
 function paramsAfterFlushCallback(level, strategy, callback) {
-  assert(this._handle, "zlib binding closed");
+  $assert(this._handle, "zlib binding closed");
   this._handle.params(level, strategy);
   if (!this.destroyed) {
     this._level = level;
@@ -592,50 +599,50 @@ Zlib.prototype.params = function params(level, strategy, callback) {
   }
 };
 
-function Deflate(opts) {
+function Deflate(opts): void {
   if (!(this instanceof Deflate)) return new Deflate(opts);
   Zlib.$apply(this, [opts, DEFLATE]);
 }
 $toClass(Deflate, "Deflate", Zlib);
 
-function Inflate(opts) {
+function Inflate(opts): void {
   if (!(this instanceof Inflate)) return new Inflate(opts);
   Zlib.$apply(this, [opts, INFLATE]);
 }
 $toClass(Inflate, "Inflate", Zlib);
 
-function Gzip(opts) {
+function Gzip(opts): void {
   if (!(this instanceof Gzip)) return new Gzip(opts);
   Zlib.$apply(this, [opts, GZIP]);
 }
 $toClass(Gzip, "Gzip", Zlib);
 
-function Gunzip(opts) {
+function Gunzip(opts): void {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
   Zlib.$apply(this, [opts, GUNZIP]);
 }
 $toClass(Gunzip, "Gunzip", Zlib);
 
-function DeflateRaw(opts) {
+function DeflateRaw(opts): void {
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
   Zlib.$apply(this, [opts, DEFLATERAW]);
 }
 $toClass(DeflateRaw, "DeflateRaw", Zlib);
 
-function InflateRaw(opts) {
+function InflateRaw(opts): void {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
   Zlib.$apply(this, [opts, INFLATERAW]);
 }
 $toClass(InflateRaw, "InflateRaw", Zlib);
 
-function Unzip(opts) {
+function Unzip(opts): void {
   if (!(this instanceof Unzip)) return new Unzip(opts);
   Zlib.$apply(this, [opts, UNZIP]);
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -647,6 +654,25 @@ function createConvenienceMethod(ctor, sync, methodName) {
       if (typeof opts === "function") {
         callback = opts;
         opts = {};
+      }
+      // For zstd compression, we need to set pledgedSrcSize to the buffer size
+      // so that the content size is included in the frame header
+      if (isZstd) {
+        // Calculate buffer size
+        let bufferSize;
+        if (typeof buffer === "string") {
+          bufferSize = Buffer.byteLength(buffer);
+        } else if (isArrayBufferView(buffer)) {
+          bufferSize = buffer.byteLength;
+        } else if (isAnyArrayBuffer(buffer)) {
+          bufferSize = buffer.byteLength;
+        } else {
+          bufferSize = 0;
+        }
+        // Set pledgedSrcSize if not already set
+        if (!opts.pledgedSrcSize && bufferSize > 0) {
+          opts = { ...opts, pledgedSrcSize: bufferSize };
+        }
       }
       return zlibBuffer(new ctor(opts), buffer, callback);
     };
@@ -665,7 +691,7 @@ const brotliDefaultOpts = {
   fullFlush: BROTLI_OPERATION_FLUSH,
 };
 function Brotli(opts, mode) {
-  assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
+  $assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
 
   TypedArrayPrototypeFill.$call(brotliInitParamsArray, -1);
   if (opts?.params) {
@@ -694,17 +720,74 @@ function Brotli(opts, mode) {
 }
 $toClass(Brotli, "Brotli", Zlib);
 
-function BrotliCompress(opts) {
+function BrotliCompress(opts): void {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
   Brotli.$apply(this, [opts, BROTLI_ENCODE]);
 }
 $toClass(BrotliCompress, "BrotliCompress", Brotli);
 
-function BrotliDecompress(opts) {
+function BrotliDecompress(opts): void {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
   Brotli.$apply(this, [opts, BROTLI_DECODE]);
 }
 $toClass(BrotliDecompress, "BrotliDecompress", Brotli);
+
+const zstdDefaultOpts = {
+  flush: ZSTD_e_continue,
+  finishFlush: ZSTD_e_end,
+  fullFlush: ZSTD_e_flush,
+};
+
+class Zstd extends ZlibBase {
+  constructor(opts, mode, initParamsArray, maxParam) {
+    $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
+
+    initParamsArray.fill(-1);
+    if (opts?.params) {
+      ObjectKeys(opts.params).forEach(origKey => {
+        const key = +origKey;
+        if (NumberIsNaN(key) || key < 0 || key > maxParam || (initParamsArray[key] | 0) !== -1) {
+          throw $ERR_ZSTD_INVALID_PARAM(origKey);
+        }
+
+        const value = opts.params[origKey];
+        if (typeof value !== "number" && typeof value !== "boolean") {
+          throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
+        }
+        initParamsArray[key] = value;
+      });
+    }
+
+    const handle = new NativeZstd(mode);
+
+    const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
+
+    const writeState = new Uint32Array(2);
+    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    super(opts, mode, handle, zstdDefaultOpts);
+    this._writeState = writeState;
+  }
+}
+
+const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
+
+const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
+
+class ZstdCompress extends Zstd {
+  constructor(opts) {
+    super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
+  }
+}
+
+const kMaxZstdDParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_d_") ? constants[key] : 0)));
+
+const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
+
+class ZstdDecompress extends Zstd {
+  constructor(opts) {
+    super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
+  }
+}
 
 // Legacy alias on the C++ wrapper object.
 ObjectDefineProperty(NativeZlib.prototype, "jsref", {
@@ -728,6 +811,8 @@ const zlib = {
   Unzip,
   BrotliCompress,
   BrotliDecompress,
+  ZstdCompress,
+  ZstdDecompress,
 
   deflate: createConvenienceMethod(Deflate, false, "deflate"),
   deflateSync: createConvenienceMethod(Deflate, true, "deflateSync"),
@@ -747,6 +832,10 @@ const zlib = {
   brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
   brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
+  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
+  zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
+  zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
+  zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),
 
   createDeflate: function (options) {
     return new Deflate(options);
@@ -774,6 +863,12 @@ const zlib = {
   },
   createBrotliDecompress: function (options) {
     return new BrotliDecompress(options);
+  },
+  createZstdCompress: function (options) {
+    return new ZstdCompress(options);
+  },
+  createZstdDecompress: function (options) {
+    return new ZstdDecompress(options);
   },
 };
 

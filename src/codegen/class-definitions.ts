@@ -7,6 +7,8 @@ interface PropertyAttribute {
    * from the prototype hash table, instead setting it using `putDirect()`.
    */
   privateSymbol?: string;
+  publicSymbol?: string;
+  name?: string;
 }
 
 /**
@@ -90,14 +92,30 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Class constructor is newable.
+   * Class constructor is newable. Called before the JSValue corresponding to
+   * the object is created. Throwing an exception prevents the object from being
+   * created.
    */
   construct?: boolean;
+
+  /**
+   * Class constructor needs `this` value.
+   *
+   * Makes the code generator call the Zig constructor function **after** the
+   * JSValue is instantiated. Only use this if you must, as it probably isn't
+   * good for GC since it means if the constructor throws the GC will have to
+   * clean up the object that never reached JS.
+   */
+  constructNeedsThis?: boolean;
   /**
    * Class constructor is callable. In JS, ES6 class constructors are not
    * callable.
    */
   call?: boolean;
+  /**
+   * The instances of this class are intended to be inside the this of a bound function.
+   */
+  forBind?: boolean;
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
@@ -166,10 +184,6 @@ export class ClassDefinition {
 
   final?: boolean;
 
-  // Do not try to track the `this` value in the constructor automatically.
-  // That is a memory leak.
-  wantsThis?: never;
-
   /**
    * Class has an `estimatedSize` function that reports external allocations to GC.
    * Called from any thread.
@@ -202,7 +216,8 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number; storable: boolean };
+  inspectCustom?: boolean;
 
   callbacks?: Record<string, string>;
 
@@ -245,10 +260,19 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone = false,
+    structuredClone,
+    inspectCustom = false,
     ...rest
   } = {} as Partial<ClassDefinition>,
-): Partial<ClassDefinition> {
+): ClassDefinition {
+  if (inspectCustom) {
+    proto.inspectCustom = {
+      fn: "inspectCustom",
+      length: 2,
+      publicSymbol: "inspectCustom",
+      name: "[nodejs.util.inspect.custom]",
+    };
+  }
   return new ClassDefinition({
     ...rest,
     call,
@@ -262,7 +286,7 @@ export function define(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),
@@ -270,7 +294,7 @@ export function define(
       Object.entries(proto)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),

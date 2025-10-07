@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import path, { dirname, join, resolve } from "path";
+import { describe, expect, it } from "bun:test";
+import { resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -197,10 +197,10 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
+import { bunEnv, bunExe } from "harness";
+import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
-import { render as svelteRender } from "svelte/server";
-import { bunEnv, bunExe } from "harness";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {

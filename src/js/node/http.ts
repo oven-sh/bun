@@ -1,12 +1,12 @@
 const { validateInteger } = require("internal/validators");
-const { Agent, globalAgent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { Agent, globalAgent } = require("node:_http_agent");
 const { ClientRequest } = require("node:_http_client");
-const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
+const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Server, ServerResponse } = require("node:_http_server");
 
-const { METHODS, STATUS_CODES } = require("internal/http");
+const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 
@@ -38,9 +38,6 @@ function get(url, options, cb) {
   return req;
 }
 
-const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
-
 const http_exports = {
   Agent,
   Server,
@@ -61,7 +58,7 @@ const http_exports = {
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
     validateInteger(max, "max", 1);
-    $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
+    parsers.max = max;
   },
   globalAgent,
   ClientRequest,

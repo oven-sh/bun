@@ -17,11 +17,11 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
+import { ServerCredentials } from "@grpc/grpc-js/build/src";
 import assert from "assert";
+import { describe, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { ServerCredentials } from "@grpc/grpc-js/build/src";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 
 const ca = readFileSync(join(__dirname, "fixtures", "ca.pem"));
 const key = readFileSync(join(__dirname, "fixtures", "server1.key"));

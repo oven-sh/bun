@@ -17,7 +17,7 @@ Bun reads the following files automatically (listed in order of increasing prece
 
 - `.env`
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
-- `.env.local`
+- `.env.local` (not loaded when `NODE_ENV=test`)
 
 ```txt#.env
 FOO=hello
@@ -42,7 +42,6 @@ $ set FOO=helloworld && bun run dev
 $ $env:FOO="helloworld"; bun run dev
 ```
 
-{% /codetabs %}
----
+## {% /codetabs %}
 
-See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.
+See [Docs > Runtime > Environment variables](https://bun.com/docs/runtime/env) for more information on using environment variables with Bun.

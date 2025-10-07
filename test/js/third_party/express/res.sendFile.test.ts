@@ -766,7 +766,7 @@ describe("res", function () {
 function createApp(path?, options?, fn?) {
   var app = express();
 
-  app.use(function sendFileMiddleware (req, res) {
+  app.use(function sendFileMiddleware(req, res) {
     res.sendFile(path, options, fn);
   });
 

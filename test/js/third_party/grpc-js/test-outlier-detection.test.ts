@@ -15,12 +15,12 @@
  *
  */
 
-import * as path from "path";
 import grpc from "@grpc/grpc-js";
-import { loadProtoFile } from "./common";
 import { OutlierDetectionLoadBalancingConfig } from "@grpc/grpc-js/build/src/load-balancer-outlier-detection";
 import assert from "assert";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
+import * as path from "path";
+import { loadProtoFile } from "./common";
 
 function multiDone(done: Mocha.Done, target: number) {
   let count = 0;

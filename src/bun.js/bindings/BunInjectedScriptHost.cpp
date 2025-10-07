@@ -54,12 +54,14 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
     auto* scriptExecutionContext = eventTarget->scriptExecutionContext();
     if (!scriptExecutionContext)
         return nullptr;
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* listeners = nullptr;
 
     for (auto& eventType : eventTarget->eventTypes()) {
         unsigned listenersForEventIndex = 0;
         auto* listenersForEvent = constructEmptyArray(exec, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
 
         for (auto& eventListener : eventTarget->eventListeners(eventType)) {
             if (!is<JSEventListener>(eventListener->callback()))
@@ -74,6 +76,7 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
                 continue;
 
             auto* propertiesForListener = constructEmptyObject(exec);
+            RETURN_IF_EXCEPTION(scope, {});
             propertiesForListener->putDirect(vm, Identifier::fromString(vm, "callback"_s), jsFunction);
             propertiesForListener->putDirect(vm, Identifier::fromString(vm, "capture"_s), jsBoolean(eventListener->useCapture()));
             propertiesForListener->putDirect(vm, Identifier::fromString(vm, "passive"_s), jsBoolean(eventListener->isPassive()));
@@ -82,8 +85,10 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
         }
 
         if (listenersForEventIndex) {
-            if (!listeners)
+            if (!listeners) {
                 listeners = constructEmptyObject(exec);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
             listeners->putDirect(vm, Identifier::fromString(vm, eventType), listenersForEvent);
         }
     }
@@ -121,6 +126,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
     if (auto* worker = JSWorker::toWrapped(vm, value)) {
         unsigned index = 0;
         auto* array = constructEmptyArray(exec, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
 
         String name = worker->name();
         if (!name.isEmpty())
@@ -142,6 +148,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         if (type == JSDOMWrapperType) {
             if (auto* headers = jsDynamicCast<JSFetchHeaders*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, headers));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -149,6 +156,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
 
             if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -157,6 +165,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         } else if (type == JSAsJSONType) {
             if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -164,6 +173,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
 
             if (auto* cookie = jsDynamicCast<JSCookie*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookie));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -171,6 +181,7 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
 
             if (auto* cookieMap = jsDynamicCast<JSCookieMap*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookieMap));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -181,11 +192,13 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
     if (auto* eventTarget = JSEventTarget::toWrapped(vm, value)) {
         unsigned index = 0;
         auto* array = constructEmptyArray(exec, nullptr);
-
-        if (auto* listeners = objectForEventTargetListeners(vm, exec, eventTarget))
-            array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "listeners"_s, listeners));
-
         RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* listeners = objectForEventTargetListeners(vm, exec, eventTarget)) {
+            array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "listeners"_s, listeners));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
         return array;
     }
 

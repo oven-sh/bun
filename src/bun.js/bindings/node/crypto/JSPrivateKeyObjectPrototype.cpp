@@ -96,7 +96,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGl
 //     JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(callFrame->thisValue());
 //     if (!privateKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "toCryptoKey"_s);
-//         return JSValue::encode({});
+//         return {};
 //     }
 
 //     KeyObject& handle = privateKeyObject->handle();

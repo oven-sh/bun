@@ -1,27 +1,5 @@
-const std = @import("std");
-const logger = bun.logger;
-const tables = @import("js_lexer_tables.zig");
-const build_options = @import("build_options");
-const js_ast = bun.JSAst;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const CodePoint = bun.CodePoint;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
-const Indentation = bun.js_printer.Options.Indentation;
 
-const unicode = std.unicode;
-
-const Source = logger.Source;
 pub const T = tables.T;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
@@ -182,11 +160,11 @@ fn NewLexer_(
             void = if (json_options.guess_indentation)
             .{},
 
-        pub inline fn loc(self: *const LexerType) logger.Loc {
+        pub inline fn loc(noalias self: *const LexerType) logger.Loc {
             return logger.usize2Loc(self.start);
         }
 
-        pub fn syntaxError(self: *LexerType) !void {
+        pub fn syntaxError(noalias self: *LexerType) !void {
             @branchHint(.cold);
 
             // Only add this if there is not already an error.
@@ -197,20 +175,20 @@ fn NewLexer_(
             return Error.SyntaxError;
         }
 
-        pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
+        pub fn addDefaultError(noalias self: *LexerType, msg: []const u8) !void {
             @branchHint(.cold);
 
             self.addError(self.start, "{s}", .{msg}, true);
             return Error.SyntaxError;
         }
 
-        pub fn addSyntaxError(self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
+        pub fn addSyntaxError(noalias self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
             @branchHint(.cold);
             self.addError(_loc, fmt, args, false);
             return Error.SyntaxError;
         }
 
-        pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
+        pub fn addError(noalias self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -223,7 +201,7 @@ fn NewLexer_(
             self.prev_error_loc = __loc;
         }
 
-        pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
+        pub fn addRangeError(noalias self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -240,7 +218,7 @@ fn NewLexer_(
             // }
         }
 
-        pub fn addRangeErrorWithNotes(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
+        pub fn addRangeErrorWithNotes(noalias self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -286,7 +264,7 @@ fn NewLexer_(
 
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
-        fn peek(it: *LexerType, n: usize) string {
+        fn peek(noalias it: *LexerType, n: usize) string {
             const original_i = it.current;
             defer it.current = original_i;
 
@@ -300,11 +278,11 @@ fn NewLexer_(
             return it.source.contents[original_i..end_ix];
         }
 
-        pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
+        pub inline fn isIdentifierOrKeyword(noalias lexer: *const LexerType) bool {
             return @intFromEnum(lexer.token) >= @intFromEnum(T.t_identifier);
         }
 
-        pub fn deinit(this: *LexerType) void {
+        pub fn deinit(noalias this: *LexerType) void {
             this.temp_buffer_u16.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
@@ -647,10 +625,10 @@ fn NewLexer_(
             }
         }
 
-        pub const InnerStringLiteral = packed struct { suffix_len: u8, needs_decode: bool };
+        pub const InnerStringLiteral = packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 };
 
         fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
-            var suffix_len: u8 = if (comptime quote == 0) 0 else 1;
+            var suffix_len: u2 = if (comptime quote == 0) 0 else 1;
             var needs_decode = false;
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
@@ -786,7 +764,10 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            const suffix_len = @as(usize, string_literal_details.suffix_len);
+            const end_pos = if (lexer.end >= suffix_len) lexer.end - suffix_len else lexer.end;
+            const slice_end = @min(lexer.source.contents.len, @max(base, end_pos));
+            lexer.string_literal_raw_content = lexer.source.contents[base..slice_end];
             lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
             lexer.string_literal_start = lexer.start;
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
@@ -798,7 +779,7 @@ fn NewLexer_(
             }
         }
 
-        inline fn nextCodepointSlice(it: *LexerType) []const u8 {
+        inline fn nextCodepointSlice(noalias it: *const LexerType) []const u8 {
             if (it.current >= it.source.contents.len) {
                 return "";
             }
@@ -806,11 +787,11 @@ fn NewLexer_(
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
-        fn remaining(it: *const LexerType) []const u8 {
+        fn remaining(noalias it: *const LexerType) []const u8 {
             return it.source.contents[it.current..];
         }
 
-        inline fn nextCodepoint(it: *LexerType) CodePoint {
+        inline fn nextCodepoint(noalias it: *LexerType) CodePoint {
             if (it.current >= it.source.contents.len) {
                 it.end = it.source.contents.len;
                 return -1;
@@ -834,7 +815,7 @@ fn NewLexer_(
             return code_point;
         }
 
-        pub fn step(lexer: *LexerType) void {
+        pub fn step(noalias lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate
@@ -846,7 +827,7 @@ fn NewLexer_(
             lexer.approximate_newline_count += @intFromBool(lexer.code_point == '\n');
         }
 
-        pub inline fn expect(self: *LexerType, comptime token: T) !void {
+        pub inline fn expect(noalias self: *LexerType, comptime token: T) !void {
             if (self.token != token) {
                 try self.expected(token);
             }
@@ -854,7 +835,7 @@ fn NewLexer_(
             try self.next();
         }
 
-        pub inline fn expectOrInsertSemicolon(lexer: *LexerType) !void {
+        pub inline fn expectOrInsertSemicolon(noalias lexer: *LexerType) !void {
             if (lexer.token == T.t_semicolon or (!lexer.has_newline_before and
                 lexer.token != T.t_close_brace and lexer.token != T.t_end_of_file))
             {
@@ -862,7 +843,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn addUnsupportedSyntaxError(self: *LexerType, msg: []const u8) !void {
+        pub fn addUnsupportedSyntaxError(noalias self: *LexerType, msg: []const u8) !void {
             self.addError(self.end, "Unsupported syntax: {s}", .{msg}, true);
             return Error.SyntaxError;
         }
@@ -901,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
+                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{any}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {
@@ -997,7 +978,7 @@ fn NewLexer_(
             return result;
         }
 
-        pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
+        pub fn expectContextualKeyword(noalias self: *LexerType, comptime keyword: string) !void {
             if (!self.isContextualKeyword(keyword)) {
                 if (@import("builtin").mode == std.builtin.Mode.Debug) {
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
@@ -1013,7 +994,7 @@ fn NewLexer_(
             try self.next();
         }
 
-        pub fn maybeExpandEquals(lexer: *LexerType) !void {
+        pub fn maybeExpandEquals(noalias lexer: *LexerType) !void {
             switch (lexer.code_point) {
                 '>' => {
                     // "=" + ">" = "=>"
@@ -1035,7 +1016,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectLessThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
+        pub fn expectLessThan(noalias lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
             switch (lexer.token) {
                 .t_less_than => {
                     if (is_inside_jsx_element) {
@@ -1063,7 +1044,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectGreaterThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
+        pub fn expectGreaterThan(noalias lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
             switch (lexer.token) {
                 .t_greater_than => {
                     if (is_inside_jsx_element) {
@@ -1105,7 +1086,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn next(lexer: *LexerType) !void {
+        pub fn next(noalias lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
             lexer.has_pure_comment_before = false;
             lexer.has_no_side_effect_comment_before = false;
@@ -1124,7 +1105,7 @@ fn NewLexer_(
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
                         }
-                        if (lexer.start == 0 and lexer.source.contents[1] == '!') {
+                        if (lexer.start == 0 and lexer.source.contents.len > 1 and lexer.source.contents[1] == '!') {
                             // "#!/usr/bin/env node"
                             lexer.token = .t_hashbang;
                             hashbang: while (true) {
@@ -1537,21 +1518,20 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
-                                            // if (comptime Environment.enableSIMD) {
-                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
-                                            // if (lexer.code_point < 128) {
-                                            //     const remainder = lexer.source.contents[lexer.current..];
-                                            //     if (remainder.len >= 4096) {
-                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
-                                            //             lexer.step();
-                                            //             continue;
-                                            //         };
-                                            //         lexer.end = lexer.current -| 1;
-                                            //         lexer.step();
-                                            //         continue;
-                                            //     }
-                                            // }
-                                            // }
+                                            if (comptime Environment.enableSIMD) {
+                                                if (lexer.code_point < 128) {
+                                                    const remainder = lexer.source.contents[lexer.current..];
+                                                    if (remainder.len >= 512) {
+                                                        lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
+                                                            lexer.step();
+                                                            continue;
+                                                        };
+                                                        lexer.end = lexer.current -| 1;
+                                                        lexer.step();
+                                                        continue;
+                                                    }
+                                                }
+                                            }
 
                                             lexer.step();
                                         },
@@ -1805,7 +1785,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expected(self: *LexerType, token: T) !void {
+        pub fn expected(noalias self: *LexerType, token: T) !void {
             if (self.is_log_disabled) {
                 return error.Backtrack;
             } else if (tokenToString.get(token).len > 0) {
@@ -1815,7 +1795,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn unexpected(lexer: *LexerType) !void {
+        pub fn unexpected(noalias lexer: *LexerType) !void {
             const found = finder: {
                 lexer.start = @min(lexer.start, lexer.end);
 
@@ -1830,11 +1810,11 @@ fn NewLexer_(
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 
-        pub fn raw(self: *LexerType) []const u8 {
+        pub fn raw(noalias self: *const LexerType) []const u8 {
             return self.source.contents[self.start..self.end];
         }
 
-        pub fn isContextualKeyword(self: *LexerType, comptime keyword: string) bool {
+        pub fn isContextualKeyword(noalias self: *const LexerType, comptime keyword: string) bool {
             return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
         }
 
@@ -1882,7 +1862,7 @@ fn NewLexer_(
             }
         }
 
-        fn scanCommentText(lexer: *LexerType, for_pragma: bool) void {
+        fn scanCommentText(noalias lexer: *LexerType, for_pragma: bool) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
@@ -1940,7 +1920,7 @@ fn NewLexer_(
         }
 
         /// This scans a "// comment" in a single pass over the input.
-        fn scanSingleLineComment(lexer: *LexerType) void {
+        fn scanSingleLineComment(noalias lexer: *LexerType) void {
             while (true) {
                 // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
                 if (bun.highway.indexOfNewlineOrNonASCIIOrHashOrAt(lexer.remaining())) |relative_index| {
@@ -2002,7 +1982,7 @@ fn NewLexer_(
         /// Scans the string for a pragma.
         /// offset is used when there's an issue with the JSX pragma later on.
         /// Returns the byte length to advance by if found, otherwise 0.
-        fn scanPragma(lexer: *LexerType, offset_for_errors: usize, chunk: string, allow_newline: bool) usize {
+        fn scanPragma(noalias lexer: *LexerType, offset_for_errors: usize, chunk: string, allow_newline: bool) usize {
             if (!lexer.has_pure_comment_before) {
                 if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
                     lexer.has_pure_comment_before = true;
@@ -2052,10 +2032,10 @@ fn NewLexer_(
             };
         }
 
-        pub fn initTSConfig(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var lex = LexerType{
                 .log = log,
-                .source = source,
+                .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
@@ -2068,26 +2048,10 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn initJSON(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            var lex = LexerType{
-                .log = log,
-                .source = source,
-                .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
-                .prev_error_loc = logger.Loc.Empty,
-                .allocator = allocator,
-                .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
-                .all_comments = std.ArrayList(logger.Range).init(allocator),
-            };
-            lex.step();
-            try lex.next();
-
-            return lex;
-        }
-
-        pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
+        pub fn initWithoutReading(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) LexerType {
             return LexerType{
                 .log = log,
-                .source = source,
+                .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
@@ -2096,7 +2060,7 @@ fn NewLexer_(
             };
         }
 
-        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var lex = initWithoutReading(log, source, allocator);
             lex.step();
             try lex.next();
@@ -2207,10 +2171,10 @@ fn NewLexer_(
             }
         }
 
-        pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) !string {
+        pub fn utf16ToString(noalias lexer: *const LexerType, js: JavascriptString) !string {
             return try strings.toUTF8AllocWithType(lexer.allocator, []const u16, js);
         }
-        pub fn nextInsideJSXElement(lexer: *LexerType) !void {
+        pub fn nextInsideJSXElement(noalias lexer: *LexerType) !void {
             lexer.assertNotJSON();
 
             lexer.has_newline_before = false;
@@ -2339,7 +2303,7 @@ fn NewLexer_(
                                 lexer.step();
 
                                 if (isIdentifierStart(lexer.code_point)) {
-                                    while (isIdentifierStart(lexer.code_point) or lexer.code_point == '-') {
+                                    while (isIdentifierContinue(lexer.code_point) or lexer.code_point == '-') {
                                         lexer.step();
                                     }
                                 } else {
@@ -2432,7 +2396,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectJSXElementChild(lexer: *LexerType, token: T) !void {
+        pub fn expectJSXElementChild(noalias lexer: *LexerType, token: T) !void {
             lexer.assertNotJSON();
 
             if (lexer.token != token) {
@@ -2562,7 +2526,7 @@ fn NewLexer_(
             }
         }
 
-        fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
+        fn maybeDecodeJSXEntity(noalias lexer: *LexerType, text: string, noalias cursor: *strings.CodepointIterator.Cursor) void {
             lexer.assertNotJSON();
 
             if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
@@ -2626,7 +2590,7 @@ fn NewLexer_(
                 }
             }
         }
-        pub fn expectInsideJSXElement(lexer: *LexerType, token: T) !void {
+        pub fn expectInsideJSXElement(noalias lexer: *LexerType, token: T) !void {
             lexer.assertNotJSON();
 
             if (lexer.token != token) {
@@ -2648,7 +2612,7 @@ fn NewLexer_(
             try lexer.nextInsideJSXElement();
         }
 
-        fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
+        fn scanRegExpValidateAndStep(noalias lexer: *LexerType) !void {
             lexer.assertNotJSON();
 
             if (lexer.code_point == '\\') {
@@ -2684,7 +2648,7 @@ fn NewLexer_(
             lexer.rescan_close_brace_as_template_token = false;
         }
 
-        pub fn rawTemplateContents(lexer: *LexerType) string {
+        pub fn rawTemplateContents(noalias lexer: *LexerType) string {
             lexer.assertNotJSON();
 
             var text: string = undefined;
@@ -2711,7 +2675,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch bun.outOfMemory();
+            var bytes = bun.handleOom(MutableString.initCopy(lexer.allocator, text));
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -2736,7 +2700,7 @@ fn NewLexer_(
             return bytes.toOwnedSliceLength(end);
         }
 
-        fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
+        fn parseNumericLiteralOrDot(noalias lexer: *LexerType) !void {
             // Number or dot;
             const first = lexer.code_point;
             lexer.step();
@@ -3055,7 +3019,6 @@ fn NewLexer_(
 
 pub const Lexer = NewLexer(.{});
 
-const JSIdentifier = @import("./js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
     return JSIdentifier.isIdentifierStart(codepoint);
 }
@@ -3373,8 +3336,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
-    bun.assert(text_end_len % strings.ascii_vector_size == 0);
-    bun.assert(text_end_len <= text.len);
+    bun.assertWithLocation(text_end_len % strings.ascii_vector_size == 0, @src());
+    bun.assertWithLocation(text_end_len <= text.len, @src());
 
     const text_end_ptr = text.ptr + text_end_len;
 
@@ -3390,8 +3353,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
-            bun.assert(first < strings.ascii_vector_size);
-            bun.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            bun.assertWithLocation(first < strings.ascii_vector_size, @src());
+            bun.assertWithLocation(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127, @src());
             return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;
@@ -3403,3 +3366,38 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const InvalidEscapeSequenceFormatter = struct {
+    code_point: i32,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.code_point) {
+            '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Unexpected escape sequence"),
+        }
+    }
+};
+
+const string = []const u8;
+
+const FeatureFlags = @import("./feature_flags.zig");
+const JSIdentifier = @import("./js_lexer/identifier.zig");
+const tables = @import("./js_lexer_tables.zig");
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_ast = bun.ast;
+const strings = bun.strings;
+const Indentation = bun.js_printer.Options.Indentation;
+
+const logger = bun.logger;
+const Source = logger.Source;
+
+const std = @import("std");
+const unicode = std.unicode;

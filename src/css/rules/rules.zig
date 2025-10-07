@@ -1,20 +1,10 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Dependency = css.Dependency;
 const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
 
 pub const import = @import("./import.zig");
 pub const layer = @import("./layer.zig");
@@ -39,7 +29,7 @@ pub const starting_style = @import("./starting_style.zig");
 
 pub const tailwind = @import("./tailwind.zig");
 
-const debug = bun.Output.scoped(.CSS_MINIFY, false);
+const debug = bun.Output.scoped(.CSS_MINIFY, .visible);
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -182,12 +172,12 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         // }
 
                         // keyframez.vendor_prefix = context.targets.prefixes(keyframez.vendor_prefix, css.prefixes.Feature.at_keyframes);
-                        // keyframe_rules.put(context.allocator, keyframez.name, rules.items.len) catch bun.outOfMemory();
+                        // bun.handleOom(keyframe_rules.put(context.allocator, keyframez.name, rules.items.len));
 
                         // const fallbacks = keyframez.getFallbacks(AtRule, context.targets);
                         // moved_rule = true;
-                        // rules.append(context.allocator, rule.*) catch bun.outOfMemory();
-                        // rules.appendSlice(context.allocator, fallbacks) catch bun.outOfMemory();
+                        // bun.handleOom(rules.append(context.allocator, rule.*));
+                        // bun.handleOom(rules.appendSlice(context.allocator, fallbacks));
                         // continue;
                         debug("TODO: KeyframesRule", .{});
                     },
@@ -201,7 +191,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .media) {
                             var last_rule = &rules.items[rules.items.len - 1].media;
                             if (last_rule.query.eql(&med.query)) {
-                                last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch bun.outOfMemory();
+                                bun.handleOom(last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items));
                                 _ = try last_rule.minify(context, parent_is_unused);
                                 continue;
                             }
@@ -382,7 +372,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             const has_no_rules = sty.rules.v.items.len == 0;
                             const idx = rules.items.len;
 
-                            rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                            bun.handleOom(rules.append(context.allocator, rule.*));
                             moved_rule = true;
 
                             // Check if this rule is a duplicate of an earlier rule, meaning it has
@@ -404,7 +394,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                                     }
                                 }
 
-                                style_rules.put(context.allocator, key, idx) catch bun.outOfMemory();
+                                bun.handleOom(style_rules.put(context.allocator, key, idx));
                             }
                         }
 
@@ -414,22 +404,22 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             }
                             var log = CssRuleList(AtRule){ .v = logical };
                             try log.minify(context, parent_is_unused);
-                            rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();
+                            bun.handleOom(rules.appendSlice(context.allocator, log.v.items));
                         }
-                        rules.appendSlice(context.allocator, supps.items) catch bun.outOfMemory();
+                        bun.handleOom(rules.appendSlice(context.allocator, supps.items));
                         for (incompatible_rules.slice_mut()) |incompatible_entry| {
                             if (!incompatible_entry.rule.isEmpty()) {
-                                rules.append(context.allocator, .{ .style = incompatible_entry.rule }) catch bun.outOfMemory();
+                                bun.handleOom(rules.append(context.allocator, .{ .style = incompatible_entry.rule }));
                             }
                             if (incompatible_entry.logical.items.len > 0) {
                                 var log = CssRuleList(AtRule){ .v = incompatible_entry.logical };
                                 try log.minify(context, parent_is_unused);
-                                rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();
+                                bun.handleOom(rules.appendSlice(context.allocator, log.v.items));
                             }
-                            rules.appendSlice(context.allocator, incompatible_entry.supports.items) catch bun.outOfMemory();
+                            bun.handleOom(rules.appendSlice(context.allocator, incompatible_entry.supports.items));
                         }
                         if (nested_rule) |nested| {
-                            rules.append(context.allocator, .{ .style = nested }) catch bun.outOfMemory();
+                            bun.handleOom(rules.append(context.allocator, .{ .style = nested }));
                         }
 
                         continue;
@@ -461,7 +451,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     else => {},
                 }
 
-                rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                bun.handleOom(rules.append(context.allocator, rule.*));
             }
 
             // MISSING SHIT HERE
@@ -624,13 +614,13 @@ fn mergeStyleRules(
         last_style_rule.declarations.declarations.appendSlice(
             context.allocator,
             sty.declarations.declarations.items,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         sty.declarations.declarations.clearRetainingCapacity();
 
         last_style_rule.declarations.important_declarations.appendSlice(
             context.allocator,
             sty.declarations.important_declarations.items,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         sty.declarations.important_declarations.clearRetainingCapacity();
 
         last_style_rule.declarations.minify(
@@ -676,3 +666,8 @@ fn mergeStyleRules(
     }
     return false;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

@@ -122,7 +122,7 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 //     //                 break;
 
 //     //             ContainerNode* parent = node->parentNode();
-//     //             if (UNLIKELY(!parent)) {
+//     //             if (!parent) [[unlikely]] {
 //     //                 // https://dom.spec.whatwg.org/#interface-document
 //     //                 if (is<Document>(*node) && event.type() != eventNames().loadEvent) {
 //     //                     ASSERT(target);
@@ -134,7 +134,7 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 //     //                 return;
 //     //             }
 
-//     //             if (auto* shadowRootOfParent = parent->shadowRoot(); UNLIKELY(shadowRootOfParent)) {
+//     //             if (auto* shadowRootOfParent = parent->shadowRoot(); shadowRootOfParent) [[unlikely]]) {
 //     //                 if (auto* assignedSlot = shadowRootOfParent->findAssignedSlot(*node)) {
 //     //                     if (shadowRootOfParent->mode() != ShadowRootMode::Open)
 //     //                         closedShadowDepth++;
@@ -176,18 +176,18 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 
 //     //     Node& currentTarget = *context.node();
 //     //     TreeScope& currentTreeScope = currentTarget.treeScope();
-//     //     if (UNLIKELY(previousTreeScope && &currentTreeScope != previousTreeScope))
+//     //     if (previousTreeScope && &currentTreeScope != previousTreeScope) [[unlikely]]
 //     //         retargeter.moveToNewTreeScope(previousTreeScope, currentTreeScope);
 
 //     //     Node* currentRelatedNode = retargeter.currentNode(currentTarget);
-//     //     if (UNLIKELY(!originIsRelatedTarget && context.target() == currentRelatedNode)) {
+//     //     if (!originIsRelatedTarget && context.target() == currentRelatedNode) [[unlikely]] {
 //     //         m_path.shrink(contextIndex);
 //     //         break;
 //     //     }
 
 //     //     context.setRelatedTarget(currentRelatedNode);
 
-//     //     if (UNLIKELY(originIsRelatedTarget && context.node() == &rootNodeInOriginTreeScope)) {
+//     //     if (originIsRelatedTarget && context.node() == &rootNodeInOriginTreeScope) [[unlikely]] {
 //     //         m_path.shrink(contextIndex + 1);
 //     //         break;
 //     //     }
@@ -209,7 +209,7 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 //     for (auto& context : m_path) {
 //         Node& currentTarget = *context.node();
 //         TreeScope& currentTreeScope = currentTarget.treeScope();
-//         if (UNLIKELY(previousTreeScope && &currentTreeScope != previousTreeScope))
+//         if (previousTreeScope && &currentTreeScope != previousTreeScope) [[unlikely]]
 //             retargeter.moveToNewTreeScope(previousTreeScope, currentTreeScope);
 
 //         if (context.isTouchEventContext()) {
@@ -307,7 +307,7 @@ EventPath::EventPath(EventTarget& target)
 // {
 //     auto& targetTreeScope = target.treeScope();
 //     TreeScope* currentTreeScope = &m_relatedNode.treeScope();
-//     if (LIKELY(currentTreeScope == &targetTreeScope && target.isConnected() && m_relatedNode.isConnected()))
+//     if (currentTreeScope == &targetTreeScope && target.isConnected() && m_relatedNode.isConnected()) [[likely]]
 //         return;
 
 //     if (&currentTreeScope->documentScope() != &targetTreeScope.documentScope()) {

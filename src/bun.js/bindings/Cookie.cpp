@@ -72,7 +72,7 @@ String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies
 ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 {
     // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
-    if (UNLIKELY(cookieString.length() < 2)) {
+    if (cookieString.length() < 2) [[unlikely]] {
         return Exception { TypeError, "Invalid cookie string: empty"_s };
     }
 
@@ -81,16 +81,16 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
     StringView cookiePair = firstSemicolonPos == notFound ? cookieString : cookieString.substring(0, firstSemicolonPos);
 
     size_t firstEqualsPos = cookiePair.find('=');
-    if (UNLIKELY(firstEqualsPos == notFound)) {
+    if (firstEqualsPos == notFound) [[unlikely]] {
         return Exception { TypeError, "Invalid cookie string: no '=' found"_s };
     }
 
-    String name = cookiePair.substring(0, firstEqualsPos).trim(isASCIIWhitespace<UChar>).toString();
+    String name = cookiePair.substring(0, firstEqualsPos).trim(isASCIIWhitespace<char16_t>).toString();
     if (name.isEmpty())
         return Exception { TypeError, "Invalid cookie string: name cannot be empty"_s };
 
     ASSERT(isValidHTTPHeaderValue(name));
-    String value = cookiePair.substring(firstEqualsPos + 1).trim(isASCIIWhitespace<UChar>).toString();
+    String value = cookiePair.substring(firstEqualsPos + 1).trim(isASCIIWhitespace<char16_t>).toString();
 
     // Default values
     String domain;
@@ -108,15 +108,15 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
         auto attributesString = cookieString.substring(firstSemicolonPos + 1);
 
         for (auto attribute : attributesString.split(';')) {
-            auto trimmedAttribute = attribute.trim(isASCIIWhitespace<UChar>);
+            auto trimmedAttribute = attribute.trim(isASCIIWhitespace<char16_t>);
             size_t assignmentPos = trimmedAttribute.find('=');
 
             String attributeName;
             String attributeValue;
 
             if (assignmentPos != notFound) {
-                attributeName = trimmedAttribute.substring(0, assignmentPos).trim(isASCIIWhitespace<UChar>).convertToASCIILowercase();
-                attributeValue = trimmedAttribute.substring(assignmentPos + 1).trim(isASCIIWhitespace<UChar>).toString();
+                attributeName = trimmedAttribute.substring(0, assignmentPos).trim(isASCIIWhitespace<char16_t>).convertToASCIILowercase();
+                attributeValue = trimmedAttribute.substring(assignmentPos + 1).trim(isASCIIWhitespace<char16_t>).toString();
             } else {
                 attributeName = trimmedAttribute.convertToASCIILowercase();
                 attributeValue = emptyString();
@@ -130,14 +130,16 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 if (!attributeValue.isEmpty() && attributeValue.startsWith('/'))
                     path = attributeValue;
             } else if (attributeName == "expires"_s && !hasMaxAge && !attributeValue.isEmpty()) {
-                if (UNLIKELY(!attributeValue.is8Bit())) {
+                if (!attributeValue.is8Bit()) [[unlikely]] {
                     auto asLatin1 = attributeValue.latin1();
-                    if (auto parsed = WTF::parseDate({ reinterpret_cast<const LChar*>(asLatin1.data()), asLatin1.length() })) {
+                    double parsed = WTF::parseDate({ reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() });
+                    if (std::isfinite(parsed)) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 } else {
                     auto nullTerminated = attributeValue.utf8();
-                    if (auto parsed = WTF::parseDate(std::span<const LChar>(reinterpret_cast<const LChar*>(nullTerminated.data()), nullTerminated.length()))) {
+                    double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminated.data()), nullTerminated.length()));
+                    if (std::isfinite(parsed)) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 }
@@ -168,7 +170,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 
 bool Cookie::isExpired() const
 {
-    if (m_expires == Cookie::emptyExpiresAtValue || m_expires < 1)
+    if (m_expires == Cookie::emptyExpiresAtValue)
         return false; // Session cookie
 
     auto currentTime = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0;
@@ -182,7 +184,7 @@ String Cookie::toString(JSC::VM& vm) const
     return builder.toString();
 }
 
-static inline bool isValidCharacterInCookieName(UChar c)
+static inline bool isValidCharacterInCookieName(char16_t c)
 {
     return (c >= 0x21 && c <= 0x3A) || (c == 0x3C) || (c >= 0x3E && c <= 0x7E);
 }
@@ -201,7 +203,7 @@ bool Cookie::isValidCookieName(const String& name)
     }
     return true;
 }
-static inline bool isValidCharacterInCookiePath(UChar c)
+static inline bool isValidCharacterInCookiePath(char16_t c)
 {
     return (c >= 0x20 && c <= 0x3A) || (c >= 0x3D && c <= 0x7E);
 }
@@ -220,7 +222,7 @@ bool Cookie::isValidCookiePath(const String& path)
     return true;
 }
 
-static inline bool isValidCharacterInCookieDomain(UChar c)
+static inline bool isValidCharacterInCookieDomain(char16_t c)
 {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-';
 }

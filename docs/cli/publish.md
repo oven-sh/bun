@@ -1,6 +1,6 @@
 Use `bun publish` to publish a package to the npm registry.
 
-`bun publish` will automatically pack your package into a tarball, strip workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` will automatically pack your package into a tarball, strip catalog and workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh
 ## Publishing the package from the current working directory
@@ -81,6 +81,16 @@ The `--dry-run` flag can be used to simulate the publish process without actuall
 ```sh
 $ bun publish --dry-run
 ```
+
+### `--tolerate-republish`
+
+The `--tolerate-republish` flag makes `bun publish` exit with code 0 instead of code 1 when attempting to republish over an existing version number. This is useful in automated workflows where republishing the same version might occur and should not be treated as an error.
+
+```sh
+$ bun publish --tolerate-republish
+```
+
+Without this flag, attempting to publish a version that already exists will result in an error and exit code 1. With this flag, the command will exit successfully even when trying to republish an existing version.
 
 ### `--gzip-level`
 

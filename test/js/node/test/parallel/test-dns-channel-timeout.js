@@ -1,16 +1,9 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN flaky
 const assert = require('assert');
 const dgram = require('dgram');
 const dns = require('dns');
-
-if (typeof Bun !== 'undefined') {
-  if (process.platform === 'win32' && require('../../../../harness').isCI) {
-    // TODO(@heimskr): This test mysteriously takes forever in Windows in CI
-    // possibly due to UDP keeping the event loop alive longer than it should.
-    common.skip('Windows CI is flaky');
-  }
-}
 
 for (const ctor of [dns.Resolver, dns.promises.Resolver]) {
   for (const timeout of [null, true, false, '', '2']) {

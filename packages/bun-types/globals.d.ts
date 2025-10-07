@@ -1,21 +1,42 @@
 declare module "bun" {
   namespace __internal {
-    type NodeWorkerThreadsWorker = import("node:worker_threads").Worker;
-    type LibWorkerOrBunWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", Bun.Worker>;
-
-    type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
-      "Performance",
-      import("perf_hooks").Performance
-    >;
-
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
+    type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
 
+    type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
+    type LibEmptyOrNodeStreamWebCompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").CompressionStream;
+    type LibEmptyOrNodeStreamWebDecompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").DecompressionStream;
+
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
+    type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
+    type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
+    type LibEmptyOrPerformanceObserver = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceObserver;
+    type LibEmptyOrPerformanceObserverEntryList = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceObserverEntryList;
+    type LibEmptyOrPerformanceResourceTiming = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").PerformanceResourceTiming;
+
     type LibEmptyOrNodeUtilTextEncoder = LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder;
+    type LibEmptyOrNodeStreamWebTextEncoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextEncoderStream;
 
     type LibEmptyOrNodeUtilTextDecoder = LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder;
+    type LibEmptyOrNodeStreamWebTextDecoderStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").TextDecoderStream;
 
     type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true
       ? {}
@@ -26,6 +47,20 @@ declare module "bun" {
       : import("node:stream/web").WritableStream<T>;
 
     type LibEmptyOrNodeMessagePort = LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort;
+    type LibEmptyOrBroadcastChannel = LibDomIsLoaded extends true ? {} : import("node:worker_threads").BroadcastChannel;
+    type LibEmptyOrEventSource = LibDomIsLoaded extends true ? {} : import("undici-types").EventSource;
+
+    type LibEmptyOrReadableByteStreamController = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableByteStreamController;
+
+    type LibEmptyOrReadableStreamBYOBReader = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableStreamBYOBReader;
+
+    type LibEmptyOrReadableStreamBYOBRequest = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableStreamBYOBRequest;
   }
 }
 
@@ -242,6 +277,30 @@ declare var Event: {
   readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
+
+/**
+ * Unimplemented in Bun
+ */
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+/**
+ * Unimplemented in Bun
+ */
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  typeof import("node:stream/web").CompressionStream
+>;
+
+/**
+ * Unimplemented in Bun
+ */
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+/**
+ * Unimplemented in Bun
+ */
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  typeof import("node:stream/web").DecompressionStream
+>;
 
 interface EventTarget {
   /**
@@ -832,7 +891,10 @@ interface ErrnoException extends Error {
   syscall?: string | undefined;
 }
 
-/** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
+/**
+ * An abnormal event (called an exception) which occurs as a result of calling a
+ * method or accessing a property of a web API
+ */
 interface DOMException extends Error {
   readonly message: string;
   readonly name: string;
@@ -862,11 +924,35 @@ interface DOMException extends Error {
   readonly INVALID_NODE_TYPE_ERR: 24;
   readonly DATA_CLONE_ERR: 25;
 }
-
-// declare var DOMException: {
-//   prototype: DOMException;
-//   new (message?: string, name?: string): DOMException;
-// };
+declare var DOMException: {
+  prototype: DOMException;
+  new (message?: string, name?: string): DOMException;
+  readonly INDEX_SIZE_ERR: 1;
+  readonly DOMSTRING_SIZE_ERR: 2;
+  readonly HIERARCHY_REQUEST_ERR: 3;
+  readonly WRONG_DOCUMENT_ERR: 4;
+  readonly INVALID_CHARACTER_ERR: 5;
+  readonly NO_DATA_ALLOWED_ERR: 6;
+  readonly NO_MODIFICATION_ALLOWED_ERR: 7;
+  readonly NOT_FOUND_ERR: 8;
+  readonly NOT_SUPPORTED_ERR: 9;
+  readonly INUSE_ATTRIBUTE_ERR: 10;
+  readonly INVALID_STATE_ERR: 11;
+  readonly SYNTAX_ERR: 12;
+  readonly INVALID_MODIFICATION_ERR: 13;
+  readonly NAMESPACE_ERR: 14;
+  readonly INVALID_ACCESS_ERR: 15;
+  readonly VALIDATION_ERR: 16;
+  readonly TYPE_MISMATCH_ERR: 17;
+  readonly SECURITY_ERR: 18;
+  readonly NETWORK_ERR: 19;
+  readonly ABORT_ERR: 20;
+  readonly URL_MISMATCH_ERR: 21;
+  readonly QUOTA_EXCEEDED_ERR: 22;
+  readonly TIMEOUT_ERR: 23;
+  readonly INVALID_NODE_TYPE_ERR: 24;
+  readonly DATA_CLONE_ERR: 25;
+};
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
@@ -883,6 +969,8 @@ declare var CryptoKey: {
   prototype: CryptoKey;
   new (): CryptoKey;
 };
+
+interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
 
 interface Position {
   lineText: string;
@@ -955,13 +1043,6 @@ interface ErrorConstructor {
   captureStackTrace(targetObject: object, constructorOpt?: Function): void;
 
   /**
-   * Optional override for formatting stack traces
-   *
-   * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-   */
-  prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
-
-  /**
    * The maximum number of stack frames to capture.
    */
   stackTraceLimit: number;
@@ -976,6 +1057,7 @@ interface ArrayBuffer {
    * Read-only. The length of the ArrayBuffer (in bytes).
    */
   readonly byteLength: number;
+
   /**
    * Resize an ArrayBuffer in-place.
    */
@@ -985,7 +1067,6 @@ interface ArrayBuffer {
    * Returns a section of an ArrayBuffer.
    */
   slice(begin: number, end?: number): ArrayBuffer;
-  readonly [Symbol.toStringTag]: string;
 }
 
 interface SharedArrayBuffer {
@@ -1261,7 +1342,7 @@ interface ImportMeta {
    * )
    * ```
    */
-  readonly main: boolean;
+  main: boolean;
 
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;
@@ -1403,12 +1484,12 @@ interface Blob {
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
    */
-  bytes(): Promise<Uint8Array>;
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
   /**
    * Returns a readable stream of the blob's contents
    */
-  stream(): ReadableStream<Uint8Array>;
+  stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<
@@ -1483,17 +1564,17 @@ interface Uint8ArrayConstructor {
       alphabet?: "base64" | "base64url";
       lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
     },
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Create a new Uint8Array from a hex encoded string
    * @param hex The hex encoded string to convert to a Uint8Array
    * @returns A new Uint8Array containing the decoded data
    */
-  fromHex(hex: string): Uint8Array;
+  fromHex(hex: string): Uint8Array<ArrayBuffer>;
 }
 
-interface BroadcastChannel {}
+interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}
 declare var BroadcastChannel: Bun.__internal.UseLibDomIfAvailable<
   "BroadcastChannel",
   typeof import("node:worker_threads").BroadcastChannel
@@ -1533,6 +1614,15 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
+ */
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
@@ -1541,6 +1631,12 @@ declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface AbortSignal extends EventTarget {
+  readonly aborted: boolean;
+  onabort: ((this: AbortSignal, ev: Event) => any) | null;
+  readonly reason: any;
+  throwIfAborted(): void;
+}
 declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
@@ -1567,12 +1663,6 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface DOMException {}
-declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
-  "DOMException",
-  { prototype: DOMException; new (): DOMException }
->;
-
 interface FormData {
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
   append(name: string, value: string | Blob): void;
@@ -1597,7 +1687,7 @@ interface FormData {
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
-interface EventSource {}
+interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
   "EventSource",
   { prototype: EventSource; new (): EventSource }
@@ -1606,67 +1696,67 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
 
-interface PerformanceEntry {}
+interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceEntry",
   { prototype: PerformanceEntry; new (): PerformanceEntry }
 >;
 
-interface PerformanceMark {}
+interface PerformanceMark extends Bun.__internal.LibEmptyOrPerformanceMark {}
 declare var PerformanceMark: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMark",
   { prototype: PerformanceMark; new (): PerformanceMark }
 >;
 
-interface PerformanceMeasure {}
+interface PerformanceMeasure extends Bun.__internal.LibEmptyOrPerformanceMeasure {}
 declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMeasure",
   { prototype: PerformanceMeasure; new (): PerformanceMeasure }
 >;
 
-interface PerformanceObserver {}
+interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
   { prototype: PerformanceObserver; new (): PerformanceObserver }
 >;
 
-interface PerformanceObserverEntryList {}
+interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}
 declare var PerformanceObserverEntryList: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserverEntryList",
   { prototype: PerformanceObserverEntryList; new (): PerformanceObserverEntryList }
 >;
 
-interface PerformanceResourceTiming {}
+interface PerformanceResourceTiming extends Bun.__internal.LibEmptyOrPerformanceResourceTiming {}
 declare var PerformanceResourceTiming: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceResourceTiming",
   { prototype: PerformanceResourceTiming; new (): PerformanceResourceTiming }
 >;
 
-interface ReadableByteStreamController {}
+interface ReadableByteStreamController extends Bun.__internal.LibEmptyOrReadableByteStreamController {}
 declare var ReadableByteStreamController: Bun.__internal.UseLibDomIfAvailable<
   "ReadableByteStreamController",
   { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
 >;
 
-interface ReadableStreamBYOBReader {}
+interface ReadableStreamBYOBReader extends Bun.__internal.LibEmptyOrReadableStreamBYOBReader {}
 declare var ReadableStreamBYOBReader: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
   { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
 >;
 
-interface ReadableStreamBYOBRequest {}
+interface ReadableStreamBYOBRequest extends Bun.__internal.LibEmptyOrReadableStreamBYOBRequest {}
 declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBRequest",
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
 >;
 
-interface TextDecoderStream {}
+interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
   { prototype: TextDecoderStream; new (): TextDecoderStream }
 >;
 
-interface TextEncoderStream {}
+interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
 declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }
@@ -1865,6 +1955,25 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   unix?: string;
+
+  /**
+   * Control automatic decompression of the response body.
+   * When set to `false`, the response body will not be automatically decompressed,
+   * and the `Content-Encoding` header will be preserved. This can improve performance
+   * when you need to handle compressed data manually or forward it as-is.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default true
+   * @example
+   * ```js
+   * // Disable automatic decompression for a proxy server
+   * const response = await fetch("https://example.com/api", {
+   *   decompress: false
+   * });
+   * // response.headers.get('content-encoding') might be 'gzip' or 'br'
+   * ```
+   */
+  decompress?: boolean;
 }
 
 /**
@@ -1906,3 +2015,21 @@ declare namespace fetch {
   ): void;
 }
 //#endregion
+
+interface RegExpConstructor {
+  /**
+   * Escapes any potential regex syntax characters in a string, and returns a
+   * new string that can be safely used as a literal pattern for the RegExp()
+   * constructor.
+   *
+   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
+   *
+   * @example
+   * ```ts
+   * const re = new RegExp(RegExp.escape("foo.bar"));
+   * re.test("foo.bar"); // true
+   * re.test("foo!bar"); // false
+   * ```
+   */
+  escape(string: string): string;
+}

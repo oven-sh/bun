@@ -1,6 +1,6 @@
+import type { Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import * as harness from "harness";
-import type { Socket } from "bun";
 describe("bun.connect", () => {
   test("should have peer x509 certificate", async () => {
     const defer = Promise.withResolvers();

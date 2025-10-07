@@ -1,10 +1,14 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
-import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
 import defaultMacro, {
+  addStrings,
+  addStringsUTF16,
   default as defaultMacroAlias,
+  escape,
+  identity,
   identity as identity1,
   identity as identity2,
+  ireturnapromise,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -121,3 +125,7 @@ test("namespace import", () => {
 // test("template string latin1", () => {
 //   expect(identity(`©${""}`)).toBe("©");
 // });
+
+test("ireturnapromise", async () => {
+  expect(await ireturnapromise()).toEqual("aaa");
+});

@@ -362,7 +362,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     // Node.js crashes here:
     // However, we should ensure this function never throws
     // That's why we do not call toPrimitive here or throw on invalid input.
-    if (UNLIKELY(!arg0.isInt32AsAnyInt())) {
+    if (!arg0.isInt32AsAnyInt()) [[unlikely]] {
         return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
     }
 
@@ -384,6 +384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
     // Inlining each of these via macros costs like 300 KB.
     const auto putProperty = [](JSC::VM& vm, JSC::JSMap* map, JSC::JSGlobalObject* globalObject, ASCIILiteral name, int value, ASCIILiteral desc) -> void {
         auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
+        // RETURN_IF_EXCEPTION
         arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(name)));
         arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc)));
         map->set(globalObject, JSC::jsNumber(value), arr);

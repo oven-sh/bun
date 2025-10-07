@@ -1,6 +1,6 @@
 import { bunRun, tempDirWithFiles } from "harness";
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
 
 describe("require(specifier)", () => {

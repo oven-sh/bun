@@ -37,6 +37,13 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> callback;
     mutable JSC::WriteBarrier<JSC::Unknown> context;
 
+    /**
+     * When you have a **specific** AsyncContextFrame to run the function in, use this
+     *
+     * Usually, you do not want to use this. Usually, you want to use `call` or `profiledCall`.
+     */
+    JSC::JSValue run(JSC::JSGlobalObject* globalObject, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList& args);
+
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

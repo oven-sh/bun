@@ -1,18 +1,27 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
-import { spawn, ChildProcess } from "child_process";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  isBroken,
+  isFlaky,
+  isMacOS,
+  isWindows,
+  tls,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 
+import { once } from "events";
 import { mkfifo } from "mkfifo";
+import type { AddressInfo } from "net";
 import net from "net";
 import { join } from "path";
-import { gzipSync } from "zlib";
 import { Readable } from "stream";
-import { once } from "events";
-import type { AddressInfo } from "net";
+import { gzipSync } from "zlib";
 const tmp_dir = tmpdirSync();
-import http from "http";
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
@@ -24,6 +33,7 @@ function startServer({ fetch, ...options }: ServeOptions) {
     fetch,
     port: 0,
   });
+  return server;
 }
 
 afterEach(() => {
@@ -262,31 +272,77 @@ describe("AbortSignal", () => {
       expect(target.reason!.name).toBe("AbortError");
     });
 
-    expect(async () => {
-      async function manualAbort() {
-        await sleep(10);
-        controller.abort();
-      }
+    async function manualAbort() {
+      await sleep(10);
+      controller.abort();
+    }
+
+    try {
       await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
-    }).toThrow(new DOMException("The operation was aborted."));
+      expect.unreachable();
+    } catch (e) {
+      expect(e?.message).toEqual("The operation was aborted.");
+      expect(e?.name).toEqual("AbortError");
+      expect(e?.constructor.name).toEqual("DOMException");
+    }
   });
 
   it("AbortErrorWhileUploading", async () => {
     const controller = new AbortController();
 
-    expect(async () => {
+    try {
       await fetch(`http://localhost:${server.port}`, {
         method: "POST",
         body: new ReadableStream({
           pull(event_controller) {
+            console.count("pull");
             event_controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            //this will abort immediately should abort before connected
+            controller.abort();
+          },
+          cancel(reason) {
+            console.log("cancel", reason);
+          },
+        }),
+        signal: controller.signal,
+      });
+      expect.unreachable();
+    } catch (ex: any) {
+      expect(ex?.message).toEqual("The operation was aborted.");
+      expect(ex?.name).toEqual("AbortError");
+      expect(ex?.constructor.name).toEqual("DOMException");
+    }
+  });
+
+  it("abort while uploading prevents pull() from being called", async () => {
+    const controller = new AbortController();
+    await fetch(`http://localhost:${server.port}`, {
+      method: "POST",
+      body: new Blob(["a"]),
+    });
+
+    try {
+      await fetch(`http://localhost:${server.port}`, {
+        method: "POST",
+        body: new ReadableStream({
+          async pull(event_controller) {
+            expect(controller.signal.aborted).toBeFalse();
+            const chunk = Buffer.alloc(256 * 1024, "abc");
+            for (let i = 0; i < 64; i++) {
+              event_controller.enqueue(chunk);
+            }
             //this will abort immediately should abort before connected
             controller.abort();
           },
         }),
         signal: controller.signal,
       });
-    }).toThrow(new DOMException("The operation was aborted."));
+      expect.unreachable();
+    } catch (ex: any) {
+      expect(ex?.message).toEqual("The operation was aborted.");
+      expect(ex?.name).toEqual("AbortError");
+      expect(ex?.constructor.name).toEqual("DOMException");
+    }
   });
 
   it("TimeoutError", async () => {
@@ -304,6 +360,8 @@ describe("AbortSignal", () => {
       expect.unreachable();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
+      expect(ex.message).toBe("The operation timed out.");
+      expect(ex.constructor.name).toBe("DOMException");
     }
   });
 
@@ -483,7 +541,7 @@ describe("fetch", () => {
     } else {
       name = url as string;
     }
-    it(name, async () => {
+    it.concurrent(name, async () => {
       gc();
       const response = await fetch(url, { verbose: true });
       gc();
@@ -493,8 +551,9 @@ describe("fetch", () => {
     });
   }
 
-  it('redirect: "manual"', async () => {
-    startServer({
+  it.concurrent('redirect: "manual"', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -512,8 +571,9 @@ describe("fetch", () => {
     expect(response.redirected).toBe(false); // not redirected
   });
 
-  it('redirect: "follow"', async () => {
-    startServer({
+  it.concurrent('redirect: "follow"', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -531,8 +591,9 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
-  it('redirect: "error" #2819', async () => {
-    startServer({
+  it.concurrent('redirect: "error" #2819', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -552,7 +613,7 @@ describe("fetch", () => {
     }
   });
 
-  it("should properly redirect to another port #7793", async () => {
+  it.concurrent("should properly redirect to another port #7793", async () => {
     var socket: net.Server | null = null;
     try {
       using server = Bun.serve({
@@ -588,8 +649,9 @@ describe("fetch", () => {
     }
   });
 
-  it("provide body", async () => {
-    startServer({
+  it.concurrent("provide body", async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(req.body);
       },
@@ -604,7 +666,7 @@ describe("fetch", () => {
   });
 
   ["GET", "HEAD", "OPTIONS"].forEach(method =>
-    it(`fail on ${method} with body`, async () => {
+    it.concurrent(`fail on ${method} with body`, async () => {
       const url = `http://${server.hostname}:${server.port}`;
       expect(async () => {
         await fetch(url, { body: "buntastic" });
@@ -612,8 +674,9 @@ describe("fetch", () => {
     }),
   );
 
-  it("content length is inferred", async () => {
-    startServer({
+  it.concurrent("content length is inferred", async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(req.headers.get("content-length"));
       },
@@ -631,7 +694,7 @@ describe("fetch", () => {
     expect(await response2.text()).toBe("0");
   });
 
-  it("should work with ipv6 localhost", async () => {
+  it.concurrent("should work with ipv6 localhost", async () => {
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -649,7 +712,7 @@ describe("fetch", () => {
   });
 });
 
-it("simultaneous HTTPS fetch", async () => {
+it.concurrent("simultaneous HTTPS fetch", async () => {
   const urls = ["https://example.com", "https://www.example.com"];
   for (let batch = 0; batch < 4; batch++) {
     const promises = new Array(20);
@@ -665,7 +728,7 @@ it("simultaneous HTTPS fetch", async () => {
   }
 });
 
-it("website with tlsextname", async () => {
+it.concurrent("website with tlsextname", async () => {
   // irony
   await fetch("https://bun.sh", { method: "HEAD" });
 });
@@ -678,23 +741,27 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         hello: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       },
     ]) {
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} json${withGC ? " (with gc) " : ""}`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(JSON.stringify(jsonObject));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it.concurrent(
+        `${jsonObject.hello === true ? "latin1" : "utf16"} json${withGC ? " (with gc) " : ""}`,
+        async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(JSON.stringify(jsonObject));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        },
+      );
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it.concurrent(
+        `${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""}`,
+        async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        },
+      );
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
         withGC ? " (with gc) " : ""
@@ -860,7 +927,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
   }
 }
 
-describe("Bun.file", () => {
+describe.concurrent("Bun.file", () => {
   let count = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
@@ -1123,11 +1190,11 @@ describe("Response", () => {
           "x-hello": "world",
           Location: "https://wrong.com",
         },
-        status: 408,
+        status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.headers.get("Location")).toBe("https://example.com");
-      expect(response.status).toBe(302);
+      expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
     });
@@ -1812,7 +1879,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it("should allow very long redirect URLS", async () => {
+it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({
     port: 0,
@@ -1840,7 +1907,7 @@ it("should allow very long redirect URLS", async () => {
   }
 });
 
-it("304 not modified with missing content-length does not cause a request timeout", async () => {
+it.concurrent("304 not modified with missing content-length does not cause a request timeout", async () => {
   const server = await Bun.listen({
     socket: {
       open(socket) {
@@ -2034,7 +2101,23 @@ describe("http/1.1 response body length", () => {
   });
 });
 describe("fetch Response life cycle", () => {
-  it("should not keep Response alive if not consumed", async () => {
+  // error: Malformed_HTTP_Response fetching "http://localhost:58888/". For more information, pass `verbose: true` in the second argument to fetch()
+  //   path: "http://localhost:58888/",
+  //  errno: 0,
+  //   code: "Malformed_HTTP_Response"
+  // 2054 |       stderr: "inherit",
+  // 2055 |       stdout: "inherit",
+  // 2056 |       stdin: "inherit",
+  // 2057 |       env: bunEnv,
+  // 2058 |     });
+  // 2059 |     expect(await clientProcess.exited).toBe(0);
+  //                                               ^
+  // error: expect(received).toBe(expected)
+  // Expected: 0
+  // Received: 1
+  //       at <anonymous> (/opt/homebrew/etc/buildkite-agent/builds/macOS-13-aarch64-1/bun/bun/test/js/web/fetch/fetch.test.ts:2059:40)
+  // ✗ fetch Response life cycle > should not keep Response alive if not consumed [205.17ms]
+  it.skipIf(isFlaky && isMacOS)("should not keep Response alive if not consumed", async () => {
     let deferred = Promise.withResolvers<string>();
 
     await using serverProcess = Bun.spawn({

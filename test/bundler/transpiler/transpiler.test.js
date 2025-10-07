@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -727,6 +727,40 @@ describe("Bun.Transpiler", () => {
       // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
+    it("non-null assertion with new operator", () => {
+      const exp = ts.expectPrinted_;
+
+      // Basic non-null assertion with new operator on nested class
+      exp(
+        "const obj = { a: class Abc {} }; const instance = new obj!.a();",
+        "const obj = { a: class Abc {\n} };\nconst instance = new obj.a",
+      );
+
+      // with constructor
+      exp(
+        "const obj = { a: class Abc { constructor(x) { this.x = x; }} }; const instance = new obj!.a(1);",
+        "const obj = { a: class Abc {\n  constructor(x) {\n    this.x = x;\n  }\n} };\nconst instance = new obj.a(1)",
+      );
+
+      // Non-null assertion with new operator on nested property
+      exp(
+        "const obj = { nested: { Class: class NestedClass {} } }; const instance = new obj!.nested.Class();",
+        "const obj = { nested: { Class: class NestedClass {\n} } };\nconst instance = new obj.nested.Class",
+      );
+
+      // Multiple non-null assertions in new expression
+      exp(
+        "const obj = { a: { b: class DeepClass {} } }; const instance = new obj!.a!.b();",
+        "const obj = { a: { b: class DeepClass {\n} } };\nconst instance = new obj.a.b",
+      );
+
+      // Non-null assertion with new operator and method call
+      exp(
+        "const obj = { getClass() { return class MyClass {}; } }; const C = obj!.getClass(); const instance = new C();",
+        "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C",
+      );
+    });
+
     it("modifiers", () => {
       const exp = ts.expectPrinted_;
 
@@ -1308,6 +1342,19 @@ console.log(<div {...obj} key="after" />);`),
       `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
+  });
+
+  it("parses TSX arrow functions correctly", () => {
+    var transpiler = new Bun.Transpiler({
+      loader: "tsx",
+    });
+    expect(transpiler.transformSync("console.log(A = <T = unknown,>() => null)")).toBe(
+      "console.log(A = () => null);\n",
+    );
+    expect(transpiler.transformSync("const B = <T extends string>() => null")).toBe("const B = () => null;\n");
+    expect(transpiler.transformSync("const element = <T extends/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element2 = <T extends={true}/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element3 = <T extends></T>")).toContain("jsxDEV");
   });
 
   it.todo("JSX", () => {
@@ -2831,6 +2878,35 @@ console.log(foo, array);
       // check("let x = arg0?.[foo]; (0, x)()", "let x = arg0?.[foo];\nx();");
     });
 
+    it("comma operator transforms", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
+      // Comma operator should be optimized when not used as call target
+      expectPrinted("(0, 1)", "1");
+      expectPrinted("(0, foo)", "foo");
+      expectPrinted("(sideEffect(), foo)", "(sideEffect(), foo)");
+
+      // Comma operator should preserve 'this' binding semantics when used as call target
+      expectPrinted("(0, obj.method)()", "(0, obj.method)()");
+      expectPrinted("(0, obj[key])()", "(0, obj[key])()");
+      expectPrinted("(0, obj?.method)()", "(0, obj?.method)()");
+      expectPrinted("(0, obj?.[key])()", "(0, obj?.[key])()");
+
+      // Side effects should still be preserved in call context
+      expectPrinted("(sideEffect(), obj.method)()", "(sideEffect(), obj.method)()");
+
+      // Non-method calls should still be optimized even in call context
+      expectPrinted("(0, func)()", "func()");
+      expectPrinted("(0, getValue())()", "getValue()()");
+
+      // Non-call target with function call as second value should be optimized
+      expectPrinted("(0, obj.method)", "obj.method");
+      expectPrinted("(0, obj[key])", "obj[key]");
+      expectPrinted("(0, func())", "func()");
+    });
+
     it("constant folding", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
@@ -3462,6 +3538,18 @@ describe("await can only be used inside an async function message", () => {
   });
 });
 
+describe("malformed function definition does not crash due to invalid scope initialization", () => {
+  it("fails with a parse error and exits cleanly", async () => {
+    const tests = ["function:", "function a() {function:}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow("Parse error");
+      }
+    }
+  });
+});
+
 it("does not crash with 9 comments and typescript type skipping", () => {
   const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
   const { stdout, stderr, exitCode } = Bun.spawnSync({
@@ -3473,6 +3561,19 @@ it("does not crash with 9 comments and typescript type skipping", () => {
 
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toContain("success!");
+  expect(exitCode).toBe(0);
+});
+
+it("does not crash with --minify-syntax and revisiting dot expressions", () => {
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-p", "[(()=>{})()][''+'c']"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("undefined\n");
   expect(exitCode).toBe(0);
 });
 
@@ -3490,4 +3591,133 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
+  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+
+  it("reproduces the original scope mismatch bug with JSX", () => {
+    // This is the exact pattern that caused the scope mismatch panic
+    const code = `
+const Layout = () => {
+  return (
+    <html>
+    </html>
+  )
+}
+
+['1', 'p'].forEach(i =>
+  app.get(\`/\${i === 'home' ? '' : i}\`, c => c.html(
+    <Layout selected={i}>
+      Hello {i}
+    </Layout>
+  ))
+)`;
+
+    // Without the fix, this would parse the array as indexing into the arrow function
+    // causing a scope mismatch panic when visiting the AST
+    const result = transpiler.transformSync(code);
+
+    // The correct parse should have the array literal as a separate statement
+    expect(result).toContain("forEach");
+    // The bug would incorrectly parse as: })["1", "p"]
+    expect(result).not.toContain(')["');
+    expect(result).not.toContain('}["');
+  });
+
+  it("correctly parses array literal on next line after block body arrow function", () => {
+    const code = `const Layout = () => {
+  return 1
+}
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    // The bug would cause the array to be parsed as indexing: Layout[...
+    expect(result).not.toContain(')["');
+  });
+
+  it("correctly parses JSX arrow function followed by array literal", () => {
+    const code = `const Layout = () => {
+  return (
+    <html>
+    </html>
+  )
+}
+
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("Layout[");
+  });
+
+  it("rejects indexing directly into block body arrow function without parens", () => {
+    const code = `const Layout = () => {return 1}['x']`;
+
+    // Should throw a parse error - either "Parse error" or the more specific message
+    expect(() => transpiler.transformSync(code)).toThrow();
+  });
+
+  it("allows indexing into parenthesized arrow function", () => {
+    const code = `const x = (() => {return {a: 1}})['a']`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain('["a"]');
+  });
+
+  it("correctly handles expression body arrow functions", () => {
+    const code = `const Layout = () => 1
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+  });
+
+  it("correctly handles arrow function with comma operator", () => {
+    const code = `const a = () => {return 1}, b = 2`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("b = 2");
+  });
+
+  it("correctly handles multiple arrow functions in const declaration", () => {
+    const code = `const a = () => {return 1}, b = () => {return 2}
+['1', '2'].forEach(x => console.log(x))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("b[");
+  });
+
+  it("preserves intentional array access with explicit semicolon", () => {
+    const code = `const Layout = () => {return 1};
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("Layout[");
+  });
+
+  it("handles nested arrow functions correctly", () => {
+    const code = `const outer = () => {
+  const inner = () => {
+    return 1
+  }
+  return inner
+}
+['test'].forEach(x => x)`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+  });
+
+  it("handles arrow function followed by object literal", () => {
+    const code = `const fn = () => {return 1}
+({a: 1, b: 2}).a`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("a: 1");
+    expect(result).not.toContain("fn(");
+  });
 });

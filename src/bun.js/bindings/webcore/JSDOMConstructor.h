@@ -20,15 +20,26 @@
 #pragma once
 
 #include "JSDOMConstructorBase.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 
-template<typename JSClass> class JSDOMConstructor final : public JSDOMConstructorBase {
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR>
+class JSDOMConstructor final : public JSDOMConstructorBase {
 public:
     using Base = JSDOMConstructorBase;
 
-    static JSDOMConstructor* create(JSC::VM&, JSC::Structure*, JSDOMGlobalObject&);
-    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject&, JSC::JSValue prototype);
+    static JSDOMConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
+    {
+        JSDOMConstructor* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructor>(vm)) JSDOMConstructor(vm, structure);
+        constructor->finishCreation(vm, globalObject);
+        return constructor;
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
 
     DECLARE_INFO;
 
@@ -40,33 +51,19 @@ public:
 
 private:
     JSDOMConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, construct)
+        : Base(vm, structure, construct, nullptr, errorCodeIfCalled)
     {
     }
 
-    void finishCreation(JSC::VM&, JSDOMGlobalObject&);
+    void finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+        initializeProperties(vm, globalObject);
+    }
 
     // Usually defined for each specialization class.
     void initializeProperties(JSC::VM&, JSDOMGlobalObject&) {}
 };
-
-template<typename JSClass> inline JSDOMConstructor<JSClass>* JSDOMConstructor<JSClass>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
-{
-    JSDOMConstructor* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructor>(vm)) JSDOMConstructor(vm, structure);
-    constructor->finishCreation(vm, globalObject);
-    return constructor;
-}
-
-template<typename JSClass> inline JSC::Structure* JSDOMConstructor<JSClass>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
-{
-    return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-}
-
-template<typename JSClass> inline void JSDOMConstructor<JSClass>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-    initializeProperties(vm, globalObject);
-}
 
 } // namespace WebCore

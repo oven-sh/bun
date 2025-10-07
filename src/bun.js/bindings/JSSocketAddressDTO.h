@@ -16,4 +16,4 @@ JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int port, boo
 } // namespace JSSocketAddress
 } // namespace Bun
 
-extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, int32_t port, bool isIPv6);
+extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, uint16_t port, bool isIPv6);

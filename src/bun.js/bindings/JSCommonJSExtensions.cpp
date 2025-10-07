@@ -138,8 +138,12 @@ void JSCommonJSExtensions::finishCreation(JSC::VM& vm)
 extern "C" void NodeModuleModule__onRequireExtensionModify(
     Zig::GlobalObject* globalObject,
     const BunString* key,
-    uint32_t kind,
+    BunLoaderType loader,
     JSC::JSValue value);
+
+extern "C" void NodeModuleModule__onRequireExtensionModifyNonFunction(
+    Zig::GlobalObject* globalObject,
+    const BunString* key);
 
 void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
 {
@@ -147,23 +151,25 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     BunString ext = Bun::toString(name);
-    uint32_t kind = 0;
     JSC::CallData callData = JSC::getCallData(value);
+    if (callData.type == JSC::CallData::Type::None) {
+        return NodeModuleModule__onRequireExtensionModifyNonFunction(globalObject, &ext);
+    }
+
+    BunLoaderType loader = BunLoaderTypeNone;
     if (callData.type == JSC::CallData::Type::Native) {
         auto* untaggedPtr = callData.native.function.untaggedPtr();
         if (untaggedPtr == &jsLoaderJS) {
-            kind = 1;
+            loader = BunLoaderTypeJS;
         } else if (untaggedPtr == &jsLoaderJSON) {
-            kind = 2;
+            loader = BunLoaderTypeJSON;
         } else if (untaggedPtr == &jsLoaderNode) {
-            kind = 3;
+            loader = BunLoaderTypeNAPI;
         } else if (untaggedPtr == &jsLoaderTS) {
-            kind = 4;
+            loader = BunLoaderTypeTS;
         }
-    } else if (callData.type == JSC::CallData::Type::None) {
-        kind = -1;
     }
-    NodeModuleModule__onRequireExtensionModify(globalObject, &ext, kind, value);
+    NodeModuleModule__onRequireExtensionModify(globalObject, &ext, loader, value);
 }
 
 bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
@@ -241,19 +247,22 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSObject* modValue = callFrame->argument(0).getObject();
     if (!modValue) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
-        return JSC::JSValue::encode({});
+        return {};
     }
     Bun::JSCommonJSModule* mod = jsDynamicCast<Bun::JSCommonJSModule*>(modValue);
     if (!mod) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
-        return JSC::JSValue::encode({});
+        return {};
     }
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),
@@ -278,9 +287,9 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         ASSERT(callData.type == JSC::CallData::Type::JS);
         NakedPtr<JSC::Exception> returnedException = nullptr;
         JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
-        if (UNLIKELY(returnedException)) {
+        if (returnedException) [[unlikely]] {
             throwException(globalObject, scope, returnedException->value());
-            return JSC::JSValue::encode({});
+            return {};
         }
     }
 

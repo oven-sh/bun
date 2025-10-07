@@ -29,7 +29,7 @@
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
-#include <JavaScriptCore/Strong.h>
+
 #include <JavaScriptCore/JSPromise.h>
 
 #if OS(WINDOWS)
@@ -117,9 +117,9 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
 };
 
-class JSBundlerPlugin final : public JSC::JSNonFinalObject {
+class JSBundlerPlugin final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
@@ -156,25 +156,45 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
 
     Bun::BundlerPlugin plugin;
     /// These are defined in BundlerPlugin.ts
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+
     JSC::JSGlobalObject* m_globalObject;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        JSBundlerPlugin* thisObject = static_cast<JSBundlerPlugin*>(cell);
+        thisObject->~JSBundlerPlugin();
+    }
 
 private:
     JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
-        : JSC::JSNonFinalObject(vm, structure)
+        : Base(vm, structure)
         , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
 
+    ~JSBundlerPlugin() = default;
     void finishCreation(JSC::VM&);
 };
+
+template<typename Visitor>
+void JSBundlerPlugin::visitAdditionalChildren(Visitor& visitor)
+{
+    this->onLoadFunction.visit(visitor);
+    this->onResolveFunction.visit(visitor);
+    this->setupFunction.visit(visitor);
+    this->plugin.deferredPromises.visit(this, visitor);
+}
 
 template<typename Visitor>
 void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -182,11 +202,18 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->onLoadFunction.visit(visitor);
-    thisObject->onResolveFunction.visit(visitor);
-    thisObject->setupFunction.visit(visitor);
+    thisObject->visitAdditionalChildren(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+
+template<typename Visitor>
+void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren(visitor);
+}
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
@@ -215,23 +242,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-static JSBundlerPluginNativeOnBeforeParseCallback nativeCallbackFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
-{
-    if (auto* fn = jsDynamicCast<JSFFIFunction*>(value)) {
-        return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
-    }
-
-    if (auto* object = value.getObject()) {
-        if (auto callbackValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(globalObject->vm(), String("native"_s)))) {
-            if (auto* fn = jsDynamicCast<JSFFIFunction*>(callbackValue)) {
-                return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
-            }
-        }
-    }
-
-    return nullptr;
 }
 
 void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external)
@@ -360,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 
     // The dlopen *void handle is attached to the node_addon as a NapiExternal
     Bun::NapiExternal* napi_external = jsDynamicCast<Bun::NapiExternal*>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
-    if (UNLIKELY(!napi_external)) {
+    if (!napi_external) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
@@ -387,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     NapiExternal* externalPtr = nullptr;
     if (!external.isUndefinedOrNull()) {
         externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
-        if (UNLIKELY(!externalPtr)) {
+        if (!externalPtr) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
@@ -441,10 +451,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundlerPlugin* pluginObject)
 {
-    JSC::JSGlobalObject* globalObject = pluginObject->globalObject();
-    Strong<JSPromise> strong_promise = JSC::Strong<JSPromise>(globalObject->vm(), JSPromise::create(globalObject->vm(), globalObject->promiseStructure()));
-    JSPromise* ret = strong_promise.get();
-    pluginObject->plugin.deferredPromises.append(strong_promise);
+    auto* vm = &pluginObject->vm();
+    auto* globalObject = pluginObject->globalObject();
+
+    JSPromise* ret = JSPromise::create(*vm, globalObject->promiseStructure());
+    pluginObject->plugin.deferredPromises.append(*vm, pluginObject, ret);
 
     return JSC::JSValue::encode(ret);
 }
@@ -504,12 +515,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
-    if (UNLIKELY(!function))
+    if (!function) [[unlikely]]
         return;
 
     JSC::CallData callData = JSC::getCallData(function);
 
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
     auto scope = DECLARE_CATCH_SCOPE(plugin->vm());
@@ -522,7 +533,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
         scope.clearException();
         if (!plugin->plugin.tombstoned) {
@@ -547,12 +558,12 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
-    if (UNLIKELY(!function))
+    if (!function) [[unlikely]]
         return;
 
     JSC::CallData callData = JSC::getCallData(function);
 
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -565,7 +576,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         auto exception = JSValue(scope.exception());
         scope.clearException();
         if (!plugin->plugin.tombstoned) {
@@ -596,14 +607,14 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, plugin->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), plugin->globalObject());
 
     auto* runSetupFn = plugin->setupFunction.get(plugin);
 
     JSC::CallData callData = JSC::getCallData(loadAndResolvePluginsForServeBuiltinFn);
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     MarkedArgumentBuffer arguments;
@@ -611,7 +622,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
 
-    return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments)));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
@@ -623,14 +634,14 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     JSC::EncodedJSValue encodedIsBake)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* setupFunction = jsCast<JSFunction*>(plugin->setupFunction.get(plugin));
-    if (UNLIKELY(!setupFunction))
+    if (!setupFunction) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     JSC::CallData callData = JSC::getCallData(setupFunction);
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     MarkedArgumentBuffer arguments;
@@ -641,7 +652,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedIsBake));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    return JSC::JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments));
+    auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
+
+    return JSValue::encode(result);
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
@@ -651,20 +665,55 @@ extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* c
 
 extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
 {
-    auto deferredPromises = std::exchange(pluginObject->plugin.deferredPromises, {});
-    for (auto& promise : deferredPromises) {
+    auto* globalObject = pluginObject->globalObject();
+    MarkedArgumentBuffer arguments;
+    pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
+    ASSERT(!arguments.hasOverflowed());
+
+    auto scope = DECLARE_THROW_SCOPE(pluginObject->vm());
+    for (auto promiseValue : arguments) {
+        JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
         if (rejected) {
-            promise->reject(pluginObject->globalObject(), JSC::jsUndefined());
+            promise->reject(globalObject, JSC::jsUndefined());
         } else {
-            promise->resolve(pluginObject->globalObject(), JSC::jsUndefined());
+            promise->resolve(globalObject, JSC::jsUndefined());
         }
-        promise.clear();
+        RETURN_IF_EXCEPTION(scope, );
     }
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = plugin->globalObject();
+
+    // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
+    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
+        WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
+
+    JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        return JSValue::encode(jsUndefined());
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedBuildPromise));
+    arguments.append(JSValue::decode(encodedBuildResult));
+    arguments.append(JSValue::decode(encodedRejection));
+
+    // TODO: use AsyncContextFrame?
+    auto result
+        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(

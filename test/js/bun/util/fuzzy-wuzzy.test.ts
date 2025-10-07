@@ -17,11 +17,22 @@
  *
  */
 
-const ENABLE_LOGGING = false;
+const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1";
 
-import { describe, test } from "bun:test";
-import { isWindows } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "events";
+import { isWindows } from "harness";
+var calls = 0,
+  constructs = 0,
+  subclasses = 0;
+afterAll(() => {
+  process.stdout.write(`\nStats: ${calls} calls, ${constructs} constructs, ${subclasses} subclasses\n`);
+});
+
+function log(from, ...message: any[]) {
+  if (!ENABLE_LOGGING) return;
+  console.log(`[ ${from} ] ${message.join(" ")}`);
+}
 
 const Promise = globalThis.Promise;
 globalThis.Promise = function (...args) {
@@ -34,6 +45,7 @@ globalThis.Promise = function (...args) {
 
   return promise?.catch?.(e => {
     if (ENABLE_LOGGING) {
+      log("unknown", "Uncaught error:");
       console.log(e);
     }
   });
@@ -41,10 +53,11 @@ globalThis.Promise = function (...args) {
 globalThis.Promise.prototype = Promise.prototype;
 Object.assign(globalThis.Promise, Promise);
 
-function wrap(input) {
+function wrap(input, from) {
   if (typeof input?.catch === "function") {
     return input?.catch?.(e => {
       if (ENABLE_LOGGING) {
+        log(from, "Threw error:");
         console.error(e);
       }
     });
@@ -64,13 +77,17 @@ delete process._destroy;
 delete process._events;
 delete process.openStdin;
 delete process.emitWarning;
-delete require("stream").Readable.prototype.destroy;
+require("stream").Readable.prototype.destroy = () => {};
 delete globalThis.Loader;
 // ** Uncatchable errors in tests **
 delete ReadableStreamDefaultReader.prototype["closed"];
 delete ReadableStreamBYOBReader.prototype["closed"];
 delete WritableStreamDefaultWriter.prototype["ready"];
 delete WritableStreamDefaultWriter.prototype["closed"];
+Object.defineProperty(ReadableStreamDefaultReader.prototype, "closed", { value: false });
+Object.defineProperty(ReadableStreamBYOBReader.prototype, "closed", { value: false });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "ready", { value: Promise.resolve() });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "closed", { value: false });
 WebAssembly.compile = () => {};
 WebAssembly.instantiate = () => {};
 // ** Uncatchable errors in tests **
@@ -107,22 +124,6 @@ delete console.timeLog;
 delete console.assert;
 Bun.generateHeapSnapshot = () => {};
 
-const TODOs = [
-  "ByteLengthQueuingStrategy",
-  "CountQueuingStrategy",
-  "ReadableByteStreamController",
-  "ReadableStream",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableStreamDefaultController",
-  "ReadableStreamDefaultReader",
-  "TransformStream",
-  "TransformStreamDefaultController",
-  "WritableStream",
-  "WritableStreamDefaultController",
-  "WritableStreamDefaultWriter",
-];
-
 const ignoreList = [
   Object.prototype,
   Function.prototype,
@@ -156,13 +157,10 @@ const ignoreList = [
   RegExp.prototype,
   Date.prototype,
   String.prototype,
-
-  // TODO: getFunctionRealm() on these.
-  ReadableStream.prototype,
 ];
 
 const constructBanned = banned;
-const callBanned = [...TODOs, ...banned];
+const callBanned = [...banned];
 
 function allThePropertyNames(object, banned) {
   if (!object) {
@@ -213,36 +211,44 @@ if (ENABLE_LOGGING) {
 
 const seenValues = new WeakSet();
 var callAllMethodsCount = 0;
-function callAllMethods(object) {
+function callAllMethods(object, rootName) {
   callAllMethodsCount++;
-  const queue = [];
+  const queue: { value: unknown; from: string }[] = [];
   const seen = new Set([object, object?.subarray]);
   for (const methodName of allThePropertyNames(object, callBanned)) {
+    const fullName = rootName + "." + methodName;
     try {
       try {
         if (object instanceof EventEmitter) {
           object?.on?.("error", () => {});
         }
-        const returnValue = wrap(Reflect.apply(object?.[methodName], object, []));
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        log(fullName, "Calling...");
+        const returnValue = wrap(Reflect.apply(object?.[methodName], object, []), fullName + "()");
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
+        calls++;
       } catch (e) {
-        const returnValue = wrap(Reflect.apply(object.constructor?.[methodName], object?.constructor, []));
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        const returnValue = wrap(
+          Reflect.apply(object.constructor?.[methodName], object?.constructor, []),
+          "(new " + fullName + "())",
+        );
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
+        calls++;
       }
     } catch (e) {
       const val = object?.[methodName];
       if (val && (typeof val === "object" || typeof val === "function") && !seenValues.has(val)) {
         seenValues.add(val);
-        queue.push(val);
+        queue.push({ value: val, from: fullName });
       }
     } finally {
     }
   }
 
   while (queue.length) {
-    const value = queue.shift();
+    const { value, from } = queue.shift()!;
     if (value) {
       for (const methodName of allThePropertyNames(value, callBanned)) {
+        const fullName = from + "." + methodName;
         try {
           const method = value?.[methodName];
           if (method && seen.has(method)) {
@@ -252,34 +258,44 @@ function callAllMethods(object) {
           if (value instanceof EventEmitter) {
             value?.on?.("error", () => {});
           }
-          const returnValue = wrap(Reflect?.apply?.(method, value, []));
+          log(fullName, "Calling...");
+          const returnValue = wrap(Reflect?.apply?.(method, value, []), fullName + "()");
           if (returnValue?.then) {
             continue;
           }
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
+          calls++;
         } catch (e) {}
       }
     }
   }
 }
 
-function constructAllConstructors(object) {
-  const queue = [];
+function constructAllConstructors(object, rootName) {
+  const queue: { value: unknown; from: string }[] = [];
   const seen = new Set([object?.subarray]);
   for (const methodName of allThePropertyNames(object, constructBanned)) {
+    const fullName = rootName + "." + methodName;
     const method = object?.[methodName];
+
     try {
       try {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
+        constructs++;
       } catch (e) {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
+        constructs++;
       }
     } catch (e) {
       try {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
+        constructs++;
       } catch (e) {
         Error.captureStackTrace(e);
       }
@@ -287,21 +303,112 @@ function constructAllConstructors(object) {
   }
 
   while (queue.length) {
-    const value = queue.shift();
+    const { value, from } = queue.shift()!;
     for (const methodName of allThePropertyNames(value, constructBanned)) {
+      const fullName = from + "." + methodName;
       try {
         const method = value?.[methodName];
         if (method && seen.has(method)) {
           continue;
         }
 
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(value, [], method);
         if (seen.has(returnValue)) {
           continue;
         }
 
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         seen.add(returnValue);
+        constructs++;
+      } catch (e) {}
+    }
+  }
+}
+
+function constructAllConstructorsWithSubclassing(object, rootName) {
+  const queue: { value: unknown; from: string }[] = [];
+  const seen = new Set([object?.subarray]);
+  for (const methodName of allThePropertyNames(object, constructBanned)) {
+    const fullName = rootName + "." + methodName;
+    const method = object?.[methodName];
+
+    try {
+      try {
+        // Create a subclass of the constructor
+        class Subclass extends object {}
+        log(fullName, "Constructing with subclass...");
+        const returnValue = Reflect.construct(object, [], Subclass);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+        subclasses++;
+      } catch (e) {
+        try {
+          // Try with the constructor property
+          class Subclass extends object?.constructor {}
+          log(fullName, "Constructing with subclass...");
+          const returnValue = Reflect.construct(object?.constructor, [], Subclass);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+          subclasses++;
+        } catch (e) {
+          // Fallback to a more generic approach
+          const Subclass = function () {};
+          Object.setPrototypeOf(Subclass.prototype, object);
+          log(fullName, "Constructing with subclass...");
+          const returnValue = Reflect.construct(object, [], Subclass);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+          subclasses++;
+        }
+      }
+    } catch (e) {
+      try {
+        // Try with prototype constructor
+        class Subclass extends object?.prototype?.constructor {}
+        log(fullName, "Constructing with subclass...");
+        const returnValue = Reflect.construct(object?.prototype?.constructor, [], Subclass);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+        subclasses++;
+      } catch (e) {
+        Error.captureStackTrace(e);
+      }
+    }
+  }
+
+  while (queue.length) {
+    const { value, from } = queue.shift()!;
+    for (const methodName of allThePropertyNames(value, constructBanned)) {
+      const fullName = from + "." + methodName;
+      try {
+        const method = value?.[methodName];
+        if (method && seen.has(method)) {
+          continue;
+        }
+
+        // Create a subclass of the value
+        try {
+          class Subclass extends value {}
+          log(fullName, "Constructing with subclass...");
+          const returnValue = Reflect.construct(value, [], Subclass);
+          if (seen.has(returnValue)) {
+            continue;
+          }
+
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+          seen.add(returnValue);
+          subclasses++;
+        } catch (e) {
+          // Fallback to a more generic approach
+          const Subclass = function () {};
+          Object.setPrototypeOf(Subclass.prototype, value);
+          log(fullName, "Constructing with subclass...");
+          const returnValue = Reflect.construct(value, [], Subclass);
+          if (seen.has(returnValue)) {
+            continue;
+          }
+
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
+          seen.add(returnValue);
+          subclasses++;
+        }
       } catch (e) {}
     }
   }
@@ -318,7 +425,18 @@ const modules = [
   "os",
   "dgram",
   "domain",
-  // "crypto",
+  "crypto",
+  "util/types",
+  "http",
+  "_http_agent",
+  "_http_client",
+  "_http_common",
+  "_http_incoming",
+  "_http_outgoing",
+  "_http_server",
+  "http2",
+  "process",
+  "undici",
   "timers",
   "punycode",
   "trace_events",
@@ -328,12 +446,22 @@ const modules = [
   "bun:ffi",
   "string_decoder",
   "bun:sqlite",
+  "fs/promises",
 ];
 
 for (const mod of modules) {
   describe(mod, () => {
-    test("call", () => callAllMethods(require(mod)));
-    test("construct", () => constructAllConstructors(require(mod)));
+    test("call", () => {
+      expect(async () => await callAllMethods(require(mod), `require("${mod}")`)).not.toThrow();
+    });
+    test("construct", () => {
+      expect(async () => await constructAllConstructors(require(mod), `require("${mod}")`)).not.toThrow();
+    });
+    test("construct-subclass", () => {
+      expect(
+        async () => await constructAllConstructorsWithSubclassing(require(mod), `require("${mod}")`),
+      ).not.toThrow();
+    });
   });
 }
 
@@ -360,8 +488,18 @@ for (const HardCodedClass of [
 
   process,
 ]) {
-  test("call " + (HardCodedClass.name || HardCodedClass.toString()), () => constructAllConstructors(HardCodedClass));
-  test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () => callAllMethods(HardCodedClass));
+  test("call " + (HardCodedClass.name || HardCodedClass.toString()), () =>
+    constructAllConstructors(HardCodedClass, HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass"),
+  );
+  test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () =>
+    callAllMethods(HardCodedClass, HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass"),
+  );
+  test("construct-subclass " + (HardCodedClass.name || HardCodedClass.toString()), () =>
+    constructAllConstructorsWithSubclassing(
+      HardCodedClass,
+      HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass",
+    ),
+  );
 }
 
 const globals = [
@@ -374,13 +512,20 @@ for (const [Global, name] of globals) {
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
-      callAllMethods(Global);
+      expect(async () => await callAllMethods(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
-      constructAllConstructors(Global);
+      expect(async () => await constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
+      await Bun.sleep(1);
+    });
+    test.skipIf(isWindows && Global === Bun)("construct-subclass", async () => {
+      await Bun.sleep(1);
+      expect(
+        async () => await constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis"),
+      ).not.toThrow();
       await Bun.sleep(1);
     });
   });

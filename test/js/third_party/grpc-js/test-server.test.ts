@@ -17,26 +17,26 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
+import * as protoLoader from "@grpc/proto-loader";
 import assert from "assert";
 import * as fs from "fs";
 import * as http2 from "http2";
-import * as path from "path";
 import * as net from "net";
-import * as protoLoader from "@grpc/proto-loader";
+import * as path from "path";
 
 import * as grpc from "@grpc/grpc-js/build/src";
 import { Server, ServerCredentials } from "@grpc/grpc-js/build/src";
 import { ServiceError } from "@grpc/grpc-js/build/src/call";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
-import { sendUnaryData, ServerUnaryCall, ServerDuplexStream } from "@grpc/grpc-js/build/src/server-call";
+import { sendUnaryData, ServerDuplexStream, ServerUnaryCall } from "@grpc/grpc-js/build/src/server-call";
 
+import { CompressionAlgorithms } from "@grpc/grpc-js/build/src/compression-algorithms";
+import { afterEach as after, afterEach, beforeEach as before, beforeEach, describe, it } from "bun:test";
+import { SecureContextOptions } from "tls";
 import { assert2, loadProtoFile } from "./common";
+import { Request__Output } from "./generated/Request";
 import { TestServiceClient, TestServiceHandlers } from "./generated/TestService";
 import { ProtoGrpcType as TestServiceGrpcType } from "./generated/test_service";
-import { Request__Output } from "./generated/Request";
-import { CompressionAlgorithms } from "@grpc/grpc-js/build/src/compression-algorithms";
-import { SecureContextOptions } from "tls";
-import { afterEach as after, beforeEach as before, describe, it, afterEach, beforeEach } from "bun:test";
 
 const loadedTestServiceProto = protoLoader.loadSync(path.join(__dirname, "fixtures/test_service.proto"), {
   keepCase: true,
@@ -659,7 +659,7 @@ describe("Echo service", () => {
     server.forceShutdown();
   });
 
-  it("should echo the recieved message directly", done => {
+  it("should echo the received message directly", done => {
     client.echo({ value: "test value", value2: 3 }, (error: ServiceError, response: any) => {
       assert.ifError(error);
       assert.deepStrictEqual(response, { value: "test value", value2: 3 });

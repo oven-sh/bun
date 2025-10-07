@@ -9,7 +9,7 @@
 
 #include "wtf/Assertions.h"
 
-extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
+extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
     void* wakeup_buffer_,
     size_t nbytes)
 {
@@ -18,13 +18,13 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &port);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 
     // Insert a send right into the port since we also use this to send
     kr = mach_port_insert_right(self, port, port, MACH_MSG_TYPE_MAKE_SEND);
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 
@@ -35,7 +35,7 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
         (mach_port_info_t)&limits,
         MACH_PORT_LIMITS_INFO_COUNT);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 
@@ -117,10 +117,15 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
     }
 }
 
+extern "C" void io_darwin_close_machport(mach_port_t port)
+{
+    mach_port_deallocate(mach_task_self(), port);
+}
+
 #else
 
 // stub out these symbols
-extern "C" int io_darwin_create_machport(unsigned long long wakeup, int fd,
+extern "C" int io_darwin_create_machport(int fd,
     void* wakeup_buffer_,
     unsigned long long nbytes)
 {
@@ -129,5 +134,7 @@ extern "C" int io_darwin_create_machport(unsigned long long wakeup, int fd,
 
 // stub out these symbols
 extern "C" bool io_darwin_schedule_wakeup(void* waker) { return false; }
+
+extern "C" void io_darwin_close_machport(unsigned port) {}
 
 #endif

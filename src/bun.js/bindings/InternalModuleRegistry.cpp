@@ -37,9 +37,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto&& origin = SourceOrigin(WTF::URL(urlString));
-    SourceCode source = JSC::makeSource(SOURCE, origin,
-        JSC::SourceTaintedOrigin::Untainted,
-        moduleName);
+    SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
     maybeAddCodeCoverage(vm, source);
     JSFunction* func
         = JSFunction::create(
@@ -55,7 +53,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
@@ -71,7 +69,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     ASSERT(
         result && result.isCell() && jsDynamicCast<JSObject*>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().data());
+        moduleName.utf8().span().data());
     return result;
 }
 
@@ -100,12 +98,7 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
-JSValue initializeInternalModuleFromDisk(
-    JSGlobalObject* globalObject,
-    VM& vm,
-    const WTF::String& moduleName,
-    WTF::String fileBase,
-    const WTF::String& urlString)
+JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
 {
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
@@ -114,7 +107,7 @@ JSValue initializeInternalModuleFromDisk(
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().data(), file.utf8().data());
+            moduleName.utf8().span().data(), file.utf8().span().data());
         CRASH();
     }
 }
@@ -167,9 +160,12 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
     }
     return value;

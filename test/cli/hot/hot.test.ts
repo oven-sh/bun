@@ -1,4 +1,4 @@
-import { spawn, stderr } from "bun";
+import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
@@ -470,7 +470,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         const match = next.match(/\s*at.*?:1003:(\d+)$/);
         if (!match) throw new Error("invalid string: " + next);
         const col = match[1];
-        expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
+        expect(Number(col)).toBe(1 + "throw new ".length + (reloadCounter - 1) * 2);
         any = true;
       }
 

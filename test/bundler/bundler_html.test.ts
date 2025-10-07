@@ -485,7 +485,7 @@ export const largeModule = {
     outdir: "out/",
     files: {
       "/in/entry.js": `
-import htmlContent from './template.html';
+import htmlContent from './template.html' with { type: 'file' };
 console.log('Loaded HTML:', htmlContent);`,
 
       "/in/template.html": `

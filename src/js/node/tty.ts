@@ -1,5 +1,8 @@
+// Hardcoded module "node:tty"
+
 // Note: please keep this module's loading constrants light, as some users
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
+
 const {
   setRawMode: ttySetMode,
   isatty,
@@ -7,19 +10,42 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
+const fs = require("internal/fs/streams");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
+  fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
-  this.isTTY = true;
+  // Only set isTTY to true if the fd is actually a TTY
+  this.isTTY = isatty(fd);
 }
+$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
+    const Prototype = Object.create(fs.ReadStream.prototype);
+
+    // Add ref/unref methods to make tty.ReadStream behave like Node.js
+    // where TTY streams have socket-like behavior
+    Prototype.ref = function () {
+      // Get the underlying native stream source if available
+      const source = this.$bunNativePtr;
+      if (source?.updateRef) {
+        source.updateRef(true);
+      }
+      return this;
+    };
+
+    Prototype.unref = function () {
+      // Get the underlying native stream source if available
+      const source = this.$bunNativePtr;
+      if (source?.updateRef) {
+        source.updateRef(false);
+      }
+      return this;
+    };
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
@@ -80,7 +106,7 @@ Object.defineProperty(ReadStream, "prototype", {
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = require("node:fs").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);
@@ -98,7 +124,7 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = require("node:fs").WriteStream.prototype;
+    const Real = fs.WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
     WriteStream.prototype._refreshSize = function () {
@@ -150,6 +176,16 @@ Object.defineProperty(WriteStream, "prototype", {
 
     WriteStream.prototype.moveCursor = function (dx, dy, cb) {
       return require("node:readline").moveCursor(this, dx, dy, cb);
+    };
+
+    // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
+    // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
+    WriteStream.prototype[Symbol.asyncIterator] = function () {
+      // Since WriteStream is write-only, we return an empty async iterator
+      // This matches the behavior of Node.js Duplex streams used for stdout/stderr
+      return (async function* () {
+        // stdout/stderr don't produce readable data, so yield nothing
+      })();
     };
 
     return Real;

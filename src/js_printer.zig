@@ -1,61 +1,9 @@
-const std = @import("std");
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
-const js_ast = bun.JSAst;
-const options = @import("options.zig");
-const rename = @import("renamer.zig");
-const runtime = @import("runtime.zig");
-const Lock = bun.Mutex;
-const Api = @import("./api/schema.zig").Api;
-const fs = @import("fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const Ref = @import("ast/base.zig").Ref;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
-
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
-
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
-const G = js_ast.G;
-const T = js_lexer.T;
-const E = js_ast.E;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
-const Ast = js_ast.Ast;
-
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
-const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = bun.assert;
-
-const ImportRecord = bun.ImportRecord;
-const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
 const ascii_only_always_on_unless_minifying = true;
@@ -197,12 +145,6 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     return len;
 }
 
-pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
-    var bytes = output_;
-    try quoteForJSONBuffer(text, &bytes, ascii_only);
-    return bytes;
-}
-
 pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
@@ -233,10 +175,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 std.debug.assert(text[i] <= 0x7F);
                 break :brk text[i];
             },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
+            .latin1 => text[i],
             .utf16 => brk: {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
@@ -399,7 +338,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
         }
     }
 }
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
@@ -418,14 +357,14 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
-    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void;
+    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
 
-    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
+    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void)) type {
         return struct {
-            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
                 try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
             }
 
@@ -452,10 +391,10 @@ pub const Options = struct {
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
-    css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    css_import_behavior: api.CssInJsBehavior = api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
-    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
     input_files_for_dev_server: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
@@ -540,29 +479,22 @@ pub const RequireOrImportMeta = struct {
     };
 };
 
+fn isIdentifierOrNumericConstantOrPropertyAccess(expr: *const Expr) bool {
+    return switch (expr.data) {
+        .e_identifier, .e_dot, .e_index => true,
+        .e_number => |e| std.math.isInf(e.value) or std.math.isNan(e.value),
+        else => false,
+    };
+}
+
 pub const PrintResult = union(enum) {
-    result: struct {
-        code: []u8,
-        source_map: ?SourceMap.Chunk = null,
-    },
+    result: Success,
     err: anyerror,
 
-    pub fn clone(
-        this: PrintResult,
-        allocator: std.mem.Allocator,
-    ) !PrintResult {
-        return switch (this) {
-            .result => PrintResult{
-                .result = .{
-                    .code = try allocator.dupe(u8, this.result.code),
-                    .source_map = this.result.source_map,
-                },
-            },
-            .err => PrintResult{
-                .err = this.err,
-            },
-        };
-    }
+    pub const Success = struct {
+        code: []u8,
+        source_map: ?SourceMap.Chunk = null,
+    };
 };
 
 // do not make this a packed struct
@@ -1375,7 +1307,7 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            bun.assert(!ref.isNull());
+            bun.assert(!ref.isNull()); // Invalid Symbol
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1654,6 +1586,13 @@ fn NewPrinter(
             return &p.import_records[import_record_index];
         }
 
+        pub fn isUnboundIdentifier(p: *Printer, expr: *const Expr) bool {
+            if (expr.data != .e_identifier) return false;
+            const ref = expr.data.e_identifier.ref;
+            const symbol = p.symbols().get(p.symbols().follow(ref)) orelse return false;
+            return symbol.kind == .unbound;
+        }
+
         pub fn printRequireOrImportExpr(
             p: *Printer,
             import_record_index: u32,
@@ -1904,8 +1843,9 @@ fn NewPrinter(
         }
 
         pub inline fn printPure(p: *Printer) void {
-            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
-            p.printWhitespacer(ws("/* @__PURE__ */ "));
+            if (p.options.print_dce_annotations) {
+                p.printWhitespacer(ws("/* @__PURE__ */ "));
+            }
         }
 
         pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
@@ -2123,12 +2063,12 @@ fn NewPrinter(
 
                         if (p.options.target == .node) {
                             // "__require.module"
-                            if (p.options.require_ref) |require|
-                                p.printSymbol(require)
-                            else
-                                p.print("require");
-
-                            p.print(".module");
+                            if (p.options.require_ref) |require| {
+                                p.printSymbol(require);
+                                p.print(".module");
+                            } else {
+                                p.print("module");
+                            }
                         } else if (p.options.commonjs_module_ref.isValid()) {
                             p.printSymbol(p.options.commonjs_module_ref);
                         } else {
@@ -2215,7 +2155,7 @@ fn NewPrinter(
                     }
                 },
                 .e_new => |e| {
-                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused == .if_unused and p.options.print_dce_annotations;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
                     if (wrap) {
@@ -2265,7 +2205,7 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused == .if_unused and p.options.print_dce_annotations;
                     if (has_pure_comment and level.gte(.postfix)) {
                         wrap = true;
                     }
@@ -2382,6 +2322,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".requireResolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -2807,12 +2750,12 @@ fn NewPrinter(
 
                             if (inlined_value) |value| {
                                 if (replaced.items.len == 0) {
-                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                    bun.handleOom(replaced.appendSlice(e.parts[0..i]));
                                 }
                                 part.value = value;
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             } else if (replaced.items.len > 0) {
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             }
                         }
 
@@ -3072,13 +3015,26 @@ fn NewPrinter(
                         p.printSpace();
                     } else {
                         p.printSpaceBeforeOperator(e.op);
+                        if (e.op.isPrefix()) {
+                            p.addSourceMapping(expr.loc);
+                        }
                         p.print(entry.text);
                         p.prev_op = e.op;
                         p.prev_op_end = p.writer.written;
                     }
 
                     if (e.op.isPrefix()) {
-                        p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                        // Never turn "typeof (0, x)" into "typeof x" or "delete (0, x)" into "delete x"
+                        if ((e.op == .un_typeof and !e.flags.was_originally_typeof_identifier and p.isUnboundIdentifier(&e.value)) or
+                            (e.op == .un_delete and !e.flags.was_originally_delete_of_identifier_or_property_access and isIdentifierOrNumericConstantOrPropertyAccess(&e.value)))
+                        {
+                            p.print("(0,");
+                            p.printSpace();
+                            p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                            p.print(")");
+                        } else {
+                            p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                        }
                     }
 
                     if (wrap) {
@@ -3116,7 +3072,7 @@ fn NewPrinter(
                         }
 
                         // Only allocate heap memory on the stack for nested binary expressions
-                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        bun.handleOom(p.binary_expression_stack.append(v));
                         v = BinaryExpressionVisitor{
                             .e = left_binary.?,
                             .level = v.left_level,
@@ -4542,6 +4498,7 @@ fn NewPrinter(
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
                         .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
                         .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .yaml => p.printWhitespacer(ws(" with { type: \"yaml\" }")),
                         .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
                         .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
                         .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
@@ -5452,6 +5409,10 @@ pub fn NewWriter(
             return this.ctx.getMutableBuffer();
         }
 
+        pub fn takeBuffer(this: *Self) MutableString {
+            return this.ctx.takeBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5554,6 +5515,11 @@ pub const BufferWriter = struct {
 
     pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
         return &this.buffer;
+    }
+
+    pub fn takeBuffer(this: *BufferWriter) MutableString {
+        defer this.buffer = .initEmpty(this.buffer.allocator);
+        return this.buffer;
     }
 
     pub fn getWritten(this: *BufferWriter) []u8 {
@@ -5860,12 +5826,14 @@ pub fn printAst(
 
     if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
 
-            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+            defer source_maps_chunk.deinit();
+
+            try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), "");
@@ -5873,7 +5841,9 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 
@@ -5898,8 +5868,8 @@ pub fn printJSON(
     var stmts = [_]js_ast.Stmt{stmt};
     var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
     const ast = Ast.initTest(&parts);
-    const list = js_ast.Symbol.List.init(ast.symbols.slice());
-    const nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    const list = js_ast.Symbol.List.fromBorrowedSliceDangerous(ast.symbols.slice());
+    const nested_list = js_ast.Symbol.NestedList.fromBorrowedSliceDangerous(&.{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
 
     var printer = PrinterType.init(
@@ -6063,9 +6033,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
+    var buffer: MutableString = printer.writer.takeBuffer();
+
     return .{
         .result = .{
-            .code = written,
+            .code = buffer.takeSlice(),
             .source_map = source_map,
         },
     };
@@ -6114,7 +6086,9 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 
@@ -6122,3 +6096,45 @@ pub fn printCommonJS(
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
+
+const string = []const u8;
+
+const SourceMap = @import("./sourcemap/sourcemap.zig");
+const fs = @import("./fs.zig");
+const importRecord = @import("./import_record.zig");
+const options = @import("./options.zig");
+const rename = @import("./renamer.zig");
+const runtime = @import("./runtime.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptor;
+const ImportRecord = bun.ImportRecord;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const api = bun.schema.api;
+
+const js_ast = bun.ast;
+const Ast = js_ast.Ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
+
+const Op = js_ast.Op;
+const Level = js_ast.Op.Level;
+
+const strings = bun.strings;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;

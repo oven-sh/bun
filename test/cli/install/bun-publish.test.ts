@@ -1,17 +1,17 @@
-import { describe, expect, test, beforeAll, afterAll, it } from "bun:test";
-import { spawn, file, write } from "bun";
-import { rm, exists } from "fs/promises";
-import { join } from "path";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { exists, rm } from "fs/promises";
 import {
   VerdaccioRegistry,
   bunExe,
   bunEnv as env,
-  stderrForInstall,
-  runBunInstall,
-  pack,
-  tmpdirSync,
   isWindows,
+  pack,
+  runBunInstall,
+  stderrForInstall,
+  tmpdirSync,
 } from "harness";
+import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -36,8 +36,8 @@ export async function publish(
     env,
   });
 
-  const out = await Bun.readableStreamToText(stdout);
-  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+  const out = await stdout.text();
+  const err = stderrForInstall(await stderr.text());
   const exitCode = await exited;
   return { out, err, exitCode };
 }
@@ -356,7 +356,7 @@ for (const info of [
   { user: "bin3", directories: { bin: "bins" } },
 ]) {
   test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
-    const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
     const publishDir = tmpdirSync();
     const bunfig = await registry.authBunfig("binaries-" + info.user);
 
@@ -847,4 +847,86 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     ``,
   ]);
   expect(exitCode).toBe(0);
+});
+
+describe("--tolerate-republish", async () => {
+  test("republishing normally fails", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-fail");
+    const pkgJson = {
+      name: "republish-test-1",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-1"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-1@1.0.0");
+
+    // Second publish should fail
+    ({ out, err, exitCode } = await publish(env, packageDir));
+    expect(exitCode).toBe(1);
+    expect(err).toMatch(/403|409|already exists|already present|cannot publish/);
+  });
+
+  test("republishing with --tolerate-republish skips when version exists", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-tolerate");
+    const pkgJson = {
+      name: "republish-test-2",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-2"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-2@1.0.0");
+
+    // Second publish with --tolerate-republish should skip
+    ({ out, err, exitCode } = await publish(env, packageDir, "--tolerate-republish"));
+    expect(exitCode).toBe(0);
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(err).not.toContain("error:");
+  });
+
+  test("republishing tarball with --tolerate-republish skips when version exists", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-tarball");
+    const pkgJson = {
+      name: "republish-test-3",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // Create tarball
+    await pack(packageDir, env);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz");
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-3@1.0.0");
+
+    // Second publish with --tolerate-republish should skip
+    ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
+    expect(exitCode).toBe(0);
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(err).not.toContain("error:");
+  });
 });

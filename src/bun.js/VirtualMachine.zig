@@ -2,7 +2,9 @@
 //!
 //! Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
+
 const VirtualMachine = @This();
+
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
 
@@ -17,6 +19,8 @@ comptime {
     @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+    @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
+    @export(&allowRejectionHandledWarning, .{ .name = "Bun__VM__allowRejectionHandledWarning" });
 }
 
 global: *JSGlobalObject,
@@ -30,20 +34,24 @@ main: []const u8 = "",
 main_is_html_entrypoint: bool = false,
 main_resolved_path: bun.String = bun.String.empty,
 main_hash: u32 = 0,
+/// Set if code overrides Bun.main to a custom value, and then reset when the VM loads a new file
+/// (e.g. when bun:test starts testing a new file)
+overridden_main: jsc.Strong.Optional = .empty,
 entry_point: ServerEntryPoint = undefined,
 origin: URL = URL{},
 node_fs: ?*bun.api.node.fs.NodeFS = null,
 timer: bun.api.Timer.All,
-event_loop_handle: ?*JSC.PlatformEventLoop = null,
+event_loop_handle: ?*jsc.PlatformEventLoop = null,
 pending_unref_counter: i32 = 0,
 preload: []const []const u8 = &.{},
 unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+counters: Counters = .{},
 
-hot_reload: bun.CLI.Command.HotReload = .none,
-jsc: *VM = undefined,
+hot_reload: bun.cli.Command.HotReload = .none,
+jsc_vm: *VM = undefined,
 
 /// hide bun:wrap from stack traces
 /// bun:wrap is very noisy
@@ -53,7 +61,6 @@ is_printing_plugin: bool = false,
 is_shutting_down: bool = false,
 plugin_runner: ?PluginRunner = null,
 is_main_thread: bool = false,
-last_reported_error_for_dedupe: JSValue = .zero,
 exit_handler: ExitHandler = .{},
 
 default_tls_reject_unauthorized: ?bool = null,
@@ -92,7 +99,7 @@ has_patched_run_main: bool = false,
 transpiler_store: ModuleLoader.RuntimeTranspilerStore,
 
 after_event_loop_callback_ctx: ?*anyopaque = null,
-after_event_loop_callback: ?JSC.OpaqueCallback = null,
+after_event_loop_callback: ?jsc.OpaqueCallback = null,
 
 remap_stack_frames_mutex: bun.Mutex = .{},
 
@@ -117,16 +124,16 @@ macro_event_loop: EventLoop = EventLoop{},
 regular_event_loop: EventLoop = EventLoop{},
 event_loop: *EventLoop = undefined,
 
-ref_strings: JSC.RefString.Map = undefined,
+ref_strings: jsc.RefString.Map = undefined,
 ref_strings_mutex: bun.Mutex = undefined,
 
 active_tasks: usize = 0,
 
-rare_data: ?*JSC.RareData = null,
+rare_data: ?*jsc.RareData = null,
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 entry_point_result: struct {
-    value: JSC.Strong.Optional = .empty,
+    value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
 } = .{},
 
@@ -144,11 +151,12 @@ aggressive_garbage_collection: GCLevel = GCLevel.none,
 
 module_loader: ModuleLoader = .{},
 
-gc_controller: JSC.GarbageCollectionController = .{},
+gc_controller: jsc.GarbageCollectionController = .{},
 worker: ?*webcore.WebWorker = null,
 ipc: ?IPCInstanceUnion = null,
+hot_reload_counter: u32 = 0,
 
-debugger: ?JSC.Debugger = null,
+debugger: ?jsc.Debugger = null,
 has_started_debugger: bool = false,
 has_terminated: bool = false,
 
@@ -167,12 +175,6 @@ channel_ref_overridden: bool = false,
 // if one disconnect event listener should be ignored
 channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
-/// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
-/// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
-/// true may expose bugs that would otherwise only occur using Workers. Controlled by
-/// Options.destruct_main_thread_on_exit.
-destruct_main_thread_on_exit: bool,
-
 /// A set of extensions that exist in the require.extensions map. Keys
 /// contain the leading '.'. Value is either a loader for built in
 /// functions, or an index into JSCommonJSExtensions.
@@ -185,13 +187,40 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
-pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
+initial_script_execution_context_identifier: i32,
+
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
+
+pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
+    const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
+    if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
+    return jsvalue;
+}
+
+pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
 
-pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
+pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
+    return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
+}
+pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
+    return this.unhandledRejectionsMode() != .bun;
+}
+pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
+    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
+}
+
+pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value) !*Body.Value.HiveRef {
     return .init(body, &this.body_value_hive_allocator);
+}
+
+/// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+/// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+/// true may expose bugs that would otherwise only occur using Workers. Controlled by
+pub fn shouldDestructMainThreadOnExit(_: *const VirtualMachine) bool {
+    return bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT);
 }
 
 pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
@@ -286,7 +315,11 @@ pub const VMHolder = struct {
 };
 
 pub inline fn get() *VirtualMachine {
-    return VMHolder.vm.?;
+    return getOrNull().?;
+}
+
+pub inline fn getOrNull() ?*VirtualMachine {
+    return VMHolder.vm;
 }
 
 pub fn getMainThreadVM() ?*VirtualMachine {
@@ -342,10 +375,10 @@ const SourceMapHandlerGetter = struct {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in source_mappings like normal
     /// This is hideously expensive memory-wise...
-    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
-        temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
+        try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
         const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
         const source_url_len = source.path.text.len;
@@ -385,7 +418,7 @@ pub const UnhandledRejectionScope = struct {
     onUnhandledRejection: *const OnUnhandledRejection = undefined,
     count: usize = 0,
 
-    pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+    pub fn apply(this: *UnhandledRejectionScope, vm: *jsc.VirtualMachine) void {
         vm.onUnhandledRejection = this.onUnhandledRejection;
         vm.onUnhandledRejectionCtx = this.ctx;
         vm.unhandled_error_counter = this.count;
@@ -431,7 +464,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
-    if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER)) {
         this.transpiler_store.enabled = false;
     }
 
@@ -489,30 +522,130 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
 
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
+extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
+extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) bool;
+extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
+extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
+extern fn Bun__noSideEffectsToString(vm: *jsc.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
-pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
+fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
+    return jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });
+}
+
+fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
+    if (isErrorLike(globalObject, reason) catch blk: {
+        globalObject.clearException();
+        break :blk false;
+    }) return reason;
+    const reasonStr = blk: {
+        var scope: jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        defer if (scope.exception()) |_| scope.clearException();
+        break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
+    };
+    const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
+        "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
+        "{s}" ++
+        "\".";
+    if (reasonStr.isString()) {
+        return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{reasonStr.asString().view(globalObject)}).toJS();
+    }
+    return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{"undefined"}).toJS();
+}
+
+pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {
     if (this.isShuttingDown()) {
         Output.debugWarn("unhandledRejection during shutdown.", .{});
-        return true;
+        return;
     }
 
     if (isBunTest) {
         this.unhandled_error_counter += 1;
         this.onUnhandledRejection(this, globalObject, reason);
+        return;
+    }
+
+    switch (this.unhandledRejectionsMode()) {
+        .bun => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            // continue to default handler
+        },
+        .none => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            return; // ignore the unhandled rejection
+        },
+        .warn => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
+            jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
+            return;
+        },
+        .warn_with_error_code => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
+            this.exit_handler.exit_code = 1;
+            return;
+        },
+        .strict => {
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            _ = this.uncaughtException(globalObject, wrapped_reason, true);
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
+                _ = globalObject.reportUncaughtException(globalObject.takeException(err).asException(globalObject.vm()).?);
+            };
+            return;
+        },
+        .throw => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
+            // continue to default handler
+            this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => return,
+            };
+        },
+    }
+    this.unhandled_error_counter += 1;
+    this.onUnhandledRejection(this, globalObject, reason);
+    return;
+}
+
+pub fn handledPromise(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, promise: JSValue) bool {
+    if (this.isShuttingDown()) {
         return true;
     }
 
-    const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
-    if (!handled) {
-        this.unhandled_error_counter += 1;
-        this.onUnhandledRejection(this, globalObject, reason);
-    }
-    return handled;
+    return Bun__emitHandledPromiseEvent(globalObject, promise);
 }
 
-pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
+pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
-        Output.debugWarn("uncaughtException during shutdown.", .{});
         return true;
     }
 
@@ -544,15 +677,15 @@ pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
-pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
+pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
 
-pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSGlobalObject, value: JSValue) void {
+pub fn defaultOnUnhandledRejection(this: *jsc.VirtualMachine, _: *JSGlobalObject, value: JSValue) void {
     this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
 }
 
@@ -595,7 +728,8 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
-    this.global.reload();
+    this.global.reload() catch @panic("Failed to reload");
+    this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
@@ -610,9 +744,9 @@ pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     };
 }
 
-pub inline fn rareData(this: *VirtualMachine) *JSC.RareData {
+pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
-        this.rare_data = this.allocator.create(JSC.RareData) catch unreachable;
+        this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};
         break :brk this.rare_data.?;
     };
@@ -649,7 +783,7 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
     }
 }
 
-pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) jsc.ScriptExecutionStatus {
     if (this.is_shutting_down) {
         return .stopped;
     }
@@ -707,20 +841,27 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
-    if (this.destruct_main_thread_on_exit and this.is_main_thread) {
+    bun.assert(this.isShuttingDown());
+    // FIXME: we should be doing this, but we're not, but unfortunately doing it
+    //        causes like 50+ tests to break
+    // this.eventLoop().tick();
+    if (this.shouldDestructMainThreadOnExit()) {
+        if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
+        this.transpiler.deinit();
+        this.gc_controller.deinit();
         this.deinit();
     }
     bun.Global.exit(this.exit_handler.exit_code);
 }
 
 pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
-    var debugger: *JSC.Debugger = &(this.debugger orelse return 0);
+    var debugger: *jsc.Debugger = &(this.debugger orelse return 0);
     debugger.next_debugger_id +%= 1;
     return debugger.next_debugger_id;
 }
 
-pub fn hotMap(this: *VirtualMachine) ?*JSC.RareData.HotMap {
+pub fn hotMap(this: *VirtualMachine) ?*jsc.RareData.HotMap {
     if (this.hot_reload != .hot) {
         return null;
     }
@@ -728,7 +869,7 @@ pub fn hotMap(this: *VirtualMachine) ?*JSC.RareData.HotMap {
     return this.rareData().hotMap(this.allocator);
 }
 
-pub inline fn enqueueTask(this: *VirtualMachine, task: JSC.Task) void {
+pub inline fn enqueueTask(this: *VirtualMachine, task: jsc.Task) void {
     this.eventLoop().enqueueTask(task);
 }
 
@@ -736,7 +877,7 @@ pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: *bun.api.Timer.I
     this.eventLoop().enqueueImmediateTask(task);
 }
 
-pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.ConcurrentTask) void {
+pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *jsc.ConcurrentTask) void {
     this.eventLoop().enqueueTaskConcurrent(task);
 }
 
@@ -754,18 +895,24 @@ pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
     }
 }
 
-pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
+pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) void {
     this.eventLoop().waitForPromise(promise);
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
-    this.eventLoop().waitForTasks();
+    while (this.isEventLoopAlive()) {
+        this.eventLoop().tick();
+
+        if (this.isEventLoopAlive()) {
+            this.eventLoop().autoTick();
+        }
+    }
 }
 
-pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
+pub const MacroMap = std.AutoArrayHashMap(i32, jsc.C.JSObjectRef);
 
 pub fn enableMacroMode(this: *VirtualMachine) void {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
 
     if (!this.has_enabled_macro_mode) {
         this.has_enabled_macro_mode = true;
@@ -781,7 +928,7 @@ pub fn enableMacroMode(this: *VirtualMachine) void {
     this.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
     this.macro_mode = true;
     this.event_loop = &this.macro_event_loop;
-    bun.Analytics.Features.macros += 1;
+    bun.analytics.Features.macros += 1;
     this.transpiler_store.enabled = false;
 }
 
@@ -817,11 +964,10 @@ fn getOriginTimestamp() u64 {
 pub inline fn isLoaded() bool {
     return VMHolder.vm != null;
 }
-const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 pub fn initWithModuleGraph(
     opts: Options,
 ) !*VirtualMachine {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const allocator = opts.allocator;
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
@@ -851,11 +997,12 @@ pub fn initWithModuleGraph(
         .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
         .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
         .origin_timestamp = getOriginTimestamp(),
-        .ref_strings = JSC.RefString.Map.init(allocator),
+        .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -876,6 +1023,9 @@ pub fn initWithModuleGraph(
         .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
     };
 
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
+
     vm.transpiler.resolver.standalone_module_graph = opts.graph.?;
 
     // Avoid reading from tsconfig.json & package.json when we're in standalone mode
@@ -888,17 +1038,17 @@ pub fn initWithModuleGraph(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         false,
         false,
         null,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc_vm = vm.global.vm();
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     return vm;
 }
@@ -909,7 +1059,7 @@ export fn Bun__isMainThreadVM() callconv(.C) bool {
 
 pub const Options = struct {
     allocator: std.mem.Allocator,
-    args: Api.TransformOptions,
+    args: api.TransformOptions,
     log: ?*logger.Log = null,
     env_loader: ?*DotEnv.Loader = null,
     store_fd: bool = false,
@@ -920,7 +1070,7 @@ pub const Options = struct {
     eval: bool = false,
 
     graph: ?*bun.StandaloneModuleGraph = null,
-    debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
+    debugger: bun.cli.Command.Debugger = .{ .unspecified = {} },
     is_main_thread: bool = false,
     /// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
     /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
@@ -931,7 +1081,7 @@ pub const Options = struct {
 pub var is_smol_mode = false;
 
 pub fn init(opts: Options) !*VirtualMachine {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const allocator = opts.allocator;
     var log: *logger.Log = undefined;
     if (opts.log) |__log| {
@@ -973,10 +1123,11 @@ pub fn init(opts: Options) !*VirtualMachine {
         .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
         .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         .origin_timestamp = getOriginTimestamp(),
-        .ref_strings = JSC.RefString.Map.init(allocator),
+        .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -987,6 +1138,9 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -1006,14 +1160,14 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         opts.smol,
         opts.eval,
         null,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc_vm = vm.global.vm();
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
 
@@ -1021,7 +1175,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     return vm;
 }
@@ -1034,7 +1188,7 @@ pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
     }
 }
 
-fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) void {
+fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) void {
     if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
         return;
     }
@@ -1045,7 +1199,7 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
     const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
     const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
 
-    const wait_for_connection: JSC.Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
+    const wait_for_connection: jsc.Debugger.Wait = if (set_breakpoint_on_first_line or wait_for_debugger) .forever else .off;
 
     switch (cli_flag) {
         .unspecified => {
@@ -1090,7 +1244,7 @@ pub fn initWorker(
     worker: *webcore.WebWorker,
     opts: Options,
 ) anyerror!*VirtualMachine {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     var log: *logger.Log = undefined;
     const allocator = opts.allocator;
     if (opts.log) |__log| {
@@ -1129,18 +1283,20 @@ pub fn initWorker(
         .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
         .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         .origin_timestamp = getOriginTimestamp(),
-        .ref_strings = JSC.RefString.Map.init(allocator),
+        .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .standalone_module_graph = worker.parent.standalone_module_graph,
         .worker = worker,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        // This option is irrelevant for Workers
-        .destruct_main_thread_on_exit = false,
+        .initial_script_execution_context_identifier = @as(i32, @intCast(worker.execution_context_id)),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
     );
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1169,22 +1325,24 @@ pub fn initWorker(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        @as(i32, @intCast(worker.execution_context_id)),
+        vm.initial_script_execution_context_identifier,
         worker.mini,
         opts.eval,
         worker.cpp_worker,
     );
     vm.regular_event_loop.global = vm.global;
-    vm.jsc = vm.global.vm();
-    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
+    vm.jsc_vm = vm.global.vm();
+    uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.transpiler.setAllocator(allocator);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     return vm;
 }
 
+extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *jsc.JSGlobalObject;
+
 pub fn initBake(opts: Options) anyerror!*VirtualMachine {
-    JSC.markBinding(@src());
+    jsc.markBinding(@src());
     const allocator = opts.allocator;
     var log: *logger.Log = undefined;
     if (opts.log) |__log| {
@@ -1221,10 +1379,11 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
         .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         .origin_timestamp = getOriginTimestamp(),
-        .ref_strings = JSC.RefString.Map.init(allocator),
+        .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1235,7 +1394,16 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
-    vm.eventLoop().ensureWaker();
+    if (comptime bun.Environment.isWindows) {
+        vm.eventLoop().ensureWaker();
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc_vm = vm.global.vm();
+        uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
+    } else {
+        vm.global = BakeCreateProdGlobal(vm.console);
+        vm.jsc_vm = vm.global.vm();
+        vm.eventLoop().ensureWaker();
+    }
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -1257,14 +1425,14 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
-    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+    vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     return vm;
 }
 
 pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
-pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
+pub fn clearRefString(_: *anyopaque, ref_string: *jsc.RefString) void {
     _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
 }
 
@@ -1294,10 +1462,10 @@ pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifi
     };
 }
 
-fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
-    JSC.markBinding(@src());
+fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *jsc.RefString {
+    jsc.markBinding(@src());
     bun.assert(input_.len > 0);
-    const hash = hash_ orelse JSC.RefString.computeHash(input_);
+    const hash = hash_ orelse jsc.RefString.computeHash(input_);
     this.ref_strings_mutex.lock();
     defer this.ref_strings_mutex.unlock();
 
@@ -1308,12 +1476,12 @@ fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const
         else
             input_;
 
-        const ref = this.allocator.create(JSC.RefString) catch unreachable;
-        ref.* = JSC.RefString{
+        const ref = this.allocator.create(jsc.RefString) catch unreachable;
+        ref.* = jsc.RefString{
             .allocator = this.allocator,
             .ptr = input.ptr,
             .len = input.len,
-            .impl = bun.String.createExternal(*JSC.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
+            .impl = bun.String.createExternal(*jsc.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
             .hash = hash,
             .ctx = this,
             .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -1324,11 +1492,11 @@ fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const
     return entry.value_ptr.*;
 }
 
-fn freeRefString(str: *JSC.RefString, _: *anyopaque, _: u32) callconv(.C) void {
+fn freeRefString(str: *jsc.RefString, _: *anyopaque, _: u32) callconv(.C) void {
     str.deinit();
 }
 
-pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *jsc.RefString {
     bun.assert(input_.len > 0);
     var _was_new = false;
     return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
@@ -1354,7 +1522,7 @@ pub fn fetchWithoutOnLoadPlugins(
     defer referrer_clone.deinit();
 
     var virtual_source_to_use: ?logger.Source = null;
-    var blob_to_deinit: ?JSC.WebCore.Blob = null;
+    var blob_to_deinit: ?jsc.WebCore.Blob = null;
     defer if (blob_to_deinit) |*blob| blob.deinit();
     const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
         return error.ModuleNotFound;
@@ -1419,13 +1587,13 @@ fn _resolve(
         return;
     } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, node_fallbacks.import_path)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
-    } else if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
+    } else if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
         ret.result = null;
         ret.path = result.path;
         return;
@@ -1434,12 +1602,12 @@ fn _resolve(
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
     {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, "blob:")) {
         ret.result = null;
-        if (JSC.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
-            ret.path = specifier;
+        if (jsc.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
+            ret.path = try bun.default_allocator.dupe(u8, specifier);
             return;
         } else {
             return error.ModuleNotFound;
@@ -1469,7 +1637,7 @@ fn _resolve(
                 source_to_use,
                 normalized_specifier,
                 if (is_esm) .stmt else .require,
-                if (jsc_vm.standalone_module_graph == null) .read_only else .disable,
+                jsc_vm.transpiler.resolver.opts.global_cache,
             )) {
                 .success => |r| r,
                 .failure => |e| e,
@@ -1562,7 +1730,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,
@@ -1570,7 +1738,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;
     }
 
@@ -1589,14 +1757,14 @@ pub fn resolveMaybeNeedsTrailingSlash(
             else
                 specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+            if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.borrowUTF8(after_namespace), source, .bun)) |resolved_path| {
                 res.* = resolved_path;
                 return;
             }
         }
     }
 
-    if (JSC.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
+    if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
         res.* = ErrorableString.ok(
             if (is_user_require_resolve and hardcoded.node_builtin)
                 specifier
@@ -1660,7 +1828,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -1675,14 +1843,15 @@ pub fn resolveMaybeNeedsTrailingSlash(
 
 pub const main_file_name: string = "bun:main";
 
-pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) JSValue {
     _ = callframe; // autofix
     globalObject.bunVM().drainMicrotasks();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    this.eventLoop().drainMicrotasks();
+    // TODO: properly propagate exception upwards
+    this.eventLoop().drainMicrotasks() catch {};
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
@@ -1704,7 +1873,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
@@ -1712,13 +1881,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
-                .resolve => bun.api.ResolveMessage.create(
+                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
+                .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
                     referrer.toUTF8(bun.default_allocator).slice(),
-                ).asVoid(),
+                ) catch |e| globalThis.takeException(e)),
             });
             return;
         },
@@ -1731,13 +1900,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
             for (logs, errors) |msg, *current| {
                 current.* = switch (msg.metadata) {
-                    .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg),
+                    .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e),
                     .resolve => bun.api.ResolveMessage.create(
                         globalThis,
                         globalThis.allocator(),
                         msg,
                         referrer.toUTF8(bun.default_allocator).slice(),
-                    ),
+                    ) catch |e| globalThis.takeException(e),
                 };
             }
 
@@ -1751,13 +1920,12 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ).asVoid(),
+                ) catch |e| globalThis.takeException(e),
             );
         },
     }
 }
 
-// TODO:
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
 
@@ -1769,10 +1937,11 @@ pub fn deinit(this: *VirtualMachine) void {
     if (this.rare_data) |rare_data| {
         rare_data.deinit();
     }
+    this.overridden_main.deinit();
     this.has_terminated = true;
 }
 
-pub const ExceptionList = std.ArrayList(Api.JsException);
+pub const ExceptionList = std.ArrayList(api.JsException);
 
 pub fn printException(
     this: *VirtualMachine,
@@ -1796,17 +1965,8 @@ pub fn printException(
     }
 }
 
-pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-    if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
-        return;
-
-    this.runErrorHandler(result, exception_list);
-}
-
 pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
     @branchHint(.cold);
-    if (!result.isEmptyOrUndefinedOrNull())
-        this.last_reported_error_for_dedupe = result;
 
     const prev_had_errors = this.had_errors;
     this.had_errors = false;
@@ -1820,8 +1980,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.isException(this.global.vm())) {
-        const exception = @as(*Exception, @ptrCast(result.asVoid()));
+    if (result.asException(this.jsc_vm)) |exception| {
         this.printException(
             exception,
             exception_list,
@@ -1848,15 +2007,13 @@ export fn Bun__logUnhandledException(exception: JSValue) void {
     get().runErrorHandler(exception, null);
 }
 
-pub fn clearEntryPoint(
-    this: *VirtualMachine,
-) void {
+pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
     if (this.main.len == 0) {
         return;
     }
 
     var str = ZigString.init(main_file_name);
-    this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&str);
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
@@ -1897,7 +2054,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 return error.ModuleNotFound;
             },
         };
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).protect();
@@ -1920,7 +2077,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
+            this.waitForPromise(jsc.AnyPromise{
                 .internal = promise,
             });
         }
@@ -1937,10 +2094,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
 
 pub fn ensureDebugger(this: *VirtualMachine, block_until_connected: bool) !void {
     if (this.debugger != null) {
-        try JSC.Debugger.create(this, this.global);
+        try jsc.Debugger.create(this, this.global);
 
         if (block_until_connected) {
-            JSC.Debugger.waitForDebuggerIfNecessary(this);
+            jsc.Debugger.waitForDebuggerIfNecessary(this);
         }
     }
 }
@@ -1950,7 +2107,10 @@ extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
 pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     try this.ensureDebugger(true);
 
@@ -1977,7 +2137,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
-                const ret = NodeModuleModule__callOverriddenRunMain(this.global, bun.String.createUTF8ForJS(this.global, main_file_name));
+                const ret = try jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
                     this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
                     return this.pending_internal_promise.?;
@@ -1989,7 +2149,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         const promise = if (!this.main_is_html_entrypoint)
             JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
         else
-            Bun__loadHTMLEntryPoint(this.global);
+            try jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).ensureStillAlive();
@@ -2018,7 +2178,10 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachi
 pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     this.eventLoop().ensureWaker();
 
@@ -2045,7 +2208,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
     const promise = try this.reloadEntryPoint(entry_path);
     this.eventLoop().performGC();
-    this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
+    this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
         .internal = promise,
     });
     if (this.worker) |worker| {
@@ -2156,8 +2319,8 @@ pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_n
 /// We cannot hold it from Zig code because it relies on C++ ARIA to automatically release the lock
 /// and it is not safe to copy the lock itself
 /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
-pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
-    this.global.vm().holdAPILock(ctx, JSC.OpaqueWrap(Context, function));
+pub fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
+    this.global.vm().holdAPILock(ctx, jsc.OpaqueWrap(Context, function));
 }
 
 const MacroEntryPointLoader = struct {
@@ -2172,7 +2335,7 @@ pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*
     var promise: *JSInternalPromise = undefined;
 
     promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
-    this.waitForPromise(JSC.AnyPromise{
+    this.waitForPromise(jsc.AnyPromise{
         .internal = promise,
     });
 
@@ -2237,16 +2400,16 @@ pub fn printErrorlikeObject(
             pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }
@@ -2337,7 +2500,7 @@ fn printErrorFromMaybePrivateData(
 pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
     var jsc_vm = globalObject.bunVM();
     _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -2425,13 +2588,13 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
     }
 }
 
-pub export fn Bun__remapStackFramePositions(vm: *JSC.VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+pub export fn Bun__remapStackFramePositions(vm: *jsc.VirtualMachine, frames: [*]jsc.ZigStackFrame, frames_count: usize) void {
     // **Warning** this method can be called in the heap collector thread!!
     // https://github.com/oven-sh/bun/issues/17087
     vm.remapStackFramePositions(frames, frames_count);
 }
 
-pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFrame, frames_count: usize) void {
     for (frames[0..frames_count]) |*frame| {
         if (frame.position.isInvalid() or frame.remapped) continue;
         var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
@@ -2444,8 +2607,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFr
 
         if (this.resolveSourceMapping(
             sourceURL.slice(),
-            @max(frame.position.line.zeroBased(), 0),
-            @max(frame.position.column.zeroBased(), 0),
+            frame.position.line,
+            frame.position.column,
             .no_source_contents,
         )) |lookup| {
             const source_map = lookup.source_map;
@@ -2455,8 +2618,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFr
                 frame.source_url = source_url;
             }
             const mapping = lookup.mapping;
-            frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-            frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+            frame.position.line = mapping.original.lines;
+            frame.position.column = mapping.original.columns;
             frame.remapped = true;
         } else {
             // we don't want it to be remapped again
@@ -2476,8 +2639,8 @@ pub fn remapZigException(
 ) void {
     error_instance.toZigException(this.global, exception);
     const enable_source_code_preview = allow_source_code_preview and
-        !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+        !(bun.getRuntimeFeatureFlag(.BUN_DISABLE_SOURCE_CODE_PREVIEW) or
+            bun.getRuntimeFeatureFlag(.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW));
 
     defer {
         if (Environment.isDebug) {
@@ -2502,7 +2665,7 @@ pub fn remapZigException(
         .{"processTicksAndRejections"},
     });
 
-    var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+    var frames: []jsc.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
     if (this.hide_bun_stackframes) {
         var start_index: ?usize = null;
         for (frames, 0..) |frame, i| {
@@ -2514,7 +2677,9 @@ pub fn remapZigException(
             }
 
             // Workaround for being unable to hide that specific frame without also hiding the frame before it
-            if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+            if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+            {
                 start_index = 0;
                 break;
             }
@@ -2530,7 +2695,9 @@ pub fn remapZigException(
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+                if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                    NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+                {
                     continue;
                 }
 
@@ -2552,7 +2719,9 @@ pub fn remapZigException(
                 frame.source_url.hasPrefixComptime("node:") or
                 frame.source_url.isEmpty() or
                 frame.source_url.eqlComptime("native") or
-                frame.source_url.eqlComptime("unknown"))
+                frame.source_url.eqlComptime("unknown") or
+                frame.source_url.eqlComptime("[unknown]") or
+                frame.source_url.hasPrefixComptime("[source:"))
             {
                 top_frame_is_builtin = true;
                 continue;
@@ -2572,8 +2741,8 @@ pub fn remapZigException(
             .mapping = .{
                 .generated = .{},
                 .original = .{
-                    .lines = @max(top.position.line.zeroBased(), 0),
-                    .columns = @max(top.position.column.zeroBased(), 0),
+                    .lines = bun.Ordinal.fromZeroBased(@max(top.position.line.zeroBased(), 0)),
+                    .columns = bun.Ordinal.fromZeroBased(@max(top.position.column.zeroBased(), 0)),
                 },
                 .source_index = 0,
             },
@@ -2583,8 +2752,8 @@ pub fn remapZigException(
     else
         this.resolveSourceMapping(
             top_source_url.slice(),
-            @max(top.position.line.zeroBased(), 0),
-            @max(top.position.column.zeroBased(), 0),
+            top.position.line,
+            top.position.column,
             .source_contents,
         );
 
@@ -2631,8 +2800,8 @@ pub fn remapZigException(
         if (code.len > 0)
             source_code_slice.* = code;
 
-        top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-        top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+        top.position.line = mapping.original.lines;
+        top.position.column = mapping.original.columns;
 
         exception.remapped = true;
         top.remapped = true;
@@ -2672,8 +2841,8 @@ pub fn remapZigException(
             defer source_url.deinit();
             if (this.resolveSourceMapping(
                 source_url.slice(),
-                @max(frame.position.line.zeroBased(), 0),
-                @max(frame.position.column.zeroBased(), 0),
+                frame.position.line,
+                frame.position.column,
                 .no_source_contents,
             )) |lookup| {
                 defer if (lookup.source_map) |map| map.deref();
@@ -2683,8 +2852,8 @@ pub fn remapZigException(
                 }
                 const mapping = lookup.mapping;
                 frame.remapped = true;
-                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+                frame.position.line = mapping.original.lines;
+                frame.position.column = mapping.original.columns;
             }
         }
     }
@@ -2811,7 +2980,7 @@ fn printErrorInstance(
     const is_error_instance = mode == .js and
         (error_instance != .zero and error_instance.jsType() == .ErrorInstance);
     const code: ?[]const u8 = if (is_error_instance) code: {
-        if (error_instance.uncheckedPtrCast(JSC.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
+        if (error_instance.uncheckedPtrCast(jsc.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
             if (code_value.isString()) {
                 const code_string = code_value.toBunString(this.global) catch {
                     // JSC::JSString to WTF::String can only fail on out of memory.
@@ -2933,7 +3102,7 @@ fn printErrorInstance(
 
     if (is_error_instance) {
         var saw_cause = false;
-        const Iterator = JSC.JSPropertyIterator(.{
+        const Iterator = jsc.JSPropertyIterator(.{
             .include_value = true,
             .skip_empty_name = true,
             .own_properties_only = true,
@@ -3001,7 +3170,7 @@ fn printErrorInstance(
                 }
 
                 formatter.format(
-                    JSC.Formatter.Tag.getAdvanced(
+                    try jsc.Formatter.Tag.getAdvanced(
                         value,
                         this.global,
                         .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3042,7 +3211,7 @@ fn printErrorInstance(
 
         // "cause" is not enumerable, so the above loop won't see it.
         if (!saw_cause) {
-            if (error_instance.getOwn(this.global, "cause")) |cause| {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
                     try errors_to_append.append(cause);
@@ -3051,7 +3220,7 @@ fn printErrorInstance(
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
-        const tag = JSC.Formatter.Tag.getAdvanced(
+        const tag = try jsc.Formatter.Tag.getAdvanced(
             error_instance,
             this.global,
             .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3084,8 +3253,23 @@ fn printErrorInstance(
     }
 
     for (errors_to_append.items) |err| {
+        // Check for circular references to prevent infinite recursion in cause chains
+        if (formatter.map_node == null) {
+            formatter.map_node = ConsoleObject.Formatter.Visited.Pool.get(default_allocator);
+            formatter.map_node.?.data.clearRetainingCapacity();
+            formatter.map = formatter.map_node.?.data;
+        }
+
+        const entry = formatter.map.getOrPut(err) catch unreachable;
+        if (entry.found_existing) {
+            try writer.writeAll("\n");
+            try writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", allow_ansi_color));
+            continue;
+        }
+
         try writer.writeAll("\n");
         try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        _ = formatter.map.remove(err);
     }
 }
 
@@ -3200,7 +3384,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
             cursor = i + 1;
             if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
+                const first_line = bun.String.borrowUTF8(msg[0..i]);
                 writer.print(": {s}::", .{first_line.githubAction()}) catch {};
                 break;
             }
@@ -3278,8 +3462,8 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
 pub fn resolveSourceMapping(
     this: *VirtualMachine,
     path: []const u8,
-    line: i32,
-    column: i32,
+    line: Ordinal,
+    column: Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
     return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
@@ -3292,7 +3476,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+            const mapping = map.mappings.find(line, column) orelse
                 return null;
 
             return .{
@@ -3306,7 +3490,7 @@ pub fn resolveSourceMapping(
     };
 }
 
-extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue, handle: JSValue) void;
 extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 pub extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
@@ -3325,24 +3509,24 @@ pub const IPCInstance = struct {
     pub const new = bun.TrivialNew(@This());
     pub const deinit = bun.TrivialDeinit(@This());
 
-    globalThis: ?*JSGlobalObject,
+    globalThis: *JSGlobalObject,
     context: if (Environment.isPosix) *uws.SocketContext else void,
-    data: IPC.IPCData,
+    data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
     const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
-    pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
+    pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
     }
     pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
         return this.globalThis;
     }
 
-    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
-        JSC.markBinding(@src());
-        const globalThis = this.globalThis orelse return;
-        const event_loop = JSC.VirtualMachine.get().eventLoop();
+    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) void {
+        jsc.markBinding(@src());
+        const globalThis = this.globalThis;
+        const event_loop = jsc.VirtualMachine.get().eventLoop();
 
         switch (message) {
             // In future versions we can read this in order to detect version mismatches,
@@ -3354,7 +3538,7 @@ pub const IPCInstance = struct {
                 IPC.log("Received IPC message from parent", .{});
                 event_loop.enter();
                 defer event_loop.exit();
-                Process__emitMessageEvent(globalThis, data);
+                Process__emitMessageEvent(globalThis, data, handle);
             },
             .internal => |data| {
                 IPC.log("Received IPC internal message from parent", .{});
@@ -3368,22 +3552,20 @@ pub const IPCInstance = struct {
     pub fn handleIPCClose(this: *IPCInstance) void {
         IPC.log("IPCInstance#handleIPCClose", .{});
         var vm = VirtualMachine.get();
-        vm.ipc = null;
         const event_loop = vm.eventLoop();
         node_cluster_binding.child_singleton.deinit();
         event_loop.enter();
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
         if (Environment.isPosix) {
-            uws.us_socket_context_free(0, this.context);
+            this.context.deinit(false);
         }
         vm.channel_ref.disable();
-        this.deinit();
     }
 
     export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
         if (global.bunVM().getIPCInstance()) |current_ipc| {
-            current_ipc.data.close(true);
+            current_ipc.data.closeSocketNextTick(true);
         }
     }
 
@@ -3406,8 +3588,8 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
-            IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
+            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
+            IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
 
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
@@ -3417,7 +3599,9 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             this.ipc = .{ .initialized = instance };
 
-            const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
+            instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
+
+            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3425,7 +3609,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             };
             socket.setTimeout(0);
 
-            instance.data = .{ .socket = socket, .mode = opts.mode };
+            instance.data.socket = .{ .open = socket };
 
             break :instance instance;
         },
@@ -3433,12 +3617,13 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
                 .context = {},
-                .data = .{ .mode = opts.mode },
+                .data = undefined,
             });
+            instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
             this.ipc = .{ .initialized = instance };
 
-            instance.data.configureClient(IPCInstance, instance, opts.info) catch {
+            instance.data.windowsConfigureClient(opts.info) catch {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
@@ -3480,7 +3665,7 @@ pub const ExitHandler = struct {
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
@@ -3489,81 +3674,79 @@ pub const ExitHandler = struct {
     }
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
     }
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const JSC = bun.jsc;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Async = bun.Async;
-const Transpiler = bun.Transpiler;
-const ImportWatcher = JSC.hot_reloader.ImportWatcher;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const ErrorableString = JSC.ErrorableString;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const Exception = JSC.Exception;
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Fs = @import("../fs.zig");
-const Resolver = @import("../resolver/resolver.zig");
-const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-const ParseResult = bun.transpiler.ParseResult;
-const logger = bun.logger;
-const Api = @import("../api/schema.zig").Api;
-const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
-const ConsoleObject = JSC.ConsoleObject;
-const Node = JSC.Node;
-const ZigException = JSC.ZigException;
-const ZigStackTrace = JSC.ZigStackTrace;
-const ErrorableResolvedSource = JSC.ErrorableResolvedSource;
-const ResolvedSource = JSC.ResolvedSource;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSModuleLoader = JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = JSC.ErrorableZigString;
-const VM = JSC.VM;
-const JSFunction = JSC.JSFunction;
-const Config = @import("./config.zig");
-const URL = @import("../url.zig").URL;
-const Bun = JSC.API.Bun;
-const EventLoop = JSC.EventLoop;
-const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const IPC = @import("ipc.zig");
-const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;
-const Watcher = bun.Watcher;
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
-const JSValue = JSC.JSValue;
-const PluginRunner = bun.transpiler.PluginRunner;
-const SavedSourceMap = JSC.SavedSourceMap;
-const ModuleLoader = JSC.ModuleLoader;
-const uws = bun.uws;
-const Output = bun.Output;
-const strings = bun.strings;
-const SourceMap = bun.sourcemap;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-const Ordinal = bun.Ordinal;
 const string = []const u8;
-const FetchFlags = ModuleLoader.FetchFlags;
+
+const Config = @import("./config.zig");
+const Counters = @import("./Counters.zig");
+const Fs = @import("../fs.zig");
+const IPC = @import("./ipc.zig");
+const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
-const js_ast = bun.JSAst;
-const js_printer = bun.js_printer;
-const node_fallbacks = ModuleLoader.node_fallbacks;
-const options = bun.options;
-const webcore = bun.webcore;
-const Global = bun.Global;
+const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const std = @import("std");
+const PackageManager = @import("../install/install.zig").PackageManager;
+const URL = @import("../url.zig").URL;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
 const DotEnv = bun.DotEnv;
-const HotReloader = JSC.hot_reloader.HotReloader;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Ordinal = bun.Ordinal;
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const String = bun.String;
+const Transpiler = bun.Transpiler;
+const Watcher = bun.Watcher;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const options = bun.options;
+const strings = bun.strings;
+const uws = bun.uws;
+const Arena = bun.allocators.MimallocArena;
+const PluginRunner = bun.transpiler.PluginRunner;
+const api = bun.schema.api;
+const DNSResolver = bun.api.dns.Resolver;
+
+const jsc = bun.jsc;
+const ConsoleObject = jsc.ConsoleObject;
+const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
+const ErrorableString = jsc.ErrorableString;
+const EventLoop = jsc.EventLoop;
+const Exception = jsc.Exception;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSInternalPromise = jsc.JSInternalPromise;
+const JSModuleLoader = jsc.JSModuleLoader;
+const JSValue = jsc.JSValue;
+const Node = jsc.Node;
+const ResolvedSource = jsc.ResolvedSource;
+const SavedSourceMap = jsc.SavedSourceMap;
+const VM = jsc.VM;
+const ZigException = jsc.ZigException;
+const ZigStackTrace = jsc.ZigStackTrace;
+const ZigString = jsc.ZigString;
+const Bun = jsc.API.Bun;
+
+const ModuleLoader = jsc.ModuleLoader;
+const FetchFlags = ModuleLoader.FetchFlags;
+const RuntimeTranspilerStore = jsc.ModuleLoader.RuntimeTranspilerStore;
+const node_fallbacks = ModuleLoader.node_fallbacks;
+
+const HotReloader = jsc.hot_reloader.HotReloader;
+const ImportWatcher = jsc.hot_reloader.ImportWatcher;
+
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
+
+const webcore = bun.webcore;
 const Body = webcore.Body;

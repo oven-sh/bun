@@ -57,9 +57,10 @@ test("TypeScript Worker from a Blob", async () => {
 });
 
 test("Worker from a blob errors on invalid blob", async () => {
-  expect(() => {
-    new Worker("blob:i dont exist!");
-  }).toThrow();
+  const { promise, reject } = Promise.withResolvers();
+  const worker = new Worker("blob:i dont exist!");
+  worker.addEventListener("error", e => reject(e.message));
+  expect(promise).rejects.toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)');
 });
 
 test("Revoking an object URL after a Worker is created before it loads should throw an error", async () => {
@@ -80,7 +81,7 @@ test("Revoking an object URL after a Worker is created before it loads should th
         worker.onerror = resolve;
       });
       expect(result).toBeInstanceOf(ErrorEvent);
-      expect((result as ErrorEvent).message).toContain(url);
+      expect((result as ErrorEvent).message).toBe("BuildMessage: Blob URL is missing");
       break;
     } catch (e) {
       if (attempt === 9) {

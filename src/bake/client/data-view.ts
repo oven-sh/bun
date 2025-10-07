@@ -1,10 +1,10 @@
 import { td, te } from "../shared";
 
 export class DataViewReader {
-  view: DataView<ArrayBuffer>;
+  view: DataView;
   cursor: number;
 
-  constructor(view: DataView<ArrayBuffer>, cursor: number = 0) {
+  constructor(view: DataView, cursor: number = 0) {
     this.view = view;
     this.cursor = cursor;
   }
@@ -34,7 +34,7 @@ export class DataViewReader {
   }
 
   stringWithLength(byteLength: number) {
-    const str = td.decode(this.view.buffer.slice(this.cursor, this.cursor + byteLength));
+    const str = td.decode(this.view.buffer.slice(this.cursor, this.cursor + byteLength) as ArrayBuffer);
     this.cursor += byteLength;
     return str;
   }

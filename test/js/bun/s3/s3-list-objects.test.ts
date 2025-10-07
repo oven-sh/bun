@@ -1,5 +1,5 @@
-import { describe, it, expect, afterAll } from "bun:test";
-import { randomUUIDv7, S3Client, S3ListObjectsResponse, S3Options } from "bun";
+import { randomUUIDv7, S3Client, S3Options } from "bun";
+import { afterAll, describe, expect, it } from "bun:test";
 import { getSecret } from "harness";
 
 const options: S3Options = {

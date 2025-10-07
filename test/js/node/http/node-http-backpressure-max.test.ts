@@ -5,10 +5,10 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
+import { isCI, isLinux } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { isCI, isLinux } from "harness";
 
 describe("backpressure", () => {
   // Linux CI only have 8GB with is not enought because we will clone all or most of this 4GB into memory

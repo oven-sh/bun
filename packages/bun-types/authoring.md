@@ -65,13 +65,11 @@ Note: The order of references in `index.d.ts` is important - `bun.ns.d.ts` must 
 ### Best Practices
 
 1. **Type Safety**
-
    - Please use strict types instead of `any` where possible
    - Leverage TypeScript's type system features (generics, unions, etc.)
    - Document complex types with JSDoc comments
 
 2. **Compatibility**
-
    - Use `Bun.__internal.UseLibDomIfAvailable<LibDomName extends string, OurType>` for types that might conflict with lib.dom.d.ts (see [`./fetch.d.ts`](./fetch.d.ts) for a real example)
    - `@types/node` often expects variables to always be defined (this was the biggest cause of most of the conflicts in the past!), so we use the `UseLibDomIfAvailable` type to make sure we don't overwrite `lib.dom.d.ts` but still provide Bun types while simultaneously declaring the variable exists (for Node to work) in the cases that we can.
 

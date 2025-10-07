@@ -273,7 +273,7 @@ void MessagePort::dispatchMessages()
                 return;
 
             auto ports = MessagePort::entanglePorts(*context, WTFMove(message.transferredPorts));
-            if (UNLIKELY(scope.exception())) {
+            if (scope.exception()) [[unlikely]] {
                 // Currently, we assume that the only way we can get here is if we have a termination.
                 RELEASE_ASSERT(vm->hasPendingTerminationException());
                 return;
@@ -427,8 +427,7 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
-        if (listener->isAttribute())
-            start();
+        start();
         m_hasMessageEventListener = true;
     }
     return EventTarget::addEventListener(eventType, WTFMove(listener), options);

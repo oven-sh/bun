@@ -1,4 +1,4 @@
-import { expect, test, describe, jest } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -8,22 +8,22 @@ test("error.cause", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"1 | import { expect, test, describe, jest } from "bun:test";
+"1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
 5 |   const err2 = new Error("error 2", { cause: err });
-                   ^
+                       ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:16)
+      at <anonymous> ([dir]/inspect-error.test.js:5:20)
 
-1 | import { expect, test, describe, jest } from "bun:test";
+1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
-                  ^
+                      ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:15)
+      at <anonymous> ([dir]/inspect-error.test.js:4:19)
 "
 `);
 });
@@ -41,9 +41,9 @@ test("Error", () => {
 30 | 
 31 | test("Error", () => {
 32 |   const err = new Error("my message");
-                   ^
+                       ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:15)
+      at <anonymous> ([dir]/inspect-error.test.js:32:19)
 "
 `);
 });
@@ -71,15 +71,6 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
-function ansiRegex({ onlyFirst = false } = {}) {
-  const pattern = [
-    "[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)",
-    "(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))",
-  ].join("|");
-
-  return new RegExp(pattern, onlyFirst ? undefined : "g");
-}
-const stripANSIColors = str => str.replace(ansiRegex(), "");
 const normalizeError = str => {
   // remove debug-only stack trace frames
   // like "at require (:1:21)"
@@ -104,7 +95,7 @@ test("Error inside minified file (no color) ", () => {
   } catch (e) {
     expect(
       normalizeError(
-        Bun.inspect(e)
+        Bun.inspect(e, { colors: false })
           .replaceAll("\\", "/")
           .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
           .trim(),
@@ -118,9 +109,9 @@ test("Error inside minified file (no color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:101:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
     `);
   }
 });
@@ -133,12 +124,10 @@ test("Error inside minified file (color) ", () => {
     expect(
       // TODO: remove this workaround once snapshots work better
       normalizeError(
-        stripANSIColors(
-          Bun.inspect(e, { colors: true })
-            .replaceAll("\\", "/")
-            .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
-            .trim(),
-        ).trim(),
+        Bun.stripANSI(Bun.inspect(e, { colors: true }))
+          .replaceAll("\\", "/")
+          .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
+          .trim(),
       ),
     ).toMatchInlineSnapshot(`
       "21 | exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED=Z;
@@ -149,9 +138,9 @@ test("Error inside minified file (color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:129:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
     `);
   }
 });
@@ -165,7 +154,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:160:19)"
+    at <anonymous> ([file]:149:19)"
 `);
 });
 

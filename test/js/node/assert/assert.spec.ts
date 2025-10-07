@@ -1,5 +1,5 @@
-import { describe, beforeEach, it, expect } from "bun:test";
 import assert, { AssertionError } from "assert";
+import { beforeEach, describe, expect, it } from "bun:test";
 
 describe("assert(expr)", () => {
   // https://github.com/oven-sh/bun/issues/941

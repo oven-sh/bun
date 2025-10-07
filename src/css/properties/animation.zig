@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -515,3 +510,6 @@ pub const TimelineRangeName = enum {
     /// Represents the range during which the principal box crosses the start border edge.
     exit_crossing,
 };
+
+const bun = @import("bun");
+const std = @import("std");

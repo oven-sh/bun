@@ -1,31 +1,14 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
 const Length = css.css_values.length.Length;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 
 const VendorPrefix = css.VendorPrefix;
 const Property = css.Property;
-const PropertyId = css.PropertyId;
 const Feature = css.prefixes.Feature;
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
@@ -182,7 +165,7 @@ pub const BoxShadowHandler = struct {
 
                     var unparsed = unp.deepClone(context.allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    dest.append(context.allocator, .{ .unparsed = unparsed }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, .{ .unparsed = unparsed }));
                     this.flushed = true;
                 } else return false;
             },
@@ -225,7 +208,7 @@ pub const BoxShadowHandler = struct {
                     }
                 }
 
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }));
                 if (prefixes.none) {
                     prefixes = VendorPrefix.NONE;
                 } else {
@@ -245,7 +228,7 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }));
             }
 
             if (fallbacks.lab) {
@@ -259,14 +242,18 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }));
             } else {
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }));
             }
         } else {
-            dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }));
         }
 
         this.flushed = true;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

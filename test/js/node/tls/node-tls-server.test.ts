@@ -2,11 +2,11 @@ import { readFileSync, realpathSync } from "fs";
 import { tls as cert1 } from "harness";
 import { AddressInfo } from "net";
 import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
 import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
-import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -316,24 +316,24 @@ describe("tls.createServer", () => {
             ST: "CA",
           });
 
-          expect(cert.ca).toBeFalse();
+          expect(cert.ca).toBe(true);
           expect(cert.bits).toBe(2048);
           expect(cert.modulus).toBe(
-            "beee8773af7c8861ec11351188b9b1798734fb0729b674369be3285a29fe5dacbfab700d09d7904cf1027d89298bd68be0ef1df94363012b0deb97f632cb76894bcc216535337b9db6125ef68996dd35b4bea07e86c41da071907a86651e84f8c72141f889cc0f770554791e9f07bbe47c375d2d77b44dbe2ab0ed442bc1f49abe4f8904977e3dfd61cd501d8eff819ff1792aedffaca7d281fd1db8c5d972d22f68fa7103ca11ac9aaed1cdd12c33c0b8b47964b37338953d2415edce8b83d52e2076ca960385cc3a5ca75a75951aafdb2ad3db98a6fdd4baa32f575fea7b11f671a9eaa95d7d9faf958ac609f3c48dec5bddcf1bc1542031ed9d4b281d7dd1",
+            "e5633a2c8118171cbeaf321d55d0444586cbe566bb51a234b0ead69faf7490069854efddffac68986652ff949f472252e4c7d24c6ee4e3366e54d9e4701e24d021e583e1a088112c0f96475a558b42f883a3e796c937cc4d6bb8791b227017b3e73deb40b0ac84f033019f580a3216888acec71ce52d938fcadd8e29794e38774e33d323ede89b58e526ef8b513ba465fa4ffd9cf6c1ec7480de0dcb569dec295d7b3cce40256b428d5907e90e7a52e77c3101f4ad4c0e254ab03d75ac42ee1668a5094bc4521b264fb404b6c4b17b6b279e13e6282e1e4fb6303540cb830ea8ff576ca57b7861e4ef797af824b0987c870718780a1c5141e4f904fd0c5139f5",
           );
           expect(cert.exponent).toBe("0x10001");
           expect(cert.pubkey).toBeInstanceOf(Buffer);
           // yes these spaces are intentional
-          expect(cert.valid_from).toBe("Sep  6 23:27:34 2023 GMT");
-          expect(cert.valid_to).toBe("Sep  5 23:27:34 2025 GMT");
-          expect(cert.fingerprint).toBe("E3:90:9C:A8:AB:80:48:37:8D:CE:11:64:45:3A:EB:AD:C8:3C:B3:5C");
+          expect(cert.valid_from).toBe("Sep  6 03:00:49 2025 GMT");
+          expect(cert.valid_to).toBe("Sep  4 03:00:49 2035 GMT");
+          expect(cert.fingerprint).toBe("D2:5E:B9:AD:8B:48:3B:7A:35:D3:1A:45:BD:32:AC:AD:55:4A:BA:AD");
           expect(cert.fingerprint256).toBe(
-            "53:DD:15:78:60:FD:66:8C:43:9E:19:7E:CF:2C:AF:49:3C:D1:11:EC:61:2D:F5:DC:1D:0A:FA:CD:12:F9:F8:E0",
+            "85:F4:47:0C:6D:D8:DE:C8:68:77:7C:5E:3F:9B:56:A6:D3:69:C7:C2:1A:E8:B8:F8:1C:16:1D:04:78:A0:E9:91",
           );
           expect(cert.fingerprint512).toBe(
-            "2D:31:CB:D2:A0:CA:E5:D4:B5:59:11:48:4B:BC:65:11:4F:AB:02:24:59:D8:73:43:2F:9A:31:92:BC:AF:26:66:CD:DB:8B:03:74:0C:C1:84:AF:54:2D:7C:FD:EF:07:6E:85:66:98:6B:82:4F:A5:72:97:A2:19:8C:7B:57:D6:15",
+            "CE:00:17:97:29:5E:1C:7E:59:86:8D:1F:F0:F4:AF:A0:B0:10:F2:2E:0E:79:D1:32:D0:44:F9:B4:3A:DE:D5:83:A9:15:0E:E4:47:24:D4:2A:10:FB:21:BE:3A:38:21:FC:40:20:B3:BC:52:64:F7:38:93:EF:C9:3F:C8:57:89:31",
           );
-          expect(cert.serialNumber).toBe("1da7a7b8d71402ed2d8c3646a5cedf2b8117efc8");
+          expect(cert.serialNumber).toBe("71a46ae89fd817ef81a34d5973e1de42f09b9d63");
 
           expect(cert.raw).toBeInstanceOf(Buffer);
           client?.end();
@@ -540,32 +540,14 @@ describe("tls.createServer events", () => {
       });
   });
 
-  it("should call error", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  it("should error on an invalid port", () => {
+    const server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
-    const server: Server = createServer(COMMON_CERT);
-
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall("error not called")();
-    };
-
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
-
-    server
-      .on(
-        "error",
-        mustCall(err => {
-          server.close();
-          clearTimeout(timeout);
-          expect(err).toBeDefined();
-          done();
-        }),
-      )
-      .listen(123456);
+    expect(() => server.listen(123456)).toThrow(
+      expect.objectContaining({
+        code: "ERR_SOCKET_BAD_PORT",
+      }),
+    );
   });
 
   it("should call abort with signal", done => {

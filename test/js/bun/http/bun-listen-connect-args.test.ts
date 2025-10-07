@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "bun:test";
 import { cwdScope, isWindows, rmScope, tempDirWithFiles } from "harness";
 
 describe.if(!isWindows)("unix socket", () => {

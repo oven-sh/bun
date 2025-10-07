@@ -1,4 +1,5 @@
 const ArrayBufferSink = @This();
+
 pub const JSSink = webcore.Sink.JSSink(@This(), "ArrayBufferSink");
 
 bytes: bun.ByteList,
@@ -14,16 +15,14 @@ pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
     this.signal = signal;
 }
 
-pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) JSC.Maybe(void) {
-    this.bytes.len = 0;
-    var list = this.bytes.listManaged(this.allocator);
-    list.clearRetainingCapacity();
+pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) bun.sys.Maybe(void) {
+    this.bytes.clearRetainingCapacity();
 
     switch (stream_start) {
         .ArrayBufferSink => |config| {
             if (config.chunk_size > 0) {
-                list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
-                this.bytes.update(list);
+                this.bytes.ensureTotalCapacityPrecise(this.allocator, config.chunk_size) catch
+                    return .{ .err = Syscall.Error.oom };
             }
 
             this.as_uint8array = config.as_uint8array;
@@ -35,18 +34,18 @@ pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) JSC.Maybe(void
     this.done = false;
 
     this.signal.start();
-    return .{ .result = {} };
+    return .success;
 }
 
-pub fn flush(_: *ArrayBufferSink) JSC.Maybe(void) {
-    return .{ .result = {} };
+pub fn flush(_: *ArrayBufferSink) bun.sys.Maybe(void) {
+    return .success;
 }
 
-pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
+pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
     if (this.streaming) {
         const value: JSValue = switch (this.as_uint8array) {
-            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
-            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            true => jsc.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array) catch .zero, // TODO: properly propagate exception upwards
+            false => jsc.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer) catch .zero, // TODO: properly propagate exception upwards
         };
         this.bytes.len = 0;
         if (wait) {}
@@ -57,23 +56,15 @@ pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bo
 }
 
 pub fn finalize(this: *ArrayBufferSink) void {
-    if (this.bytes.len > 0) {
-        this.bytes.listManaged(this.allocator).deinit();
-        this.bytes = bun.ByteList.init("");
-        this.done = true;
-    }
-
-    this.allocator.destroy(this);
+    this.destroy();
 }
 
 pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
-    const this = try allocator.create(ArrayBufferSink);
-    this.* = ArrayBufferSink{
-        .bytes = bun.ByteList.init(&.{}),
+    return bun.new(ArrayBufferSink, .{
+        .bytes = bun.ByteList.empty,
         .allocator = allocator,
         .next = next,
-    };
-    return this;
+    });
 }
 
 pub fn construct(
@@ -120,31 +111,30 @@ pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable 
     return .{ .owned = len };
 }
 
-pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Maybe(void) {
+pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) bun.sys.Maybe(void) {
     if (this.next) |*next| {
         return next.end(err);
     }
     this.signal.close(err);
-    return .{ .result = {} };
+    return .success;
 }
 pub fn destroy(this: *ArrayBufferSink) void {
-    this.bytes.deinitWithAllocator(this.allocator);
-    this.allocator.destroy(this);
+    this.bytes.deinit(this.allocator);
+    bun.destroy(this);
 }
 pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
     if (this.streaming) {
         const value: JSValue = switch (as_uint8array) {
-            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
-            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            true => jsc.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
+            false => jsc.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
         };
         this.bytes.len = 0;
         return value;
     }
 
-    var list = this.bytes.listManaged(this.allocator);
-    this.bytes = bun.ByteList.init("");
+    defer this.bytes = bun.ByteList.empty;
     return ArrayBuffer.fromBytes(
-        try list.toOwnedSlice(),
+        try this.bytes.toOwnedSlice(this.allocator),
         if (as_uint8array)
             .Uint8Array
         else
@@ -152,18 +142,17 @@ pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: 
     ).toJS(globalThis, null);
 }
 
-pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Maybe(ArrayBuffer) {
+pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) bun.sys.Maybe(ArrayBuffer) {
     if (this.done) {
         return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
     }
 
     bun.assert(this.next == null);
-    var list = this.bytes.listManaged(this.allocator);
-    this.bytes = bun.ByteList.init("");
     this.done = true;
     this.signal.close(null);
+    defer this.bytes = bun.ByteList.empty;
     return .{ .result = ArrayBuffer.fromBytes(
-        list.toOwnedSlice() catch bun.outOfMemory(),
+        bun.handleOom(this.bytes.toOwnedSlice(this.allocator)),
         if (this.as_uint8array)
             .Uint8Array
         else
@@ -181,13 +170,17 @@ pub fn memoryCost(this: *const ArrayBufferSink) usize {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Syscall = bun.sys;
-const Sink = webcore.Sink;
+
+const jsc = bun.jsc;
+const ArrayBuffer = jsc.ArrayBuffer;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
 const webcore = bun.webcore;
+const Sink = webcore.Sink;
+
 const streams = webcore.streams;
 const Signal = webcore.streams.Signal;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ArrayBuffer = JSC.ArrayBuffer;

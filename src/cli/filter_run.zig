@@ -1,20 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const std = @import("std");
-const Fs = @import("../fs.zig");
-const RunCommand = @import("run_command.zig").RunCommand;
-const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = bun.Semver.String;
-
-const CLI = bun.CLI;
-const Command = CLI.Command;
-
-const transpiler = bun.transpiler;
-
-const FilterArg = @import("filter_arg.zig");
-
 const ScriptConfig = struct {
     package_json_path: []u8,
     package_name: []const u8,
@@ -75,8 +58,8 @@ pub const ProcessHandle = struct {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             const original_path = this.state.env.map.get("PATH") orelse "";
-            this.state.env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
-            defer this.state.env.map.put("PATH", original_path) catch bun.outOfMemory();
+            bun.handleOom(this.state.env.map.put("PATH", this.config.PATH));
+            defer bun.handleOom(this.state.env.map.put("PATH", original_path));
             const envp = try this.state.env.map.createNullDelimitedEnvMap(arena.allocator());
 
             break :brk try (try bun.spawn.spawnProcess(&this.options, argv[0..], envp)).unwrap();
@@ -140,7 +123,7 @@ pub const ProcessHandle = struct {
         this.state.processExit(this) catch {};
     }
 
-    pub fn eventLoop(this: *This) *bun.JSC.MiniEventLoop {
+    pub fn eventLoop(this: *This) *bun.jsc.MiniEventLoop {
         return this.state.event_loop;
     }
 
@@ -157,7 +140,7 @@ const State = struct {
     const This = @This();
 
     handles: []ProcessHandle,
-    event_loop: *bun.JSC.MiniEventLoop,
+    event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
     // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
@@ -178,7 +161,7 @@ const State = struct {
 
     fn readChunk(this: *This, handle: *ProcessHandle, chunk: []const u8) !void {
         if (this.pretty_output) {
-            handle.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(handle.buffer.appendSlice(chunk));
             this.redraw(false) catch {};
         } else {
             var content = chunk;
@@ -272,7 +255,7 @@ const State = struct {
     fn redraw(this: *This, is_abort: bool) !void {
         if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
-        try this.draw_buf.appendSlice("\x1b[?2026h");
+        try this.draw_buf.appendSlice(Output.synchronized_start);
         if (this.last_lines_written > 0) {
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
@@ -341,7 +324,7 @@ const State = struct {
                 try this.draw_buf.writer().print(fmt("<cyan><d>Waiting for {d} other script(s)<r>\n"), .{handle.remaining_dependencies});
             }
         }
-        try this.draw_buf.appendSlice("\x1b[?2026l");
+        try this.draw_buf.appendSlice(Output.synchronized_end);
         this.last_lines_written = 0;
         for (this.draw_buf.items) |c| {
             if (c == '\n') {
@@ -450,7 +433,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     const fsinstance = try bun.fs.FileSystem.init(null);
 
     // these things are leaked because we are going to exit
-    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
+    // When --workspaces is set, we want to match all workspace packages
+    // Otherwise use the provided filters
+    var filters_to_use = ctx.filters;
+    if (ctx.workspaces) {
+        // Use "*" as filter to match all packages in the workspace
+        filters_to_use = &.{"*"};
+    }
+
+    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
     var patterns = std.ArrayList([]u8).init(ctx.allocator);
 
     // Find package.json at workspace root
@@ -470,6 +461,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
+        // When using --workspaces, skip the root package to prevent recursion
+        if (ctx.workspaces and strings.eql(path, resolve_root)) {
+            continue;
+        }
+
         const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
@@ -482,8 +478,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
-        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
-            const original_content = pkgscripts.get(name) orelse continue;
+        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
+            const original_content = pkgscripts.get(name) orelse {
+                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
+                    Global.exit(1);
+                }
+
+                continue;
+            };
 
             var copy_script_capacity: usize = original_content.len;
             for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;
@@ -517,11 +520,19 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     if (scripts.items.len == 0) {
-        Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        if (ctx.if_present) {
+            // Exit silently with success when --if-present is set
+            Global.exit(0);
+        }
+        if (ctx.workspaces) {
+            Output.errGeneric("No workspace packages have script \"{s}\"", .{script_name});
+        } else {
+            Output.errGeneric("No packages matched the filter", .{});
+        }
         Global.exit(1);
     }
 
-    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env);
+    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
@@ -530,7 +541,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
+        .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
     };
@@ -552,7 +563,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) },
+                .windows = if (Environment.isWindows) .{ .loop = bun.jsc.EventLoopHandle.init(event_loop) },
                 .stream = true,
             },
         };
@@ -655,3 +666,18 @@ fn hasCycle(current: *ProcessHandle) bool {
     current.visiting = false;
     return false;
 }
+
+const FilterArg = @import("./filter_arg.zig");
+const std = @import("std");
+const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
+const RunCommand = @import("./run_command.zig").RunCommand;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const strings = bun.strings;
+const transpiler = bun.transpiler;
+
+const CLI = bun.cli;
+const Command = CLI.Command;

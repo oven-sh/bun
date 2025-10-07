@@ -1,13 +1,10 @@
-import { BunFile, Loader, plugin } from "bun";
+import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import path, { dirname, join, resolve } from "path";
+import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
+import path from "path";
+import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
 import notAPlugin from "./not_native_plugin.cc" with { type: "file" };
-import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
-import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
-import { itBundled } from "bundler/expectBundled";
-import os from "os";
-import fs from "fs";
 
 describe("native-plugins", async () => {
   const cwd = process.cwd();

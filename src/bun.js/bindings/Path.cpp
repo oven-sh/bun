@@ -78,7 +78,9 @@ DEFINE_PATH_FUNCTION(jsFunctionPath_toNamespacedPathWindows, Bun__Path__toNamesp
 static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 {
     auto& vm = JSC::getVM(globalThis);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* path = JSC::constructEmptyObject(globalThis);
+    RETURN_IF_EXCEPTION(scope, {});
     auto builtinNames = WebCore::builtinNames(vm);
 
     if (!isWindows) {
@@ -116,15 +118,20 @@ namespace Bun {
 
 JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(
         globalObject,
         (unsigned)0,
         Zig::createPath(globalObject, false));
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(
         globalObject,
         (unsigned)1,
         Zig::createPath(globalObject, true));
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

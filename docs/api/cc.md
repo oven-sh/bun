@@ -2,7 +2,7 @@
 
 ## Usage (cc in `bun:ffi`)
 
-See the [introduction blog post](https://bun.sh/blog/compile-and-run-c-in-js) for more information.
+See the [introduction blog post](https://bun.com/blog/compile-and-run-c-in-js) for more information.
 
 JavaScript:
 

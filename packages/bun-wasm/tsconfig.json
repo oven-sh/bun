@@ -13,11 +13,6 @@
     "baseUrl": ".",
     "types": ["node"]
   },
-  "include": [
-    "./node_modules/peechy",
-    "./schema.d.ts",
-    "./index.ts",
-    "./schema.js"
-  ],
+  "include": ["./node_modules/peechy", "./schema.d.ts", "./index.ts", "./schema.js"],
   "exclude": []
 }

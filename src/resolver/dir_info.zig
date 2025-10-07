@@ -1,22 +1,4 @@
-const bun = @import("bun");
-const std = @import("std");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-
-const allocators = @import("../allocators.zig");
 const DirInfo = @This();
-const Fs = @import("../fs.zig");
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
 
 pub const Index = allocators.IndexType;
 
@@ -110,8 +92,20 @@ pub fn getEntriesConst(dirinfo: *const DirInfo) ?*const Fs.FileSystem.DirEntry {
 pub fn getParent(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.parent);
 }
+
 pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.enclosing_browser_scope);
+}
+
+pub fn deinit(i: *DirInfo) void {
+    if (i.package_json) |p| {
+        p.deinit();
+        i.package_json = null;
+    }
+    if (i.tsconfig_json) |t| {
+        t.deinit();
+        i.tsconfig_json = null;
+    }
 }
 
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.
@@ -120,3 +114,15 @@ pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
 // 3. Store whether a directory has been queried and whether that query was successful.
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
 pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128, true);
+
+const string = []const u8;
+
+const Fs = @import("../fs.zig");
+const std = @import("std");
+const PackageJSON = @import("./package_json.zig").PackageJSON;
+const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+
+const bun = @import("bun");
+const FeatureFlags = bun.FeatureFlags;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const allocators = bun.allocators;

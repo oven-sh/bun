@@ -39,7 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor, (JSGlobalObject 
     auto* constructor = jsDynamicCast<JSDOMConstructorBase*>(callee);
     const auto& name = constructor->name();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString("Use `new "_s, name, "(...)` instead of `"_s, name, "(...)`"_s));
+    Bun::throwError(globalObject, scope, constructor->errorCode(), makeString("Use `new "_s, name, "(...)` instead of `"_s, name, "(...)`"_s));
     return {};
 }
 

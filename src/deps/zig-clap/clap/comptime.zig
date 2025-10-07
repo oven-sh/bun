@@ -1,12 +1,3 @@
-const clap = @import("../clap.zig");
-const bun = @import("bun");
-const std = @import("std");
-
-const debug = std.debug;
-const heap = std.heap;
-const mem = std.mem;
-const testing = std.testing;
-
 /// Deprecated: Use `parseEx` instead
 pub fn ComptimeClap(
     comptime Id: type,
@@ -189,3 +180,10 @@ pub fn ComptimeClap(
         }
     };
 }
+
+const bun = @import("bun");
+const clap = @import("../clap.zig");
+
+const std = @import("std");
+const debug = std.debug;
+const mem = std.mem;

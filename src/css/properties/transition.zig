@@ -1,37 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const Error = css.Error;
-
-const ContainerName = css.css_rules.container.ContainerName;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-const Percentage = css.css_values.percentage.Percentage;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 const Property = css.css_properties.Property;
 const PropertyId = css.css_properties.PropertyId;
@@ -188,7 +159,7 @@ pub const TransitionHandler = struct {
                 dest.append(
                     context.allocator,
                     .{ .unparsed = x.getPrefixed(context.allocator, context.targets, Feature.transition) },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else return false,
             else => return false,
         }
@@ -273,7 +244,7 @@ pub const TransitionHandler = struct {
                     dest.append(
                         context.allocator,
                         Property{ .transition = .{ transitions.deepClone(context.allocator), intersection } },
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 bun.bits.remove(VendorPrefix, property_prefixes, intersection);
@@ -296,7 +267,7 @@ pub const TransitionHandler = struct {
                     );
                     rtl_properties = null;
                 } else {
-                    dest.append(context.allocator, Property{ .@"transition-property" = .{ properties, prefix } }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, Property{ .@"transition-property" = .{ properties, prefix } }));
                 }
             }
         }
@@ -306,7 +277,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _durations.?[1];
             _durations = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-duration" = .{ durations, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-duration" = .{ durations, prefix } }));
             }
         }
 
@@ -315,7 +286,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _delays.?[1];
             _delays = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-delay" = .{ delays, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-delay" = .{ delays, prefix } }));
             }
         }
 
@@ -324,7 +295,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _timing_functions.?[1];
             _timing_functions = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-timing-function" = .{ timing_functions, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-timing-function" = .{ timing_functions, prefix } }));
             }
         }
 
@@ -542,3 +513,7 @@ fn isTransitionProperty(property_id: *const PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

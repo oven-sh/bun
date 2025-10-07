@@ -88,6 +88,20 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 
+## Build-time constants
+
+Use the `--define` flag to inject build-time constants into your executable, such as version numbers, build timestamps, or configuration values:
+
+```bash
+$ bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/cli.ts --outfile mycli
+```
+
+These constants are embedded directly into your compiled binary at build time, providing zero runtime overhead and enabling dead code elimination optimizations.
+
+{% callout type="info" %}
+For comprehensive examples and advanced patterns, see the [Build-time constants guide](/guides/runtime/build-time-constants).
+{% /callout %}
+
 ## Deploying to production
 
 Compiled executables reduce memory usage and improve Bun's start time.
@@ -125,6 +139,130 @@ The `--minify` argument optimizes the size of the transpiled output code. If you
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
+
+## Embedding runtime arguments
+
+**`--compile-exec-argv="args"`** - Embed runtime arguments that are available via `process.execArgv`:
+
+```bash
+bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
+```
+
+```js
+// In the compiled app
+console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
+## Act as the Bun CLI
+
+{% note %}
+
+New in Bun v1.2.16
+
+{% /note %}
+
+You can run a standalone executable as if it were the `bun` CLI itself by setting the `BUN_BE_BUN=1` environment variable. When this variable is set, the executable will ignore its bundled entrypoint and instead expose all the features of Bun's CLI.
+
+For example, consider an executable compiled from a simple script:
+
+```sh
+$ cat such-bun.js
+console.log("you shouldn't see this");
+
+$ bun build --compile ./such-bun.js
+ [3ms] bundle 1 modules
+[89ms] compile such-bun
+```
+
+Normally, running `./such-bun` with arguments would execute the script. However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bun` binary:
+
+```sh
+# Executable runs its own entrypoint by default
+$ ./such-bun install
+you shouldn't see this
+
+# With the env var, the executable acts like the `bun` CLI
+$ BUN_BE_BUN=1 ./such-bun install
+bun install v1.2.16-canary.1 (1d1db811)
+Checked 63 installs across 64 packages (no changes) [5.00ms]
+```
+
+This is useful for building CLI tools on top of Bun that may need to install packages, bundle dependencies, run different or local files and more without needing to download a separate binary or install bun.
+
+## Full-stack executables
+
+{% note %}
+
+New in Bun v1.2.17
+
+{% /note %}
+
+Bun's `--compile` flag can create standalone executables that contain both server and client code, making it ideal for full-stack applications. When you import an HTML file in your server code, Bun automatically bundles all frontend assets (JavaScript, CSS, etc.) and embeds them into the executable. When Bun sees the HTML import on the server, it kicks off a frontend build process to bundle JavaScript, CSS, and other assets.
+
+{% codetabs %}
+
+```ts#server.ts
+import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    "/": index,
+    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
+  },
+});
+
+console.log(`Server running at http://localhost:${server.port}`);
+```
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My App</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <h1>Hello World</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>
+```
+
+```js#app.js
+console.log("Hello from the client!");
+```
+
+```css#styles.css
+body {
+  background-color: #f0f0f0;
+}
+```
+
+{% /codetabs %}
+
+To build this into a single executable:
+
+```sh
+bun build --compile ./server.ts --outfile myapp
+```
+
+This creates a self-contained binary that includes:
+
+- Your server code
+- The Bun runtime
+- All frontend assets (HTML, CSS, JavaScript)
+- Any npm packages used by your server
+
+The result is a single file that can be deployed anywhere without needing Node.js, Bun, or any dependencies installed. Just run:
+
+```sh
+./myapp
+```
+
+Bun automatically handles serving the frontend assets with proper MIME types and cache headers. The HTML import is replaced with a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets.
+
+For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
 
 ## Worker
 
@@ -174,7 +312,7 @@ $ ./hello
 
 Standalone executables support embedding files.
 
-To embed files into an executable with `bun build --compile`, import the file in your code
+To embed files into an executable with `bun build --compile`, import the file in your code.
 
 ```ts
 // this becomes an internal file path
@@ -283,16 +421,119 @@ $ bun build --compile --asset-naming="[name].[ext]" ./index.ts
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
 
+## Using Bun.build() API
+
+You can also generate standalone executables using the `Bun.build()` JavaScript API. This is useful when you need programmatic control over the build process.
+
+### Basic usage
+
+```js
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  compile: {
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
+  },
+});
+```
+
+### Windows metadata with Bun.build()
+
+When targeting Windows, you can specify metadata through the `windows` object:
+
+```js
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  compile: {
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
+    windows: {
+      title: "My Application",
+      publisher: "My Company Inc",
+      version: "1.2.3.4",
+      description: "A powerful application built with Bun",
+      copyright: "© 2024 My Company Inc",
+      hideConsole: false, // Set to true for GUI applications
+      icon: "./icon.ico", // Path to icon file
+    },
+  },
+});
+```
+
+### Cross-compilation with Bun.build()
+
+You can cross-compile for different platforms:
+
+```js
+// Build for multiple platforms
+const platforms = [
+  { target: "bun-windows-x64", outfile: "app-windows.exe" },
+  { target: "bun-linux-x64", outfile: "app-linux" },
+  { target: "bun-darwin-arm64", outfile: "app-macos" },
+];
+
+for (const platform of platforms) {
+  await Bun.build({
+    entrypoints: ["./app.ts"],
+    outdir: "./dist",
+    compile: platform,
+  });
+}
+```
+
 ## Windows-specific flags
 
-When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+When compiling a standalone executable for Windows, there are several platform-specific options that can be used to customize the generated `.exe` file:
 
-- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
-- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+### Visual customization
+
+- `--windows-icon=path/to/icon.ico` - Set the executable file icon
+- `--windows-hide-console` - Disable the background terminal window (useful for GUI applications)
+
+### Metadata customization
+
+You can embed version information and other metadata into your Windows executable:
+
+- `--windows-title <STR>` - Set the product name (appears in file properties)
+- `--windows-publisher <STR>` - Set the company name
+- `--windows-version <STR>` - Set the version number (e.g. "1.2.3.4")
+- `--windows-description <STR>` - Set the file description
+- `--windows-copyright <STR>` - Set the copyright information
+
+#### Example with all metadata flags:
+
+```sh
+bun build --compile ./app.ts \
+  --outfile myapp.exe \
+  --windows-title "My Application" \
+  --windows-publisher "My Company Inc" \
+  --windows-version "1.2.3.4" \
+  --windows-description "A powerful application built with Bun" \
+  --windows-copyright "© 2024 My Company Inc"
+```
+
+This metadata will be visible in Windows Explorer when viewing the file properties:
+
+1. Right-click the executable in Windows Explorer
+2. Select "Properties"
+3. Go to the "Details" tab
+
+#### Version string format
+
+The `--windows-version` flag accepts version strings in the following formats:
+
+- `"1"` - Will be normalized to "1.0.0.0"
+- `"1.2"` - Will be normalized to "1.2.0.0"
+- `"1.2.3"` - Will be normalized to "1.2.3.0"
+- `"1.2.3.4"` - Full version format
+
+Each version component must be a number between 0 and 65535.
 
 {% callout %}
 
-These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs. They are only available when building on Windows itself.
 
 {% /callout %}
 
@@ -353,5 +594,4 @@ Currently, the `--compile` flag can only accept a single entrypoint at a time an
 - `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
-- `--format` - always outputs a binary executable. Internally, it's almost esm.
 - `--no-bundle` - we always bundle everything into the executable.

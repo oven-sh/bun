@@ -56,6 +56,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 
@@ -115,7 +116,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // invalidateEventListenerRegions();
 
     eventListenersDidChange();
-    if (UNLIKELY(this->onDidChangeListener)) {
+    if (this->onDidChangeListener) [[unlikely]] {
         this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Add);
     }
     return true;
@@ -153,7 +154,7 @@ bool EventTarget::removeEventListener(const AtomString& eventType, EventListener
         if (eventNames().isWheelEventType(eventType))
             invalidateEventListenerRegions();
 
-        if (UNLIKELY(this->onDidChangeListener)) {
+        if (this->onDidChangeListener) [[unlikely]] {
             this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Remove);
         }
         eventListenersDidChange();
@@ -231,8 +232,12 @@ bool EventTarget::hasActiveEventListeners(const AtomString& eventType) const
 
 ExceptionOr<bool> EventTarget::dispatchEventForBindings(Event& event)
 {
-    if (!event.isInitialized() || event.isBeingDispatched())
+    if (!event.isInitialized())
         return Exception { InvalidStateError };
+
+    if (event.isBeingDispatched()) {
+        return Exception { EVENT_RECURSION, makeString("The event \""_s, event.type(), "\" is already being dispatched"_s) };
+    }
 
     if (!scriptExecutionContext())
         return false;
@@ -316,7 +321,7 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
 
     for (auto& registeredListener : listeners) {
-        if (UNLIKELY(registeredListener->wasRemoved()))
+        if (registeredListener->wasRemoved()) [[unlikely]]
             continue;
 
         if (phase == EventInvokePhase::Capturing && !registeredListener->useCapture())
@@ -388,7 +393,7 @@ void EventTarget::removeAllEventListeners()
         // if (data->eventListenerMap.contains(eventNames().wheelEvent) || data->eventListenerMap.contains(eventNames().mousewheelEvent))
         // invalidateEventListenerRegions();
 
-        if (UNLIKELY(this->onDidChangeListener)) {
+        if (this->onDidChangeListener) [[unlikely]] {
             for (auto& eventType : data->eventListenerMap.eventTypes()) {
                 this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Clear);
             }

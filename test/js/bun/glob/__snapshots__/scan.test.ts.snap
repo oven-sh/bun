@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`fast-glob e2e tests patterns regular fixtures/*: fixtures/* 1`] = `
 [
@@ -1104,3 +1104,7 @@ exports[`fast-glob e2e tests (absolute) only files (cwd) **/*: absolute: **/* 1`
   "/fixtures/third/library/b/book.md",
 ]
 `;
+
+exports[`fast-glob e2e tests (absolute) patterns regular ../.: absolute: ../. 1`] = `[]`;
+
+exports[`fast-glob e2e tests patterns regular ../.: ../. 1`] = `[]`;

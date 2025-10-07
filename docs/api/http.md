@@ -1,7 +1,7 @@
 The page primarily documents the Bun-native `Bun.serve` API. Bun also implements [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) and the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
 
 {% callout %}
-These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](https://bun.sh/docs/runtime/nodejs-apis).
+These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](https://bun.com/docs/runtime/nodejs-apis).
 {% /callout %}
 
 To start a high-performance HTTP server with a clean API, the recommended approach is [`Bun.serve`](#start-a-server-bun-serve).
@@ -149,7 +149,7 @@ Bun.serve({
     }),
 
     // Redirects
-    "/blog": Response.redirect("https://bun.sh/blog"),
+    "/blog": Response.redirect("https://bun.com/blog"),
 
     // API responses
     "/api/config": Response.json({
@@ -163,6 +163,70 @@ Bun.serve({
 Static responses do not allocate additional memory after initialization. You can generally expect at least a 15% performance improvement over manually returning a `Response` object.
 
 Static route responses are cached for the lifetime of the server object. To reload static routes, call `server.reload(options)`.
+
+### File Responses vs Static Responses
+
+When serving files in routes, there are two distinct behaviors depending on whether you buffer the file content or serve it directly:
+
+```ts
+Bun.serve({
+  routes: {
+    // Static route - content is buffered in memory at startup
+    "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
+
+    // File route - content is read from filesystem on each request
+    "/download.zip": new Response(Bun.file("./download.zip")),
+  },
+});
+```
+
+**Static routes** (`new Response(await file.bytes())`) buffer content in memory at startup:
+
+- **Zero filesystem I/O** during requests - content served entirely from memory
+- **ETag support** - Automatically generates and validates ETags for caching
+- **If-None-Match** - Returns `304 Not Modified` when client ETag matches
+- **No 404 handling** - Missing files cause startup errors, not runtime 404s
+- **Memory usage** - Full file content stored in RAM
+- **Best for**: Small static assets, API responses, frequently accessed files
+
+**File routes** (`new Response(Bun.file(path))`) read from filesystem per request:
+
+- **Filesystem reads** on each request - checks file existence and reads content
+- **Built-in 404 handling** - Returns `404 Not Found` if file doesn't exist or becomes inaccessible
+- **Last-Modified support** - Uses file modification time for `If-Modified-Since` headers
+- **If-Modified-Since** - Returns `304 Not Modified` when file hasn't changed since client's cached version
+- **Range request support** - Automatically handles partial content requests with `Content-Range` headers
+- **Streaming transfers** - Uses buffered reader with backpressure handling for efficient memory usage
+- **Memory efficient** - Only buffers small chunks during transfer, not entire file
+- **Best for**: Large files, dynamic content, user uploads, files that change frequently
+
+### HTTP Caching Behavior
+
+Both route types implement HTTP caching standards but with different strategies:
+
+#### Static Routes Caching
+
+- **ETag generation**: Automatically computes ETag hash from content at startup
+- **If-None-Match**: Validates client ETag against server ETag
+- **304 responses**: Returns `304 Not Modified` with empty body when ETags match
+- **Cache headers**: Inherits any `Cache-Control` headers you provide in the Response
+- **Consistency**: ETag remains constant until server restart or route reload
+
+#### File Routes Caching
+
+- **Last-Modified**: Uses file's `mtime` for `Last-Modified` header
+- **If-Modified-Since**: Compares client date with file modification time
+- **304 responses**: Returns `304 Not Modified` when file unchanged since client's cached version
+- **Content-Length**: Automatically set based on current file size
+- **Dynamic validation**: Checks file modification time on each request
+
+#### Status Code Handling
+
+Both route types automatically adjust status codes:
+
+- **200 → 204**: Empty files (0 bytes) return `204 No Content` instead of `200 OK`
+- **200 → 304**: Successful cache validation returns `304 Not Modified`
+- **File routes only**: Missing or inaccessible files return `404 Not Found`
 
 ```ts
 const server = Bun.serve({
@@ -326,7 +390,11 @@ Bun.serve({
 
 ### HTML imports
 
-To add a client-side single-page app, you can use an HTML import:
+Bun supports importing HTML files directly into your server code, enabling full-stack applications with both server-side and client-side code. HTML imports work in two modes:
+
+**Development (`bun --hot`):** Assets are bundled on-demand at runtime, enabling hot module replacement (HMR) for a fast, iterative development experience. When you change your frontend code, the browser automatically updates without a full page reload.
+
+**Production (`bun build`):** When building with `bun build --target=bun`, the `import index from "./index.html"` statement resolves to a pre-built manifest object containing all bundled client assets. `Bun.serve` consumes this manifest to serve optimized assets with zero runtime bundling overhead. This is ideal for deploying to production.
 
 ```ts
 import myReactSinglePageApp from "./index.html";
@@ -338,9 +406,9 @@ Bun.serve({
 });
 ```
 
-HTML imports don't just serve HTML. It's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser.
+HTML imports don't just serve HTML — it's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.com/docs/bundler), JavaScript transpiler and CSS parser. You can use this to build full-featured frontends with React, TypeScript, Tailwind CSS, and more.
 
-You can use this to build a full-featured frontend with React, TypeScript, Tailwind CSS, and more. Check out [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack) to learn more.
+For a complete guide on building full-stack applications with HTML imports, including detailed examples and best practices, see [/docs/bundler/fullstack](https://bun.com/docs/bundler/fullstack).
 
 ### Practical example: REST API
 
@@ -601,7 +669,7 @@ Bun.serve({
 ```
 
 {% callout %}
-[Learn more about debugging in Bun](https://bun.sh/docs/runtime/debugger)
+[Learn more about debugging in Bun](https://bun.com/docs/runtime/debugger)
 {% /callout %}
 
 The call to `Bun.serve` returns a `Server` object. To stop the server, call the `.stop()` method.
@@ -768,7 +836,7 @@ Instead of passing the server options into `Bun.serve`, `export default` it. Thi
 $ bun --hot server.ts
 ``` -->
 
-<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](https://bun.sh/docs/runtime/hot). -->
+<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](https://bun.com/docs/runtime/hot). -->
 
 ## Streaming files
 

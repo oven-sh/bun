@@ -1,8 +1,7 @@
-import { describe, test } from "bun:test";
 import { frameworkRouterInternals } from "bun:internal-for-testing";
-import { expect } from "bun:test";
-import path from "path";
+import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
 

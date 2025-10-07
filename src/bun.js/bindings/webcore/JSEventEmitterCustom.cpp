@@ -43,12 +43,12 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
 
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
-    if (UNLIKELY(!thisValue.isCell())) {
+    if (!thisValue.isCell()) [[unlikely]] {
         return nullptr;
     }
 
     JSCell* thisCell = thisValue.asCell();
-    if (UNLIKELY(!thisCell->isObject())) {
+    if (!thisCell->isObject()) [[unlikely]] {
         return nullptr;
     }
 
@@ -64,6 +64,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
             return jsCast<JSEventEmitter*>(asObject(_events));
         }
     }
+    // TODO: properly propagate exception upwards (^ getIfPropertyExists)
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -75,7 +76,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
 
     thisObject->putDirect(vm, name, result, 0);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return nullptr;
     }

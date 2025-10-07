@@ -12,11 +12,16 @@ var FakeSocket = class Socket extends Duplex {
   isServer = false;
 
   #address;
+  _httpMessage: any;
+  constructor(httpMessage: any) {
+    super();
+    this._httpMessage = httpMessage;
+  }
   address() {
     // Call server.requestIP() without doing any property getter twice.
     var internalData;
     return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
+      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -118,6 +123,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {}
+
+  destroy() {
+    this._httpMessage?.destroy?.();
+    return super.destroy();
+  }
 };
 
 Object.defineProperty(FakeSocket, "name", { value: "Socket" });

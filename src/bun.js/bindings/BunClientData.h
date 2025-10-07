@@ -36,7 +36,7 @@ enum class UseCustomHeapCellType { Yes,
 
 class JSHeapData {
     WTF_MAKE_NONCOPYABLE(JSHeapData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSHeapData);
     friend class JSVMClientData;
 
 public:
@@ -58,7 +58,9 @@ public:
 
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
+    JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
+    // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
     Lock m_lock;
@@ -76,7 +78,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
 class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_NONCOPYABLE(JSVMClientData);
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData, JSVMClientData);
 
 public:
     explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);

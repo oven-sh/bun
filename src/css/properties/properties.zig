@@ -1,13 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 const Position = position.Position;
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
 
@@ -41,7 +32,6 @@ pub const transform = @import("./transform.zig");
 pub const transition = @import("./transition.zig");
 pub const ui = @import("./ui.zig");
 
-const generated = @import("./properties_generated.zig");
 pub const PropertyId = generated.PropertyId;
 pub const Property = generated.Property;
 pub const PropertyIdTag = generated.PropertyIdTag;
@@ -1884,3 +1874,13 @@ pub const CSSWideKeyword = enum {
 //         .ty = ColorScheme,
 //     },
 // });
+
+const bun = @import("bun");
+const generated = @import("./properties_generated.zig");
+
+const css = @import("../css_parser.zig");
+const Error = css.Error;
+const SmallList = css.SmallList;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

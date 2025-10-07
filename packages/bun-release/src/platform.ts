@@ -1,6 +1,6 @@
-import { spawn } from "./spawn";
-import { exists, read } from "./fs";
 import { debug } from "./console";
+import { exists, read } from "./fs";
+import { spawn } from "./spawn";
 
 export const os = process.platform;
 
@@ -62,7 +62,7 @@ export const platforms: Platform[] = [
   },
   {
     os: "linux",
-    arch: "aarch64",
+    arch: "arm64",
     abi: "musl",
     bin: "bun-linux-aarch64-musl",
     exe: "bin/bun",

@@ -24,12 +24,12 @@ server.on('request', (req, res) => {
 
 server.listen(0, common.mustCall(() => {
   const port = server.address().port;
-  const client = http2.connect(`http://127.0.0.1:${port}`);
+  const client = http2.connect(`http://localhost:${port}`);
   const req = client.request({
     ':path': '/',
     ':method': 'GET',
     ':scheme': 'http',
-    ':authority': `127.0.0.1:${port}`
+    ':authority': `localhost:${port}`
   });
   req.on('end', common.mustCall(() => {
     client.close();

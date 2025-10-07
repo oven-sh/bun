@@ -6,7 +6,7 @@
 //
 // Without this flag, each test is a "smoke test", running the iteration once.
 import { expect } from "bun:test";
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest } from "../bake-harness";
 
 // https://github.com/oven-sh/bun/issues/18910
 devTest("crash #18910", {
@@ -15,17 +15,17 @@ devTest("crash #18910", {
     "b.js": ``,
   },
   async test(dev) {
-    await using c = await dev.client('/', { allowUnlimitedReloads: true });
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
 
     const absPath = dev.join("b.js");
 
-    await dev.stressTest(async() => {
+    await dev.stressTest(async () => {
       for (let i = 0; i < 100; i++) {
         await Bun.write(absPath, "let a = 0;");
         await Bun.sleep(2);
         await Bun.write(absPath, "// let a = 0;");
         await Bun.sleep(2);
-      } 
+      }
     });
 
     await dev.write("b.js", "globalThis.a = 1;");

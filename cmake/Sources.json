@@ -1,0 +1,80 @@
+[
+  {
+    "output": "BunErrorSources.txt",
+    "paths": ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"]
+  },
+  {
+    "output": "NodeFallbacksSources.txt",
+    "paths": ["src/node-fallbacks/*.js"]
+  },
+  {
+    "output": "ZigGeneratedClassesSources.txt",
+    "paths": ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts"]
+  },
+  {
+    "output": "JavaScriptSources.txt",
+    "paths": [
+      "src/js/**/*.{js,ts}",
+      "src/install/PackageManager/scanner-entry.ts"
+    ]
+  },
+  {
+    "output": "JavaScriptCodegenSources.txt",
+    "paths": ["src/codegen/*.ts"]
+  },
+  {
+    "output": "BakeRuntimeSources.txt",
+    "paths": ["src/bake/*.ts", "src/bake/*/*.{ts,css}"],
+    "exclude": ["src/bake/generated.ts"]
+  },
+  {
+    "output": "BindgenSources.txt",
+    "paths": ["src/**/*.bind.ts"]
+  },
+  {
+    "output": "BindgenV2Sources.txt",
+    "paths": ["src/**/*.bindv2.ts"]
+  },
+  {
+    "output": "BindgenV2InternalSources.txt",
+    "paths": ["src/codegen/bindgenv2/**/*.ts"]
+  },
+  {
+    "output": "ZigSources.txt",
+    "paths": ["src/**/*.zig"]
+  },
+  {
+    "output": "CxxSources.txt",
+    "paths": [
+      "src/io/*.cpp",
+      "src/bun.js/modules/*.cpp",
+      "src/bun.js/bindings/*.cpp",
+      "src/bun.js/bindings/webcore/*.cpp",
+      "src/bun.js/bindings/sqlite/*.cpp",
+      "src/bun.js/bindings/webcrypto/*.cpp",
+      "src/bun.js/bindings/webcrypto/*/*.cpp",
+      "src/bun.js/bindings/node/*.cpp",
+      "src/bun.js/bindings/node/crypto/*.cpp",
+      "src/bun.js/bindings/node/http/*.cpp",
+      "src/bun.js/bindings/v8/*.cpp",
+      "src/bun.js/bindings/v8/shim/*.cpp",
+      "src/bake/*.cpp",
+      "src/deps/*.cpp",
+      "src/vm/*.cpp",
+      "packages/bun-usockets/src/crypto/*.cpp"
+    ]
+  },
+  {
+    "output": "CSources.txt",
+    "paths": [
+      "packages/bun-usockets/src/*.c",
+      "packages/bun-usockets/src/eventing/*.c",
+      "packages/bun-usockets/src/internal/*.c",
+      "packages/bun-usockets/src/crypto/*.c",
+      "src/bun.js/bindings/uv-posix-polyfills.c",
+      "src/bun.js/bindings/uv-posix-stubs.c",
+      "src/*.c",
+      "src/bun.js/bindings/node/http/llhttp/*.c"
+    ]
+  }
+]

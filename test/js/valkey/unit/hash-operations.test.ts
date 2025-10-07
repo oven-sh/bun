@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
@@ -34,6 +34,46 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       // HGET non-existent field should return null
       const nonExistentField = await ctx.redis.send("HGET", [key, "nonexistent"]);
       expect(nonExistentField).toBeNull();
+    });
+
+    test("HGET native method", async () => {
+      const key = ctx.generateKey("hget-native-test");
+
+      // Set a hash field
+      await ctx.redis.send("HSET", [key, "username", "johndoe"]);
+
+      // Test native hget method - single value return
+      const result = await ctx.redis.hget(key, "username");
+      expectType<string>(result, "string");
+      expect(result).toBe("johndoe");
+
+      // HGET non-existent field should return null
+      const nonExistent = await ctx.redis.hget(key, "nonexistent");
+      expect(nonExistent).toBeNull();
+
+      // HGET non-existent key should return null
+      const nonExistentKey = await ctx.redis.hget("nonexistentkey", "field");
+      expect(nonExistentKey).toBeNull();
+    });
+
+    test("HGET vs HMGET return value differences", async () => {
+      const key = ctx.generateKey("hget-vs-hmget");
+
+      // Set a single field
+      await ctx.redis.send("HSET", [key, "field1", "value1"]);
+
+      // HGET returns a single value (string or null)
+      const hgetResult = await ctx.redis.hget(key, "field1");
+      expect(hgetResult).toBe("value1");
+      expect(typeof hgetResult).toBe("string");
+
+      // HMGET with single field returns an array
+      const hmgetResult = await ctx.redis.hmget(key, ["field1"]);
+      expect(hmgetResult).toEqual(["value1"]);
+      expect(Array.isArray(hmgetResult)).toBe(true);
+
+      // This demonstrates the key difference - no need to access [0] with HGET
+      expect(hgetResult).toBe(hmgetResult[0]);
     });
 
     test("HMSET and HMGET commands", async () => {

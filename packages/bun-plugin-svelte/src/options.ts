@@ -1,5 +1,5 @@
-import { strict as assert } from "node:assert";
 import { type BuildConfig } from "bun";
+import { strict as assert } from "node:assert";
 import type { CompileOptions, ModuleCompileOptions } from "svelte/compiler";
 
 type OverrideCompileOptions = Pick<CompileOptions, "customElement" | "runes" | "modernAst" | "namespace">;

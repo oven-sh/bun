@@ -1,44 +1,3 @@
-const URL = @import("../url.zig").URL;
-const bun = @import("bun");
-const std = @import("std");
-const MutableString = bun.MutableString;
-const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
-const String = Semver.String;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const PackageManager = @import("./install.zig").PackageManager;
-const ExternalStringMap = @import("./install.zig").ExternalStringMap;
-const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
-const PackageNameHash = bun.install.PackageNameHash;
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const ExternalSlice = @import("./install.zig").ExternalSlice;
-const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = bun.logger;
-const Output = bun.Output;
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
-const Environment = bun.Environment;
-const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = bun.http;
-const JSON = bun.JSON;
-const default_allocator = bun.default_allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const SlicedString = Semver.SlicedString;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
-const VersionSlice = @import("./install.zig").VersionSlice;
-const ObjectPool = @import("../pool.zig").ObjectPool;
-const Api = @import("../api/schema.zig").Api;
-const DotEnv = @import("../env_loader.zig");
-const http = bun.http;
-const OOM = bun.OOM;
-const Global = bun.Global;
-const PublishCommand = bun.CLI.PublishCommand;
-const File = bun.sys.File;
-
 const Npm = @This();
 
 const WhoamiError = OOM || error{
@@ -175,8 +134,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("???", response_buf.list.items);
-    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         switch (err) {
             error.OutOfMemory => |oom| return oom,
             else => {
@@ -204,8 +163,8 @@ pub fn responseError(
 ) OOM!noreturn {
     const message = message: {
         var log = logger.Log.init(allocator);
-        const source = logger.Source.initPathString("???", response_body.list.items);
-        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        const source = &logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => break :message null,
@@ -277,7 +236,7 @@ pub const Registry = struct {
             return name[1..];
         }
 
-        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
+        pub fn fromAPI(name: string, registry_: api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
             var registry = registry_;
 
             // Support $ENV_VAR for registry URLs
@@ -447,6 +406,7 @@ pub const Registry = struct {
         package_name: string,
         loaded_manifest: ?PackageManifest,
         package_manager: *PackageManager,
+        is_extended_manifest: bool,
     ) !PackageVersionResponse {
         switch (response.status_code) {
             400 => return error.BadRequest,
@@ -493,12 +453,13 @@ pub const Registry = struct {
             newly_last_modified,
             new_etag,
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
+            is_extended_manifest,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.saveAsync(
                     &package,
                     scope,
-                    package_manager.getTemporaryDirectory(),
+                    package_manager.getTemporaryDirectory().handle,
                     package_manager.getCacheDirectory(),
                 );
             }
@@ -510,7 +471,6 @@ pub const Registry = struct {
     }
 };
 
-const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
 const DistTagMap = extern struct {
     tags: ExternalStringList = ExternalStringList{},
     versions: VersionSlice = VersionSlice{},
@@ -696,8 +656,8 @@ pub const OperatingSystem = enum(u16) {
         else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
-    pub fn isMatch(this: OperatingSystem) bool {
-        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
+    pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
     pub inline fn has(this: OperatingSystem, other: u16) bool {
@@ -726,19 +686,19 @@ pub const OperatingSystem = enum(u16) {
         return .{ .added = this, .removed = .none };
     }
 
-    const JSC = bun.JSC;
-    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const jsc = bun.jsc;
+    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return JSC.JSValue.jsBoolean(operating_system.combine().isMatch());
+        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch(current));
     }
 };
 
@@ -761,6 +721,10 @@ pub const Libc = enum(u8) {
         return (@intFromEnum(this) & other) != 0;
     }
 
+    pub fn isMatch(this: Libc, target: Libc) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+    }
+
     pub fn negatable(this: Libc) Negatable(Libc) {
         return .{ .added = this, .removed = .none };
     }
@@ -768,8 +732,8 @@ pub const Libc = enum(u8) {
     // TODO:
     pub const current: Libc = @intFromEnum(glibc);
 
-    const JSC = bun.JSC;
-    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const jsc = bun.jsc;
+    pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(1);
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
@@ -780,7 +744,7 @@ pub const Libc = enum(u8) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return JSC.JSValue.jsBoolean(libc.combine().isMatch());
+        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
     }
 };
 
@@ -835,27 +799,27 @@ pub const Architecture = enum(u16) {
         return (@intFromEnum(this) & other) != 0;
     }
 
-    pub fn isMatch(this: Architecture) bool {
-        return @intFromEnum(this) & @intFromEnum(current) != 0;
+    pub fn isMatch(this: Architecture, target: Architecture) bool {
+        return @intFromEnum(this) & @intFromEnum(target) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {
         return .{ .added = this, .removed = .none };
     }
 
-    const JSC = bun.JSC;
-    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const jsc = bun.jsc;
+    pub fn jsFunctionArchitectureIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return JSC.JSValue.jsBoolean(architecture.combine().isMatch());
+        return jsc.JSValue.jsBoolean(architecture.combine().isMatch(current));
     }
 };
 
@@ -912,13 +876,16 @@ pub const PackageVersion = extern struct {
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
 
+    /// Unix timestamp when this version was published (0 if unknown)
+    publish_timestamp_ms: f64 = 0,
+
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
     }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 232) {
+    if (@sizeOf(Npm.PackageVersion) != 240) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -940,6 +907,9 @@ pub const NpmPackage = extern struct {
 
     versions_buf: VersionSlice = VersionSlice{},
     string_lists_buf: ExternalStringList = ExternalStringList{},
+
+    // Flag to indicate if we have timestamp data from extended manifest
+    has_extended_manifest: bool = false,
 };
 
 pub const PackageManifest = struct {
@@ -970,7 +940,9 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
+        // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
+        // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        pub const version = "bun-npm-manifest-cache-v0.0.7\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -1112,7 +1084,7 @@ pub const PackageManifest = struct {
             // This needs many more call sites, doesn't have much impact on this location.
             var realpath_buf: bun.PathBuffer = undefined;
             const path_to_use_for_opening_file = if (Environment.isWindows)
-                bun.path.joinAbsStringBufZ(PackageManager.get().temp_dir_path, &realpath_buf, &.{ PackageManager.get().temp_dir_path, tmp_path }, .auto)
+                bun.path.joinAbsStringBufZ(PackageManager.get().getTemporaryDirectory().path, &realpath_buf, &.{tmp_path}, .auto)
             else
                 tmp_path;
 
@@ -1131,6 +1103,9 @@ pub const PackageManifest = struct {
                                 var did_warn = std.atomic.Value(bool).init(false);
 
                                 pub fn warnOnce() void {
+                                    // .monotonic is okay because we only ever set this to true, and
+                                    // we don't rely on any side effects from a thread that
+                                    // previously set this to true.
                                     if (!did_warn.swap(true, .monotonic)) {
                                         // This is not an error. Nor is it really a warning.
                                         Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
@@ -1360,16 +1335,16 @@ pub const PackageManifest = struct {
     };
 
     pub const bindings = struct {
-        const JSC = bun.JSC;
-        const JSValue = JSC.JSValue;
-        const JSGlobalObject = JSC.JSGlobalObject;
-        const CallFrame = JSC.CallFrame;
-        const ZigString = JSC.ZigString;
+        const jsc = bun.jsc;
+        const JSValue = jsc.JSValue;
+        const JSGlobalObject = jsc.JSGlobalObject;
+        const CallFrame = jsc.CallFrame;
+        const ZigString = jsc.ZigString;
 
         pub fn generate(global: *JSGlobalObject) JSValue {
             const obj = JSValue.createEmptyObject(global, 1);
             const parseManifestString = ZigString.static("parseManifest");
-            obj.put(global, parseManifestString, JSC.createCallback(global, parseManifestString, 2, jsParseManifest));
+            obj.put(global, parseManifestString, jsc.createCallback(global, parseManifestString, 2, jsParseManifest));
             return obj;
         }
 
@@ -1429,7 +1404,7 @@ pub const PackageManifest = struct {
                     try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
-            var result = bun.String.fromUTF8(buf.items);
+            var result = bun.String.borrowUTF8(buf.items);
             defer result.deref();
 
             return result.toJSByParseJSON(global);
@@ -1499,6 +1474,310 @@ pub const PackageManifest = struct {
         return null;
     }
 
+    pub fn shouldExcludeFromAgeFilter(this: *const PackageManifest, exclusions: ?[]const []const u8) bool {
+        if (exclusions) |excl| {
+            const pkg_name = this.name();
+            for (excl) |excluded| {
+                if (strings.eql(pkg_name, excluded)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub inline fn isPackageVersionTooRecent(
+        package_version: *const PackageVersion,
+        minimum_release_age_ms: f64,
+    ) bool {
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
+        return package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms;
+    }
+
+    fn searchVersionList(
+        this: *const PackageManifest,
+        versions: []const Semver.Version,
+        packages: []const PackageVersion,
+        group: Semver.Query.Group,
+        group_buf: string,
+        minimum_release_age_ms: f64,
+        newest_filtered: *?Semver.Version,
+    ) ?FindVersionResult {
+        var prev_package_blocked_from_age: ?*const PackageVersion = null;
+        var best_version: ?FindResult = null;
+
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
+        const seven_days_ms: f64 = 7 * std.time.ms_per_day;
+        const stability_window_ms: f64 = @min(minimum_release_age_ms, seven_days_ms);
+
+        var i = versions.len;
+        while (i > 0) {
+            i -= 1;
+            const version = versions[i];
+            if (group.satisfies(version, group_buf, this.string_buf)) {
+                const package = &packages[i];
+                if (isPackageVersionTooRecent(package, minimum_release_age_ms)) {
+                    if (newest_filtered.* == null) newest_filtered.* = version;
+                    prev_package_blocked_from_age = package;
+                }
+                // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
+                else if (prev_package_blocked_from_age) |prev_package| {
+                    // only try to go backwards for a max of 7 days on top of existing minimum age
+                    if (package.publish_timestamp_ms < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms)) {
+                        if (best_version == null) {
+                            best_version = .{
+                                .version = version,
+                                .package = package,
+                            };
+                        }
+                        break;
+                    }
+
+                    const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                    if (is_stable) {
+                        best_version = .{
+                            .version = version,
+                            .package = package,
+                        };
+                        break;
+                    } else {
+                        if (best_version == null) {
+                            best_version = .{
+                                .version = version,
+                                .package = package,
+                            };
+                        }
+                        prev_package_blocked_from_age = package;
+                        continue;
+                    }
+                } else {
+                    return .{
+                        .found = .{
+                            .version = version,
+                            .package = package,
+                        },
+                    };
+                }
+            }
+        }
+
+        if (best_version) |result| {
+            if (newest_filtered.*) |nf| {
+                return .{ .found_with_filter = .{
+                    .result = result,
+                    .newest_filtered = nf,
+                } };
+            } else {
+                return .{ .found = result };
+            }
+        }
+        return null;
+    }
+
+    pub const FindVersionResult = union(enum) {
+        found: FindResult,
+        found_with_filter: struct {
+            result: FindResult,
+            newest_filtered: ?Semver.Version = null,
+        },
+        err: enum {
+            not_found,
+            too_recent,
+            all_versions_too_recent,
+        },
+
+        pub fn unwrap(self: FindVersionResult) ?FindResult {
+            return switch (self) {
+                .found => |result| result,
+                .found_with_filter => |filtered| filtered.result,
+                .err => null,
+            };
+        }
+
+        pub fn latestIsFiltered(self: FindVersionResult) bool {
+            return switch (self) {
+                .found_with_filter => |filtered| filtered.newest_filtered != null,
+                .err => |err| err == .all_versions_too_recent,
+                // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
+                else => false,
+            };
+        }
+    };
+
+    pub fn findByDistTagWithFilter(
+        this: *const PackageManifest,
+        tag: string,
+        minimum_release_age_ms: ?f64,
+        exclusions: ?[]const []const u8,
+    ) FindVersionResult {
+        const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_ms = min_age_gate_ms orelse {
+            return .{ .found = dist_result };
+        };
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
+        const seven_days_ms: f64 = 7 * std.time.ms_per_day;
+        const stability_window_ms = @min(min_age_ms, seven_days_ms);
+
+        const dist_too_recent = isPackageVersionTooRecent(dist_result.package, min_age_ms);
+        if (!dist_too_recent) {
+            return .{ .found = dist_result };
+        }
+
+        const latest_version = dist_result.version;
+        const is_prerelease = latest_version.tag.hasPre();
+        const latest_version_tag = if (is_prerelease) latest_version.tag.pre.slice(this.string_buf) else null;
+        const latest_version_tag_before_dot = if (latest_version_tag) |v|
+            if (strings.indexOfChar(v, '.')) |i| v[0..i] else v
+        else
+            null;
+
+        const list = if (is_prerelease) this.pkg.prereleases else this.pkg.releases;
+        const versions = list.keys.get(this.versions);
+        const packages = list.values.get(this.package_versions);
+
+        var best_version: ?FindResult = null;
+        var prev_package_blocked_from_age: ?*const PackageVersion = dist_result.package;
+
+        var i: usize = versions.len;
+        while (i > 0) : (i -= 1) {
+            const idx = i - 1;
+            const version = versions[idx];
+            const package = &packages[idx];
+
+            if (version.order(latest_version, this.string_buf, this.string_buf) == .gt) continue;
+            if (latest_version_tag_before_dot) |expected_tag| {
+                const package_tag = version.tag.pre.slice(this.string_buf);
+                const actual_tag =
+                    if (strings.indexOfChar(package_tag, '.')) |dot_i| package_tag[0..dot_i] else package_tag;
+
+                if (!strings.eql(actual_tag, expected_tag)) continue;
+            }
+
+            if (isPackageVersionTooRecent(package, min_age_ms)) {
+                prev_package_blocked_from_age = package;
+                continue;
+            }
+
+            // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
+            if (prev_package_blocked_from_age) |prev_package| {
+                // only try to go backwards for a max of 7 days on top of existing minimum age
+                if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
+                    return .{ .found_with_filter = .{
+                        .result = best_version orelse .{ .version = version, .package = package },
+                        .newest_filtered = dist_result.version,
+                    } };
+                }
+
+                const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                if (is_stable) {
+                    return .{ .found_with_filter = .{
+                        .result = .{ .version = version, .package = package },
+                        .newest_filtered = dist_result.version,
+                    } };
+                } else {
+                    if (best_version == null) {
+                        best_version = .{ .version = version, .package = package };
+                    }
+                    prev_package_blocked_from_age = package;
+                    continue;
+                }
+            }
+
+            best_version = .{
+                .version = version,
+                .package = package,
+            };
+            break;
+        }
+
+        if (best_version) |result| {
+            return .{ .found_with_filter = .{
+                .result = result,
+                .newest_filtered = dist_result.version,
+            } };
+        }
+
+        return .{ .err = .all_versions_too_recent };
+    }
+
+    pub fn findBestVersionWithFilter(
+        this: *const PackageManifest,
+        group: Semver.Query.Group,
+        group_buf: string,
+        minimum_release_age_ms: ?f64,
+        exclusions: ?[]const []const u8,
+    ) FindVersionResult {
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_ms = min_age_gate_ms orelse {
+            const result = this.findBestVersion(group, group_buf);
+            if (result) |r| return .{ .found = r };
+            return .{ .err = .not_found };
+        };
+        bun.debugAssert(this.pkg.has_extended_manifest);
+
+        const left = group.head.head.range.left;
+        var newest_filtered: ?Semver.Version = null;
+
+        if (left.op == .eql) {
+            const result = this.findByVersion(left.version);
+            if (result) |r| {
+                if (isPackageVersionTooRecent(r.package, min_age_ms)) {
+                    return .{ .err = .too_recent };
+                }
+                return .{ .found = r };
+            }
+            return .{ .err = .not_found };
+        }
+
+        if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version, group_buf, this.string_buf)) {
+                if (isPackageVersionTooRecent(result.package, min_age_ms)) {
+                    newest_filtered = result.version;
+                }
+                if (newest_filtered == null) {
+                    if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                        if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
+                            return .{ .found = result };
+                        }
+                    } else {
+                        return .{ .found = result };
+                    }
+                }
+            }
+        }
+
+        if (this.searchVersionList(
+            this.pkg.releases.keys.get(this.versions),
+            this.pkg.releases.values.get(this.package_versions),
+            group,
+            group_buf,
+            min_age_ms,
+            &newest_filtered,
+        )) |result| {
+            return result;
+        }
+
+        if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+            if (this.searchVersionList(
+                this.pkg.prereleases.keys.get(this.versions),
+                this.pkg.prereleases.values.get(this.package_versions),
+                group,
+                group_buf,
+                min_age_ms,
+                &newest_filtered,
+            )) |result| {
+                return result;
+            }
+        }
+
+        if (newest_filtered != null) {
+            return .{ .err = .all_versions_too_recent };
+        }
+
+        return .{ .err = .not_found };
+    }
+
     pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
         const left = group.head.head.range.left;
         // Fast path: exact version
@@ -1559,7 +1838,7 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    fn parse(
+    pub fn parse(
         allocator: std.mem.Allocator,
         scope: *const Registry.Scope,
         log: *logger.Log,
@@ -1568,21 +1847,29 @@ pub const PackageManifest = struct {
         last_modified: []const u8,
         etag: []const u8,
         public_max_age: u32,
+        is_extended_manifest: bool,
     ) !?PackageManifest {
-        const source = logger.Source.initPathString(expected_name, json_buffer);
+        const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
-        defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
+        defer bun.ast.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
-            &source,
+            source,
             log,
             arena.allocator(),
-        ) catch return null;
+        ) catch {
+            // don't use the arena memory!
+            var cloned_log: logger.Log = .init(bun.default_allocator);
+            try log.cloneToWithRecycled(&cloned_log, true);
+            log.* = cloned_log;
+
+            return null;
+        };
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }
@@ -1653,7 +1940,7 @@ pub const PackageManifest = struct {
 
                     if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
                     }
 
@@ -2259,6 +2546,16 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    if (json.asProperty("time")) |time_obj| {
+                        if (time_obj.expr.get(version_name)) |publish_time_expr| {
+                            if (publish_time_expr.asString(allocator)) |publish_time_str| {
+                                if (bun.jsc.wtf.parseES5Date(publish_time_str) catch null) |time| {
+                                    package_version.publish_timestamp_ms = time;
+                                }
+                            }
+                        }
+                    }
+
                     if (!parsed_version.version.tag.hasPre()) {
                         release_versions[0] = parsed_version.version.min();
                         versioned_package_releases[0] = package_version;
@@ -2448,6 +2745,7 @@ pub const PackageManifest = struct {
         result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
         result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
+        result.pkg.has_extended_manifest = is_extended_manifest;
 
         if (string_builder.ptr) |ptr| {
             result.string_buf = ptr[0..string_builder.len];
@@ -2457,4 +2755,43 @@ pub const PackageManifest = struct {
     }
 };
 
-const assert = bun.assert;
+const string = []const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const std = @import("std");
+const Bin = @import("./bin.zig").Bin;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const Integrity = @import("./integrity.zig").Integrity;
+const ObjectPool = @import("../pool.zig").ObjectPool;
+const URL = @import("../url.zig").URL;
+
+const Aligner = @import("./install.zig").Aligner;
+const ExternalSlice = @import("./install.zig").ExternalSlice;
+const ExternalStringList = @import("./install.zig").ExternalStringList;
+const ExternalStringMap = @import("./install.zig").ExternalStringMap;
+const PackageManager = @import("./install.zig").PackageManager;
+const VersionSlice = @import("./install.zig").VersionSlice;
+const initializeStore = @import("./install.zig").initializeMiniStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const HTTPClient = bun.http;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const http = bun.http;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+const api = bun.schema.api;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;
+
+const ExternalPackageNameHashList = bun.install.ExternalPackageNameHashList;
+const PackageNameHash = bun.install.PackageNameHash;

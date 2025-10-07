@@ -1,11 +1,11 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
-const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
-  "ZigGlobalObject.cpp",
-  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
-  2,
-);
+const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
+  min: number,
+  max: number,
+  figures: number,
+) => import("node:perf_hooks").RecordableHistogram;
 
 var {
   Performance,
@@ -86,8 +86,7 @@ class PerformanceNodeTiming {
     };
   }
 }
-Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -112,8 +111,7 @@ class PerformanceResourceTiming {
     throwNotImplemented("PerformanceResourceTiming");
   }
 }
-Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
+$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
 export default {
   performance: {
@@ -174,9 +172,61 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
-  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
-  // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
-  createHistogram: createFunctionThatMasqueradesAsUndefined("", 0),
+  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
+    const impl = require("internal/perf_hooks/monitorEventLoopDelay");
+    return impl(options);
+  },
+  createHistogram: function createHistogram(options?: {
+    lowest?: number | bigint;
+    highest?: number | bigint;
+    figures?: number;
+  }): import("node:perf_hooks").RecordableHistogram {
+    const opts = options || {};
+
+    let lowest = 1;
+    let highest = Number.MAX_SAFE_INTEGER;
+    let figures = 3;
+
+    if (opts.lowest !== undefined) {
+      if (typeof opts.lowest === "bigint") {
+        lowest = Number(opts.lowest);
+      } else if (typeof opts.lowest === "number") {
+        lowest = opts.lowest;
+      } else {
+        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], opts.lowest);
+      }
+    }
+
+    if (opts.highest !== undefined) {
+      if (typeof opts.highest === "bigint") {
+        highest = Number(opts.highest);
+      } else if (typeof opts.highest === "number") {
+        highest = opts.highest;
+      } else {
+        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], opts.highest);
+      }
+    }
+
+    if (opts.figures !== undefined) {
+      if (typeof opts.figures !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", opts.figures);
+      }
+      if (opts.figures < 1 || opts.figures > 5) {
+        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", opts.figures);
+      }
+      figures = opts.figures;
+    }
+
+    // Node.js validation - highest must be >= 2 * lowest
+    if (lowest < 1) {
+      throw $ERR_OUT_OF_RANGE("options.lowest", ">= 1 && <= 9007199254740991", lowest);
+    }
+
+    if (highest < 2 * lowest) {
+      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2 * lowest} && <= 9007199254740991`, highest);
+    }
+
+    return cppCreateHistogram(lowest, highest, figures);
+  },
   PerformanceResourceTiming,
 };

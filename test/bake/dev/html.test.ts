@@ -199,3 +199,26 @@ devTest("memory leak case 1", {
     await dev.fetch("/"); // previously leaked source map
   },
 });
+
+devTest("chrome devtools automatic workspace folders", {
+  files: {
+    "index.html": `
+      <script type="module" src="/script.ts"></script>
+    `,
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/.well-known/appspecific/com.chrome.devtools.json");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    const root = dev.join(".");
+    expect(json).toMatchObject({
+      workspace: {
+        root,
+        uuid: expect.any(String),
+      },
+    });
+  },
+});

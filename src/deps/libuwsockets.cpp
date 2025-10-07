@@ -23,6 +23,11 @@ using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 extern "C"
 {
 
+  void uws_loop_date_header_timer_update(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    loopData->updateDate();
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     if (ssl)
@@ -50,8 +55,9 @@ extern "C"
     }
   }
 
-  void uws_app_get(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -76,9 +82,9 @@ extern "C"
     }
   }
 
-  void uws_app_post(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_post(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
-
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -103,8 +109,9 @@ extern "C"
     }
   }
 
-  void uws_app_options(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_options(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -141,8 +148,9 @@ extern "C"
     }
 }
 
-  void uws_app_delete(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_delete(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -167,8 +175,9 @@ extern "C"
     }
   }
 
-  void uws_app_patch(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_patch(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -193,8 +202,9 @@ extern "C"
     }
   }
 
-  void uws_app_put(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_put(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -221,7 +231,7 @@ extern "C"
 
   void uws_app_head(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
-    std::string pattern = std::string(pattern_ptr, pattern_len);
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -245,8 +255,9 @@ extern "C"
                   { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
     }
   }
-  void uws_app_connect(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_connect(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -271,8 +282,9 @@ extern "C"
     }
   }
 
-  void uws_app_trace(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_trace(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -312,7 +324,7 @@ extern "C"
 
   void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
-    std::string pattern = std::string(pattern_ptr, pattern_len);
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -362,6 +374,46 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->close();
+    }
+  }
+
+  void uws_app_close_idle(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->closeIdle();
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->closeIdle();
+    }
+  }
+
+  void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
     }
   }
 
@@ -470,13 +522,22 @@ extern "C"
       uwsApp->domain(server_name);
     }
   }
-  void uws_app_set_require_host_header(int ssl, uws_app_t *app, bool require_host_header) {
+  void uws_app_set_max_http_header_size(int ssl, uws_app_t *app, uint64_t max_header_size) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->setRequireHostHeader(require_host_header);
+      uwsApp->setMaxHTTPHeaderSize(max_header_size);
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->setRequireHostHeader(require_host_header);
+      uwsApp->setMaxHTTPHeaderSize(max_header_size);
+    }
+  }
+  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setFlags(require_host_header, use_strict_method_validation);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setFlags(require_host_header, use_strict_method_validation);
     }
   }
 
@@ -1169,6 +1230,26 @@ extern "C"
     }
   }
 
+  void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+    }
+  }
+
+  void uws_res_write_mark(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->writeMark();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->writeMark();
+    }
+  }
+
   void uws_res_write_header(int ssl, uws_res_r res, const char *key,
                             size_t key_length, const char *value,
                             size_t value_length)
@@ -1209,7 +1290,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1217,8 +1298,8 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
-      data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1260,7 +1341,7 @@ extern "C"
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1282,7 +1363,7 @@ extern "C"
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1543,7 +1624,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
@@ -1553,7 +1634,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
@@ -1725,11 +1806,31 @@ __attribute__((callback (corker, ctx)))
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->flushHeaders();
     } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res; 
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->flushHeaders();
     }
   }
 
+  void *uws_res_get_socket_data(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->getSocketData();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->getSocketData();
+    }
+  }
+
+  bool uws_res_is_connect_request(int ssl, uws_res_r res)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isConnectRequest();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isConnectRequest();
+    }
+  }
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)
@@ -1755,6 +1856,10 @@ __attribute__((callback (corker, ctx)))
   void us_socket_sendfile_needs_more(us_socket_r s) {
     s->context->loop->data.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  }
+
+  LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
+    return us_poll_fd(&s->p);
   }
 
   // Gets the remote address and port

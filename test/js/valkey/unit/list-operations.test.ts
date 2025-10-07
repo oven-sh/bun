@@ -1,6 +1,6 @@
-import { describe, expect, test, beforeEach } from "bun:test";
-import { expectType, ctx, createClient, ConnectionType, isEnabled } from "../test-utils";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { isCI } from "harness";
+import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering Redis list operations

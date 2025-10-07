@@ -15,11 +15,11 @@
  *
  */
 
-import assert from "assert";
-import * as path from "path";
 import * as grpc from "@grpc/grpc-js/build/src";
+import assert from "assert";
+import { afterAll as after, beforeAll as before, beforeEach, describe, it } from "bun:test";
+import * as path from "path";
 import { TestClient, loadProtoFile } from "./common";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 
 const protoFile = path.join(__dirname, "fixtures", "echo_service.proto");
 const echoService = loadProtoFile(protoFile).EchoService as grpc.ServiceClientConstructor;

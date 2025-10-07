@@ -59,6 +59,7 @@ DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);
 
 void NapiHandleScopeImpl::append(JSC::JSValue val)
 {
+    WTF::Locker locker { cellLock() };
     m_storage.append(Slot(vm(), this, val));
 }
 
@@ -75,6 +76,7 @@ bool NapiHandleScopeImpl::escape(JSC::JSValue val)
 
 NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 {
+    WTF::Locker locker { cellLock() };
     m_storage.append(Slot());
     return &m_storage.last();
 }

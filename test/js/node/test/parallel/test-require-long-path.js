@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 if (!common.isWindows)
   common.skip('this test is Windows-specific.');
 

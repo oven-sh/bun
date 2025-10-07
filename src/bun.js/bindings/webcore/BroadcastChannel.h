@@ -63,6 +63,7 @@ public:
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message);
     void close();
+    bool isClosed() const { return m_isClosed; }
 
     WEBCORE_EXPORT static void dispatchMessageTo(BroadcastChannelIdentifier, Ref<SerializedScriptValue>&&);
 

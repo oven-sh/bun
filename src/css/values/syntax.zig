@@ -1,14 +1,9 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Length = css.css_values.length.Length;
 const Percentage = css.css_values.percentage.Percentage;
@@ -95,7 +90,7 @@ pub const SyntaxString = union(enum) {
             components.append(
                 allocator,
                 component,
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
 
             trimmed_input = std.mem.trimLeft(u8, trimmed_input, SPACE_CHARACTERS);
             if (trimmed_input.len == 0) {
@@ -216,7 +211,7 @@ pub const SyntaxString = union(enum) {
                             switch (component.multiplier) {
                                 .none => return .{ .result = value },
                                 .space => {
-                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
+                                    bun.handleOom(parsed.append(input.allocator(), value));
                                     if (input.isExhausted()) {
                                         return .{ .result = ParsedComponent{ .repeated = .{
                                             .components = parsed,
@@ -225,7 +220,7 @@ pub const SyntaxString = union(enum) {
                                     }
                                 },
                                 .comma => {
-                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
+                                    bun.handleOom(parsed.append(input.allocator(), value));
                                     if (input.next().asValue()) |token| {
                                         if (token.* == .comma) continue;
                                         break;
@@ -522,3 +517,8 @@ pub const Multiplier = enum {
     /// The component may repeat one or more times, separated by commas.
     comma,
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

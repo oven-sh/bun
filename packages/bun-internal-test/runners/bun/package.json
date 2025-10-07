@@ -1,5 +1,0 @@
-{
-  "private": true,
-  "name": "bun",
-  "module": "runner.ts"
-}

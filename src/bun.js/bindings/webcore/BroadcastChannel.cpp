@@ -267,8 +267,8 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, std::nullopt, WTFMove(dummyPorts));
-        if (UNLIKELY(scope.exception())) {
+        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, nullptr, WTFMove(dummyPorts));
+        if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());
             return;

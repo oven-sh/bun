@@ -1,8 +1,10 @@
 import type { Bake } from "bun";
-import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
+import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
+import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
+import type { RequestContext } from "../hmr-runtime-server";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {
@@ -12,8 +14,8 @@ function assertReactComponent(Component: any) {
 }
 
 // This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
-  let route = component(meta.pageModule, meta.params);
+function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
+  let route = component(meta.pageModule, meta.params, meta.request);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
     if (import.meta.env.DEV) assertReactComponent(Layout);
@@ -35,7 +37,7 @@ function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
   );
 }
 
-function component(mod: any, params: Record<string, string> | null) {
+function component(mod: any, params: Record<string, string> | null, request?: Request) {
   const Page = mod.default;
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
@@ -49,12 +51,21 @@ function component(mod: any, params: Record<string, string> | null) {
     props = method();
   }
 
+  // Pass request prop if mode is 'ssr'
+  if (mod.mode === "ssr" && request) {
+    props.request = request;
+  }
+
   return <Page params={params} {...props} />;
 }
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
-// in the Request object, the route's module, and extra route metadata.
-export async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
+// in the Request object, the route's module, extra route metadata, and the AsyncLocalStorage instance.
+export async function render(
+  request: Request,
+  meta: Bake.RouteMetadata,
+  als?: AsyncLocalStorage<RequestContext>,
+): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation
@@ -63,6 +74,9 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // payload, but only generate HTML for the former of these rendering modes.
   // This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
+
+  // Check if the page module has a streaming export, default to false
+  const streaming = meta.pageModule.streaming ?? false;
 
   // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);
@@ -83,34 +97,64 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
 
   // This renders Server Components to a ReadableStream "RSC Payload"
   let pipe;
-  const signal: MiniAbortSignal = { aborted: false, abort: null! };
+  const signal: MiniAbortSignal = { aborted: undefined, abort: null! };
   ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
     onError: err => {
       if (signal.aborted) return;
-      console.error(err);
+
+      // Mark as aborted and call the abort function
+      signal.aborted = err;
+      // @ts-expect-error
+      signal.abort(err);
+      rscPayload.destroy(err);
     },
     filterStackFrame: () => false,
   }));
   pipe(rscPayload);
 
-  rscPayload.on("error", err => {
-    if (signal.aborted) return;
-    console.error(err);
-  });
-
   if (skipSSR) {
+    const responseOptions = als?.getStore()?.responseOptions || {};
     return new Response(rscPayload as any, {
       status: 200,
       headers: { "Content-Type": "text/x-component" },
+      ...responseOptions,
     });
   }
 
   // The RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.modules, signal), {
-    headers: {
-      "Content-Type": "text/html; charset=utf8",
-    },
-  });
+  if (streaming) {
+    const responseOptions = als?.getStore()?.responseOptions || {};
+    if (als) {
+      const state = als.getStore();
+      if (state) state.streamingStarted = true;
+    }
+    // Stream the response as before
+    return new Response(renderToHtml(rscPayload, meta.modules, signal), {
+      headers: {
+        "Content-Type": "text/html; charset=utf8",
+      },
+      ...responseOptions,
+    });
+  } else {
+    // Buffer the entire response and return it all at once
+    const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
+    const result = await htmlStream.bytes();
+
+    const opts = als?.getStore()?.responseOptions ?? { headers: {} };
+    const { headers, ...response_options } = opts;
+
+    const cookies = meta.pageModule.mode === "ssr" ? { "Set-Cookie": request.cookies.toSetCookieHeaders() } : {};
+
+    return new Response(result, {
+      headers: {
+        "Content-Type": "text/html; charset=utf8",
+        // TODO: merge cookies and cookies inside of headers
+        ...cookies,
+        ...headers,
+      },
+      ...response_options,
+    });
+  }
 }
 
 // When a production build is performed, pre-rendering is invoked here. If this
@@ -128,7 +172,13 @@ export async function prerender(meta: Bake.RouteMetadata) {
   let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  const html = await renderToStaticHtml(rscPayload, meta.modules);
+  let html;
+  try {
+    html = await renderToStaticHtml(rscPayload, meta.modules);
+  } catch (err) {
+    //console.error("ah fuck");
+    return undefined;
+  }
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {
@@ -184,7 +234,7 @@ export const contentTypeToStaticFile = {
 
 /** Instead of using AbortController, this is used */
 export interface MiniAbortSignal {
-  aborted: boolean;
+  aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
   abort: () => void;
 }

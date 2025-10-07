@@ -1,16 +1,12 @@
-const std = @import("std");
-const bun = @import("bun");
 const wchar_t = u16;
+
+// Match libarchive's platform-specific type definitions
 const la_int64_t = i64;
 const la_ssize_t = isize;
+
 const struct_archive = opaque {};
 const struct_archive_entry = opaque {};
-const archive_entry = struct_archive_entry;
-const mode_t = bun.Mode;
-const FILE = @import("std").c.FILE;
 // const time_t = @import("std").c.time_t;
-const dev_t = @import("std").c.dev_t;
-const OOM = bun.OOM;
 
 pub const FileType = enum(mode_t) {
     regular = 0o100000,
@@ -184,8 +180,6 @@ pub const Flags = struct {
     };
 };
 
-const ARCHIVE_VERSION_ONLY_STRING = "3.5.3dev";
-const ARCHIVE_VERSION_STRING = "libarchive " ++ ARCHIVE_VERSION_ONLY_STRING;
 const ARCHIVE_EOF = @as(c_int, 1);
 const ARCHIVE_OK = @as(c_int, 0);
 const ARCHIVE_RETRY = -@as(c_int, 10);
@@ -252,11 +246,6 @@ const ARCHIVE_FORMAT_RAR = @import("std").zig.c_translation.promoteIntLiteral(c_
 const ARCHIVE_FORMAT_7ZIP = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xE0000, .hexadecimal);
 const ARCHIVE_FORMAT_WARC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xF0000, .hexadecimal);
 const ARCHIVE_FORMAT_RAR_V5 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x100000, .hexadecimal);
-const ARCHIVE_READ_FORMAT_CAPS_NONE = @as(c_int, 0);
-const ARCHIVE_READ_FORMAT_CAPS_ENCRYPT_DATA = @as(c_int, 1) << @as(c_int, 0);
-const ARCHIVE_READ_FORMAT_CAPS_ENCRYPT_METADATA = @as(c_int, 1) << @as(c_int, 1);
-const ARCHIVE_READ_FORMAT_ENCRYPTION_UNSUPPORTED = -@as(c_int, 2);
-const ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW = -@as(c_int, 1);
 const ARCHIVE_EXTRACT_OWNER = @as(c_int, 0x0001);
 const ARCHIVE_EXTRACT_PERM = @as(c_int, 0x0002);
 const ARCHIVE_EXTRACT_TIME = @as(c_int, 0x0004);
@@ -276,18 +265,6 @@ const ARCHIVE_EXTRACT_HFS_COMPRESSION_FORCED = @import("std").zig.c_translation.
 const ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000, .hexadecimal);
 const ARCHIVE_EXTRACT_CLEAR_NOCHANGE_FFLAGS = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000, .hexadecimal);
 const ARCHIVE_EXTRACT_SAFE_WRITES = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000, .hexadecimal);
-const ARCHIVE_READDISK_RESTORE_ATIME = @as(c_int, 0x0001);
-const ARCHIVE_READDISK_HONOR_NODUMP = @as(c_int, 0x0002);
-const ARCHIVE_READDISK_MAC_COPYFILE = @as(c_int, 0x0004);
-const ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS = @as(c_int, 0x0008);
-const ARCHIVE_READDISK_NO_XATTR = @as(c_int, 0x0010);
-const ARCHIVE_READDISK_NO_ACL = @as(c_int, 0x0020);
-const ARCHIVE_READDISK_NO_FFLAGS = @as(c_int, 0x0040);
-const ARCHIVE_MATCH_MTIME = @as(c_int, 0x0100);
-const ARCHIVE_MATCH_CTIME = @as(c_int, 0x0200);
-const ARCHIVE_MATCH_NEWER = @as(c_int, 0x0001);
-const ARCHIVE_MATCH_OLDER = @as(c_int, 0x0002);
-const ARCHIVE_MATCH_EQUAL = @as(c_int, 0x0010);
 
 pub const Archive = opaque {
     pub const Result = enum(i32) {
@@ -1362,3 +1339,12 @@ pub const ARCHIVE_ENTRY_ACL_STYLE_SEPARATOR_COMMA = @as(c_int, 0x00000008);
 pub const ARCHIVE_ENTRY_ACL_STYLE_COMPACT = @as(c_int, 0x00000010);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID = @as(c_int, 1024);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT = @as(c_int, 2048);
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const mode_t = bun.Mode;
+
+const FILE = @import("std").c.FILE;
+const dev_t = @import("std").c.dev_t;

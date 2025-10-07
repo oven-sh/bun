@@ -1,17 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const open = @import("../open.zig");
-const Command = bun.CLI.Command;
-
 pub const ExecCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
@@ -23,9 +9,7 @@ pub const ExecCommand = struct {
             null,
         );
         try bundle.runEnvLoader(false);
-        const mini = bun.JSC.MiniEventLoop.initGlobal(bundle.env);
         var buf: bun.PathBuffer = undefined;
-
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,
             .err => |e| {
@@ -33,6 +17,7 @@ pub const ExecCommand = struct {
                 Global.exit(1);
             },
         };
+        const mini = bun.jsc.MiniEventLoop.initGlobal(bundle.env, cwd);
         const parts: []const []const u8 = &[_][]const u8{
             cwd,
             "[eval]",
@@ -54,3 +39,8 @@ pub const ExecCommand = struct {
         // }
     }
 };
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.cli.Command;

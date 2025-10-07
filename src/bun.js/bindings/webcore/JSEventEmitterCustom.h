@@ -7,7 +7,7 @@ namespace WebCore {
 
 // Wrapper type for JSEventEmitter's castedThis because JSDOMWindow and JSWorkerGlobalScope do not inherit JSEventEmitter.
 class JSEventEmitterWrapper {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSEventEmitterWrapper);
 
 public:
     JSEventEmitterWrapper(EventEmitter& wrapped, JSC::JSObject* wrapper)
@@ -42,8 +42,9 @@ public:
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
         auto* thisObject = jsEventEmitterCastFast(vm, &lexicalGlobalObject, thisValue);
-        if (UNLIKELY(!thisObject))
+        if (!thisObject) [[unlikely]] {
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
+        }
 
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }

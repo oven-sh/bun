@@ -421,8 +421,330 @@ devTest("custom hook tracking", {
       }
     `,
   },
+
   async test(dev) {
     await using c = await dev.client("/", {});
     await c.expectMessage("PASS");
+  },
+});
+
+devTest("react component with hooks and mutual recursion renders without error", {
+  files: {
+    ...reactAndRefreshStub,
+    "index.tsx": `
+      import ComponentWithConst, { helper } from './component-with-const';
+      import ComponentWithLet, { getCounter } from './component-with-let';
+      import ComponentWithVar, { getGlobalState } from './component-with-var';
+      import MathComponent, { utilityFunction } from './component-with-function';
+      import ProcessorComponent, { DataProcessor } from './component-with-class';
+      
+      function useThis() {
+        return null;
+      }
+
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeEffect(fn) {
+        fn();
+      }
+
+      export default function AA({ depth = 0 }: { depth: number }) {
+        const [count, setCount] = useFakeState(0);
+        useThis();
+        useFakeEffect(() => {});
+        return depth === 0 && <B />
+      }
+
+      function B() {
+        const [value, setValue] = useFakeState(42);
+        useFakeEffect(() => {});
+        return <AA depth={1} />
+      }
+
+      // Call B outside the function body to test statement -> expression transform
+      B();
+      
+      // Call all imported default functions outside their bodies
+      ComponentWithConst();
+      ComponentWithLet();
+      ComponentWithVar();
+      MathComponent({ input: 10 });
+      ProcessorComponent({ text: "test" });
+      
+      // Use all the imported components and their non-default exports
+      console.log("ComponentWithConst:", ComponentWithConst());
+      console.log("helper:", helper());
+      
+      console.log("ComponentWithLet:", ComponentWithLet());
+      console.log("getCounter:", getCounter());
+      
+      console.log("ComponentWithVar:", ComponentWithVar());
+      console.log("getGlobalState:", getGlobalState());
+      
+      console.log("MathComponent:", MathComponent({ input: 10 }));
+      console.log("utilityFunction:", utilityFunction(15));
+      
+      console.log("ProcessorComponent:", ProcessorComponent({ text: "test" }));
+      const processor = new DataProcessor();
+      console.log("DataProcessor:", processor.process("world"));
+      
+      console.log("PASS");
+    `,
+    "component-with-const.tsx": `
+      const helperValue = "helper-result";
+      
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeCallback(fn) {
+        return fn;
+      }
+      
+      export default function Component() {
+        const [state, setState] = useFakeState(helperValue);
+        const [count, setCount] = useFakeState(0);
+        const callback = useFakeCallback(() => {});
+        return helperValue;
+      }
+      
+      export const helper = () => helperValue;
+      
+      // Call Component outside its body to test statement -> expression transform
+      Component();
+      const result1 = Component();
+      helper();
+    `,
+    "component-with-let.tsx": `
+      let counter = 0;
+      
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeEffect(fn, deps) {
+        fn();
+      }
+
+      function useFakeMemo(fn, deps) {
+        return fn();
+      }
+      
+      export default function Counter() {
+        const [localCount, setLocalCount] = useFakeState(0);
+        const [multiplier, setMultiplier] = useFakeState(1);
+        useFakeEffect(() => {
+          setLocalCount(counter * multiplier);
+        }, [multiplier]);
+        const memoized = useFakeMemo(() => counter * 2, [counter]);
+        return ++counter;
+      }
+      
+      export const getCounter = () => counter;
+      
+      // Call Counter outside its body multiple times
+      Counter();
+      Counter();
+      const currentCount = Counter();
+      getCounter();
+      
+      // Test with different call patterns
+      [1, 2, 3].forEach(() => Counter());
+      const counters = [Counter, Counter, Counter].map(fn => fn());
+    `,
+    "component-with-var.tsx": `
+      var globalState = { value: 42 };
+      
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeMemo(fn, deps) {
+        return fn();
+      }
+
+      function useFakeRef(initial) {
+        return { current: initial };
+      }
+      
+      export default function StateComponent() {
+        const [localState, setLocalState] = useFakeState(globalState.value);
+        const [factor, setFactor] = useFakeState(2);
+        const computed = useFakeMemo(() => localState * factor, [localState, factor]);
+        const ref = useFakeRef(null);
+        return globalState.value;
+      }
+      
+      export const getGlobalState = () => globalState;
+      
+      // Call StateComponent outside its body
+      StateComponent();
+      const state1 = StateComponent();
+      const state2 = StateComponent();
+      getGlobalState();
+      
+      // Test with object method calls
+      const obj = { fn: StateComponent };
+      obj.fn();
+      
+      // Test with array of functions
+      const fns = [StateComponent, getGlobalState];
+      fns[0]();
+      fns[1]();
+    `,
+    "component-with-function.tsx": `
+      function multiply(x: number) {
+        return x * 2;
+      }
+      
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeCallback(fn, deps) {
+        return fn;
+      }
+
+      function useFakeReducer(reducer, initial) {
+        return [initial, () => {}];
+      }
+      
+      export default function MathComponent({ input }: { input: number }) {
+        const [result, setResult] = useFakeState(0);
+        const [operations, setOperations] = useFakeState(0);
+        const [state, dispatch] = useFakeReducer((s, a) => s, {});
+        
+        const calculate = useFakeCallback(() => {
+          const value = multiply(input);
+          setResult(value);
+          setOperations(prev => prev + 1);
+          return value;
+        }, [input]);
+        
+        return multiply(input);
+      }
+      
+      export const utilityFunction = multiply;
+      
+      // Call MathComponent outside its body with various patterns
+      MathComponent({ input: 5 });
+      MathComponent({ input: 10 });
+      const result1 = MathComponent({ input: 15 });
+      utilityFunction(20);
+      
+      // Test with function composition
+      const compose = (fn: Function) => fn({ input: 25 });
+      compose(MathComponent);
+      
+      // Test with conditional calls
+      const shouldCall = true;
+      if (shouldCall) {
+        MathComponent({ input: 30 });
+      }
+      
+      // Test with ternary
+      const ternaryResult = true ? MathComponent({ input: 35 }) : null;
+      
+      // Test with logical operators
+      true && MathComponent({ input: 40 });
+      false || MathComponent({ input: 45 });
+    `,
+    "component-with-class.tsx": `
+      class Processor {
+        process(data: string) {
+          return data.toUpperCase();
+        }
+      }
+      
+      function useFakeState(initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeReducer(reducer, initial) {
+        return [initial, () => {}];
+      }
+
+      function useFakeRef(initial) {
+        return { current: initial };
+      }
+
+      function useFakeContext() {
+        return {};
+      }
+      
+      const reducer = (state: any, action: any) => {
+        switch (action.type) {
+          case 'process':
+            return { ...state, processed: action.payload };
+          default:
+            return state;
+        }
+      };
+      
+      export default function ProcessorComponent({ text }: { text: string }) {
+        const [state, setState] = useFakeState({ text, processed: '' });
+        const [history, dispatch] = useFakeReducer(reducer, { processed: [] });
+        const processorRef = useFakeRef(new Processor());
+        const context = useFakeContext();
+        
+        const processor = new Processor();
+        const result = processor.process(text);
+        
+        dispatch({ type: 'process', payload: result });
+        
+        return processor.process(text);
+      }
+      
+      export const DataProcessor = Processor;
+      
+      // Call ProcessorComponent outside its body
+      ProcessorComponent({ text: "hello" });
+      ProcessorComponent({ text: "world" });
+      const processed1 = ProcessorComponent({ text: "test1" });
+      const processed2 = ProcessorComponent({ text: "test2" });
+      
+      // Test with new DataProcessor
+      const proc1 = new DataProcessor();
+      const proc2 = new DataProcessor();
+      proc1.process("data1");
+      proc2.process("data2");
+      
+      // Test with function binding
+      const boundProcessor = ProcessorComponent.bind(null);
+      boundProcessor({ text: "bound" });
+      
+      // Test with apply/call
+      ProcessorComponent.call(null, { text: "called" });
+      ProcessorComponent.apply(null, [{ text: "applied" }]);
+      
+      // Test with destructuring
+      const { process } = new DataProcessor();
+      
+      // Test with spread operator
+      const args = [{ text: "spread" }];
+      ProcessorComponent(...args);
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.tsx"],
+      body: `<div id="root"></div>`,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage(
+      "ComponentWithConst:",
+      "helper:",
+      "ComponentWithLet:",
+      "getCounter:",
+      "ComponentWithVar:",
+      "getGlobalState:",
+      "MathComponent:",
+      "utilityFunction:",
+      "ProcessorComponent:",
+      "DataProcessor:",
+      "PASS",
+    );
   },
 });

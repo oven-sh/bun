@@ -1,5 +1,5 @@
 import { inspect } from "bun";
-import { it, test, expect, describe } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 const inputs = [
   { a: 1, b: 2 },

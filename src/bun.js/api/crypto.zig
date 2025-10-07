@@ -1,4 +1,4 @@
-pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
+pub fn createCryptoError(globalThis: *jsc.JSGlobalObject, err_code: u32) JSValue {
     return bun.BoringSSL.ERR_toJS(globalThis, err_code);
 }
 
@@ -21,12 +21,8 @@ comptime {
     CryptoHasher.Extern.@"export"();
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

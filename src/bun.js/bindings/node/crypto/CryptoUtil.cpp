@@ -69,7 +69,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    if (UNLIKELY(!bytes.size() and encoding != BufferEncodingType::buffer)) {
+    if (!bytes.size() and encoding != BufferEncodingType::buffer) [[unlikely]] {
         return JSValue::encode(jsEmptyString(vm));
     }
 
@@ -110,7 +110,7 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     JSString* paddedHex = hex.length() % 2
         ? jsString(vm, tryMakeString('0', hex))
         : jsString(vm, hex);
-    if (UNLIKELY(!paddedHex)) {
+    if (!paddedHex) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
@@ -487,14 +487,9 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
 
     // Encode the signature in DER format
     auto buf = asn1_sig.encode();
-    if (buf.len < 0) {
-        return false;
-    }
-
-    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
-        return false;
-    }
-
+    if (buf.len < 0) return false;
+    auto bsource = ByteSource::allocated(buf);
+    if (!derBuffer.tryAppend(bsource.span())) return false;
     return true;
 }
 

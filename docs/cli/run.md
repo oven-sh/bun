@@ -106,7 +106,7 @@ $ bun run clean
  Done.
 ```
 
-Bun executes the script command in a subshell. On Linux & macOS, it checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`. On windows, it uses [bun shell](https://bun.sh/docs/runtime/shell) to support bash-like syntax and many common commands.
+Bun executes the script command in a subshell. On Linux & macOS, it checks for the following shells in order, using the first one it finds: `bash`, `sh`, `zsh`. On windows, it uses [bun shell](https://bun.com/docs/runtime/shell) to support bash-like syntax and many common commands.
 
 {% callout %}
 ⚡️ The startup time for `npm run` on Linux is roughly 170ms; with Bun it is `6ms`.
@@ -151,6 +151,14 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 $ bun run --bun vite
 ```
 
+### `--no-addons`
+
+Disable native addons and use the `node-addons` export condition.
+
+```bash
+$ bun --no-addons run server.js
+```
+
 ### Filtering
 
 In monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
@@ -164,7 +172,15 @@ bun run --filter 'ba*' <script>
 
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
-Find more details in the docs page for [filter](https://bun.sh/docs/cli/filter#running-scripts-with-filter).
+Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
+
+### `--workspaces`
+
+Run scripts across all workspaces in the monorepo:
+
+```bash
+bun run --workspaces test
+```
 
 ## `bun run -` to pipe code from stdin
 
@@ -185,6 +201,23 @@ This is TypeScript!
 
 For convenience, all code is treated as TypeScript with JSX support when using `bun run -`.
 
+## `bun run --console-depth`
+
+Control the depth of object inspection in console output with the `--console-depth` flag.
+
+```bash
+$ bun --console-depth 5 run index.tsx
+```
+
+This sets how deeply nested objects are displayed in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
+
+```js
+const nested = { a: { b: { c: { d: "deep" } } } };
+console.log(nested);
+// With --console-depth 2 (default): { a: { b: [Object] } }
+// With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }
+```
+
 ## `bun run --smol`
 
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
@@ -194,6 +227,14 @@ $ bun --smol run index.tsx
 ```
 
 This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.
+
+## `--user-agent`
+
+**`--user-agent <string>`** - Set User-Agent header for all `fetch()` requests:
+
+```bash
+bun --user-agent "MyBot/1.0" run index.tsx
+```
 
 ## Resolution order
 
@@ -205,5 +246,16 @@ When there is a package.json script and a file with the same name, `bun run` pri
 2. Source files, eg `bun run src/main.js`
 3. Binaries from project packages, eg `bun add eslint && bun run eslint`
 4. (`bun run` only) System commands, eg `bun run ls`
+
+### `--unhandled-rejections`
+
+Configure how unhandled promise rejections are handled:
+
+```bash
+$ bun --unhandled-rejections=throw script.js  # Throw exception (terminate immediately)
+$ bun --unhandled-rejections=strict script.js # Throw exception (emit rejectionHandled if handled later)
+$ bun --unhandled-rejections=warn script.js   # Print warning to stderr (default in Node.js)
+$ bun --unhandled-rejections=none script.js   # Silently ignore
+```
 
 {% bunCLIUsage command="run" /%}

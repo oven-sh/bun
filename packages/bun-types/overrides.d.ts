@@ -1,8 +1,38 @@
 export {};
 
+declare module "stream/web" {
+  interface ReadableStream {
+    /**
+     * Consume a ReadableStream as text
+     */
+    text(): Promise<string>;
+
+    /**
+     * Consume a ReadableStream as a Uint8Array
+     */
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Consume a ReadableStream as JSON
+     */
+    json(): Promise<any>;
+
+    /**
+     * Consume a ReadableStream as a Blob
+     */
+    blob(): Promise<Blob>;
+  }
+}
+
+declare module "url" {
+  interface URLSearchParams {
+    toJSON(): Record<string, string>;
+  }
+}
+
 declare global {
   namespace NodeJS {
-    interface ProcessEnv extends Bun.Env, ImportMetaEnv {}
+    interface ProcessEnv extends Bun.Env {}
 
     interface Process {
       readonly version: string;
@@ -143,6 +173,96 @@ declare global {
         UV_ESOCKTNOSUPPORT: number;
         UV_ENODATA: number;
         UV_EUNATCH: number;
+      };
+      binding(m: "http_parser"): {
+        methods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "QUERY",
+        ];
+        allMethods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "PRI",
+          "DESCRIBE",
+          "ANNOUNCE",
+          "SETUP",
+          "PLAY",
+          "PAUSE",
+          "TEARDOWN",
+          "GET_PARAMETER",
+          "SET_PARAMETER",
+          "REDIRECT",
+          "RECORD",
+          "FLUSH",
+          "QUERY",
+        ];
+        HTTPParser: unknown;
+        ConnectionsList: unknown;
       };
       binding(m: string): object;
     }

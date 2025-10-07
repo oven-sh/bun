@@ -6,33 +6,36 @@
 #include "ModuleLoader.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSInternalPromise.h>
-
+#include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 using namespace JSC;
-extern "C" JSInternalPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
+extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 
     JSValue htmlModule = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalHtml);
-    if (UNLIKELY(scope.exception())) {
-        return promise->rejectWithCaughtException(globalObject, scope);
+    if (scope.exception()) [[unlikely]] {
+        return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
     JSObject* htmlModuleObject = htmlModule.getObject();
-    if (UNLIKELY(!htmlModuleObject)) {
+    if (!htmlModuleObject) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }
 
     MarkedArgumentBuffer args;
     JSValue result = JSC::call(globalObject, htmlModuleObject, args, "Failed to load HTML entry point"_s);
-    if (UNLIKELY(scope.exception())) {
-        return promise->rejectWithCaughtException(globalObject, scope);
+    if (scope.exception()) [[unlikely]] {
+        return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
-    promise = jsDynamicCast<JSInternalPromise*>(result);
-    if (UNLIKELY(!promise)) {
+    if (result.isUndefined()) {
+        return JSPromise::resolvedPromise(globalObject, result);
+    }
+
+    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result);
+    if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }
     return promise;

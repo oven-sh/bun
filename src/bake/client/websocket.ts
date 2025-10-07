@@ -42,6 +42,13 @@ interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
   wrapped: WebSocket | null;
   send(data: string | ArrayBuffer): void;
+  /**
+   * Send data once the connection is established.
+   * Buffer if the connection is not established yet.
+   *
+   * @param data String or ArrayBuffer
+   */
+  sendBuffered(data: string | ArrayBuffer): void;
   close(): void;
   [Symbol.dispose](): void;
 }
@@ -50,12 +57,34 @@ export function getMainWebSocket(): WebSocketWrapper | null {
   return mainWebSocket;
 }
 
+// Modern browsers allow the WebSocket constructor to receive an http: or https: URL and implicitly convert it to a ws: or wss: URL.
+// But, older browsers didn't support this, so we normalize the URL manually.
+let normalizeWebSocketURL = (url: string) => {
+  const origin = globalThis?.location?.origin ?? globalThis?.location?.href ?? "http://localhost:3000";
+  let object = new URL(url, origin);
+  if (object.protocol === "https:") {
+    object.protocol = "wss:";
+  } else if (object.protocol === "http:") {
+    object.protocol = "ws:";
+  }
+
+  return object.toString();
+};
+
 export function initWebSocket(
   handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
   { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
+  url = normalizeWebSocketURL(url);
   let firstConnection = true;
   let closed = false;
+
+  // Allow some messages to be queued if sent before the connection is established.
+  let sendQueue: Array<string | ArrayBuffer> = [];
+  let sendQueueLength = 0;
+
+  // Don't queue infinite data incase the user has a bug somewhere in their code.
+  const MAX_SEND_QUEUE_LENGTH = 1024 * 256;
 
   const wsProxy: WebSocketWrapper = {
     wrapped: null,
@@ -63,6 +92,15 @@ export function initWebSocket(
       const wrapped = this.wrapped;
       if (wrapped && wrapped.readyState === 1) {
         wrapped.send(data);
+      }
+    },
+    sendBuffered(data) {
+      const wrapped = this.wrapped;
+      if (wrapped && wrapped.readyState === 1) {
+        wrapped.send(data);
+      } else if (wrapped && wrapped.readyState === 0 && sendQueueLength < MAX_SEND_QUEUE_LENGTH) {
+        sendQueue.push(data);
+        sendQueueLength += typeof data === "string" ? data.length : (data as ArrayBuffer).byteLength;
       }
     },
     close() {
@@ -84,6 +122,14 @@ export function initWebSocket(
   function onFirstOpen() {
     console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");
     onStatusChange?.(true);
+
+    // Drain the send queue.
+    const oldSendQueue = sendQueue;
+    sendQueue = [];
+    sendQueueLength = 0;
+    for (const data of oldSendQueue) {
+      wsProxy.send(data);
+    }
   }
 
   function onMessage(ev: MessageEvent<string | ArrayBuffer>) {
@@ -109,6 +155,9 @@ export function initWebSocket(
     console.warn("[Bun] Hot-module-reloading socket disconnected, reconnecting...");
 
     await new Promise(done => setTimeout(done, 1000));
+
+    // Clear the send queue.
+    sendQueue.length = sendQueueLength = 0;
 
     while (true) {
       if (closed) return;

@@ -50,6 +50,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)") catch unreachable,
     clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
     clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
@@ -231,6 +232,8 @@ save_text_lockfile: ?bool = null,
 lockfile_only: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
+
+minimum_release_age_ms: ?f64 = null,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -831,6 +834,18 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.flag("--save-text-lockfile")) {
         cli.save_text_lockfile = true;
+    }
+
+    if (args.option("--minimum-release-age")) |min_age_secs| {
+        const secs = std.fmt.parseFloat(f64, min_age_secs) catch {
+            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
+            Global.crash();
+        };
+        if (secs < 0) {
+            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
+            Global.crash();
+        }
+        cli.minimum_release_age_ms = secs * std.time.ms_per_s;
     }
 
     const omit_values = args.options("--omit");

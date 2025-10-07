@@ -1340,7 +1340,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     // TODO: implement a writeev() fast path
     var source_blob: Blob = brk: {
         if (data.as(Response)) |response| {
-            switch (response.body.value) {
+            const bodyValue = response.getBodyValue();
+            switch (bodyValue.*) {
                 .WTFStringImpl,
                 .InternalBlob,
                 .Used,
@@ -1348,20 +1349,21 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Blob,
                 .Null,
                 => {
-                    break :brk response.body.use();
+                    break :brk bodyValue.use();
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();
-                    _ = response.body.value.use();
+                    _ = bodyValue.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
-                .Locked => |*locked| {
+                .Locked => {
                     if (destination_blob.isS3()) {
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try response.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        _ = try bodyValue.toReadableStream(globalThis);
+
+                        if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1392,16 +1394,16 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .promise = jsc.JSPromise.Strong.init(globalThis),
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
                     });
-
-                    response.body.value.Locked.task = task;
-                    response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                    bodyValue.Locked.task = task;
+                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
                     return task.promise.value();
                 },
             }
         }
 
         if (data.as(Request)) |request| {
-            switch (request.body.value) {
+            const bodyValue = request.getBodyValue();
+            switch (bodyValue.*) {
                 .WTFStringImpl,
                 .InternalBlob,
                 .Used,
@@ -1409,11 +1411,11 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Blob,
                 .Null,
                 => {
-                    break :brk request.body.value.use();
+                    break :brk bodyValue.use();
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();
-                    _ = request.body.value.use();
+                    _ = bodyValue.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
                 .Locked => |locked| {
@@ -1421,8 +1423,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try request.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        _ = try bodyValue.toReadableStream(globalThis);
+                        if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1453,8 +1455,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
                     });
 
-                    request.body.value.Locked.task = task;
-                    request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                    bodyValue.Locked.task = task;
+                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                     return task.promise.value();
                 },

@@ -2868,6 +2868,9 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
 {
+    if (env == nullptr) {
+        return;
+    }
     env->cleanup();
 }
 

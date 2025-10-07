@@ -1363,7 +1363,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         defer aws_options.deinit();
                         _ = try bodyValue.toReadableStream(globalThis);
 
-                        if (response.getBodyReadableStream(globalThis)) |readable| {
+                        if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});

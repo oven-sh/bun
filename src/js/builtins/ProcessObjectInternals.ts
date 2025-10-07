@@ -99,7 +99,6 @@ export function getStdinStream(
   $assert(fd === 0);
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
-  $debug("getStdinStream: source.setFlowing =", typeof source?.setFlowing);
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -110,12 +109,8 @@ export function getStdinStream(
 
   function own() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
-
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
-
-    console.error("[ProcessObjectInternals] own() called, source?.setFlowing =", typeof source?.setFlowing);
-    $debug("resume(); source.setFlowing =", typeof source?.setFlowing);
     source?.setFlowing?.(true);
 
     shouldDisown = false;
@@ -127,9 +122,6 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
-
-    console.error("[ProcessObjectInternals] disown() called, source?.setFlowing =", typeof source?.setFlowing);
-    $debug("pause(); source.setFlowing =", typeof source?.setFlowing);
     source?.setFlowing?.(false);
 
     if (reader) {

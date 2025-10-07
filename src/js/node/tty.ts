@@ -48,7 +48,6 @@ Object.defineProperty(ReadStream, "prototype", {
     };
 
     Prototype.setRawMode = function (flag) {
-      console.error("[tty.ts] setRawMode called with flag=", flag, "fd=", this.fd);
       flag = !!flag;
 
       // On windows, this goes through the stream handle itself, as it must call
@@ -84,9 +83,7 @@ Object.defineProperty(ReadStream, "prototype", {
           return this;
         }
       } else {
-        console.error("[tty.ts] calling ttySetMode with fd=", this.fd, "flag=", flag);
         const err = ttySetMode(this.fd, flag);
-        console.error("[tty.ts] ttySetMode returned err=", err);
         if (err) {
           this.emit("error", new Error("setRawMode failed with errno: " + err));
           return this;

@@ -350,9 +350,6 @@ const PosixBufferedReader = struct {
     pub fn read(this: *PosixBufferedReader) void {
         // Don't initiate new reads if paused
         if (this.flags.is_paused) {
-            if (bun.Environment.isDebug) {
-                bun.Output.prettyln("<d>[PipeReader] read() blocked by is_paused<r>", .{});
-            }
             return;
         }
 

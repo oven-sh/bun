@@ -1,3 +1,9 @@
+const KillPass = enum {
+    sigterm, // Send SIGTERM for graceful shutdown
+    sigstop, // Send SIGSTOP to freeze processes
+    sigkill, // Send SIGKILL for forced termination
+};
+
 pub fn killAllChildProcesses() void {
     if (Environment.isWindows) {
         // Windows already uses Job Objects which automatically kill children on exit
@@ -11,23 +17,35 @@ pub fn killAllChildProcesses() void {
     // Do NOT kill the entire process group with kill(-pid) as that would
     // kill the Bun process itself before it can finish shutting down
 
-    // Pass 1: freeze entire tree with SIGSTOP to minimize reparenting races
-    // If enumeration fails, continue to pass 2 anyway to ensure we attempt termination
-    const children_freeze = getChildPids(current_pid, current_pid) catch &[_]c_int{};
-    defer if (children_freeze.len > 0) bun.default_allocator.free(children_freeze);
-    var seen_stop = std.AutoHashMap(c_int, void).init(bun.default_allocator);
-    defer seen_stop.deinit();
-    for (children_freeze) |child| {
-        killProcessTreeRecursive(child, &seen_stop, current_pid, true) catch {};
+    // Pass 1: SIGTERM to allow graceful cleanup
+    // Give processes a chance to handle cleanup work before forced termination
+    const children_term = getChildPids(current_pid, current_pid) catch &[_]c_int{};
+    defer if (children_term.len > 0) bun.default_allocator.free(children_term);
+    var seen_term = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+    defer seen_term.deinit();
+    for (children_term) |child| {
+        killProcessTreeRecursive(child, &seen_term, current_pid, .sigterm) catch {};
     }
 
-    // Pass 2: terminate (SIGTERM then SIGKILL)
+    // Brief delay to allow processes to handle SIGTERM
+    std.time.sleep(10 * std.time.ns_per_ms);
+
+    // Pass 2: SIGSTOP to freeze entire tree and minimize reparenting races
+    const children_stop = getChildPids(current_pid, current_pid) catch &[_]c_int{};
+    defer if (children_stop.len > 0) bun.default_allocator.free(children_stop);
+    var seen_stop = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+    defer seen_stop.deinit();
+    for (children_stop) |child| {
+        killProcessTreeRecursive(child, &seen_stop, current_pid, .sigstop) catch {};
+    }
+
+    // Pass 3: SIGKILL to force termination of any remaining processes
     const children_kill = getChildPids(current_pid, current_pid) catch &[_]c_int{};
     defer if (children_kill.len > 0) bun.default_allocator.free(children_kill);
     var seen_kill = std.AutoHashMap(c_int, void).init(bun.default_allocator);
     defer seen_kill.deinit();
     for (children_kill) |child| {
-        killProcessTreeRecursive(child, &seen_kill, current_pid, false) catch {};
+        killProcessTreeRecursive(child, &seen_kill, current_pid, .sigkill) catch {};
     }
 }
 
@@ -134,7 +152,7 @@ fn getChildPidsFallback(parent: c_int, current_pid: c_int) ![]c_int {
     return list.toOwnedSlice();
 }
 
-fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), current_pid: c_int, stop_only: bool) !void {
+fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), current_pid: c_int, pass: KillPass) !void {
     // Avoid cycles and killing ourselves
     if (killed.contains(pid) or pid == current_pid or pid <= 0) {
         return;
@@ -150,20 +168,25 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
     // Process children first (depth-first)
     for (children) |child| {
         if (child > 0) {
-            killProcessTreeRecursive(child, killed, current_pid, stop_only) catch {};
+            killProcessTreeRecursive(child, killed, current_pid, pass) catch {};
         }
     }
 
-    if (stop_only) {
-        // First pass: SIGSTOP to freeze the process tree
-        // Use std.posix.SIG for platform-portable signal constants
-        // (SIGSTOP=17 on macOS, 19 on Linux)
-        _ = std.c.kill(pid, std.posix.SIG.STOP);
-    } else {
-        // Second pass: try multiple signals to ensure the process dies
-        _ = std.c.kill(pid, std.posix.SIG.TERM); // SIGTERM first
-        std.time.sleep(5 * std.time.ns_per_ms); // Brief delay
-        _ = std.c.kill(pid, std.posix.SIG.KILL); // SIGKILL to ensure it dies
+    // Use std.posix.SIG for platform-portable signal constants
+    // (SIGSTOP=17 on macOS, 19 on Linux)
+    switch (pass) {
+        .sigterm => {
+            // Pass 1: SIGTERM for graceful shutdown
+            _ = std.c.kill(pid, std.posix.SIG.TERM);
+        },
+        .sigstop => {
+            // Pass 2: SIGSTOP to freeze the process
+            _ = std.c.kill(pid, std.posix.SIG.STOP);
+        },
+        .sigkill => {
+            // Pass 3: SIGKILL to force termination
+            _ = std.c.kill(pid, std.posix.SIG.KILL);
+        },
     }
 }
 

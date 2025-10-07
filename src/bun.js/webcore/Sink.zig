@@ -624,7 +624,7 @@ pub export fn Bun__onSinkDestroyed(
     ptr_value: ?*anyopaque,
     sink_ptr: ?*anyopaque,
 ) callconv(.C) void {
-    _ = sink_ptr; // autofix
+    _ = sink_ptr;
     const ptr = DestructorPtr.from(ptr_value);
 
     if (ptr.isNull()) {

@@ -364,7 +364,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub fn orderedRemove(this: *@This(), idx: u32) T {
             var ptr, const len_ptr, const capp = this.tripleMut();
-            _ = capp; // autofix
+            _ = capp;
             bun.assert(idx < len_ptr.*);
 
             const length = len_ptr.*;
@@ -379,7 +379,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub fn swapRemove(this: *@This(), idx: u32) T {
             var ptr, const len_ptr, const capp = this.tripleMut();
-            _ = capp; // autofix
+            _ = capp;
             bun.assert(idx < len_ptr.*);
 
             const ret = ptr[idx];
@@ -570,7 +570,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         fn reserve(this: *@This(), allocator: Allocator, additional: u32) void {
             const ptr, const __len, const capp = this.tripleMut();
-            _ = ptr; // autofix
+            _ = ptr;
             const len_ = __len.*;
 
             if (capp - len_ >= additional) return;

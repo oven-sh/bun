@@ -299,14 +299,14 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T
 }
 
 pub fn DefineListShorthand(comptime T: type) type {
-    _ = T; // autofix
+    _ = T;
     // TODO: implement this when we implement visit?
     // does nothing now
     return struct {};
 }
 
 pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, comptime PropertyFieldMap: anytype) type {
-    _ = property_name; // autofix
+    _ = property_name;
     // TODO: validate map, make sure each field is set
     // make sure each field is same index as in T
     _ = PropertyFieldMap;
@@ -314,9 +314,9 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, 
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
         pub fn fromLonghands(allocator: Allocator, decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {
-            _ = allocator; // autofix
-            _ = decls; // autofix
-            _ = vendor_prefix; // autofix
+            _ = allocator;
+            _ = decls;
+            _ = vendor_prefix;
             // var count: usize = 0;
             // var important_count: usize = 0;
             // var this: T = undefined;
@@ -432,7 +432,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, 
 
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
         pub fn longhands(vendor_prefix: VendorPrefix) []const PropertyId {
-            _ = vendor_prefix; // autofix
+            _ = vendor_prefix;
             // const out: []const PropertyId = comptime out: {
             //     var out: [std.meta.fields(@TypeOf(T.PropertyFieldMap)).len]PropertyId = undefined;
 
@@ -453,9 +453,9 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, 
 
         /// Returns a longhand property for this shorthand.
         pub fn longhand(this: *const T, allocator: Allocator, property_id: *const PropertyId) ?Property {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            _ = property_id; // autofix
+            _ = this;
+            _ = allocator;
+            _ = property_id;
             // inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
             //     if (@as(PropertyIdTag, property_id.*) == @field(T.PropertyFieldMap, field.name)) {
             //         const val = if (@hasDecl(@TypeOf(@field(T, field.namee)), "clone"))
@@ -478,9 +478,9 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag, 
 
         /// Updates this shorthand from a longhand property.
         pub fn setLonghand(this: *T, allocator: Allocator, property: *const Property) bool {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            _ = property; // autofix
+            _ = this;
+            _ = allocator;
+            _ = property;
             // inline for (std.meta.fields(T.PropertyFieldMap)) |field| {
             //     if (@as(PropertyIdTag, property.*) == @field(T.PropertyFieldMap, field.name)) {
             //         const val = if (@hasDecl(@TypeOf(@field(T, field.name)), "clone"))
@@ -790,8 +790,8 @@ pub fn DeriveParse(comptime T: type) type {
 
         // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         //     // to implement this, we need to cargo expand the derive macro
-        //     _ = this; // autofix
-        //     _ = dest; // autofix
+        //     _ = this;
+        //     _ = dest;
         //     @compileError(todo_stuff.depth);
         // }
     };
@@ -974,7 +974,7 @@ fn parse_at_rule(
     comptime P: type,
     parser: *P,
 ) Result(P.AtRuleParser.AtRule) {
-    _ = allocator; // autofix
+    _ = allocator;
     ValidAtRuleParser(P);
     const delimiters = Delimiters{ .semicolon = true, .curly_bracket = true };
     const Closure = struct {
@@ -1103,7 +1103,7 @@ fn parse_custom_at_rule_body(
     const result = switch (T.CustomAtRuleParser.parseBlock(at_rule_parser, prelude, start, input, options, is_nested)) {
         .result => |vv| vv,
         .err => |e| {
-            _ = e; // autofix
+            _ = e;
             // match &err.kind {
             //   ParseErrorKind::Basic(kind) => ParseError {
             //     kind: ParseErrorKind::Basic(kind.clone()),
@@ -2656,7 +2656,7 @@ pub fn NestedRuleParser(comptime T: type) type {
 
         pub const RuleBodyItemParser = struct {
             pub fn parseQualified(this: *This) bool {
-                _ = this; // autofix
+                _ = this;
                 return true;
             }
 
@@ -3339,7 +3339,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             if (comptime !bun.Environment.isDebug) return;
 
             const layer_names_field_len = this.layer_names.len;
-            _ = layer_names_field_len; // autofix
+            _ = layer_names_field_len;
             var actual_layer_rules_len: usize = 0;
 
             for (this.rules.v.items) |*rule| {
@@ -3380,7 +3380,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: ParserOptions,
             imports_from_tailwind: CssRuleList(AtRule),
         ) @This() {
-            _ = allocator; // autofix
+            _ = allocator;
             if (comptime AtRule != BundlerAtRule) @compileError("Expected BundlerAtRule for this function.");
 
             const stylesheet = This{
@@ -3514,9 +3514,9 @@ pub const StyleAttribute = struct {
     }
 
     pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) void {
-        _ = allocator; // autofix
-        _ = this; // autofix
-        _ = options; // autofix
+        _ = allocator;
+        _ = this;
+        _ = options;
         // TODO: IMPLEMENT THIS!
     }
 };
@@ -3670,7 +3670,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                     const Closure = struct { token: Token, start: ParserState };
                     break :result this.input.parseUntilAfter(Delimiters{ .semicolon = true }, I, &Closure{ .token = token, .start = start }, struct {
                         pub fn parseFn(closure: *const Closure, i: *Parser) Result(I) {
-                            _ = i; // autofix
+                            _ = i;
                             return .{ .err = closure.start.sourceLocation().newUnexpectedTokenError(closure.token) };
                         }
                     }.parseFn);

@@ -182,7 +182,7 @@ const PosixBufferedReader = struct {
 
     // No-op on posix.
     pub fn pause(this: *PosixBufferedReader) void {
-        _ = this; // autofix
+        _ = this;
     }
 
     pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
@@ -208,12 +208,12 @@ const PosixBufferedReader = struct {
     }
 
     pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-        _ = event_loop_ctx; // autofix
+        _ = event_loop_ctx;
         this.updateRef(false);
     }
 
     pub fn enableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-        _ = event_loop_ctx; // autofix
+        _ = event_loop_ctx;
         this.updateRef(true);
     }
 
@@ -506,7 +506,7 @@ const PosixBufferedReader = struct {
     }
 
     fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) bun.sys.Maybe(usize)) void {
-        _ = size_hint; // autofix
+        _ = size_hint;
         const streaming = parent.vtable.isStreamingEnabled();
 
         if (streaming) {

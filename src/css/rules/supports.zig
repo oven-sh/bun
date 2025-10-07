@@ -119,12 +119,12 @@ pub const SupportsCondition = union(enum) {
             usize,
             struct {
                 pub fn hash(self: @This(), s: SeenDeclKey) u32 {
-                    _ = self; // autofix
+                    _ = self;
                     return std.array_hash_map.hashString(s[1]) +% @intFromEnum(s[0]);
                 }
                 pub fn eql(self: @This(), a: SeenDeclKey, b: SeenDeclKey, b_index: usize) bool {
-                    _ = self; // autofix
-                    _ = b_index; // autofix
+                    _ = self;
+                    _ = b_index;
                     return seenDeclKeyEql(a, b);
                 }
 
@@ -403,9 +403,9 @@ pub fn SupportsRule(comptime R: type) type {
         }
 
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
-            _ = this; // autofix
-            _ = context; // autofix
-            _ = parent_is_unused; // autofix
+            _ = this;
+            _ = context;
+            _ = parent_is_unused;
             // TODO: Implement this
             return;
         }

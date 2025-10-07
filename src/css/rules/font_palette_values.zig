@@ -207,7 +207,7 @@ pub const FontPaletteValuesDeclarationParser = struct {
         pub const Declaration = FontPaletteValuesProperty;
 
         pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
-            _ = this; // autofix
+            _ = this;
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("font-family", name)) {

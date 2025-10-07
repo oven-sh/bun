@@ -376,7 +376,7 @@ pub fn fromPipe(
     parent: anytype,
     buffered_reader: anytype,
 ) bun.JSError!jsc.JSValue {
-    _ = parent; // autofix
+    _ = parent;
     jsc.markBinding(@src());
     var source = webcore.FileReader.Source.new(.{
         .globalThis = globalThis,
@@ -644,7 +644,7 @@ pub fn NewSource(
             }
 
             pub fn isClosed(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-                _ = globalObject; // autofix
+                _ = globalObject;
                 return jsc.JSValue.jsBoolean(this.is_closed);
             }
 
@@ -675,7 +675,7 @@ pub fn NewSource(
             }
 
             pub fn cancel(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-                _ = globalObject; // autofix
+                _ = globalObject;
                 jsc.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 this.cancel();
@@ -716,7 +716,7 @@ pub fn NewSource(
             }
 
             pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-                _ = globalObject; // autofix
+                _ = globalObject;
 
                 jsc.markBinding(@src());
 
@@ -724,7 +724,7 @@ pub fn NewSource(
             }
 
             pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-                _ = globalObject; // autofix
+                _ = globalObject;
 
                 jsc.markBinding(@src());
 
@@ -736,7 +736,7 @@ pub fn NewSource(
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-                _ = globalObject; // autofix
+                _ = globalObject;
                 jsc.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 const ref_or_unref = callFrame.argument(0).toBoolean();

@@ -130,7 +130,7 @@ pub fn PosixPipeWriter(
         }
 
         pub fn drainBufferedData(parent: *This, buf: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
-            _ = received_hup; // autofix
+            _ = received_hup;
 
             const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
 

@@ -41,7 +41,7 @@ pub fn runTasks(
             if (ptask.callback.apply.logger.errors == 0) {
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     if (ptask.callback.apply.task_id) |task_id| {
-                        _ = task_id; // autofix
+                        _ = task_id;
 
                     } else if (Ctx == *PackageInstaller) {
                         if (ptask.callback.apply.install_context) |*ctx| {

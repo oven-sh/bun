@@ -2558,10 +2558,10 @@ pub const Data = union(Tag) {
             },
             .e_arrow => {},
             .e_jsx_element => |e| {
-                _ = e; // autofix
+                _ = e;
             },
             .e_object => |e| {
-                _ = e; // autofix
+                _ = e;
             },
             inline .e_spread, .e_await => |e| {
                 e.value.data.writeToHasher(hasher, symbol_table);
@@ -2572,13 +2572,13 @@ pub const Data = union(Tag) {
                     value.data.writeToHasher(hasher, symbol_table);
             },
             .e_template => |e| {
-                _ = e; // autofix
+                _ = e;
             },
             .e_if => |e| {
-                _ = e; // autofix
+                _ = e;
             },
             .e_import => |e| {
-                _ = e; // autofix
+                _ = e;
 
             },
             inline .e_identifier,

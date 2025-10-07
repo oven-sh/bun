@@ -57,7 +57,7 @@ pub const CssModule = struct {
     }
 
     pub fn deinit(this: *CssModule) void {
-        _ = this; // autofix
+        _ = this;
         // TODO: deinit
     }
 

@@ -18,8 +18,8 @@ state: union(enum) {
 } = .idle,
 
 pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt; // autofix
-    _ = opts; // autofix
+    _ = fmt;
+    _ = opts;
     try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
@@ -179,8 +179,8 @@ pub const ShellTouchTask = struct {
     concurrent_task: jsc.EventLoopTask,
 
     pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+        _ = fmt;
+        _ = opts;
         try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 

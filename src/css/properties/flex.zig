@@ -843,7 +843,7 @@ pub const FlexHandler = struct {
         ctx: *css.PropertyHandlerContext,
         comptime feature_name: []const u8,
     ) void {
-        _ = this; // autofix
+        _ = this;
         if (key) |value| {
             const val = value[0];
             var prefix = value[1];
@@ -903,7 +903,7 @@ pub const FlexHandler = struct {
     }
 
     fn legacyProperty(this: *FlexHandler, comptime field_name: []const u8, key: anytype, dest: *css.DeclarationList, ctx: *css.PropertyHandlerContext) void {
-        _ = this; // autofix
+        _ = this;
         if (key) |value| {
             const val = value[0];
             const prefix = value[1];

@@ -130,8 +130,8 @@ pub const BasicParseErrorKind = union(enum) {
     qualified_rule_invalid,
 
     pub fn format(this: BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+        _ = fmt;
+        _ = opts;
         return switch (this) {
             .unexpected_token => |token| {
                 try writer.print("unexpected token: {}", .{token});

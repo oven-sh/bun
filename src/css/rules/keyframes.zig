@@ -171,7 +171,7 @@ pub const KeyframeSelector = union(enum) {
     pub const parse = css.DeriveParse(@This()).parse;
 
     // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
-    //     _ = input; // autofix
+    //     _ = input;
     //     @panic(css.todo_stuff.depth);
     // }
 
@@ -287,8 +287,8 @@ pub const KeyframesRule = struct {
     }
 
     pub fn getFallbacks(this: *This, comptime T: type, targets: *const css.targets.Targets) []css.CssRule(T) {
-        _ = this; // autofix
-        _ = targets; // autofix
+        _ = this;
+        _ = targets;
         @compileError(css.todo_stuff.depth);
     }
 

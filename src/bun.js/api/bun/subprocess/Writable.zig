@@ -97,7 +97,7 @@ pub const Writable = union(enum) {
                         switch (pipe.writer.startWithCurrentPipe()) {
                             .result => {},
                             .err => |err| {
-                                _ = err; // autofix
+                                _ = err;
                                 pipe.deref();
                                 if (stdio.* == .readable_stream) {
                                     stdio.readable_stream.cancel(event_loop.global);
@@ -170,7 +170,7 @@ pub const Writable = union(enum) {
                 switch (pipe.writer.start(pipe.fd, true)) {
                     .result => {},
                     .err => |err| {
-                        _ = err; // autofix
+                        _ = err;
                         pipe.deref();
                         if (stdio.* == .readable_stream) {
                             stdio.readable_stream.cancel(event_loop.global);

@@ -444,13 +444,13 @@ pub const NumberOrPercentage = union(enum) {
     pub const toCss = css.DeriveToCss(@This()).toCss;
 
     // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
-    //     _ = input; // autofix
+    //     _ = input;
     //     @panic(css.todo_stuff.depth);
     // }
 
     // pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-    //     _ = this; // autofix
-    //     _ = dest; // autofix
+    //     _ = this;
+    //     _ = dest;
     //     @panic(css.todo_stuff.depth);
     // }
 

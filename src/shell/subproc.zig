@@ -136,7 +136,7 @@ pub const ShellSubprocess = struct {
                             switch (pipe.writer.startWithCurrentPipe()) {
                                 .result => {},
                                 .err => |err| {
-                                    _ = err; // autofix
+                                    _ = err;
                                     pipe.deref();
                                     return error.UnexpectedCreatingStdin;
                                 },
@@ -343,9 +343,9 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn init(out_type: bun.shell.Subprocess.OutKind, stdio: Stdio, shellio: ?*sh.IOWriter, event_loop: jsc.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
-            _ = allocator; // autofix
-            _ = max_size; // autofix
-            _ = is_sync; // autofix
+            _ = allocator;
+            _ = max_size;
+            _ = is_sync;
 
             assertStdioResult(result);
 
@@ -1280,7 +1280,7 @@ pub const PipeReader = struct {
                 return jsc.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
-                _ = err; // autofix
+                _ = err;
                 const empty = try jsc.WebCore.ReadableStream.empty(globalObject);
                 jsc.WebCore.ReadableStream.cancel(&jsc.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
                 return empty;

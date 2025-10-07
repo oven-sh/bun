@@ -232,7 +232,7 @@ $ bun add @types/bun --minimum-release-age 3d
 
 You can also configure this in `bunfig.toml`:
 
-```toml
+```toml#bunfig.toml
 [install]
 # Only install package versions published at least 3 days ago
 minimumReleaseAge = "3d"
@@ -257,7 +257,7 @@ For more advanced security scanning, including integration with services & custo
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
 
-```toml
+```toml#bunfig.toml
 [install]
 
 # whether to install optionalDependencies

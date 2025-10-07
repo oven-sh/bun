@@ -608,7 +608,8 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     obj.root_module.pic = true;
 
     // ReleaseSafe initializes undefined memory to 0xaa to catch bugs
-    if (opts.optimize == .ReleaseSafe) {
+    // Also enable in Debug and ReleaseSafe when asan is enabled
+    if (opts.optimize == .ReleaseSafe or (opts.enable_asan and (opts.optimize == .Debug or opts.optimize == .ReleaseSafe))) {
         obj.root_module.no_init_undefined = true;
     }
 

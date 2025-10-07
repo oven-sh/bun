@@ -135,23 +135,6 @@ pub const PendingValue = struct {
         return this.readable.held.has() or (this.promise != null and !this.promise.?.isEmptyOrUndefinedOrNull());
     }
 
-    pub fn hasPendingPromise(this: *PendingValue) bool {
-        const promise = this.promise orelse return false;
-
-        if (promise.asAnyPromise()) |internal| {
-            if (internal.status(this.global.vm()) != .pending) {
-                promise.unprotect();
-                this.promise = null;
-                return false;
-            }
-
-            return true;
-        }
-
-        this.promise = null;
-        return false;
-    }
-
     pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
         var stream = if (this.readable.get(this.global)) |readable| readable else return null;
 
@@ -899,13 +882,15 @@ pub const Value = union(Tag) {
             locked.readable = .{};
             defer strong_readable.deinit();
 
-            if (locked.hasPendingPromise()) {
-                const promise = locked.promise.?;
-                defer promise.unprotect();
+            if (locked.promise) |promise_value| {
                 locked.promise = null;
+                defer promise_value.ensureStillAlive();
+                defer promise_value.unprotect();
 
-                if (promise.asAnyPromise()) |internal| {
-                    internal.reject(global, this.Error.toJS(global));
+                if (promise_value.asAnyPromise()) |promise| {
+                    if (promise.status(global.vm()) == .pending) {
+                        promise.reject(global, this.Error.toJS(global));
+                    }
                 }
             }
 
@@ -978,8 +963,8 @@ pub const Value = union(Tag) {
             }
 
             if (try readable.tee(globalThis)) |new_readable| {
-                // we current readable to be a strong reference when cloning and we will return the second one in the result
-                // this will be checked and downgraded to a write barrier if needed
+                // Keep the current readable as a strong reference when cloning, and return the second one in the result.
+                // This will be checked and downgraded to a write barrier if needed.
                 this.Locked.readable = jsc.WebCore.ReadableStream.Strong.init(new_readable[0], globalThis);
                 return Value{
                     .Locked = .{

@@ -402,16 +402,7 @@ pub const FetchTasklet = struct {
             if (this.getCurrentResponse()) |response| {
                 need_deinit = false; // body value now owns the error
                 const body = response.getBodyValue();
-                if (body.* == .Locked and body.Locked.promise != null) {
-                    const promise = body.Locked.promise.?.asAnyPromise().?;
-                    body.toErrorInstance(err, globalThis);
-                    if (promise.isHandled(globalThis.vm())) {
-                        return;
-                    }
-                    promise.reject(globalThis, body.Error.toJS(globalThis));
-                } else {
-                    body.toErrorInstance(err, globalThis);
-                }
+                body.toErrorInstance(err, globalThis);
             }
             return;
         }

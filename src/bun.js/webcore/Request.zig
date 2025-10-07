@@ -574,10 +574,9 @@ fn checkBodyStreamRef(this: *Request, globalObject: *JSGlobalObject) void {
     if (this.#js_ref.tryGet()) |js_value| {
         if (this.#body.value == .Locked) {
             if (this.#body.value.Locked.readable.get(globalObject)) |stream| {
-                // we dont hold a strong reference to the stream we will guard it in js.gc.stream
-                // so we avoid cycled references
-                // anyone using Response should not use Locked.readable directly because it dont always owns it
-                // the owner will be always the Response object it self
+                // Store the stream in js.gc.stream instead of holding a strong reference
+                // to avoid circular references. The Request object owns the stream,
+                // so Locked.readable should not be used directly by consumers.
                 stream.value.ensureStillAlive();
                 js.gc.stream.set(js_value, globalObject, stream.value);
                 this.#body.value.Locked.readable.deinit();

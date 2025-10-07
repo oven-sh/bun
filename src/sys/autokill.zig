@@ -212,18 +212,31 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
 
     // Use std.posix.SIG for platform-portable signal constants
     // (SIGSTOP=17 on macOS, 19 on Linux)
+    // Use direct syscall on Linux to avoid musl libc issues
     switch (pass) {
         .sigterm => {
             // Pass 1: SIGTERM for graceful shutdown
-            _ = std.c.kill(pid, std.posix.SIG.TERM);
+            if (comptime Environment.isLinux) {
+                _ = std.os.linux.kill(pid, std.posix.SIG.TERM);
+            } else {
+                _ = std.c.kill(pid, std.posix.SIG.TERM);
+            }
         },
         .sigstop => {
             // Pass 2: SIGSTOP to freeze the process
-            _ = std.c.kill(pid, std.posix.SIG.STOP);
+            if (comptime Environment.isLinux) {
+                _ = std.os.linux.kill(pid, std.posix.SIG.STOP);
+            } else {
+                _ = std.c.kill(pid, std.posix.SIG.STOP);
+            }
         },
         .sigkill => {
             // Pass 3: SIGKILL to force termination
-            _ = std.c.kill(pid, std.posix.SIG.KILL);
+            if (comptime Environment.isLinux) {
+                _ = std.os.linux.kill(pid, std.posix.SIG.KILL);
+            } else {
+                _ = std.c.kill(pid, std.posix.SIG.KILL);
+            }
         },
     }
 }

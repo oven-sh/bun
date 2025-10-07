@@ -632,15 +632,15 @@ describe.skipIf(isWindows)("--autokill", () => {
       "nested_parent.js": `
         const { spawn } = require('child_process');
 
-        // Spawn a nested Bun process that spawns its own children
+        // Spawn a nested Bun process with --autokill that spawns its own children
         const bunExe = process.argv[0];
-        const childBun = spawn(bunExe, ['nested_child.js'], {
+        const childBun = spawn(bunExe, ['--autokill', 'nested_child.js'], {
           cwd: __dirname
         });
 
         console.log('parent-bun-pid:', childBun.pid);
 
-        // Exit after a delay, triggering autokill
+        // Exit after a delay, triggering autokill on parent and nested child
         setTimeout(() => process.exit(0), 200);
       `,
     });

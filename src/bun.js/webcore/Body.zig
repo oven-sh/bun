@@ -978,6 +978,9 @@ pub const Value = union(Tag) {
             }
 
             if (try readable.tee(globalThis)) |new_readable| {
+                // we current readable to be a strong reference when cloning and we will return the second one in the result
+                // this will be checked and downgraded to a write barrier if needed
+                this.Locked.readable = jsc.WebCore.ReadableStream.Strong.init(new_readable[0], globalThis);
                 return Value{
                     .Locked = .{
                         .readable = jsc.WebCore.ReadableStream.Strong.init(new_readable[1], globalThis),

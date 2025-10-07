@@ -395,6 +395,8 @@ pub fn doClone(
         }
     }
 
+    this.checkBodyStreamRef(globalThis);
+
     return js_wrapper;
 }
 
@@ -415,6 +417,7 @@ pub fn cloneValue(
                 }
             }
         }
+
         break :brk try this.#body.clone(globalThis);
     };
     errdefer body.deinit(bun.default_allocator);

@@ -40,13 +40,3 @@ test.serial("test serial-2", async () => {
   await tick();
   console.log("[1] end test serial-2");
 });
-
-/*
-Vitest order is:
-
-[1] [2,3] [4] [5,6,7] [8]
-
-Our order is:
-
-[1] [2,3] [4] [5,6,7,8]
-*/

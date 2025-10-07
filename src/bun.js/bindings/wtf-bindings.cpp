@@ -105,13 +105,17 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
     int expected;
     int rc;
 
+    fprintf(stderr, "[ttySetMode] fd=%d mode=%d current_mode=%d\n", fd, mode, current_tty_mode);
+
     if (current_tty_mode == mode)
         return 0;
 
     if (current_tty_mode == 0 && mode != 0) {
+        fprintf(stderr, "[ttySetMode] calling tcgetattr\n");
         do {
             rc = tcgetattr(fd, &orig_tty_termios);
         } while (rc == -1 && errno == EINTR);
+        fprintf(stderr, "[ttySetMode] tcgetattr returned %d\n", rc);
 
         if (rc == -1)
             return errno;
@@ -158,8 +162,10 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         break;
     }
 
-    /* Apply changes after draining */
-    rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
+    /* Apply changes immediately */
+    fprintf(stderr, "[ttySetMode] calling tcsetattr with TCSANOW\n");
+    rc = uv__tcsetattr(fd, TCSANOW, &tmp);
+    fprintf(stderr, "[ttySetMode] tcsetattr returned %d\n", rc);
     if (rc == 0)
         current_tty_mode = mode;
 

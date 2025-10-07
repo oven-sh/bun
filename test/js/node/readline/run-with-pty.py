@@ -29,8 +29,8 @@ if pid == 0:
 else:
     os.close(slave_fd)
     signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(1)  # 1 second timeout
-    time.sleep(0.005)
+    signal.alarm(5)  # 5 second timeout
+    time.sleep(0.1)  # Give process more time to start
 
     # Read initial output
     while select.select([master_fd], [], [], 0.05)[0]:

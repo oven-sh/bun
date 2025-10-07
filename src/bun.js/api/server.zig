@@ -1186,7 +1186,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                existing_request = Request.init(
+                existing_request = Request.init2(
                     bun.String.cloneUTF8(url.href),
                     headers,
                     bun.handleOom(this.vm.initRequestBodyValue(body)),
@@ -2213,13 +2213,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.signal = signal;
             signal.pendingActivityRef();
 
-            const request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            const request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {

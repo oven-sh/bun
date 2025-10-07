@@ -1455,8 +1455,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
                     });
 
-                    request.body.value.Locked.task = task;
-                    request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                    bodyValue.Locked.task = task;
+                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                     return task.promise.value();
                 },

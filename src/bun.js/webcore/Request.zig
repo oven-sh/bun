@@ -125,6 +125,21 @@ pub fn init(
     };
 }
 
+/// TODO: do we need this?
+pub fn init2(
+    url: bun.String,
+    headers: ?*FetchHeaders,
+    body: *Body.Value.HiveRef,
+    method: Method,
+) Request {
+    return Request{
+        .url = url,
+        .#headers = headers,
+        .#body = body,
+        .method = method,
+    };
+}
+
 pub fn getContentType(
     this: *Request,
 ) bun.JSError!?ZigString.Slice {

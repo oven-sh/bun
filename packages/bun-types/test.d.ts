@@ -528,8 +528,8 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<[...T]>;
-    each<T extends unknown[]>(table: readonly T[]): Test<[...T]>;
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
+    each<T extends unknown[]>(table: readonly T[]): Test<T>;
     each<T>(table: T[]): Test<[T]>;
   }
   /**

@@ -179,6 +179,12 @@ describe.skipIf(isWindows)("--autokill", () => {
 
   test("autokill handles deeply nested process tree", async () => {
     const dir = tempDirWithFiles("autokill-deep", {
+      "spawn_nested.sh": `#!/bin/sh
+# Level 2 shell: spawn sleep and record its PID
+sleep 30 & echo "level3=$!" >> "$1"
+# Wait for the background job so we don't exit and reparent level3 to init
+wait
+`,
       "deep_tree.js": `
         const { spawn } = require('child_process');
         const fs = require('fs');
@@ -186,27 +192,26 @@ describe.skipIf(isWindows)("--autokill", () => {
 
         // Create a 3-level deep process tree and capture all PIDs
         const pidFile = path.join(__dirname, 'deep-pids.json');
-        const pids = {};
+        const nestedScript = path.join(__dirname, 'spawn_nested.sh');
 
-        // Level 1: outer shell
-        const shellCmd = [
-          '# Start level2 (inner shell) in background',
-          'sh -c "sleep 30 & echo level3=$! >> ' + pidFile + '; sleep 1" &',
-          'echo level2=$! >> ' + pidFile,
-          'wait'
-        ].join('; ');
+        // Make script executable
+        fs.chmodSync(nestedScript, 0o755);
 
+        // Write level1 PID first (to file that will be appended to)
+        fs.writeFileSync(pidFile, '');
+
+        // Level 1: outer shell that spawns Level 2 (the nested script)
+        const shellCmd = nestedScript + ' ' + pidFile + ' & echo level2=$! >> ' + pidFile + '; sleep 0.3; wait';
         const level1 = spawn('sh', ['-c', shellCmd]);
-        pids.level1 = level1.pid;
 
-        // Write level1 PID immediately
-        fs.writeFileSync(pidFile, 'level1=' + pids.level1 + '\\n');
+        // Append level1 PID
+        fs.appendFileSync(pidFile, 'level1=' + level1.pid + '\\n');
 
-        // Wait a bit for child processes to start and write their PIDs
+        // Wait for child processes to start and write their PIDs
         setTimeout(() => {
           console.log('done');
           setTimeout(() => process.exit(0), 50);
-        }, 100);
+        }, 400);
       `,
     });
 
@@ -229,17 +234,20 @@ describe.skipIf(isWindows)("--autokill", () => {
     try {
       const pidData = await Bun.file(pidFile).text();
       const pids: Record<string, number> = {};
-      for (const line of pidData.trim().split("\\n")) {
-        const [key, value] = line.split("=");
-        if (key && value) {
-          pids[key] = Number.parseInt(value, 10);
-        }
+      // Match all level#=PID patterns
+      const matches = pidData.matchAll(/level(\d+)=(\d+)/g);
+      for (const match of matches) {
+        const key = `level${match[1]}`;
+        const value = Number.parseInt(match[2], 10);
+        pids[key] = value;
       }
 
-      // We should at least have level1
+      // Verify we captured all three levels
       expect(pids.level1).toBeGreaterThan(0);
+      expect(pids.level2).toBeGreaterThan(0);
+      expect(pids.level3).toBeGreaterThan(0);
 
-      // Wait for all captured processes to die
+      // Wait for all processes to die
       for (const [name, pid] of Object.entries(pids)) {
         if (pid && pid > 0) {
           const died = await waitForProcessDeath(pid, 1000);
@@ -252,9 +260,6 @@ describe.skipIf(isWindows)("--autokill", () => {
           }
         }
       }
-
-      // Verify we got at least 2 levels (level1 and ideally level2/level3)
-      expect(Object.keys(pids).length).toBeGreaterThanOrEqual(1);
     } catch (err) {
       // If we can't read the file, at least verify something happened
       expect(output.trim()).toContain("done");

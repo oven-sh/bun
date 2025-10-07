@@ -841,6 +841,15 @@ pub fn installIsolatedPackages(
                     };
 
                     if (!missing_from_cache) {
+                        if (patch_info == .patch) {
+                            installer.applyPackagePatch(entry_id, patch_info.patch) catch |err| {
+                                // monotonic is okay because we haven't started the task yet (it isn't running
+                                // on another thread)
+                                entry_steps[entry_id.get()].store(.done, .monotonic);
+                                installer.onTaskFail(entry_id, .{ .patching = err });
+                                continue;
+                            };
+                        }
                         installer.startTask(entry_id);
                         continue;
                     }

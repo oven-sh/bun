@@ -147,21 +147,13 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
-            const fmt = "\n\nErrors occurred while calculating hash for <b>{s}<r>:\n\n";
-            const args = .{this.callback.calc_hash.patchfile_path};
-            if (log_level.showProgress()) {
-                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-            } else {
-                Output.prettyErrorln(
-                    fmt,
-                    args,
-                );
+            if (log_level != .silent) {
+                if (calc_hash.logger.hasErrors()) {
+                    calc_hash.logger.print(Output.errorWriter()) catch {};
+                } else {
+                    Output.errGeneric("Failed to calculate hash for patch <b>{s}<r>", .{this.callback.calc_hash.patchfile_path});
+                }
             }
-            if (calc_hash.logger.errors > 0) {
-                Output.prettyErrorln("\n\n", .{});
-                calc_hash.logger.print(Output.errorWriter()) catch {};
-            }
-            Output.flush();
             Global.crash();
         };
 
@@ -428,12 +420,10 @@ pub const PatchTask = struct {
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
                 if (e.getErrno() == .NOENT) {
-                    const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
-                    const args = .{
+                    bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, "Couldn't find patch file: '{s}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>", .{
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
-                    };
-                    bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args));
+                    }));
                     return null;
                 }
                 log.addWarningFmt(

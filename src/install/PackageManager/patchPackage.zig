@@ -708,7 +708,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    overwritePackageInNodeModulesFolder(manager, cache_dir, cache_dir_subpath, module_folder) catch |e| {
+    overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
         Output.prettyError(
             "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
             .{@errorName(e)},
@@ -729,170 +729,57 @@ pub fn preparePatch(manager: *PackageManager) !void {
 }
 
 fn overwritePackageInNodeModulesFolder(
-    manager: *PackageManager,
     cache_dir: std.fs.Dir,
     cache_dir_subpath: []const u8,
     node_modules_folder_path: []const u8,
 ) !void {
-    var node_modules_folder = try std.fs.cwd().openDir(node_modules_folder_path, .{ .iterate = true });
-    defer node_modules_folder.close();
-
-    const IGNORED_PATHS: []const bun.OSPathSlice = &[_][]const bun.OSPathChar{
-        bun.OSPathLiteral("node_modules"),
-        bun.OSPathLiteral(".git"),
-        bun.OSPathLiteral("CMakeFiles"),
-    };
-
-    const FileCopier = struct {
-        pub fn copy(
-            destination_dir_: std.fs.Dir,
-            walker: *Walker,
-            in_dir: if (bun.Environment.isWindows) []const u16 else void,
-            out_dir: if (bun.Environment.isWindows) []const u16 else void,
-            buf1: if (bun.Environment.isWindows) []u16 else void,
-            buf2: if (bun.Environment.isWindows) []u16 else void,
-            tmpdir_in_node_modules: if (bun.Environment.isWindows) std.fs.Dir else void,
-        ) !u32 {
-            var real_file_count: u32 = 0;
-
-            var copy_file_state: bun.CopyFileState = .{};
-            var pathbuf: bun.PathBuffer = undefined;
-            var pathbuf2: bun.PathBuffer = undefined;
-            // _ = pathbuf; // autofix
-
-            while (try walker.next().unwrap()) |entry| {
-                if (entry.kind != .file) continue;
-                real_file_count += 1;
-                const createFile = std.fs.Dir.createFile;
-
-                // 1. rename original file in node_modules to tmp_dir_in_node_modules
-                // 2. create the file again
-                // 3. copy cache flie to the newly re-created file
-                // 4. profit
-                if (comptime bun.Environment.isWindows) {
-                    var tmpbuf: [1024]u8 = undefined;
-                    const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
-                    const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
-                        Global.crash();
-                    });
-
-                    const entrypath = bun.strings.fromWPath(pathbuf[0..], entry.path);
-                    pathbuf[entrypath.len] = 0;
-                    const entrypathZ = pathbuf[0..entrypath.len :0];
-
-                    if (bun.sys.renameatConcurrently(
-                        .fromStdDir(destination_dir_),
-                        entrypathZ,
-                        .fromStdDir(tmpdir_in_node_modules),
-                        tmpname,
-                        .{ .move_fallback = true },
-                    ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {}", .{e});
-                        Global.crash();
-                    }
-
-                    var outfile = createFile(destination_dir_, entrypath, .{}) catch |e| {
-                        Output.prettyError("<r><red>error<r>: failed to create file {s} ({s})", .{ entrypath, @errorName(e) });
-                        Global.crash();
-                    };
-                    outfile.close();
-
-                    const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
-                    const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
-
-                    bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
-                } else if (comptime Environment.isPosix) {
-                    var in_file = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
-                    defer in_file.close();
-
-                    @memcpy(pathbuf[0..entry.path.len], entry.path);
-                    pathbuf[entry.path.len] = 0;
-
-                    if (bun.sys.unlinkat(
-                        .fromStdDir(destination_dir_),
-                        pathbuf[0..entry.path.len :0],
-                    ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
-                        Global.crash();
-                    }
-
-                    var outfile = try createFile(destination_dir_, entry.path, .{});
-                    defer outfile.close();
-
-                    const stat = in_file.stat().unwrap() catch continue;
-                    _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
-
-                    bun.copyFileWithState(in_file, .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
+    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
+    defer dest_subpath.deinit();
+    {
+        switch (bun.sys.lstat(dest_subpath.sliceZ())) {
+            .err => {},
+            .result => |stat| {
+                if (bun.S.ISLNK(stat.mode)) {
+                    bun.sys.unlink(dest_subpath.sliceZ()).unwrap() catch {};
+                    bun.sys.mkdir(dest_subpath.sliceZ(), 0o755).unwrap() catch {};
                 }
-            }
-
-            return real_file_count;
+            },
         }
+    }
+
+    const src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = src_path: {
+        if (comptime Environment.isWindows) {
+            var path_buf: bun.WPathBuffer = undefined;
+            const abs_path = try bun.getFdPathW(.from(cache_dir), &path_buf);
+
+            var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(abs_path);
+            src_path.append(cache_dir_subpath);
+
+            break :src_path src_path;
+        }
+
+        // unused if not windows
+        break :src_path .init();
+    };
+    defer src_path.deinit();
+
+    const cached_package_folder = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+
+    const ignore_directories: []const bun.OSPathSlice = &.{
+        comptime bun.OSPathLiteral("node_modules"),
+        comptime bun.OSPathLiteral(".git"),
+        comptime bun.OSPathLiteral("CMakeFiles"),
     };
 
-    var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
-    defer pkg_in_cache_dir.close();
-    var walker = bun.handleOom(Walker.walk(.fromStdDir(pkg_in_cache_dir), manager.allocator, &.{}, IGNORED_PATHS));
-    defer walker.deinit();
+    var copier: bun.install.FileCopier = try .init(
+        .fromStdDir(cached_package_folder),
+        src_path,
+        dest_subpath,
+        ignore_directories,
+    );
+    defer copier.deinit();
 
-    var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
-    var buf2: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
-    var in_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
-    var out_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
-
-    if (comptime bun.Environment.isWindows) {
-        const inlen = bun.windows.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);
-        if (inlen == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-            Global.crash();
-        }
-        in_dir = buf1[0..inlen];
-        const outlen = bun.windows.GetFinalPathNameByHandleW(node_modules_folder.fd, &buf2, buf2.len, 0);
-        if (outlen == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-            Global.crash();
-        }
-        out_dir = buf2[0..outlen];
-        var tmpbuf: [1024]u8 = undefined;
-        const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("tffbp", tmpbuf[0..], bun.fastRandom()) catch |e| {
-            Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
-            Global.crash();
-        });
-        const temp_folder_in_node_modules = try node_modules_folder.makeOpenPath(tmpname, .{});
-        defer {
-            node_modules_folder.deleteTree(tmpname) catch {};
-        }
-        _ = try FileCopier.copy(
-            node_modules_folder,
-            &walker,
-            in_dir,
-            out_dir,
-            &buf1,
-            &buf2,
-            temp_folder_in_node_modules,
-        );
-    } else if (Environment.isPosix) {
-        _ = try FileCopier.copy(
-            node_modules_folder,
-            &walker,
-            {},
-            {},
-            {},
-            {},
-            {},
-        );
-    }
+    try copier.copy().unwrap();
 }
 
 fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).Next {

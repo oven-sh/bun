@@ -4,6 +4,7 @@ export default [
   define({
     name: "Request",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     klass: {},
@@ -12,6 +13,7 @@ export default [
     configurable: false,
     overridesToJS: true,
     memoryCost: true,
+    values: ["stream"],
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },

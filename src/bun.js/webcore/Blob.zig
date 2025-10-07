@@ -1424,7 +1424,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
                         _ = try bodyValue.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});

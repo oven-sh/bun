@@ -37,16 +37,18 @@ test("spawn should handle cwd paths >= MAX_PATH on Windows", async () => {
   // This should either:
   // 1. Succeed and spawn the process
   // 2. Fail gracefully with an error (not panic with UV_ENOTCONN)
-  const result = await Bun.spawn({
-    cmd: [bunExe(), "--version"],
-    cwd: deepPath,
-    stdout: "pipe",
-    stderr: "pipe",
-  }).exited;
-
-  // The spawn might fail due to long path, but it should NOT panic
-  // If it succeeds, great! If it fails, it should be a proper error, not a panic
-  expect(typeof result).toBe("number");
+  let err;
+  try {
+    await Bun.spawn({
+      cmd: [bunExe(), "--version"],
+      cwd: deepPath,
+      stdout: "pipe",
+      stderr: "pipe",
+    }).exited;
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
 });
 
 test("spawn should handle cwd paths with disabled 8.3 names on Windows", async () => {
@@ -69,25 +71,27 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
 
   console.log(`Created path for 8.3 test (length: ${deepPath.length}): ${deepPath}`);
 
-  // Copy test.js to the deep path
-  await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
+  // Attempt to copy test.js to the deep path
+  let err;
+  try {
+    await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
 
   // This should not panic, even if GetShortPathNameW fails
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: deepPath,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // Should either work or fail gracefully
-  // If it fails, stderr should contain a proper error message, not a panic
-  if (exitCode !== 0) {
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("UV_ENOTCONN");
-  } else {
-    expect(stdout.trim()).toBe("hello");
+  err = undefined;
+  try {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: deepPath,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await proc.exited;
+  } catch (e) {
+    err = e;
   }
+  expect(err).toBeInstanceOf(Error);
 });

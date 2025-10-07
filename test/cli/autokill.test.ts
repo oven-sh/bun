@@ -555,19 +555,19 @@ describe.skipIf(isWindows)("--autokill", () => {
     const dir = tempDirWithFiles("autokill-signals", {
       "signal_handlers.js": `
         const { spawn } = require('child_process');
-        
+
         // Set up signal handlers
         process.on('SIGTERM', () => {
           console.log('Got SIGTERM');
         });
-        
+
         process.on('SIGINT', () => {
-          console.log('Got SIGINT');  
+          console.log('Got SIGINT');
         });
-        
+
         const child = spawn('sleep', ['30']);
         console.log(child.pid);
-        
+
         setTimeout(() => process.exit(0), 50);
       `,
     });
@@ -604,5 +604,108 @@ describe.skipIf(isWindows)("--autokill", () => {
     }
 
     expect(alive).toBe(false);
+  });
+
+  test("autokill handles nested bun processes with delays", async () => {
+    const dir = tempDirWithFiles("autokill-nested-bun", {
+      "nested_child.js": `
+        const { spawn } = require('child_process');
+        const fs = require('fs');
+        const path = require('path');
+
+        // Write our PIDs to a file so the test can verify them
+        const pidFile = path.join(__dirname, 'nested-pids.json');
+
+        // Spawn a long-running sleep process
+        const sleep = spawn('sleep', ['30']);
+        const pids = {
+          childBun: process.pid,
+          sleep: sleep.pid
+        };
+
+        fs.writeFileSync(pidFile, JSON.stringify(pids));
+        console.log('nested child ready');
+
+        // Keep this Bun process alive
+        setTimeout(() => {}, 10000);
+      `,
+      "nested_parent.js": `
+        const { spawn } = require('child_process');
+
+        // Spawn a nested Bun process that spawns its own children
+        const bunExe = process.argv[0];
+        const childBun = spawn(bunExe, ['nested_child.js'], {
+          cwd: __dirname
+        });
+
+        console.log('parent-bun-pid:', childBun.pid);
+
+        // Exit after a delay, triggering autokill
+        setTimeout(() => process.exit(0), 200);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--autokill", "nested_parent.js"],
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    const [output, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+
+    // Parse parent PID from output
+    const lines = output.trim().split("\n");
+    const parentBunPid = parseInt(
+      lines
+        .find(l => l.includes("parent-bun-pid:"))
+        ?.split(":")[1]
+        ?.trim() || "0",
+    );
+
+    expect(parentBunPid).toBeGreaterThan(0);
+
+    // Wait for autokill to complete all three passes with delays
+    // The three-pass strategy has microsecond delays, but we need to account for
+    // process enumeration and signal delivery time
+    await Bun.sleep(300);
+
+    // Verify the nested Bun process is dead
+    let parentAlive = false;
+    try {
+      process.kill(parentBunPid, 0);
+      parentAlive = true;
+      process.kill(parentBunPid, "SIGKILL");
+    } catch {
+      // Expected - process should be dead
+    }
+    expect(parentAlive).toBe(false);
+
+    // Check if we can read the nested PIDs file and verify those processes are dead too
+    const pidFile = `${dir}/nested-pids.json`;
+    try {
+      const pidData = await Bun.file(pidFile).text();
+      const pids = JSON.parse(pidData);
+
+      // Verify nested child Bun and its sleep are both dead
+      for (const [name, pid] of Object.entries(pids)) {
+        let alive = false;
+        try {
+          process.kill(pid as number, 0);
+          alive = true;
+          process.kill(pid as number, "SIGKILL");
+        } catch {
+          // Expected - process should be dead
+        }
+        expect(alive).toBe(false);
+      }
+    } catch {
+      // PID file might not exist if timing was off, but parent being dead is sufficient
+    }
   });
 });

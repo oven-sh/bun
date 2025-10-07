@@ -93,7 +93,8 @@ const PosixBufferedReader = struct {
         close_handle: bool = true,
         memfd: bool = false,
         use_pread: bool = false,
-        _: u7 = 0,
+        is_paused: bool = false,
+        _: u6 = 0,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -180,9 +181,22 @@ const PosixBufferedReader = struct {
         return this.handle.getFd();
     }
 
-    // No-op on posix.
     pub fn pause(this: *PosixBufferedReader) void {
-        _ = this; // autofix
+        if (this.flags.is_paused) return;
+        this.flags.is_paused = true;
+
+        // Unregister the FilePoll if it's registered
+        if (this.handle == .poll) {
+            if (this.handle.poll.isRegistered()) {
+                _ = this.handle.poll.unregister(this.loop(), false);
+            }
+        }
+    }
+
+    pub fn unpause(this: *PosixBufferedReader) void {
+        if (!this.flags.is_paused) return;
+        this.flags.is_paused = false;
+        // The next read() call will re-register the poll if needed
     }
 
     pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
@@ -334,6 +348,9 @@ const PosixBufferedReader = struct {
     }
 
     pub fn read(this: *PosixBufferedReader) void {
+        // Don't initiate new reads if paused
+        if (this.flags.is_paused) return;
+
         const buf = this.buffer();
         const fd = this.getFd();
 

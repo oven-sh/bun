@@ -18,6 +18,7 @@ lazy: Lazy = .{ .none = {} },
 buffered: std.ArrayListUnmanaged(u8) = .{},
 read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
 highwater_mark: usize = 16384,
+flowing: bool = true,
 
 pub const IOReader = bun.io.BufferedReader;
 pub const Poll = IOReader;
@@ -487,6 +488,14 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     }
 
     if (!this.reader.hasPendingRead()) {
+        // If not flowing (paused), don't initiate new reads
+        if (!this.flowing) {
+            log("onPull({d}) = pending (not flowing)", .{buffer.len});
+            this.pending_value.set(this.parent().globalThis, array);
+            this.pending_view = buffer;
+            return .{ .pending = &this.pending };
+        }
+
         this.read_inside_on_pull = .{ .js = buffer };
         this.reader.read();
 
@@ -629,6 +638,22 @@ pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {
         @panic("FileReader.setRawMode must not be called on " ++ comptime Environment.os.displayString());
     }
     return this.reader.setRawMode(flag);
+}
+
+pub fn setFlowing(this: *FileReader, flag: bool) void {
+    log("setFlowing({}) was={}", .{ flag, this.flowing });
+
+    if (this.flowing == flag) {
+        return;
+    }
+
+    this.flowing = flag;
+
+    if (flag) {
+        this.reader.unpause();
+    } else {
+        this.reader.pause();
+    }
 }
 
 pub fn memoryCost(this: *const FileReader) usize {

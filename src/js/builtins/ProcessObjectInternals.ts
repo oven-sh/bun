@@ -184,13 +184,17 @@ export function getStdinStream(
   const originalPause = stream.pause;
   stream.pause = function () {
     $debug("pause();");
+    console.log("[ProcessObjectInternals] pause() called, source?.setFlowing=", typeof source?.setFlowing);
+    source?.setFlowing?.(false);
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
     $debug("resume();");
+    console.log("[ProcessObjectInternals] resume() called");
     own();
+    source?.setFlowing?.(true);
     return originalResume.$call(this);
   };
 

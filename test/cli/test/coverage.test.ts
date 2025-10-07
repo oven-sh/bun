@@ -122,7 +122,9 @@ test("should call both functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"---------------|---------|---------|-------------------
+"test.test.ts:
+(pass) should call both functions
+---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |  100.00 |  100.00 |
@@ -185,7 +187,9 @@ test("should call only some functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"---------------|---------|---------|-------------------
+"test.test.ts:
+(pass) should call only some functions
+---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |   75.00 |   83.33 |
@@ -248,7 +252,9 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"--------------|---------|---------|-------------------
+"test.test.ts:
+(pass) should call all functions
+--------------|---------|---------|-------------------
 File          | % Funcs | % Lines | Uncovered Line #s
 --------------|---------|---------|-------------------
 All files     |  100.00 |  100.00 |
@@ -313,7 +319,11 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"----------------|---------|---------|-------------------
+"main.test.ts:
+(pass) should call all functions
+
+src/feature.spec.ts:
+----------------|---------|---------|-------------------
 File            | % Funcs | % Lines | Uncovered Line #s
 ----------------|---------|---------|-------------------
 All files       |  100.00 |  100.00 |
@@ -430,7 +440,9 @@ test("should pass", () => {
 "3 | coveragePathIgnorePatterns = 123
                                  ^
 error: coveragePathIgnorePatterns must be a string or array of strings
-    at <dir>/bunfig.toml:3:30"
+    at <dir>/bunfig.toml:3:30
+
+Invalid Bunfig: failed to load bunfig"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -467,7 +479,9 @@ test("should pass", () => {
 "3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
                                                    ^
 error: coveragePathIgnorePatterns array must contain only strings
-    at <dir>/bunfig.toml:3:48"
+    at <dir>/bunfig.toml:3:48
+
+Invalid Bunfig: failed to load bunfig"
 `);
   expect(result.exitCode).toBe(1);
 });
@@ -507,7 +521,9 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"---------------|---------|---------|-------------------
+"test.test.ts:
+(pass) should call function
+---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |  100.00 |  100.00 |
@@ -558,7 +574,9 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"-----------|---------|---------|-------------------
+"test.test.ts:
+(pass) should call function
+-----------|---------|---------|-------------------
 File       | % Funcs | % Lines | Uncovered Line #s
 -----------|---------|---------|-------------------
 All files  |    0.00 |    0.00 |

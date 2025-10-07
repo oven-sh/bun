@@ -7,6 +7,7 @@ url: bun.String = bun.String.empty,
 #headers: ?*FetchHeaders = null,
 signal: ?*AbortSignal = null,
 #body: *Body.Value.HiveRef,
+#js_ref: jsc.JSRef = .empty(),
 method: Method = Method.GET,
 redirect: FetchRedirect = .follow,
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
@@ -190,8 +191,38 @@ pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
     this.calculateEstimatedByteSize();
 }
 
+pub inline fn getBodyReadableStream(
+    this: *Request,
+    globalObject: *JSGlobalObject,
+) ?jsc.WebCore.ReadableStream {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        if (js.gc.stream.get(js_ref)) |stream| {
+            // JS is always source of truth for the stream
+            return jsc.WebCore.ReadableStream.fromJS(stream, globalObject) catch |err| {
+                _ = globalObject.takeException(err);
+                return null;
+            };
+        }
+    }
+    if (this.#body.value == .Locked) {
+        return this.#body.value.Locked.readable.get(globalObject);
+    }
+    return null;
+}
+pub inline fn detachReadableStream(this: *Request, globalObject: *jsc.JSGlobalObject) void {
+    if (this.#js_ref.tryGet()) |js_ref| {
+        js.gc.stream.clear(js_ref, globalObject);
+    }
+    if (this.#body.value == .Locked) {
+        var old = this.#body.value.Locked.readable;
+        old.deinit();
+        this.#body.value.Locked.readable = .{};
+    }
+}
+
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
+    this.checkBodyStreamRef(globalObject);
     return js.toJSUnchecked(globalObject, this);
 }
 
@@ -263,7 +294,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
                 try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
             }
         } else if (this.#body.value == .Locked) {
-            if (this.#body.value.Locked.readable.get(this.#body.value.Locked.global)) |stream| {
+            if (this.getBodyReadableStream(formatter.globalThis)) |stream| {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -369,6 +400,7 @@ pub fn finalizeWithoutDeinit(this: *Request) void {
 }
 
 pub fn finalize(this: *Request) void {
+    this.#js_ref.finalize();
     this.finalizeWithoutDeinit();
     _ = this.#body.unref();
     if (this.weak_ptr_data.onFinalize()) {
@@ -538,13 +570,29 @@ const Fields = enum {
     // timeout,
     url,
 };
-
-pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue) bun.JSError!Request {
+fn checkBodyStreamRef(this: *Request, globalObject: *JSGlobalObject) void {
+    if (this.#js_ref.tryGet()) |js_value| {
+        if (this.#body.value == .Locked) {
+            if (this.#body.value.Locked.readable.get(globalObject)) |stream| {
+                // we dont hold a strong reference to the stream we will guard it in js.gc.stream
+                // so we avoid cycled references
+                // anyone using Response should not use Locked.readable directly because it dont always owns it
+                // the owner will be always the Response object it self
+                stream.value.ensureStillAlive();
+                js.gc.stream.set(js_value, globalObject, stream.value);
+                this.#body.value.Locked.readable.deinit();
+                this.#body.value.Locked.readable = .{};
+            }
+        }
+    }
+}
+pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue, this_value: jsc.JSValue) bun.JSError!Request {
     var success = false;
     const vm = globalThis.bunVM();
     const body = try vm.initRequestBodyValue(.{ .Null = {} });
     var req = Request{
         .#body = body,
+        .#js_ref = .initWeak(this_value),
     };
     defer {
         if (!success) {
@@ -789,16 +837,17 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     }
 
     req.calculateEstimatedByteSize();
+    req.checkBodyStreamRef(globalThis);
     success = true;
 
     return req;
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Request {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Request {
     const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.ptr[0..arguments_.len];
 
-    const request = try constructInto(globalThis, arguments);
+    const request = try constructInto(globalThis, arguments, this_value);
     return Request.new(request);
 }
 
@@ -831,7 +880,7 @@ pub fn doClone(
             }
         }
     }
-
+    this.checkBodyStreamRef(globalThis);
     return js_wrapper;
 }
 
@@ -950,7 +999,18 @@ pub fn cloneInto(
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    var body_ = try this.#body.value.clone(globalThis);
+    var body_ = brk: {
+        if (this.#js_ref.tryGet()) |js_ref| {
+            if (js.gc.stream.get(js_ref)) |stream| {
+                var readable = try jsc.WebCore.ReadableStream.fromJS(stream, globalThis);
+                if (readable != null) {
+                    break :brk try this.#body.value.cloneWithReadableStream(globalThis, &readable.?);
+                }
+            }
+        }
+
+        break :brk try this.#body.value.clone(globalThis);
+    };
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);
     const url = if (preserve_url) req.url else this.url.dupeRef();

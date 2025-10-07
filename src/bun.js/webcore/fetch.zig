@@ -2107,6 +2107,9 @@ pub fn Bun__fetch_(
             }
 
             if (bodyValue.* == .Locked) {
+                if (req.getBodyReadableStream(globalThis)) |readable| {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis) };
+                }
                 if (bodyValue.Locked.readable.has()) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
                 }

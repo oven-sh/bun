@@ -1922,8 +1922,18 @@ pub const Formatter = struct {
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
                     handleFirstProperty(ctx, globalThis, ctx.parent) catch return;
-                } else {
+                } else if (ctx.i > 1) {
                     this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                } else {
+                    // If this is the first property of an empty array, we don't need to print a comma
+                    const should_print_comma = if (ctx.parent.isArray())
+                        (ctx.parent.getLength(globalThis) catch 0) > 0
+                    else
+                        true;
+
+                    if (should_print_comma) {
+                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                    }
                 }
 
                 defer ctx.i += 1;
@@ -2385,8 +2395,32 @@ pub const Formatter = struct {
                 // }
 
                 if (len == 0) {
-                    writer.writeAll("[]");
-                    this.addForNewLine(2);
+                    writer.writeAll("[");
+                    this.addForNewLine(1);
+
+                    const prev_quote_strings = this.quote_strings;
+                    this.quote_strings = true;
+                    defer this.quote_strings = prev_quote_strings;
+                    if (!jsType.isArguments()) {
+                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                        var iter = Iterator{
+                            .formatter = this,
+                            .writer = writer_,
+                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                            .single_line = this.single_line,
+                            .parent = value,
+                            // Start at i=1 to skip handleFirstProperty since we manually printed the opening bracket
+                            .i = 1,
+                        };
+                        try value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                        if (this.failed) return;
+
+                        // We need to print a space at the end if the empty array has custom properties
+                        if (iter.i > 1) {
+                            writer.writeAll(" ");
+                        }
+                    }
+                    writer.writeAll("]");
                     return;
                 }
 

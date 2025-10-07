@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
 import { join } from "path";
+import { rmSync } from "fs";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
@@ -674,8 +675,6 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         .env(bunEnv)
         .cwd(filedir);
 
-      await $`rm -rf node_modules`.env(bunEnv).cwd(filedir);
-
       await $`${bunExe()} i --linker isolated`.env(bunEnv).cwd(filedir);
 
       // With isolated linker, there may be some stderr output during patch commit
@@ -847,7 +846,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       await $`${bunExe()} patch --commit '${relativePatchPath}'`.env(bunEnv).cwd(filedir);
 
       // Delete node_modules and reinstall with isolated linker
-      await $`rm -rf node_modules`.env(bunEnv).cwd(filedir);
+      rmSync(join(filedir, "node_modules"), { force: true, recursive: true });
       await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
 
       // Verify patch is still applied

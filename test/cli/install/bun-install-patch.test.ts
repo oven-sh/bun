@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { rmSync } from "fs";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);

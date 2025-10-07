@@ -1402,7 +1402,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         }
 
         if (data.as(Request)) |request| {
-            switch (request.body.value) {
+            const bodyValue = request.getBodyValue();
+            switch (bodyValue.*) {
                 .WTFStringImpl,
                 .InternalBlob,
                 .Used,
@@ -1410,11 +1411,11 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Blob,
                 .Null,
                 => {
-                    break :brk request.body.value.use();
+                    break :brk bodyValue.use();
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();
-                    _ = request.body.value.use();
+                    _ = bodyValue.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
                 .Locked => |locked| {
@@ -1422,7 +1423,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try request.body.value.toReadableStream(globalThis);
+                        _ = try bodyValue.toReadableStream(globalThis);
                         if (locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();

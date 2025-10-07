@@ -35,7 +35,7 @@ export function APITester() {
       >
         <Label htmlFor="method" className="sr-only">Method</Label>
         <Select name="method" defaultValue="GET">
-          <SelectTrigger className="w-[100px]">
+          <SelectTrigger className="w-[100px]" id="method">
             <SelectValue placeholder="Method" />
           </SelectTrigger>
           <SelectContent align="start">
@@ -45,6 +45,7 @@ export function APITester() {
         </Select>
         <Label htmlFor="endpoint" className="sr-only">Endpoint</Label>
         <Input
+          id="endpoint"
           type="text"
           name="endpoint"
           defaultValue="/api/hello"
@@ -57,6 +58,7 @@ export function APITester() {
       <Label htmlFor="response" className="sr-only">Response</Label>
       <Textarea
         ref={responseInputRef}
+        id="response"
         readOnly
         placeholder="Response will appear here..."
         className="min-h-[140px] font-mono resize-y"

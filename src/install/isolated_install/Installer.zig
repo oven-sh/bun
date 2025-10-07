@@ -363,7 +363,17 @@ pub const Installer = struct {
                     .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
                     .binaries => |err| .{ .binaries = err },
                     .run_scripts => |err| .{ .run_scripts = err },
-                    .patching => |log| .{ .patching = log },
+                    .patching => |log| blk: {
+                        // Deep-clone the log so each error owns its own buffer
+                        var cloned_log = bun.logger.Log.init(allocator);
+                        // Need a mutable copy to call cloneToWithRecycled
+                        var mutable_log = log;
+                        mutable_log.cloneToWithRecycled(&cloned_log, false) catch {
+                            // If allocation fails, return a dummy error to avoid leaking
+                            break :blk .{ .patching = cloned_log };
+                        };
+                        break :blk .{ .patching = cloned_log };
+                    },
                 };
             }
         };

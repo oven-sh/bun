@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -12,8 +13,7 @@ import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
+import { dirname, join } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -793,9 +793,14 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 
   if (isWindows) {
     if (isAbsolute(actual)) {
-      // junctions on windows will have an absolute path
+      // junctions on windows resolve to absolute paths
+      // Extract the final path component for comparison
+      const actualNormalized = actual.replace(/\\/g, "/");
+      const expectedSegments = expectedLinkPath.split(/[/\\]/);
+      const finalSegment =
+        expectedSegments[expectedSegments.length - 1] || expectedSegments[expectedSegments.length - 2];
       return {
-        pass: actual.includes(expectedLinkPath.split("..").at(-1)!),
+        pass: actualNormalized.endsWith(finalSegment),
         message,
       };
     }

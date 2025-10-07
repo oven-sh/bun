@@ -56,6 +56,10 @@ interface CopyFromOptionsBase {
    * When exceeded, the operation is aborted with CopyFail.
    */
   maxBytes?: number;
+  /**
+   * COPY operation timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
 }
 
 interface CopyFromBinaryOptions extends CopyFromOptionsBase {
@@ -80,6 +84,10 @@ interface CopyToOptions {
    * Enable streaming mode to avoid buffering in Zig. Defaults to true.
    */
   stream?: boolean;
+  /**
+   * COPY operation timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
 }
 
 type SQLTemplateFn = (strings: string, ...values: unknown[]) => Query<unknown, unknown>;

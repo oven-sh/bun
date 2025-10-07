@@ -123,6 +123,40 @@ declare module "bun" {
     | (string & {});
 
   /**
+   * PostgreSQL COPY binary format base types
+   */
+  type CopyBinaryBaseType =
+    | "bool"
+    | "int2"
+    | "int4"
+    | "int8"
+    | "float4"
+    | "float8"
+    | "text"
+    | "varchar"
+    | "bpchar"
+    | "bytea"
+    | "date"
+    | "time"
+    | "timestamp"
+    | "timestamptz"
+    | "uuid"
+    | "json"
+    | "jsonb"
+    | "numeric"
+    | "interval";
+
+  /**
+   * PostgreSQL COPY binary format array types
+   */
+  type CopyBinaryArrayType = `${CopyBinaryBaseType}[]`;
+
+  /**
+   * PostgreSQL COPY binary format type tokens
+   */
+  type CopyBinaryType = CopyBinaryBaseType | CopyBinaryArrayType;
+
+  /**
    * Represents a SQL array parameter
    */
   interface SQLArrayParameter {
@@ -1004,6 +1038,82 @@ declare module "bun" {
      * const result = await sql.file("query.sql", [1, 2, 3]);
      */
     file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
+
+    /** COPY FROM STDIN - bulk import helper (PostgreSQL COPY protocol) */
+    copyFrom(
+      table: string,
+      columns: string[],
+      data:
+        | string
+        | unknown[]
+        | Iterable<unknown[]>
+        | AsyncIterable<unknown[]>
+        | AsyncIterable<string | Uint8Array | ArrayBuffer>
+        | (() => Iterable<unknown[]>),
+      options?: {
+        format?: "text" | "csv" | "binary";
+        delimiter?: string;
+        null?: string;
+        sanitizeNUL?: boolean;
+        replaceInvalid?: string;
+        signal?: AbortSignal;
+        onProgress?: (info: { bytesSent: number; chunksSent: number }) => void;
+        batchSize?: number;
+        /** When format is "binary" and passing row arrays, provide per-column type tokens (e.g. "int4","text","uuid","int4[]") */
+        binaryTypes?: readonly string[];
+        /** Maximum number of bytes to send per chunk (defaults to 256 KiB) */
+        maxChunkSize?: number;
+        /** Maximum total number of bytes to send (0 = unlimited) */
+        maxBytes?: number;
+        /** COPY operation timeout in milliseconds (0 = no timeout) */
+        timeout?: number;
+      },
+    ): Promise<{ command: string | null; count: number | null }>;
+
+    /** COPY TO STDOUT - streaming export helper (PostgreSQL COPY protocol) */
+    copyTo(
+      queryOrOptions:
+        | string
+        | {
+            table: string;
+            columns?: string[];
+            format?: "text" | "csv" | "binary";
+            signal?: AbortSignal;
+            onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void;
+            /** Maximum total number of bytes to receive (0 = unlimited) */
+            maxBytes?: number;
+            /** Enable streaming mode to avoid buffering (defaults to true) */
+            stream?: boolean;
+            /** COPY operation timeout in milliseconds (0 = no timeout) */
+            timeout?: number;
+          },
+    ): AsyncIterable<string | ArrayBuffer>;
+
+    /** COPY TO STDOUT piping helper - pipe stream directly to a sink */
+    copyToPipeTo(
+      queryOrOptions:
+        | string
+        | {
+            table: string;
+            columns?: string[];
+            format?: "text" | "csv" | "binary";
+            signal?: AbortSignal;
+            onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void;
+            /** Maximum total number of bytes to receive (0 = unlimited) */
+            maxBytes?: number;
+            /** Enable streaming mode to avoid buffering (defaults to true) */
+            stream?: boolean;
+            /** COPY operation timeout in milliseconds (0 = no timeout) */
+            timeout?: number;
+          },
+      writable:
+        | WritableStream<Uint8Array | string>
+        | {
+            write: (chunk: string | ArrayBuffer | Uint8Array) => unknown | Promise<unknown>;
+            close?: () => unknown | Promise<unknown>;
+            end?: () => unknown | Promise<unknown>;
+          },
+    ): Promise<void>;
   }
 
   /**

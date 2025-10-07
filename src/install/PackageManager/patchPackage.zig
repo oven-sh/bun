@@ -550,6 +550,15 @@ pub fn preparePatch(manager: *PackageManager) !void {
     const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
     var folder_path_buf: bun.PathBuffer = undefined;
+
+    // Determine if we're using isolated installs
+    // Mirrors the logic in install_with_manager.zig
+    const using_isolated_installs = switch (manager.options.node_linker) {
+        .hoisted => false,
+        .isolated => true,
+        .auto => manager.lockfile.workspace_paths.count() > 0,
+    };
+
     var iterator = Lockfile.Tree.Iterator(.node_modules).init(manager.lockfile);
     var resolution_buf: [1024]u8 = undefined;
 
@@ -665,7 +674,15 @@ pub fn preparePatch(manager: *PackageManager) !void {
         .name_and_version => brk: {
             const pkg_maybe_version_to_patch = argument;
             const name, const version = Dependency.splitNameAndMaybeVersion(pkg_maybe_version_to_patch);
-            const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
+
+            const pkg_id: PackageID, const module_folder_: []const u8 = if (using_isolated_installs) isolated: {
+                const info = try pkgInfoForNameAndVersionIsolated(manager.lockfile, pkg_maybe_version_to_patch, name, version, manager.allocator);
+                break :isolated .{ info.pkg_id, info.relative_path };
+            } else hoisted: {
+                const pkg_id_val, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
+                const folder_path = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
+                break :hoisted .{ pkg_id_val, folder_path };
+            };
 
             const pkg = manager.lockfile.packages.get(pkg_id);
             const pkg_name = pkg.name.slice(strbuf);
@@ -692,7 +709,6 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const cache_dir = cache_result.cache_dir;
             const cache_dir_subpath = cache_result.cache_dir_subpath;
 
-            const module_folder_ = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
             const buf = if (comptime bun.Environment.isWindows) bun.path.pathToPosixBuf(u8, module_folder_, win_normalizer[0..]) else module_folder_;
 
             break :brk .{
@@ -724,6 +740,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
         Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
         Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
     }
+    Output.flush();
 
     return;
 }
@@ -809,7 +826,162 @@ fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modu
     return null;
 }
 
+/// Find a package in the isolated install structure (.bun directory)
+/// Returns a path like "node_modules/.bun/name@version/node_modules/name"
+/// or for scoped packages: "node_modules/.bun/@scope+name@version/node_modules/@scope/name"
+fn findPackageInIsolatedStore(
+    lockfile: *Lockfile,
+    pkg_id: PackageID,
+    pkg_name: []const u8,
+    allocator: std.mem.Allocator,
+) ?[]const u8 {
+    const strbuf = lockfile.buffers.string_bytes.items;
+    const pkg = lockfile.packages.get(pkg_id);
+
+    // For scoped packages like @types/ws, the store path uses @types+ws
+    // For regular packages like is-even, just use is-even
+    var store_name_buf: bun.PathBuffer = undefined;
+    const store_name = if (std.mem.indexOfScalar(u8, pkg_name, '/')) |slash_idx|
+        std.fmt.bufPrint(&store_name_buf, "{s}+{s}", .{ pkg_name[0..slash_idx], pkg_name[slash_idx + 1 ..] }) catch return null
+    else
+        pkg_name;
+
+    // Format the store path like: name@version or @scope+name@version
+    var store_path_buf: bun.PathBuffer = undefined;
+    const store_path = std.fmt.bufPrint(&store_path_buf, "{s}@{}", .{
+        store_name,
+        pkg.resolution.fmt(strbuf, .posix),
+    }) catch return null;
+
+    // The actual path in isolated installs is:
+    // node_modules/.bun/{store_path}/node_modules/{name}
+    const full_path = bun.path.join(&[_][]const u8{ "node_modules", ".bun", store_path, "node_modules", pkg_name }, .auto);
+
+    // Check if this path exists
+    var path_buf: bun.PathBuffer = undefined;
+    @memcpy(path_buf[0..full_path.len], full_path);
+    path_buf[full_path.len] = 0;
+    const path_z = path_buf[0..full_path.len :0];
+
+    const result = bun.sys.exists(path_z);
+    if (result) {
+        return allocator.dupe(u8, full_path) catch return null;
+    }
+
+    return null;
+}
+
+/// Search for a package in isolated store by checking all possible locations
+/// This handles cases where the package might be in a workspace's node_modules
+fn searchIsolatedStore(
+    lockfile: *Lockfile,
+    pkg_id: PackageID,
+    pkg_name: []const u8,
+    allocator: std.mem.Allocator,
+) ?[]const u8 {
+    // Try the root level isolated install location
+    return findPackageInIsolatedStore(lockfile, pkg_id, pkg_name, allocator);
+}
+
 const IdPair = struct { DependencyID, PackageID };
+
+/// Result for isolated install package lookup
+const IsolatedPackageInfo = struct {
+    pkg_id: PackageID,
+    relative_path: []const u8,
+};
+
+/// Find package info for isolated installs
+fn pkgInfoForNameAndVersionIsolated(
+    lockfile: *Lockfile,
+    pkg_maybe_version_to_patch: []const u8,
+    name: []const u8,
+    version: ?[]const u8,
+    allocator: std.mem.Allocator,
+) !IsolatedPackageInfo {
+    var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
+    var pairs = bun.handleOom(std.ArrayList(IdPair).initCapacity(sfb.get(), 8));
+    defer pairs.deinit();
+
+    const name_hash = String.Builder.stringHash(name);
+    const strbuf = lockfile.buffers.string_bytes.items;
+    var buf: [1024]u8 = undefined;
+    const dependencies = lockfile.buffers.dependencies.items;
+
+    // Find all matching packages in dependencies
+    for (dependencies, 0..) |dep, dep_id| {
+        if (dep.name_hash != name_hash) continue;
+        const pkg_id = lockfile.buffers.resolutions.items[dep_id];
+        if (pkg_id == invalid_package_id) continue;
+        const pkg = lockfile.packages.get(pkg_id);
+        if (version) |v| {
+            const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
+            if (std.mem.eql(u8, label, v)) {
+                bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
+            }
+        } else {
+            bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
+        }
+    }
+
+    if (pairs.items.len == 0) {
+        Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
+        Output.flush();
+        Global.crash();
+    }
+
+    // For isolated installs, we need to search the filesystem for the package
+    // Try each package ID until we find one that exists
+    for (pairs.items) |pair| {
+        const pkg_id = pair[1];
+        if (searchIsolatedStore(lockfile, pkg_id, name, allocator)) |path| {
+            return .{
+                .pkg_id = pkg_id,
+                .relative_path = path,
+            };
+        }
+    }
+
+    // If we still haven't found it, report multiple versions if applicable
+    if (version == null and pairs.items.len > 1) {
+        // Check if all pairs point to the same package
+        const first_pkg_id = pairs.items[0][1];
+        var all_same = true;
+        for (pairs.items) |pair| {
+            if (pair[1] != first_pkg_id) {
+                all_same = false;
+                break;
+            }
+        }
+
+        if (!all_same) {
+            Output.prettyErrorln(
+                "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
+                .{name},
+            );
+            var i: usize = 0;
+            var seen = std.AutoHashMap(PackageID, void).init(allocator);
+            defer seen.deinit();
+
+            while (i < pairs.items.len) : (i += 1) {
+                const pkgid = pairs.items[i][1];
+                if (pkgid == invalid_package_id) continue;
+                if (seen.contains(pkgid)) continue;
+                seen.put(pkgid, {}) catch {};
+
+                const pkg = lockfile.packages.get(pkgid);
+                Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+            }
+            Global.crash();
+        }
+    }
+
+    Output.prettyError(
+        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+        .{pkg_maybe_version_to_patch},
+    );
+    Global.crash();
+}
 
 fn pkgInfoForNameAndVersion(
     lockfile: *Lockfile,
@@ -846,6 +1018,7 @@ fn pkgInfoForNameAndVersion(
 
     if (pairs.items.len == 0) {
         Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
+        Output.flush();
         Global.crash();
         return;
     }

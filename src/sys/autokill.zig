@@ -33,8 +33,10 @@ pub fn killAllChildProcesses() void {
         }
     }
 
-    // Brief delay to allow processes to handle SIGTERM (500 microseconds)
-    std.time.sleep(500 * std.time.ns_per_us);
+    // Brief delay to allow processes to handle SIGTERM
+    // Use longer delay on musl due to slower syscalls and /proc inconsistencies
+    const delay_us = if (Environment.isMusl) 2000 else 500;
+    std.time.sleep(delay_us * std.time.ns_per_us);
 
     // Pass 2: SIGSTOP to freeze entire tree and minimize reparenting races
     // Get fresh child list in case some exited from SIGTERM
@@ -71,7 +73,8 @@ pub fn killAllChildProcesses() void {
 
 fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
     if (Environment.isLinux) {
-        // Try /proc/{pid}/task/{tid}/children first (most efficient)
+        // Try /proc/{pid}/task/{tid}/children first (most efficient, requires kernel 3.5+)
+        // If it fails for any reason (older kernel, musl quirks, etc), fall back to /proc scanning
         const children_path = std.fmt.allocPrint(
             bun.default_allocator,
             "/proc/{d}/task/{d}/children",
@@ -83,7 +86,8 @@ fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
         defer bun.default_allocator.free(children_path);
 
         const file = std.fs.openFileAbsolute(children_path, .{}) catch {
-            // Fallback to scanning /proc (older kernels)
+            // File doesn't exist (older kernel or /proc not mounted properly)
+            // Fall back to scanning /proc
             return getChildPidsFallback(parent, current_pid);
         };
         defer file.close();
@@ -101,6 +105,8 @@ fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
             list.append(pid) catch continue;
         }
 
+        // If we successfully read the file but it gave us no children,
+        // trust that result - don't fall back
         return list.toOwnedSlice();
     } else if (Environment.isMac) {
         // Use proc_listpids with PROC_PPID_ONLY

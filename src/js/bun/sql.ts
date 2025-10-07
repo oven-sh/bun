@@ -1647,23 +1647,9 @@ const SQL: typeof Bun.SQL = function SQL(
           options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
             ? Number((options as any).maxChunkSize)
             : __fromDefaults__.maxChunkSize | 0;
-        console.debug(
-          "[Postgres COPY FROM] string payload length:",
-          payload.length,
-          "maxChunkSize:",
-          maxChunkSize,
-          "maxBytes:",
-          maxBytes,
-        );
+
         if (payload.length <= maxChunkSize) {
           if (maxBytes && bytesSent + payload.length > maxBytes) {
-            console.debug(
-              "[Postgres COPY FROM] aborting: maxBytes exceeded (bytesSent:",
-              bytesSent + payload.length,
-              "limit:",
-              maxBytes,
-              ")",
-            );
             throw new Error("copyFrom: maxBytes exceeded");
           }
           (reserved as any).copySendData(payload);
@@ -1674,13 +1660,6 @@ const SQL: typeof Bun.SQL = function SQL(
           for (let i = 0; i < payload.length; i += maxChunkSize) {
             const part = payload.slice(i, i + maxChunkSize);
             if (maxBytes && bytesSent + part.length > maxBytes) {
-              console.debug(
-                "[Postgres COPY FROM] aborting: maxBytes exceeded (bytesSent:",
-                bytesSent + part.length,
-                "limit:",
-                maxBytes,
-                ")",
-              );
               throw new Error("copyFrom: maxBytes exceeded");
             }
             (reserved as any).copySendData(part);
@@ -1781,23 +1760,9 @@ const SQL: typeof Bun.SQL = function SQL(
               options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
                 ? Number((options as any).maxChunkSize)
                 : __fromDefaults__.maxChunkSize | 0;
-            console.debug(
-              "[Postgres COPY FROM] raw bytes chunk length:",
-              src.byteLength,
-              "maxChunkSize:",
-              maxChunkSize,
-              "maxBytes:",
-              maxBytes,
-            );
+
             if (src.byteLength <= maxChunkSize) {
               if (maxBytes && bytesSent + src.byteLength > maxBytes) {
-                console.debug(
-                  "[Postgres COPY FROM] aborting: maxBytes exceeded (bytesSent:",
-                  bytesSent + src.byteLength,
-                  "limit:",
-                  maxBytes,
-                  ")",
-                );
                 throw new Error("copyFrom: maxBytes exceeded");
               }
               (reserved as any).copySendData(src);
@@ -1808,13 +1773,6 @@ const SQL: typeof Bun.SQL = function SQL(
               for (let i = 0; i < src.byteLength; i += maxChunkSize) {
                 const part = src.subarray(i, Math.min(src.byteLength, i + maxChunkSize));
                 if (maxBytes && bytesSent + part.byteLength > maxBytes) {
-                  console.debug(
-                    "[Postgres COPY FROM] aborting: maxBytes exceeded (bytesSent:",
-                    bytesSent + part.byteLength,
-                    "limit:",
-                    maxBytes,
-                    ")",
-                  );
                   throw new Error("copyFrom: maxBytes exceeded");
                 }
                 (reserved as any).copySendData(part);
@@ -1931,14 +1889,7 @@ const SQL: typeof Bun.SQL = function SQL(
               options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
                 ? Number((options as any).maxChunkSize)
                 : __fromDefaults__.maxChunkSize | 0;
-            console.debug(
-              "[Postgres COPY FROM] sync iterable raw bytes chunk length:",
-              src.byteLength,
-              "maxChunkSize:",
-              maxChunkSize,
-              "maxBytes:",
-              maxBytes,
-            );
+
             const sendAwaitWritable = async () => {
               if (typeof (reserved as any).awaitWritable === "function") {
                 await new Promise<void>(resolve => {
@@ -2257,13 +2208,6 @@ const SQL: typeof Bun.SQL = function SQL(
                     ? Number((queryOrOptions as any).maxBytes)
                     : __toDefaults__.maxBytes | 0;
               if (toMax > 0 && bytesReceived > toMax) {
-                console.debug(
-                  "[Postgres COPY TO] aborting: maxBytes exceeded (bytesReceived:",
-                  bytesReceived,
-                  "limit:",
-                  toMax,
-                  ")",
-                );
                 rejectErr = new Error("copyTo: maxBytes exceeded");
                 done = true;
               }
@@ -2296,14 +2240,7 @@ const SQL: typeof Bun.SQL = function SQL(
                   : (queryOrOptions as any).timeout !== undefined
                     ? Math.max(0, (queryOrOptions as any).timeout | 0)
                     : (__toDefaults__.timeout ?? 0);
-              console.debug(
-                "[Postgres COPY TO] streaming mode:",
-                stream,
-                "maxBytes:",
-                __toDefaults__.maxBytes,
-                "timeout:",
-                timeout,
-              );
+
               if (typeof (reserved as any).setCopyTimeout === "function") {
                 try {
                   (reserved as any).setCopyTimeout(timeout);

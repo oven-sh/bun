@@ -843,10 +843,6 @@ class PostgresAdapter
     }>,
   ) {
     if (!newDefaults) return;
-    console.debug("[Postgres] setGlobalCopyDefaults", {
-      from: newDefaults.from ?? null,
-      to: newDefaults.to ?? null,
-    });
     if (newDefaults.from) {
       if (typeof newDefaults.from.maxChunkSize === "number" && newDefaults.from.maxChunkSize > 0) {
         PostgresAdapter.globalCopyDefaults.from.maxChunkSize = Math.floor(newDefaults.from.maxChunkSize);
@@ -869,7 +865,6 @@ class PostgresAdapter
         PostgresAdapter.globalCopyDefaults.to.timeout = Math.floor(newDefaults.to.timeout);
       }
     }
-    console.debug("[Postgres] setGlobalCopyDefaults: applied", PostgresAdapter.globalCopyDefaults);
   }
 
   // Instance getter to read current defaults (for sql.ts to merge with per-call options)
@@ -885,7 +880,6 @@ class PostgresAdapter
     }>,
   ) {
     if (!newDefaults) return;
-    console.debug("[Postgres] setCopyDefaults (before)", this.copyDefaults);
     if (newDefaults.from) {
       if (typeof newDefaults.from.maxChunkSize === "number" && newDefaults.from.maxChunkSize > 0) {
         this.copyDefaults.from.maxChunkSize = Math.floor(newDefaults.from.maxChunkSize);
@@ -908,7 +902,6 @@ class PostgresAdapter
         this.copyDefaults.to.timeout = Math.floor(newDefaults.to.timeout);
       }
     }
-    console.debug("[Postgres] setCopyDefaults (after)", this.copyDefaults);
   }
 
   // Reserved connection helper to set adapter-level defaults
@@ -919,10 +912,6 @@ class PostgresAdapter
       to: Partial<{ stream: boolean; maxBytes: number }>;
     }>,
   ) {
-    console.debug("[Postgres] setCopyDefaultsFor (connection)", {
-      hasConnection: !!connection,
-      newDefaults,
-    });
     this.setCopyDefaults(newDefaults);
   }
 

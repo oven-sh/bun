@@ -2,11 +2,11 @@
   "lsp": {
     "zls": {
       "binary": {
-        "path": "/home/gohryt/Documents/github.com/gohryt/bun/vendor/zig/zls"
+        "path": "vendor/zig/zls"
       },
       "settings": {
-        "zig_exe_path": "/home/gohryt/Documents/github.com/gohryt/bun/vendor/zig/zig",
-        "zig_lib_path": "/home/gohryt/Documents/github.com/gohryt/bun/vendor/zig/lib",
+        "zig_exe_path": "vendor/zig/zig",
+        "zig_lib_path": "vendor/zig/lib",
         "build_on_save_args": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"]
       }
     }

@@ -4,7 +4,7 @@ _file_arguments() {
     local extensions="${1}";
     local cur_word="${2}";
     # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
-    local re_escape_sed='[]~$"'"'"'`><()[{}=|*?;&#\]';
+    local re_escape_sed='[]~$"'\''`><()[{}=|*?;&#\]';
 
     # requires "findutils" package
     readarray -t -d '' COMPREPLY < <(
@@ -51,8 +51,8 @@ _read_scripts_in_package_json() {
         local scripts="${matched%\}*}";
         local scripts_rem="${scripts}";
         # escape all bash specials _except_ " (quote) and \ (backslash)
-        # since they ar already escaped in package.json: ]~$'`><()[{}=|*?;&#
-        local re_escape_bash='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]';
+        # since they are already escaped in package.json: ]~$'`><()[{}=|*?;&#
+        local re_escape_bash='[]~$'"\'"'\`><\()[{\}=|*?;&#]';
         while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
             package_json_compreply+=( "${script_name}" );

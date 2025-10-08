@@ -134,6 +134,19 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
+  describe("Value type checks", () => {
+    it("correctly identifies value types with IsMap, IsArray, IsInt32, and IsBigInt", async () => {
+      // Test a representative sample of each type, not every possible value
+      // The C++ test function will be called once with each value
+      await checkSameOutput("test_v8_value_type_checks", [new Map()]);
+      await checkSameOutput("test_v8_value_type_checks", [[]]);
+      await checkSameOutput("test_v8_value_type_checks", [42]);
+      await checkSameOutput("test_v8_value_type_checks", [123n]);
+      await checkSameOutput("test_v8_value_type_checks", [3.14]);
+      await checkSameOutput("test_v8_value_type_checks", ["string"]);
+      await checkSameOutput("test_v8_value_type_checks", [{}]);
+    });
+  });
   describe("Number", () => {
     it("can create small integer", async () => {
       await checkSameOutput("test_v8_number_int", []);

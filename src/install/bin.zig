@@ -608,7 +608,7 @@ pub const Bin = extern struct {
                 const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
                 defer bin_for_reading.close();
 
-                const read = bin_for_reading.read(&shebang_buf).unwrap() catch return;
+                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
                 break :brk shebang_buf[0..read];
             };
 

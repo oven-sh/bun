@@ -645,33 +645,42 @@ pub fn installIsolatedPackages(
                 // existing node_modules and missing node_modules/.bun folder. move and delete all
                 // node_modules to prevent hoisted package pollution
 
-                var abs_node_modules_path_buf: bun.AutoAbsPath = .initTopLevelDir();
-                defer abs_node_modules_path_buf.deinit();
+                var delete_path: bun.AutoRelPath = .init();
+                defer delete_path.deinit();
 
-                abs_node_modules_path_buf.append("node_modules");
+                delete_path.append("node_modules");
 
-                installer.startDeleteTask("node_modules");
+                {
+                    const node_modules = bun.openDirForIterationOSPath(cwd, node_modules_path).unwrap() catch |err| {
+                        Output.err(err, "failed to open './node_modules'", .{});
+                        Global.exit(1);
+                    };
+                    defer node_modules.close();
 
-                var node_modules_path_buf: bun.AutoRelPath = .init();
-                defer node_modules_path_buf.deinit();
+                    var node_modules_iter = bun.DirIterator.iterate(node_modules, .u8);
+                    while (node_modules_iter.next().unwrap() catch |err| {
+                        Output.err(err, "failed to read './node_modules'", .{});
+                        Global.exit(1);
+                    }) |entry| {
+                        if (bun.strings.startsWithChar(entry.name.slice(), '.')) {
+                            continue;
+                        }
 
-                for (lockfile.workspace_paths.values()) |workspace_path| {
-                    node_modules_path_buf.clear();
-                    node_modules_path_buf.append(workspace_path.slice(lockfile.buffers.string_bytes.items));
-                    node_modules_path_buf.append("node_modules");
+                        var delete_path_save = delete_path.save();
+                        defer delete_path_save.restore();
+                        delete_path.append(entry.name.slice());
 
-                    installer.startDeleteTask(node_modules_path_buf.sliceZ());
+                        installer.startDeleteTask(delete_path.sliceZ());
+                    }
                 }
 
-                sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
-                    Output.err(err, "failed to create './node_modules' directory", .{});
-                    Global.exit(1);
-                };
+                for (lockfile.workspace_paths.values()) |workspace_path| {
+                    delete_path.clear();
+                    delete_path.append(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                    delete_path.append("node_modules");
 
-                sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                    Output.err(err, "failed to create './node_modules/.bun' directory", .{});
-                    Global.exit(1);
-                };
+                    installer.startDeleteTask(delete_path.sliceZ());
+                }
 
                 break :is_new_bun_modules true;
             };

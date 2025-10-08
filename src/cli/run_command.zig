@@ -205,7 +205,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, .visible);
 
-    pub fn runPackageScriptForeground(
+    pub fn runPackageScriptOnce(
         ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
@@ -215,7 +215,7 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
         use_system_shell: bool,
-    ) !void {
+    ) !u32 {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
         env.map.put("npm_lifecycle_event", name) catch unreachable;
         env.map.put("npm_lifecycle_script", original_script) catch unreachable;
@@ -252,7 +252,7 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
 
-                Global.exit(1);
+                return 1;
             };
 
             if (code > 0) {
@@ -261,10 +261,10 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exit(code);
+                return code;
             }
 
-            return;
+            return 0;
         }
 
         const argv = [_]string{
@@ -302,7 +302,7 @@ pub const RunCommand = struct {
             }
 
             Output.flush();
-            return;
+            return 1;
         })) {
             .err => |err| {
                 if (!silent) {
@@ -310,7 +310,7 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return;
+                return 1;
             },
             .result => |result| result,
         };
@@ -334,7 +334,7 @@ pub const RunCommand = struct {
                         Output.flush();
                     }
 
-                    Global.exit(exit_code.code);
+                    return exit_code.code;
                 }
             },
 
@@ -357,13 +357,64 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return;
+                return 1;
             },
 
             else => {},
         }
 
-        return;
+        return 0;
+    }
+
+    // Package script runner with restart support
+    pub fn runPackageScriptForeground(
+        ctx: Command.Context,
+        allocator: std.mem.Allocator,
+        original_script: string,
+        name: string,
+        cwd: string,
+        env: *DotEnv.Loader,
+        passthrough: []const string,
+        silent: bool,
+        use_system_shell: bool,
+    ) !void {
+        const restart_policy = ctx.runtime_options.restart_policy;
+
+        // If no restart policy, run once
+        if (restart_policy == .no) {
+            const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
+            if (exit_code != 0) {
+                Global.exit(exit_code);
+            }
+            return;
+        }
+
+        // Restart logic - follow Docker model (no hardcoded limits)
+        var restart_count: u32 = 0;
+
+        while (true) {
+            const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
+
+            const should_restart = switch (restart_policy) {
+                .no => false,
+                .on_failure => exit_code != 0,
+                .always => true,
+                .unless_stopped => exit_code != 0,
+            };
+
+            if (!should_restart) {
+                if (exit_code != 0) {
+                    Global.exit(exit_code);
+                }
+                return;
+            }
+
+            restart_count += 1;
+
+            if (!silent) {
+                Output.prettyln("<d>Restarting script '{s}' (attempt {d})...<r>", .{ name, restart_count + 1 });
+            }
+        }
     }
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
@@ -1238,6 +1289,152 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    fn _bootWithRestart(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        const restart_policy = ctx.runtime_options.restart_policy;
+
+        // If no restart policy, run once directly using in-process execution
+        if (restart_policy == .no) {
+            return _bootAndHandleError(ctx, path, loader);
+        }
+
+        // With restart policy, spawn as subprocess to enable clean restarts
+        // This differs from package.json script restarts which run in-process.
+        var restart_count: u32 = 0;
+
+        while (true) {
+            const exit_code = _runFileAsSubprocess(ctx, path) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(path),
+                    @errorName(err),
+                });
+                Global.exit(1);
+            };
+
+            // Note: `unless_stopped` behaves like `on_failure` in CLI context.
+            // In a container orchestrator, "unless-stopped" would persist across restarts,
+            // but in CLI we treat it the same as on-failure for simplicity.
+            const should_restart = switch (restart_policy) {
+                .no => false,
+                .on_failure => exit_code != 0,
+                .always => true,
+                .unless_stopped => exit_code != 0,
+            };
+
+            if (!should_restart) {
+                if (exit_code != 0) {
+                    Global.exit(exit_code);
+                }
+                return true;
+            }
+
+            restart_count += 1;
+            Output.prettyln("<d>Restarting (attempt {d})...<r>", .{restart_count + 1});
+            Output.flush();
+
+            // Add throttling after 5 restarts to prevent tight restart loops
+            if (restart_count >= 5) {
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
+        }
+    }
+
+    /// Spawns a subprocess to run a file, enabling clean restarts.
+    /// The parent process handles the restart loop; the subprocess runs without --restart.
+    /// This differs from package.json scripts which use Global.exit for in-process restarts.
+    fn _runFileAsSubprocess(ctx: Command.Context, path: string) !u8 {
+        var arena = bun.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+
+        // Build command: bun <path> [args...]
+        // IMPORTANT: We don't pass --restart flag to the subprocess to avoid infinite recursion.
+        // The parent process (this function's caller) handles the restart logic.
+        var cmd_args = std.ArrayList([]const u8).init(allocator);
+        const bun_exe = bun.selfExePath() catch return error.FailedToGetSelfExe;
+        try cmd_args.append(bun_exe);
+        try cmd_args.append(path);
+
+        // Add any additional positional args (skip the first one which is the path)
+        // Also skip --restart flag to avoid infinite recursion
+        if (ctx.positionals.len > 1) {
+            var skip_next = false;
+            for (ctx.positionals[1..]) |arg| {
+                if (skip_next) {
+                    skip_next = false;
+                    continue;
+                }
+                // Skip --restart and its value
+                if (strings.hasPrefixComptime(arg, "--restart=")) continue;
+                if (strings.eqlComptime(arg, "--restart")) {
+                    skip_next = true;
+                    continue;
+                }
+                try cmd_args.append(arg);
+            }
+        }
+
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = cmd_args.items,
+            .argv0 = null,
+            .envp = null, // Inherit parent environment
+            .cwd = ctx.args.absolute_working_dir orelse "",
+            .stderr = .buffer,
+            .stdout = .buffer,
+            .stdin = .ignore,
+            .windows = if (Environment.isWindows) .{
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(null, null)),
+            },
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to spawn process: {s}", .{@errorName(err)});
+            return err;
+        })) {
+            .result => |r| r,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to spawn: {}", .{err});
+                return error.SpawnError;
+            },
+        };
+
+        // Print buffered output
+        if (spawn_result.stdout.items.len > 0) {
+            _ = Output.writer().write(spawn_result.stdout.items) catch {};
+        }
+        if (spawn_result.stderr.items.len > 0) {
+            _ = Output.errorWriter().write(spawn_result.stderr.items) catch {};
+        }
+        Output.flush();
+
+        switch (spawn_result.status) {
+            .exited => |exit_info| {
+                if (exit_info.signal.valid() and exit_info.signal != .SIGINT) {
+                    Output.prettyErrorln("<r><red>error<r>: Process terminated by signal {}<r>", .{exit_info.signal.fmt(Output.enable_ansi_colors_stderr)});
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+                    Global.raiseIgnoringPanicHandler(exit_info.signal);
+                }
+                return exit_info.code;
+            },
+            .signaled => |signal| {
+                if (signal.valid() and signal != .SIGINT) {
+                    Output.prettyErrorln("<r><red>error<r>: Process terminated by signal {}<r>", .{signal.fmt(Output.enable_ansi_colors_stderr)});
+                }
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+                Global.raiseIgnoringPanicHandler(signal);
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run process: {}", .{err});
+                return error.SpawnError;
+            },
+            else => {
+                Output.prettyErrorln("<r><red>error<r>: Unexpected process status", .{});
+                return error.UnexpectedStatus;
+            },
+        }
+    }
+
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
         Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
@@ -1324,7 +1521,7 @@ pub const RunCommand = struct {
             bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
-        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
+        _ = _bootWithRestart(ctx, absolute_script_path.?, null);
         return true;
     }
     pub fn exec(
@@ -1528,7 +1725,7 @@ pub const RunCommand = struct {
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
             if (loader.canBeRunByBun() or loader == .html) {
                 log("Resolved to: `{s}`", .{path.text});
-                return _bootAndHandleError(ctx, path.text, loader);
+                return _bootWithRestart(ctx, path.text, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
             }
@@ -1536,7 +1733,7 @@ pub const RunCommand = struct {
             // Support globs for HTML entry points.
             if (strings.hasSuffixComptime(target_name, ".html")) {
                 if (strings.containsChar(target_name, '*')) {
-                    return _bootAndHandleError(ctx, target_name, .html);
+                    return _bootWithRestart(ctx, target_name, .html);
                 }
             }
         }

@@ -930,6 +930,7 @@ pub const CommandLineReporter = struct {
                 if (this.summary().fail == this.jest.bail) {
                     this.printSummary();
                     Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
+                    Output.flush();
                     Global.exit(1);
                 }
             },

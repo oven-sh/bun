@@ -643,9 +643,9 @@ pub const Bin = extern struct {
             };
             defer bun.default_allocator.free(original_contents);
 
-            // Get original file permissions to preserve them
+            // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
             const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
-            const original_mode = @as(bun.Mode, @intCast(original_stat.mode & 0o777));
+            const original_mode = @as(bun.Mode, @intCast(original_stat.mode));
 
             // Create temporary file path
             var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

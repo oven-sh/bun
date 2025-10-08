@@ -17,11 +17,18 @@ pub const URL = opaque {
     extern fn URL__getHrefJoin(*String, *String) String;
     extern fn URL__pathFromFileURL(*String) String;
     extern fn URL__hash(*URL) String;
+    extern fn URL__fragmentIdentifier(*URL) String;
 
     /// Includes the leading '#'.
     pub fn hash(url: *URL) String {
         jsc.markBinding(@src());
         return URL__hash(url);
+    }
+
+    /// Exactly the same as hash, excluding the leading '#'.
+    pub fn fragmentIdentifier(url: *URL) String {
+        jsc.markBinding(@src());
+        return URL__fragmentIdentifier(url);
     }
 
     pub fn hrefFromString(str: bun.String) String {

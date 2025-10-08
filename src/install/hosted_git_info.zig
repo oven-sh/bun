@@ -6,11 +6,50 @@
 //!
 //! One thing that's really notable is that hosted-git-info supports extensions and we currently
 //! offer no support for extensions. This could be added in the future if necessary.
+//!
+//! # Core Concepts
+//!
+//! The goal of this library is to transform a Git URL or a "shortcut" (which is a shorthand for a
+//! longer URL) into a structured representation of the relevant Git repository.
+//!
+//! ## Shortcuts
+//!
+//! A shortcut is a shorthand for a longer URL. For example, `github:user/repo` is a shortcut which
+//! resolves to a full Github URL. `gitlab:user/repo` is another example of a shortcut.
+//!
+//! # Types
+//!
+//! This library revolves around a couple core types which are briefly described here.
+//!
+//! ## `HostedGitInfo`
+//!
+//! This is the main API point of this library. It encapsulates information about a Git repository.
+//! To parse URLs into this structure, use the `fromUrl` member function.
+//!
+//! ## `HostProvider`
+//!
+//! This enumeration defines all the known Git host providers. Each provider has slightly different
+//! properties which need to be accounted for. Further details are provided in its documentation.
+//!
+//! ## `UrlProtocol`
+//!
+//! This is a type that encapsulates the different types of protocols that a URL may have. This
+//! includes three different cases:
+//!
+//!   - `well_defined`: A protocol which is directly supported by this library.
+//!   - `custom`: A protocol which is not known by this library, but is specified in the URL.
+//!               TODO(markovejnovic): How is this handled?
+//!   - `unknown`: A protocol which is not specified in the URL.
+//!
+//! ## `WellDefinedProtocol`
+//!
+//! This type represents the set of known protocols by this library. Each protocol has slightly
+//! different properties which need to be accounted for.
+//!
+//! It's noteworthy that `WellDefinedProtocol` doesn't refer to "true" protocols, but includes fake
+//! tags like `github:` which are handled as "shortcuts" by this library.
 
-// TODO(markovejnovic): This is a fraction of what hosted-git-info actually delivers, but it's the
-// fraction that matters for us. If we want to make this API public, we will likely need to expose
-// more information.
-pub const DefaultRepresentation = enum {
+const Representation = enum {
     shortcut,
     sshurl,
     ssh,
@@ -20,233 +59,186 @@ pub const DefaultRepresentation = enum {
 };
 
 pub const HostedGitInfo = struct {
-    // TODO(markovejnovic): We will likely start to care about a lot of these fields lol.
-    //
-    // The original JS object has a lot more fields, but we mostly don't care about them.
-    // Here is an example of the full object for the URL.
-    //   href: "ssh://:password@bitbucket.org/foo/bar.git",
-    //   origin: "null",
-    //   protocol: "ssh:",
-    //   username: "",
-    //   password: "password",
-    //   host: "bitbucket.org",
-    //   hostname: "bitbucket.org",
-    //   port: "",
-    //   pathname: "/foo/bar.git",
-    //   hash: "",
-    //   search: "",
-    //   searchParams: URLSearchParams {},
-    type: []const u8,
-    domain: []const u8,
+    const Self = @This();
+
     committish: ?[]const u8,
     project: []const u8,
     user: ?[]const u8,
-    default_representation: DefaultRepresentation,
+    host_provider: HostProvider,
+    default_representation: Representation,
+
+    _memory_buffer: []const u8,
     _allocator: std.mem.Allocator,
 
-    /// Clean up owned memory
-    pub fn deinit(self: HostedGitInfo) void {
-        if (self.user) |u| self._allocator.free(u);
-        if (self.committish) |c| self._allocator.free(c);
-        self._allocator.free(self.project);
-    }
+    fn copyFrom(
+        committish: ?[]const u8,
+        project: []const u8,
+        user: ?[]const u8,
+        host_provider: HostProvider,
+        default_representation: Representation,
+        allocator: std.mem.Allocator,
+    ) !Self {
+        var sb = bun.StringBuilder{};
 
-    /// Generate an SSH URL (sshtemplate): git@{domain}:{user}/{project}.git#{committish}
-    /// Note: gist URLs omit the user: git@{domain}:{project}.git#{committish}
-    pub fn ssh(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
+        if (user) |u| sb.count(u);
+        sb.count(project);
+        if (committish) |c| sb.count(c);
 
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
+        sb.allocate(allocator) catch return error.OutOfMemory;
 
-    /// Generate an SSH URL (sshurltemplate): git+ssh://git@{domain}/{user}/{project}.git#{committish}
-    /// Note: gist URLs omit the user: git+ssh://git@{domain}/{project}.git#{committish}
-    pub fn sshurl(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
+        const user_part = if (user) |u| sb.append(u) else null;
+        const project_part = sb.append(project);
+        const committish_part = if (committish) |c| sb.append(c) else null;
+        const owned_buffer = sb.allocatedSlice();
 
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate an HTTPS URL (httpstemplate): git+https://{domain}/{user}/{project}.git#{committish}
-    pub fn https(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a Git URL (gittemplate): git://{domain}/{user}/{project}.git#{committish}
-    pub fn git(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a shortcut URL (shortcuttemplate): {type}:{user}/{project}#{committish}
-    /// Example: github:user/project#v1.0.0
-    /// Note: gist URLs omit the user: gist:{project}#{committish}
-    pub fn shortcut(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}#{s}",
-                    .{ self.type, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}",
-                    .{ self.type, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}/{s}#{s}",
-                    .{ self.type, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}/{s}",
-                    .{ self.type, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a URL string based on the default representation
-    /// Mimics hosted-git-info's toString() method
-    pub fn toString(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        return switch (self.default_representation) {
-            .shortcut => try self.shortcut(allocator),
-            .sshurl => try self.sshurl(allocator),
-            .ssh => try self.ssh(allocator),
-            .https => try self.https(allocator),
-            .git => try self.git(allocator),
-            // http doesn't have a template, falls back to sshurl
-            .http => try self.sshurl(allocator),
+        return .{
+            .committish = committish_part,
+            .project = project_part,
+            .user = user_part,
+            .host_provider = host_provider,
+            .default_representation = default_representation,
+            ._memory_buffer = owned_buffer,
+            ._allocator = allocator,
         };
+    }
+
+    /// Initialize a HostedGitInfo from an Extracted structure.
+    /// Takes ownership of the Extracted structure.
+    fn moveFromExtracted(
+        extracted: *HostProvider.Config.Formatters.Extract.Result,
+        host_provider: HostProvider,
+        default_representation: Representation,
+    ) Self {
+        var self: Self = .{
+            .committish = extracted.committish,
+            .project = extracted.project,
+            .user = extracted.user,
+            .host_provider = host_provider,
+            .default_representation = default_representation,
+            ._memory_buffer = undefined,
+            ._allocator = undefined,
+        };
+
+        const moved = extracted.move();
+        self._memory_buffer = moved.buffer;
+        self._allocator = moved.allocator;
+
+        return self;
+    }
+
+    /// Clean up owned memory
+    pub fn deinit(self: *const Self) void {
+        self._allocator.free(self._memory_buffer);
+    }
+
+    /// Generate a URL string based on the default representation.
+    /// Mimics hosted-git-info's toString() method
+    pub fn toString(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
+        _ = self;
+        _ = allocator;
+        @panic("Not Implemented");
+    }
+
+    pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?Self {
+        // git_url_mut may carry two ownership semantics:
+        //  - It aliases `git_url`, in which case it must not be freed.
+        //  - It actually points to a new allocation, in which case it must be freed.
+        var git_url_mut = git_url;
+        defer if (git_url.ptr != git_url_mut.ptr) allocator.free(git_url_mut);
+
+        if (isGithubShorthand(git_url)) {
+            // In this case we have to prefix the url with `github:`.
+            //
+            // NOTE(markovejnovic): I don't exactly understand why this is treated specially.
+            //
+            // TODO(markovejnovic): Perhaps we can avoid this allocation...
+            // This one seems quite easy to get rid of.
+            git_url_mut = bun.handleOom(bun.strings.concat(allocator, &.{ "github:", git_url }));
+        }
+
+        // Extract committish from the original string before URL parsing to avoid encoding issues
+        const raw_committish: ?[]const u8 =
+            if (bun.strings.indexOfChar(git_url_mut, '#')) |hash_idx|
+                if (hash_idx + 1 < git_url_mut.len)
+                    git_url_mut[hash_idx + 1 ..]
+                else
+                    null
+            else
+                null;
+
+        const parsed = parseUrl(allocator, git_url_mut) catch |err| {
+            debug("fromUrl: parseUrl failed: {any}\n", .{err});
+            return null;
+        };
+        defer parsed.url.deinit();
+
+        // Check if this is a shortcut (e.g., github:user/repo)
+        const is_shortcut = if (parsed.proto == .well_formed)
+            parsed.proto.well_formed.isShortcut()
+        else
+            false;
+
+        const host_provider = switch (parsed.proto) {
+            .well_formed => |p| p.hostProvider() orelse HostProvider.fromUrlDomain(parsed.url),
+            .unknown => HostProvider.fromUrlDomain(parsed.url),
+            .custom => HostProvider.fromUrl(parsed.url),
+        } orelse return null;
+
+        if (is_shortcut) {
+            // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
+            const pathname_str = parsed.url.pathname();
+            defer pathname_str.deref();
+            const pathname_utf8 = pathname_str.toUTF8(allocator);
+            defer pathname_utf8.deinit();
+            var pathname = pathname_utf8.slice();
+
+            // Strip leading / (from-url.js line 69)
+            pathname = bun.strings.trimPrefixComptime(u8, pathname, "/");
+
+            // Strip auth (from-url.js line 70-74)
+            if (bun.strings.indexOfChar(pathname, '@')) |first_at| {
+                pathname = pathname[first_at + 1 ..];
+            }
+
+            // Extract user and project from pathname (from-url.js line 76-86)
+            var user_part: ?[]const u8 = null;
+            var project_part: []const u8 = undefined;
+            if (bun.strings.lastIndexOfChar(pathname, '/')) |last_slash| {
+                const user_str = pathname[0..last_slash];
+                // We want nulls only, never empty strings (from-url.js line 79-82)
+                if (user_str.len > 0) {
+                    user_part = user_str;
+                }
+                project_part = pathname[last_slash + 1 ..];
+            } else {
+                project_part = pathname;
+            }
+
+            // Strip .git suffix (from-url.js line 88-90)
+            const project_trimmed = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+            return try HostedGitInfo.copyFrom(
+                raw_committish,
+                project_trimmed,
+                user_part,
+                host_provider,
+                .shortcut, // Shortcuts always use shortcut representation
+                allocator,
+            );
+        } else {
+            // Determine default representation from the parsed protocol
+            const default_repr = switch (parsed.proto) {
+                .well_formed => |p| p.defaultRepresentation(),
+                else => .sshurl, // Unknown/custom protocols default to sshurl
+            };
+
+            // Use host-specific extract logic
+            var extracted = host_provider.extract(allocator, parsed.url) orelse return null;
+
+            // TODO(markovejnovic): This won't really work as-is, because extracted contains
+            // URL-encoded strings. We need to decode them first, but that's a problem for later.
+            return HostedGitInfo.moveFromExtracted(&extracted, host_provider, default_repr);
+        }
     }
 };
 
@@ -255,7 +247,10 @@ pub const HostedGitInfo = struct {
 /// May error with `error.InvalidGitUrl` if the URL is not valid.
 ///
 /// Note that this may or may not allocate but it manages its own memory.
-pub fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) !*jsc.URL {
+fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) !struct {
+    url: *jsc.URL,
+    proto: UrlProtocol,
+} {
     // Certain users can provide values like user:password@github.com:foo/bar and we want to
     // "correct" the protocol to be git+ssh://user:password@github.com:foo/bar
     const proto_pair = normalizeProtocol(npa_str);
@@ -263,643 +258,22 @@ pub fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) !*jsc.URL {
     // TODO(markovejnovic): We might be able to avoid this allocation if we rework how jsc.URL
     //                      accepts strings.
     const maybe_url = proto_pair.toUrl(allocator);
-    if (maybe_url) |url| return url;
+    if (maybe_url) |url| return .{ .url = url, .proto = proto_pair.protocol };
 
     // Now that may fail, if the URL is not nicely formatted. In that case, we try to correct the
     // URL and parse it.
     const corrected = correctUrlMut(proto_pair);
     const corrected_url = corrected.toUrl(allocator);
-    if (corrected_url) |url| return url;
+    if (corrected_url) |url| return .{ .url = url, .proto = corrected.protocol };
 
     // Otherwise, we complain.
     return error.InvalidGitUrl;
 }
 
-/// Result type for host-specific extract functions
-const ExtractResult = struct {
-    user: ?[]const u8,
-    project: []const u8,
-    committish: ?[]const u8,
-};
+/// Enumeration of possible URL protocols.
+const WellDefinedProtocol = enum {
+    const Self = @This();
 
-/// Extract user, project, and committish from a URL using host-specific logic
-/// Mirrors the extract() functions in hosted-git-info/lib/hosts.js
-///
-/// TODO(markovejnovic): This method is implemented by Claude and kind of sucks. What we should do
-/// is move each of these extract* methods into the respective structs in getHostInfo.
-fn extractFromUrl(allocator: std.mem.Allocator, url: *jsc.URL, host_type: []const u8) ?ExtractResult {
-    if (std.mem.eql(u8, host_type, "github")) {
-        return extractGitHub(allocator, url);
-    } else if (std.mem.eql(u8, host_type, "bitbucket")) {
-        return extractBitbucket(allocator, url);
-    } else if (std.mem.eql(u8, host_type, "gitlab")) {
-        return extractGitLab(allocator, url);
-    } else if (std.mem.eql(u8, host_type, "gist")) {
-        return extractGist(allocator, url);
-    } else if (std.mem.eql(u8, host_type, "sourcehut")) {
-        return extractSourcehut(allocator, url);
-    }
-    return null;
-}
-
-/// GitHub extract: handles /user/project/tree/committish patterns
-/// TODO(markovejnovic): Claude generated this and it kind of sucks.
-fn extractGitHub(allocator: std.mem.Allocator, url: *jsc.URL) ?ExtractResult {
-    const pathname_str = url.pathname();
-    defer pathname_str.deref();
-    const pathname_utf8 = pathname_str.toUTF8(allocator);
-    defer pathname_utf8.deinit();
-    var pathname = pathname_utf8.slice();
-
-    // Strip leading /
-    if (bun.strings.hasPrefixComptime(pathname, "/")) {
-        pathname = pathname[1..];
-    }
-
-    // Split into [user, project, type, committish]
-    var iter = std.mem.splitScalar(u8, pathname, '/');
-    const user_part = iter.next() orelse return null;
-    const project_part = iter.next() orelse return null;
-    const type_part = iter.next();
-    const committish_part = iter.next();
-
-    // Validate: if type exists and is not empty, it must be 'tree'
-    if (type_part) |tp| {
-        if (tp.len > 0 and !std.mem.eql(u8, tp, "tree")) {
-            return null;
-        }
-    }
-
-    // Strip .git from project
-    var project = project_part;
-    if (bun.strings.hasSuffixComptime(project, ".git")) {
-        project = project[0 .. project.len - 4];
-    }
-
-    // Validate user and project are not empty
-    if (user_part.len == 0 or project.len == 0) {
-        return null;
-    }
-
-    const user = allocator.dupe(u8, user_part) catch return null;
-    const project_duped = allocator.dupe(u8, project) catch {
-        allocator.free(user);
-        return null;
-    };
-
-    // Committish: from path if type='tree', otherwise from hash
-    var committish: ?[]const u8 = null;
-    if (type_part != null and type_part.?.len > 0) {
-        // Has /tree/ segment, use committish from path
-        if (committish_part) |cp| {
-            if (cp.len > 0) {
-                committish = allocator.dupe(u8, cp) catch {
-                    allocator.free(user);
-                    allocator.free(project_duped);
-                    return null;
-                };
-            }
-        }
-    } else {
-        // No /tree/ segment, get from hash
-        const hash_str = url.hash();
-        defer hash_str.deref();
-        const hash_utf8 = hash_str.toUTF8(allocator);
-        defer hash_utf8.deinit();
-        const hash_slice = hash_utf8.slice();
-        if (hash_slice.len > 1) {
-            committish = allocator.dupe(u8, hash_slice[1..]) catch {
-                allocator.free(user);
-                allocator.free(project_duped);
-                return null;
-            };
-        }
-    }
-
-    return .{
-        .user = user,
-        .project = project_duped,
-        .committish = committish,
-    };
-}
-
-/// Bitbucket extract: handles /user/project patterns, rejects /user/project/get
-/// TODO(markovejnovic): Claude generated this and it kind of sucks.
-fn extractBitbucket(allocator: std.mem.Allocator, url: *jsc.URL) ?ExtractResult {
-    const pathname_str = url.pathname();
-    defer pathname_str.deref();
-    const pathname_utf8 = pathname_str.toUTF8(allocator);
-    defer pathname_utf8.deinit();
-    var pathname = pathname_utf8.slice();
-
-    // Strip leading /
-    if (bun.strings.hasPrefixComptime(pathname, "/")) {
-        pathname = pathname[1..];
-    }
-
-    // Split into [user, project, aux]
-    var iter = std.mem.splitScalar(u8, pathname, '/');
-    const user_part = iter.next() orelse return null;
-    const project_part = iter.next() orelse return null;
-    const aux = iter.next();
-
-    // Reject if aux is 'get' (tarball URLs)
-    if (aux) |a| {
-        if (std.mem.eql(u8, a, "get")) {
-            return null;
-        }
-    }
-
-    // Strip .git from project
-    var project = project_part;
-    if (bun.strings.hasSuffixComptime(project, ".git")) {
-        project = project[0 .. project.len - 4];
-    }
-
-    // Validate user and project are not empty
-    if (user_part.len == 0 or project.len == 0) {
-        return null;
-    }
-
-    const user = allocator.dupe(u8, user_part) catch return null;
-    const project_duped = allocator.dupe(u8, project) catch {
-        allocator.free(user);
-        return null;
-    };
-
-    // Committish always from hash
-    var committish: ?[]const u8 = null;
-    const hash_str = url.hash();
-    defer hash_str.deref();
-    const hash_utf8 = hash_str.toUTF8(allocator);
-    defer hash_utf8.deinit();
-    const hash_slice = hash_utf8.slice();
-    if (hash_slice.len > 1) {
-        committish = allocator.dupe(u8, hash_slice[1..]) catch {
-            allocator.free(user);
-            allocator.free(project_duped);
-            return null;
-        };
-    }
-
-    return .{
-        .user = user,
-        .project = project_duped,
-        .committish = committish,
-    };
-}
-
-/// GitLab extract: handles nested groups, rejects /-/ and archive.tar.gz URLs
-/// TODO(markovejnovic): Claude generated this and it kind of sucks.
-fn extractGitLab(allocator: std.mem.Allocator, url: *jsc.URL) ?ExtractResult {
-    const pathname_str = url.pathname();
-    defer pathname_str.deref();
-    const pathname_utf8 = pathname_str.toUTF8(allocator);
-    defer pathname_utf8.deinit();
-    var pathname = pathname_utf8.slice();
-
-    // Strip leading /
-    if (bun.strings.hasPrefixComptime(pathname, "/")) {
-        pathname = pathname[1..];
-    }
-
-    // Reject URLs with /-/ or /archive.tar.gz
-    if (bun.strings.contains(pathname, "/-/") or bun.strings.contains(pathname, "/archive.tar.gz")) {
-        return null;
-    }
-
-    // Split all segments - last one is project, rest is user (supports nested groups)
-    var iter = std.mem.splitScalar(u8, pathname, '/');
-    var segments_list = std.ArrayList([]const u8).init(allocator);
-    defer segments_list.deinit();
-
-    while (iter.next()) |segment| {
-        segments_list.append(segment) catch return null;
-    }
-
-    if (segments_list.items.len == 0) {
-        return null;
-    }
-
-    // Get last segment as project
-    const project_part = segments_list.items[segments_list.items.len - 1];
-
-    // Strip .git from project
-    var project = project_part;
-    if (bun.strings.hasSuffixComptime(project, ".git")) {
-        project = project[0 .. project.len - 4];
-    }
-
-    // Join all segments except last as user (supports nested groups like group/subgroup)
-    const user_segments = segments_list.items[0 .. segments_list.items.len - 1];
-    const user_part = bun.strings.join(user_segments, "/", allocator) catch return null;
-    defer allocator.free(user_part);
-
-    // Validate user and project are not empty
-    if (user_part.len == 0 or project.len == 0) {
-        return null;
-    }
-
-    const user = allocator.dupe(u8, user_part) catch return null;
-    const project_duped = allocator.dupe(u8, project) catch {
-        allocator.free(user);
-        return null;
-    };
-
-    // Committish always from hash
-    var committish: ?[]const u8 = null;
-    const hash_str = url.hash();
-    defer hash_str.deref();
-    const hash_utf8 = hash_str.toUTF8(allocator);
-    defer hash_utf8.deinit();
-    const hash_slice = hash_utf8.slice();
-    if (hash_slice.len > 1) {
-        committish = allocator.dupe(u8, hash_slice[1..]) catch {
-            allocator.free(user);
-            allocator.free(project_duped);
-            return null;
-        };
-    }
-
-    return .{
-        .user = user,
-        .project = project_duped,
-        .committish = committish,
-    };
-}
-
-/// Gist extract: special case where user can be null, rejects /user/project/raw
-/// TODO(markovejnovic): Claude generated this and it kind of sucks.
-fn extractGist(allocator: std.mem.Allocator, url: *jsc.URL) ?ExtractResult {
-    const pathname_str = url.pathname();
-    defer pathname_str.deref();
-    const pathname_utf8 = pathname_str.toUTF8(allocator);
-    defer pathname_utf8.deinit();
-    var pathname = pathname_utf8.slice();
-
-    // Strip leading /
-    if (bun.strings.hasPrefixComptime(pathname, "/")) {
-        pathname = pathname[1..];
-    }
-
-    // Split into [user, project, aux]
-    var iter = std.mem.splitScalar(u8, pathname, '/');
-    const first = iter.next() orelse return null;
-    const second = iter.next();
-    const aux = iter.next();
-
-    // Reject if aux is 'raw'
-    if (aux) |a| {
-        if (std.mem.eql(u8, a, "raw")) {
-            return null;
-        }
-    }
-
-    var user_part: ?[]const u8 = null;
-    var project_part: []const u8 = undefined;
-
-    // Special gist logic: if no second segment, first is project and user is null
-    if (second == null or second.?.len == 0) {
-        if (first.len == 0) {
-            return null;
-        }
-        project_part = first;
-    } else {
-        user_part = first;
-        project_part = second.?;
-    }
-
-    // Strip .git from project
-    var project = project_part;
-    if (bun.strings.hasSuffixComptime(project, ".git")) {
-        project = project[0 .. project.len - 4];
-    }
-
-    const user = if (user_part) |up|
-        if (up.len > 0) allocator.dupe(u8, up) catch return null else null
-    else
-        null;
-
-    const project_duped = allocator.dupe(u8, project) catch {
-        if (user) |u| allocator.free(u);
-        return null;
-    };
-
-    // Committish always from hash
-    var committish: ?[]const u8 = null;
-    const hash_str = url.hash();
-    defer hash_str.deref();
-    const hash_utf8 = hash_str.toUTF8(allocator);
-    defer hash_utf8.deinit();
-    const hash_slice = hash_utf8.slice();
-    if (hash_slice.len > 1) {
-        committish = allocator.dupe(u8, hash_slice[1..]) catch {
-            if (user) |u| allocator.free(u);
-            allocator.free(project_duped);
-            return null;
-        };
-    }
-
-    return .{
-        .user = user,
-        .project = project_duped,
-        .committish = committish,
-    };
-}
-
-/// SourceHut extract: handles /user/project patterns, rejects /user/project/archive
-/// TODO(markovejnovic): Claude generated this and it kind of sucks.
-fn extractSourcehut(allocator: std.mem.Allocator, url: *jsc.URL) ?ExtractResult {
-    const pathname_str = url.pathname();
-    defer pathname_str.deref();
-    const pathname_utf8 = pathname_str.toUTF8(allocator);
-    defer pathname_utf8.deinit();
-    var pathname = pathname_utf8.slice();
-
-    // Strip leading /
-    if (bun.strings.hasPrefixComptime(pathname, "/")) {
-        pathname = pathname[1..];
-    }
-
-    // Split into [user, project, aux]
-    var iter = std.mem.splitScalar(u8, pathname, '/');
-    const user_part = iter.next() orelse return null;
-    const project_part = iter.next() orelse return null;
-    const aux = iter.next();
-
-    // Reject if aux is 'archive' (tarball URLs)
-    if (aux) |a| {
-        if (std.mem.eql(u8, a, "archive")) {
-            return null;
-        }
-    }
-
-    // Strip .git from project
-    var project = project_part;
-    if (bun.strings.hasSuffixComptime(project, ".git")) {
-        project = project[0 .. project.len - 4];
-    }
-
-    // Validate user and project are not empty
-    if (user_part.len == 0 or project.len == 0) {
-        return null;
-    }
-
-    const user = allocator.dupe(u8, user_part) catch return null;
-    const project_duped = allocator.dupe(u8, project) catch {
-        allocator.free(user);
-        return null;
-    };
-
-    // Committish always from hash
-    var committish: ?[]const u8 = null;
-    const hash_str = url.hash();
-    defer hash_str.deref();
-    const hash_utf8 = hash_str.toUTF8(allocator);
-    defer hash_utf8.deinit();
-    const hash_slice = hash_utf8.slice();
-    if (hash_slice.len > 1) {
-        committish = allocator.dupe(u8, hash_slice[1..]) catch {
-            allocator.free(user);
-            allocator.free(project_duped);
-            return null;
-        };
-    }
-
-    return .{
-        .user = user,
-        .project = project_duped,
-        .committish = committish,
-    };
-}
-
-pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
-    // git_url_mut may carry two ownership semantics:
-    //  - It aliases `git_url`, in which case it must not be freed.
-    //  - It actually points to a new allocation, in which case it must be freed.
-    var git_url_mut = git_url;
-    defer if (git_url.ptr != git_url_mut.ptr) allocator.free(git_url_mut);
-
-    if (isGithubShorthand(git_url)) {
-        // In this case we have to prefix the url with `github:`.
-        //
-        // NOTE(markovejnovic): I don't exactly understand why this is treated specially.
-        //
-        // TODO(markovejnovic): Perhaps we can avoid this allocation...
-        // This one seems quite easy to get rid of.
-        git_url_mut = bun.handleOom(bun.strings.concat(allocator, &.{ "github:", git_url }));
-    }
-
-    // Extract committish from the original string before URL parsing to avoid encoding issues
-    const raw_committish: ?[]const u8 = if (bun.strings.indexOfChar(git_url_mut, '#')) |hash_idx|
-        if (hash_idx + 1 < git_url_mut.len)
-            git_url_mut[hash_idx + 1 ..]
-        else
-            null
-    else
-        null;
-
-    const parsed: *jsc.URL = parseUrl(allocator, git_url_mut) catch |err| {
-        debug("fromUrl: parseUrl failed: {any}\n", .{err});
-        return null;
-    };
-    defer parsed.deinit();
-
-    const host_info = deduceHostInfo(allocator, parsed) orelse {
-        return null;
-    };
-
-    // TODO(markovejnovic): From this point on, Claude implemented this method. It's really not
-    // that great...
-    // Check if this is a shortcut URL (github:, gitlab:, etc.) - from-url.js line 68
-    const proto_str = parsed.protocol();
-    defer proto_str.deref();
-    const protocol = proto_str.toUTF8(allocator);
-    defer protocol.deinit();
-    const protocol_slice = protocol.slice();
-
-    const is_shortcut = findHostInfoByProtocol(protocol_slice) != null;
-
-    var user: ?[]const u8 = null;
-    var project: []const u8 = undefined;
-    var committish: ?[]const u8 = null;
-
-    if (is_shortcut) {
-        // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
-        const pathname_str = parsed.pathname();
-        defer pathname_str.deref();
-        const pathname_utf8 = pathname_str.toUTF8(allocator);
-        defer pathname_utf8.deinit();
-        var pathname = pathname_utf8.slice();
-
-        // Strip leading / (from-url.js line 69)
-        if (bun.strings.hasPrefixComptime(pathname, "/")) {
-            pathname = pathname[1..];
-        }
-
-        // Strip auth (from-url.js line 70-74)
-        if (bun.strings.indexOfChar(pathname, '@')) |first_at| {
-            pathname = pathname[first_at + 1 ..];
-        }
-
-        // Extract user and project from pathname (from-url.js line 76-86)
-        if (bun.strings.lastIndexOfChar(pathname, '/')) |last_slash| {
-            const user_part = pathname[0..last_slash];
-            // We want nulls only, never empty strings (from-url.js line 79-82)
-            if (user_part.len > 0) {
-                user = try allocator.dupe(u8, user_part);
-            }
-            project = try allocator.dupe(u8, pathname[last_slash + 1 ..]);
-        } else {
-            project = try allocator.dupe(u8, pathname);
-        }
-
-        // Strip .git suffix (from-url.js line 88-90)
-        if (bun.strings.hasSuffixComptime(project, ".git")) {
-            const new_project = try allocator.dupe(u8, project[0 .. project.len - 4]);
-            allocator.free(project);
-            project = new_project;
-        }
-
-        // Use the raw committish we extracted earlier (from-url.js line 92-94)
-        if (raw_committish) |rc| {
-            committish = try allocator.dupe(u8, rc);
-        }
-    } else {
-        // Regular URL path: git+ssh://github.com/user/repo (from-url.js line 97-111)
-        // Use host-specific extract logic
-        const extracted = extractFromUrl(
-            allocator,
-            parsed,
-            host_info.shortcutWithoutColon(),
-        ) orelse {
-            return null;
-        };
-        user = extracted.user;
-        project = extracted.project;
-        // Use the raw committish we extracted earlier instead of the URL-encoded one
-        if (raw_committish) |rc| {
-            committish = try allocator.dupe(u8, rc);
-        }
-    }
-
-    // Determine the default representation based on the protocol
-    const default_repr = if (is_shortcut)
-        DefaultRepresentation.shortcut
-    else blk: {
-        // Get the protocol and append colon (URL.protocol() returns without colon)
-        const proto_slice = proto_str.byteSlice();
-        var proto_with_colon_buf: [32]u8 = undefined;
-        const proto_with_colon = std.fmt.bufPrint(&proto_with_colon_buf, "{s}:", .{proto_slice}) catch unreachable;
-        const result = defaultRepresentationFromProtocol(proto_with_colon);
-        debug("fromUrl: protocol={s}, default_repr={s}\n", .{ proto_with_colon, @tagName(result) });
-        break :blk result;
-    };
-
-    return .{
-        .type = host_info.shortcutWithoutColon(),
-        .domain = host_info.domain,
-        .user = user,
-        .project = project,
-        .committish = committish,
-        .default_representation = default_repr,
-        ._allocator = allocator,
-    };
-
-    // Note: This implementation is incomplete. hosted-git-info's fromUrl has a little bit more
-    // functionality:
-    //
-    // TODO(markovejnovic): Finalize the implementation of this function.
-    //
-    // - It will perform some basic sanity checking of the URL -- there are illegal combinations
-    //   and illegal characters, depending on the host. This does none of that since we only use
-    //   this in the context of npa which uses the library to decode the git provider.
-}
-
-pub const TestingAPIs = struct {
-    pub fn jsParseUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.parseUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.parseUrl takes a string as its " ++
-                    "first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all
-        // to give us a slice. Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = parseUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        };
-        defer parsed.deinit();
-
-        return parsed.href().toJS(go);
-    }
-
-    pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
-        //                      allows you to inject options. Seems untested so we didn't implement
-        //                      it.
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.fromUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.fromUrl takes a string as its first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
-        // Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = fromUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        } orelse {
-            return .null;
-        };
-
-        // Create a JavaScript object with all fields
-        const obj = jsc.JSValue.createEmptyObject(go, 5);
-        obj.put(go, jsc.ZigString.static("type"), bun.String.fromBytes(parsed.type).toJS(go));
-        obj.put(go, jsc.ZigString.static("domain"), bun.String.fromBytes(parsed.domain).toJS(go));
-        obj.put(go, jsc.ZigString.static("project"), bun.String.fromBytes(parsed.project).toJS(go));
-        obj.put(
-            go,
-            jsc.ZigString.static("user"),
-            if (parsed.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("committish"),
-            if (parsed.committish) |committish| bun.String.fromBytes(committish).toJS(go) else .null,
-        );
-
-        return obj;
-    }
-};
-
-/// Enumeration of possible URL protocols. Note that this enumeration has a
-/// many-to-one relationship with Protocol.
-const UrlProtocol = enum {
     git_plus_ssh,
     ssh,
     git_plus_https,
@@ -915,8 +289,8 @@ const UrlProtocol = enum {
     gist,
     sourcehut,
 
-    /// Mapping from string to UrlProtocol.
-    pub const strings = bun.ComptimeStringMap(UrlProtocol, .{
+    /// Mapping from string to WellDefinedProtocol.
+    const strings = bun.ComptimeStringMap(Self, .{
         .{ "git+ssh:", .git_plus_ssh },
         .{ "ssh:", .ssh },
         .{ "git+https:", .git_plus_https },
@@ -936,169 +310,46 @@ const UrlProtocol = enum {
     /// don't support this, for example `github:user/repo` is valid.
     ///
     /// Kind of arbitrary and implemented to match hosted-git-info's behavior.
-    pub fn protocolResourceIdentifierConcatenationToken(self: UrlProtocol) []const u8 {
+    fn protocolResourceIdentifierConcatenationToken(self: Self) []const u8 {
         return switch (self) {
             .git_plus_ssh, .ssh, .git_plus_https, .git_plus_http, .http, .https, .git => "//",
             .github, .bitbucket, .gitlab, .gist, .sourcehut => "",
         };
     }
-};
 
-const Host = enum {
-    github,
-    bitbucket,
-    gitlab,
-    gist,
-    sourcehut,
-};
+    /// Determine the default representation for this protocol.
+    /// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
+    fn defaultRepresentation(self: Self) Representation {
+        return switch (self) {
+            .git_plus_ssh, .ssh, .git_plus_http => .sshurl,
+            .git_plus_https => .https,
+            .git => .git,
+            .http => .http,
+            .https => .https,
+            .github, .bitbucket, .gitlab, .gist, .sourcehut => .shortcut,
+        };
+    }
 
-const HostInfo = struct {
-    protocols: []const UrlProtocol,
-    domain: []const u8,
-    shortcut: []const u8,
-    tree_path: ?[]const u8,
-    blob_path: ?[]const u8,
-    edit_path: ?[]const u8,
-    edit_template: u8, // TODO(markovejnovic): Wrong type obviously lol
-    tarball_template: u8, // TODO(markovejnovic): Wrong type obviously lol
-    extract: u8, // TODO(markovejnovic): Wrong type obviously lol
+    /// Certain protocols will have associated host providers. This method returns the associated
+    /// host provider, if one exists.
+    fn hostProvider(self: Self) ?HostProvider {
+        return switch (self) {
+            .github => .github,
+            .bitbucket => .bitbucket,
+            .gitlab => .gitlab,
+            .gist => .gist,
+            .sourcehut => .sourcehut,
+            else => null,
+        };
+    }
 
-    pub fn shortcutWithoutColon(self: HostInfo) []const u8 {
-        return self.shortcut[0 .. self.shortcut.len - 1];
+    fn isShortcut(self: Self) bool {
+        return switch (self) {
+            .github, .bitbucket, .gitlab, .gist, .sourcehut => true,
+            else => false,
+        };
     }
 };
-
-fn getHostInfo(host: Host) HostInfo {
-    return switch (host) {
-        .github => .{
-            .protocols = &.{
-                .git,
-                .http,
-                .git_plus_ssh,
-                .git_plus_https,
-                .ssh,
-                .https,
-            },
-            .domain = "github.com",
-            .shortcut = "github:",
-            .tree_path = "tree",
-            .blob_path = "blob",
-            .edit_path = "edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .bitbucket => .{
-            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
-            .domain = "bitbucket.org",
-            .shortcut = "bitbucket:",
-            .tree_path = "src",
-            .blob_path = "src",
-            .edit_path = "?mode=edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .gitlab => .{
-            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
-            .domain = "gitlab.com",
-            .shortcut = "gitlab:",
-            .tree_path = "tree",
-            .blob_path = "tree",
-            .edit_path = "-/edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .gist => .{
-            .protocols = &.{
-                .git,
-                .git_plus_ssh,
-                .git_plus_https,
-                .ssh,
-                .https,
-            },
-            .domain = "gist.github.com",
-            .shortcut = "gist:",
-            .tree_path = null,
-            .blob_path = null,
-            .edit_path = "edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .sourcehut => .{
-            .protocols = &.{ .git_plus_ssh, .https },
-            .domain = "git.sr.ht",
-            .shortcut = "sourcehut:",
-            .tree_path = "tree",
-            .blob_path = "tree",
-            .edit_path = null,
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-    };
-}
-
-/// Search for the appropriate `HostInfo` by the protocol string.
-fn findHostInfoByProtocol(protocol: []const u8) ?HostInfo {
-    inline for (std.meta.fields(Host)) |field| {
-        const host: Host = @enumFromInt(field.value);
-        const info = getHostInfo(host);
-        // We slice the last character off since URL.protocol() returns foo out of foo:// and
-        // info.shortcut includes the colon.
-        if (std.mem.eql(u8, info.shortcutWithoutColon(), protocol)) {
-            return info;
-        }
-    }
-    return null;
-}
-
-/// Determine the default representation from a protocol string
-/// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
-fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) DefaultRepresentation {
-    // Protocol mappings from hosted-git-info/lib/index.js #protocols
-    if (bun.strings.eqlComptime(protocol_with_colon, "git+ssh:")) return .sshurl;
-    if (bun.strings.eqlComptime(protocol_with_colon, "ssh:")) return .sshurl;
-    if (bun.strings.eqlComptime(protocol_with_colon, "git+https:")) return .https;
-
-    // For other protocols, use the protocol name (without colon) as the representation
-    // git: -> git, http: -> http, https: -> https, git+http: -> git+http (which falls back to sshurl)
-    const protocol_without_colon = protocol_with_colon[0 .. protocol_with_colon.len - 1];
-
-    if (bun.strings.eqlComptime(protocol_without_colon, "git")) return .git;
-    if (bun.strings.eqlComptime(protocol_without_colon, "http")) return .http;
-    if (bun.strings.eqlComptime(protocol_without_colon, "https")) return .https;
-
-    // Default fallback for unknown protocols (like git+http)
-    return .sshurl;
-}
-
-fn findHostInfoByDomain(hostname: []const u8) ?HostInfo {
-    inline for (std.meta.fields(Host)) |field| {
-        const host: Host = @enumFromInt(field.value);
-        const info = getHostInfo(host);
-        if (std.mem.eql(u8, info.domain, hostname)) {
-            return info;
-        }
-    }
-    return null;
-}
-
-/// Search the the appropriate `HostInfo` by deducing it from the URL.
-fn deduceHostInfo(allocator: std.mem.Allocator, url: *jsc.URL) ?HostInfo {
-    const proto_str = url.protocol();
-    if (findHostInfoByProtocol(proto_str.byteSlice())) |host_info| {
-        return host_info;
-    }
-
-    // TODO(markovejnovic): I don't know if this conversion is correct.
-    const as_slice = url.hostname().toSlice(allocator);
-    defer as_slice.deinit();
-    const hostname = bun.strings.withoutPrefixComptime(as_slice.slice(), "www.");
-    return findHostInfoByDomain(hostname);
-}
 
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
@@ -1160,21 +411,23 @@ fn isGithubShorthand(npa_str: []const u8) bool {
     return seen_slash and does_not_end_with_slash;
 }
 
+const UrlProtocol = union(enum) {
+    well_formed: WellDefinedProtocol,
+
+    // A protocol which is not known by the library. Includes the : character, but not the
+    // double-slash, so `foo://bar` would yield `foo:`.
+    custom: []u8,
+
+    // Either no protocol was specified or the library couldn't figure it out.
+    unknown: void,
+};
+
 const UrlProtocolPair = struct {
     url: []u8,
-    protocol: union(enum) {
-        well_formed: UrlProtocol,
-
-        // A protocol which is not known by the library. Includes the : character, but not the
-        // double-slash, so `foo://bar` would yield `foo:`.
-        custom: []u8,
-
-        // Either no protocol was specified or the library couldn't figure it out.
-        unknown: void,
-    },
+    protocol: UrlProtocol,
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    pub fn toUrl(self: *const UrlProtocolPair, allocator: std.mem.Allocator) ?*jsc.URL {
+    fn toUrl(self: *const UrlProtocolPair, allocator: std.mem.Allocator) ?*jsc.URL {
         // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
         // statistical distribution of URL lengths and found nothing.
         const long_url_thresh = 2048;
@@ -1190,7 +443,7 @@ const UrlProtocolPair = struct {
                 // This feels counter-intuitive but is correct. It's not github://foo/bar, it's
                 // github:foo/bar.
                 .well_formed => |proto_tag| &.{
-                    UrlProtocol.strings.getKey(proto_tag).?,
+                    WellDefinedProtocol.strings.getKey(proto_tag).?,
                     // Wordy name for a double-slash or empty string. github:foo/bar is valid, but
                     // git+ssh://foo/bar is also valid.
                     proto_tag.protocolResourceIdentifierConcatenationToken(),
@@ -1199,16 +452,22 @@ const UrlProtocolPair = struct {
             },
         );
     }
+
+    fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*jsc.URL {
+        // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
+        // get rid of -- in theory, URL.zig could allocate once.
+        const new_str = bun.handleOom(bun.strings.concat(allocator, parts));
+        defer allocator.free(new_str);
+        return jsc.URL.fromString(bun.String.init(new_str));
+    }
 };
 
 /// Given a loose string that may or may not be a valid URL, attempt to normalize it.
 ///
-/// This never allocates but requires `npa_str` be stable.
-///
 /// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
-/// enumeration. If the protocol is known, it is returned as a UrlProtocol. If the protocol is
+/// enumeration. If the protocol is known, it is returned as a WellDefinedProtocol. If the protocol is
 /// specified in the URL, it is given as a slice and if it is not specified, the `unknown` field is
-/// returned.
+/// returned. The result is a view into `npa_str` which must, consequently, remain stable.
 ///
 /// This mirrors the `correctProtocol` function in `hosted-git-info/parse-url.js`.
 fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
@@ -1220,7 +479,7 @@ fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
     // The cast here is safe -- first_colon_idx is guaranteed to be [-1, infty)
     const proto_slice = npa_str[0..@intCast(first_colon_idx + 1)];
 
-    if (UrlProtocol.strings.get(proto_slice)) |url_protocol| {
+    if (WellDefinedProtocol.strings.get(proto_slice)) |url_protocol| {
         // We need to slice off the protocol from the string. Note there are two very annoying
         // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
         var post_colon = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1));
@@ -1339,13 +598,949 @@ fn correctUrlMut(url_proto_pair: UrlProtocolPair) UrlProtocolPair {
     return url_proto_pair;
 }
 
-fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*jsc.URL {
-    // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to get
-    // rid of -- in theory, URL.zig could allocate once.
-    const new_str = bun.handleOom(bun.strings.concat(allocator, parts));
-    defer allocator.free(new_str);
-    return jsc.URL.fromString(bun.String.init(new_str));
-}
+/// This enumeration encapsulates all known host providers and their configurations.
+///
+/// Providers each have different configuration fields and, on top of that, have different
+/// mechanisms for formatting URLs. For example, GitHub will format SSH URLs as
+/// `git+ssh://git@${domain}/${user}/${project}.git${maybeJoin('#', committish)}`, while `gist`
+/// will format URLs as `git+ssh://git@${domain}/${project}.git${maybeJoin('#', committish)}`. This
+/// structure encapsulates the differences between providers and how they handle all of that.
+///
+/// Effectively, this enumeration acts as a registry of all known providers and a vtable for
+/// jumping between different behavior for different providers.
+const HostProvider = enum {
+    const Self = @This();
+
+    bitbucket,
+    gist,
+    github,
+    gitlab,
+    sourcehut,
+
+    fn formatSsh(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_ssh(self, allocator, user, project, committish);
+    }
+
+    fn formatSshUrl(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_sshurl(self, allocator, user, project, committish);
+    }
+
+    fn formatHttps(
+        self: Self,
+        allocator: std.mem.Allocator,
+        auth: ?[]const u8,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_https(self, allocator, auth, user, project, committish);
+    }
+
+    fn formatShortcut(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_shortcut(self, allocator, user, project, committish);
+    }
+
+    fn extract(
+        self: Self,
+        allocator: std.mem.Allocator,
+        url: *jsc.URL,
+    ) ?Config.Formatters.Extract.Result {
+        return configs.get(self).format_extract(allocator, url);
+    }
+
+    const Config = struct {
+        protocols: []const WellDefinedProtocol,
+        domain: []const u8,
+        shortcut: []const u8,
+        tree_path: ?[]const u8,
+        blob_path: ?[]const u8,
+        edit_path: ?[]const u8,
+
+        format_ssh: Formatters.Ssh.Type = Self.Config.Formatters.Ssh.default,
+        format_sshurl: Formatters.SshUrl.Type = Self.Config.Formatters.SshUrl.default,
+        format_https: Formatters.Https.Type = Self.Config.Formatters.Https.default,
+        format_shortcut: Formatters.Shortcut.Type = Self.Config.Formatters.Shortcut.default,
+        format_git: Formatters.Git.Type = Self.Config.Formatters.Git.default,
+        format_extract: Formatters.Extract.Type,
+
+        /// Encapsulates all the various foramtters that different hosts may have. Usually this has
+        /// to do with URLs, but could be other things.
+        const Formatters = struct {
+            fn requiresUser(user: ?[]const u8) void {
+                if (user == null) {
+                    @panic("Attempted to format a default SSH URL without a user. This is an " ++
+                        "irrecoverable programming bug in Bun. Please report this issue " ++
+                        "on GitHub.");
+                }
+            }
+
+            /// Mirrors hosts.js's sshtemplate
+            const Ssh = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git@{s}:{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git@{s}:{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's sshurltemplate
+            const SshUrl = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+ssh://git@{s}/{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git+ssh://git@{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's httpstemplate
+            const Https = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const auth_str = if (auth) |a| a else "";
+                    const auth_sep = if (auth_str.len > 0) "@" else "";
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+https://{s}{s}{s}/{s}/{s}.git{s}{s}",
+                        .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = auth;
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+https://{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn sourcehut(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    _ = auth;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "https://{s}/{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's shortcuttemplate
+            const Shortcut = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "{s}:{s}/{s}{s}{s}",
+                        .{ self.shortcut(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "{s}:{s}{s}{s}",
+                        .{ self.shortcut(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's extract function
+            const Extract = struct {
+                const Result = struct {
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                    _owned_buffer: ?[]const u8,
+                    _allocator: std.mem.Allocator,
+
+                    fn deinit(self: *Result) void {
+                        if (self._owned_buffer) |buf| {
+                            self._allocator.free(buf);
+                        }
+                    }
+
+                    /// Return the buffer which owns this Result and the allocator responsible for
+                    /// freeing it.
+                    ///
+                    /// Same semantics as C++ STL. Safe-to-deinit Result after this, not safe to
+                    /// use it.
+                    fn move(self: *Result) struct {
+                        buffer: []const u8,
+                        allocator: std.mem.Allocator,
+                    } {
+                        if (self._owned_buffer == null) {
+                            @panic("Cannot move an empty Result. This is a bug in Bun. Please " ++
+                                "report this issue on GitHub.");
+                        }
+
+                        const buffer = self._owned_buffer.?;
+                        const allocator = self._allocator;
+
+                        self._owned_buffer = null;
+
+                        return .{
+                            .buffer = buffer,
+                            .allocator = allocator,
+                        };
+                    }
+                };
+
+                const Type = *const fn (allocator: std.mem.Allocator, url: *jsc.URL) ?Result;
+
+                fn github(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_utf8 = pathname_str.toUTF8(allocator);
+                    defer pathname_utf8.deinit();
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
+
+                    var iter = std.mem.splitScalar(u8, pathname, '/');
+                    const user_part = iter.next() orelse return null;
+                    const project_part = iter.next() orelse return null;
+                    const type_part = iter.next();
+                    const committish_part = iter.next();
+
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+                    if (user_part.len == 0 or project.len == 0) {
+                        return null;
+                    }
+
+                    // If the type part says something other than "tree", we're not looking at a
+                    // github URL that we understand.
+                    if (type_part) |tp| {
+                        if (!std.mem.eql(u8, tp, "tree")) {
+                            return null;
+                        }
+                    }
+
+                    var committish: ?[]const u8 = null;
+                    if (type_part == null) {
+                        const fragment_str = url.fragmentIdentifier();
+                        defer fragment_str.deref();
+                        const fragment_utf8 = fragment_str.toUTF8(allocator);
+                        defer fragment_utf8.deinit();
+                        const fragment = fragment_utf8.slice();
+                        if (fragment.len > 0) {
+                            committish = fragment;
+                        }
+                    } else {
+                        committish = committish_part;
+                    }
+
+                    var sb = bun.StringBuilder{};
+                    sb.count(user_part);
+                    sb.count(project);
+                    if (committish) |c| sb.count(c);
+
+                    sb.allocate(allocator) catch return null;
+
+                    const user_slice = sb.append(user_part);
+                    const project_slice = sb.append(project);
+                    const committish_slice = if (committish) |c| sb.append(c) else null;
+
+                    return .{
+                        .user = user_slice,
+                        .project = project_slice,
+                        .committish = committish_slice,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
+                    };
+                }
+
+                fn bitbucket(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_utf8 = pathname_str.toUTF8(allocator);
+                    defer pathname_utf8.deinit();
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
+
+                    var iter = std.mem.splitScalar(u8, pathname, '/');
+                    const user_part = iter.next() orelse return null;
+                    const project_part = iter.next() orelse return null;
+                    const aux = iter.next();
+
+                    if (aux) |a| {
+                        if (std.mem.eql(u8, a, "get")) {
+                            return null;
+                        }
+                    }
+
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+                    if (user_part.len == 0 or project.len == 0) {
+                        return null;
+                    }
+
+                    const fragment_str = url.fragmentIdentifier();
+                    defer fragment_str.deref();
+                    const fragment_utf8 = fragment_str.toUTF8(allocator);
+                    defer fragment_utf8.deinit();
+                    const fragment = fragment_utf8.slice();
+                    const committish = if (fragment.len > 0) fragment else null;
+
+                    var sb = bun.StringBuilder{};
+                    sb.count(user_part);
+                    sb.count(project);
+                    if (committish) |c| sb.count(c);
+
+                    sb.allocate(allocator) catch return null;
+
+                    const user_slice = sb.append(user_part);
+                    const project_slice = sb.append(project);
+                    const committish_slice = if (committish) |c| sb.append(c) else null;
+
+                    return .{
+                        .user = user_slice,
+                        .project = project_slice,
+                        .committish = committish_slice,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
+                    };
+                }
+
+                fn gitlab(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_utf8 = pathname_str.toUTF8(allocator);
+                    defer pathname_utf8.deinit();
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
+
+                    if (bun.strings.contains(pathname, "/-/") or
+                        bun.strings.contains(pathname, "/archive.tar.gz"))
+                    {
+                        return null;
+                    }
+
+                    const end_slash = bun.strings.lastIndexOfChar(pathname, '/') orelse return null;
+                    const project_part = pathname[end_slash + 1 ..];
+                    const user_part = pathname[0..end_slash];
+
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+                    if (user_part.len == 0 or project.len == 0) {
+                        return null;
+                    }
+
+                    const fragment_str = url.fragmentIdentifier();
+                    defer fragment_str.deref();
+                    const fragment_utf8 = fragment_str.toUTF8(allocator);
+                    defer fragment_utf8.deinit();
+                    const committish = fragment_utf8.slice();
+
+                    var sb = bun.StringBuilder{};
+                    sb.count(user_part);
+                    sb.count(project);
+                    if (committish.len > 0) sb.count(committish);
+
+                    sb.allocate(allocator) catch return null;
+
+                    const user_slice = sb.append(user_part);
+                    const project_slice = sb.append(project);
+                    const committish_slice = if (committish.len > 0)
+                        sb.append(committish)
+                    else
+                        null;
+
+                    return .{
+                        .user = user_slice,
+                        .project = project_slice,
+                        .committish = committish_slice,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
+                    };
+                }
+
+                fn gist(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_utf8 = pathname_str.toUTF8(allocator);
+                    defer pathname_utf8.deinit();
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
+
+                    var iter = std.mem.splitScalar(u8, pathname, '/');
+                    var user_part = iter.next() orelse return null;
+                    var project_part = iter.next();
+                    const aux = iter.next();
+
+                    if (aux) |a| {
+                        if (std.mem.eql(u8, a, "raw")) {
+                            return null;
+                        }
+                    }
+
+                    if (project_part == null or project_part.?.len == 0) {
+                        project_part = user_part;
+                        user_part = "";
+                    }
+
+                    const project = bun.strings.trimSuffixComptime(u8, project_part.?, ".git");
+                    const user = if (user_part.len > 0) user_part else null;
+
+                    if (project.len == 0) {
+                        return null;
+                    }
+
+                    const fragment_str = url.fragmentIdentifier();
+                    defer fragment_str.deref();
+                    const fragment_utf8 = fragment_str.toUTF8(allocator);
+                    defer fragment_utf8.deinit();
+                    const fragment = fragment_utf8.slice();
+                    const committish = if (fragment.len > 0) fragment else null;
+
+                    var sb = bun.StringBuilder{};
+                    if (user) |u| sb.count(u);
+                    sb.count(project);
+                    if (committish) |c| sb.count(c);
+
+                    sb.allocate(allocator) catch return null;
+
+                    const user_slice = if (user) |u| sb.append(u) else null;
+                    const project_slice = sb.append(project);
+                    const committish_slice = if (committish) |c| sb.append(c) else null;
+
+                    return .{
+                        .user = user_slice,
+                        .project = project_slice,
+                        .committish = committish_slice,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
+                    };
+                }
+
+                fn sourcehut(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_utf8 = pathname_str.toUTF8(allocator);
+                    defer pathname_utf8.deinit();
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
+
+                    var iter = std.mem.splitScalar(u8, pathname, '/');
+                    const user_part = iter.next() orelse return null;
+                    const project_part = iter.next() orelse return null;
+                    const aux = iter.next();
+
+                    if (aux) |a| {
+                        if (std.mem.eql(u8, a, "archive")) {
+                            return null;
+                        }
+                    }
+
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+                    if (user_part.len == 0 or project.len == 0) {
+                        return null;
+                    }
+
+                    const fragment_str = url.fragmentIdentifier();
+                    defer fragment_str.deref();
+                    const fragment_utf8 = fragment_str.toUTF8(allocator);
+                    defer fragment_utf8.deinit();
+                    const fragment = fragment_utf8.slice();
+                    const committish = if (fragment.len > 0) fragment else null;
+
+                    var sb = bun.StringBuilder{};
+                    sb.count(user_part);
+                    sb.count(project);
+                    if (committish) |c| sb.count(c);
+
+                    sb.allocate(allocator) catch return null;
+
+                    const user_slice = sb.append(user_part);
+                    const project_slice = sb.append(project);
+                    const committish_slice = if (committish) |c| sb.append(c) else null;
+
+                    return .{
+                        .user = user_slice,
+                        .project = project_slice,
+                        .committish = committish_slice,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
+                    };
+                }
+            };
+
+            /// Mirrors hosts.js's gittemplate
+            const Git = struct {
+                const Type = ?*const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                const default: Type = null;
+
+                fn github(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const auth_str = if (auth) |a| a else "";
+                    const auth_sep = if (auth_str.len > 0) "@" else "";
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git://{s}{s}{s}/{s}/{s}.git{s}{s}",
+                        .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = auth;
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git://{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+        };
+    };
+
+    const configs = std.enums.EnumArray(Self, Config).init(.{
+        .bitbucket = .{
+            .protocols = &.{ .git_plus_http, .git_plus_https, .ssh, .https },
+            .domain = "bitbucket.org",
+            .shortcut = "bitbucket:",
+            .tree_path = "src",
+            .blob_path = "src",
+            .edit_path = "?mode=edit",
+            .format_extract = Self.Config.Formatters.Extract.bitbucket,
+        },
+        .gist = .{
+            .protocols = &.{ .git, .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "gist.github.com",
+            .shortcut = "gist:",
+            .tree_path = null,
+            .blob_path = null,
+            .edit_path = "edit",
+            .format_ssh = Self.Config.Formatters.Ssh.gist,
+            .format_sshurl = Self.Config.Formatters.SshUrl.gist,
+            .format_https = Self.Config.Formatters.Https.gist,
+            .format_shortcut = Self.Config.Formatters.Shortcut.gist,
+            .format_git = Self.Config.Formatters.Git.gist,
+            .format_extract = Self.Config.Formatters.Extract.gist,
+        },
+        .github = .{
+            .protocols = &.{ .git, .http, .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "github.com",
+            .shortcut = "github:",
+            .tree_path = "tree",
+            .blob_path = "blob",
+            .edit_path = "edit",
+            .format_git = Self.Config.Formatters.Git.github,
+            .format_extract = Self.Config.Formatters.Extract.github,
+        },
+        .gitlab = .{
+            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "gitlab.com",
+            .shortcut = "gitlab:",
+            .tree_path = "tree",
+            .blob_path = "tree",
+            .edit_path = "-/edit",
+            .format_extract = Self.Config.Formatters.Extract.gitlab,
+        },
+        .sourcehut = .{
+            .protocols = &.{ .git_plus_ssh, .https },
+            .domain = "git.sr.ht",
+            .shortcut = "sourcehut:",
+            .tree_path = "tree",
+            .blob_path = "tree",
+            .edit_path = null,
+            .format_https = Self.Config.Formatters.Https.sourcehut,
+            .format_extract = Self.Config.Formatters.Extract.sourcehut,
+        },
+    });
+
+    /// Return the string representation of the provider.
+    fn typeStr(self: Self) []const u8 {
+        return @tagName(self);
+    }
+
+    fn shortcut(self: Self) []const u8 {
+        return configs.get(self).shortcut;
+    }
+
+    fn domain(self: Self) []const u8 {
+        return configs.get(self).domain;
+    }
+
+    fn protocols(self: Self) []const WellDefinedProtocol {
+        return configs.get(self).protocols;
+    }
+
+    fn shortcutWithoutColon(self: Self) []const u8 {
+        const shct = self.shortcut();
+        return shct[0 .. shct.len - 1];
+    }
+
+    fn treePath(self: Self) ?[]const u8 {
+        return configs.get(self).tree_path;
+    }
+
+    fn blobPath(self: Self) ?[]const u8 {
+        return configs.get(self).blob_path;
+    }
+
+    fn editPath(self: Self) ?[]const u8 {
+        return configs.get(self).edit_path;
+    }
+
+    /// Find the appropriate host provider by its shortcut (e.g. "github:").
+    ///
+    /// The second parameter allows you to declare whether the given string includes the protocol:
+    /// colon or not.
+    fn fromShortcut(
+        shortcut_str: []const u8,
+        comptime with_colon: enum { with_colon, without_colon },
+    ) ?HostProvider {
+        inline for (std.meta.fields(Self)) |field| {
+            const provider: HostProvider = @enumFromInt(field.value);
+
+            const shortcut_matches = std.mem.eql(
+                u8,
+                switch (with_colon) {
+                    .with_colon => provider.shortcut(),
+                    .without_colon => provider.shortcutWithoutColon(),
+                },
+                shortcut_str,
+            );
+
+            if (shortcut_matches) {
+                return provider;
+            }
+        }
+
+        return null;
+    }
+
+    /// Find the appropriate host provider by its domain (e.g. "github.com").
+    fn fromDomain(domain_str: []const u8) ?HostProvider {
+        inline for (std.meta.fields(Self)) |field| {
+            const provider: HostProvider = @enumFromInt(field.value);
+
+            if (std.mem.eql(u8, provider.domain(), domain_str)) {
+                return provider;
+            }
+        }
+
+        return null;
+    }
+
+    /// Parse a URL and return the appropriate host provider, if any.
+    fn fromUrl(url: *jsc.URL) ?HostProvider {
+        const proto_str = url.protocol();
+        defer proto_str.deref();
+
+        // Try shortcut first (github:, gitlab:, etc.)
+        if (HostProvider.fromShortcut(proto_str.byteSlice(), .without_colon)) |provider| {
+            return provider;
+        }
+
+        return HostProvider.fromUrlDomain(url);
+    }
+
+    // Given a URL, use the domain in the URL to find the appropriate host provider.
+    fn fromUrlDomain(url: *jsc.URL) ?HostProvider {
+        const max_hostname_len: comptime_int = 253;
+
+        const hostname_str = url.hostname();
+        defer hostname_str.deref();
+
+        var fba_mem: [max_hostname_len]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&fba_mem);
+        const hostname_utf8 = hostname_str.toUTF8(fba.allocator());
+        defer hostname_utf8.deinit();
+        const hostname = bun.strings.withoutPrefixComptime(hostname_utf8.slice(), "www.");
+
+        return HostProvider.fromDomain(hostname);
+    }
+};
+
+pub const TestingAPIs = struct {
+    pub fn jsParseUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const allocator = bun.default_allocator;
+
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("hostedGitInfo.prototype.parseUrl takes exactly 1 argument", .{});
+        }
+
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw(
+                "hostedGitInfo.prototype.parseUrl takes a string as its " ++
+                    "first argument",
+                .{},
+            );
+        }
+
+        // TODO(markovejnovic): This feels like there's too much going on all
+        // to give us a slice. Maybe there's a better way to code this up.
+        const npa_str = try arg0.toBunString(go);
+        defer npa_str.deref();
+        var as_utf8 = npa_str.toUTF8(allocator);
+        defer as_utf8.deinit();
+        const parsed = parseUrl(allocator, as_utf8.mut()) catch |err| {
+            return go.throw("Invalid Git URL: {}", .{err});
+        };
+        defer parsed.url.deinit();
+
+        return parsed.url.href().toJS(go);
+    }
+
+    pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const allocator = bun.default_allocator;
+
+        // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
+        //                      allows you to inject options. Seems untested so we didn't implement
+        //                      it.
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("hostedGitInfo.prototype.fromUrl takes exactly 1 argument", .{});
+        }
+
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw(
+                "hostedGitInfo.prototype.fromUrl takes a string as its first argument",
+                .{},
+            );
+        }
+
+        // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
+        // Maybe there's a better way to code this up.
+        const npa_str = try arg0.toBunString(go);
+        defer npa_str.deref();
+        var as_utf8 = npa_str.toUTF8(allocator);
+        defer as_utf8.deinit();
+        const parsed = HostedGitInfo.fromUrl(allocator, as_utf8.mut()) catch |err| {
+            return go.throw("Invalid Git URL: {}", .{err});
+        } orelse {
+            return .null;
+        };
+
+        // Create a JavaScript object with all fields
+        const obj = jsc.JSValue.createEmptyObject(go, 5);
+        obj.put(
+            go,
+            jsc.ZigString.static("type"),
+            bun.String.fromBytes(parsed.host_provider.typeStr()).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("domain"),
+            bun.String.fromBytes(parsed.host_provider.domain()).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("project"),
+            bun.String.fromBytes(parsed.project).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("user"),
+            if (parsed.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("committish"),
+            if (parsed.committish) |committish|
+                bun.String.fromBytes(committish).toJS(go)
+            else
+                .null,
+        );
+
+        return obj;
+    }
+};
 
 const debug = bun.Output.scoped(.hosted_git_info, .visible);
 

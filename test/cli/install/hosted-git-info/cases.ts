@@ -12,7 +12,7 @@
 // for to determine the committish in order to test that we parse those correctly
 const committishDefaults = { committish: "lk/br@nch.t#st:^1.0.0-pre.4" };
 
-type Provider = "bitbucket" | "gist" | "github" | "gitlab" | "sourcehut" | "localhost" | "misc";
+type Provider = "bitbucket" | "gist" | "github" | "gitlab" | "sourcehut" | "misc";
 
 const defaults = {
   bitbucket: { type: "bitbucket", user: "foo", project: "bar" },
@@ -2449,7 +2449,6 @@ export const invalidGitUrls = {
     "https://gitlab.com/foo/bar/repository/archive.tar.gz",
     "https://gitlab.com/foo/bar/repository/archive.tar.gz?ref=49b393e2ded775f2df36ef2ffcb61b0359c194c9",
   ],
-  localhost: [],
   misc: [
     "https://google.com",
     "git+ssh://git@nothosted.com/abc/def",

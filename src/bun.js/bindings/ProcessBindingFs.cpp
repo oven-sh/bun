@@ -155,7 +155,7 @@ static JSValue ProcessBindingFs_bigintStatFsValues(VM& vm, JSObject* object)
     futimes                         ProcessBinding_Fs_futimes                       Function 1
     getFormatOfExtensionlessFile    ProcessBinding_Fs_getFormatOfExtensionlessFile  Function 1
     internalModuleStat              ProcessBinding_Fs_internalModuleStat            Function 1
-    kFsStatsFieldsNumber            kFsStatsFieldsNumber                            ConstantInteger 18
+    kFsStatsFieldsNumber            18                                              ConstantInteger
     lchown                          ProcessBinding_Fs_lchown                        Function 1
     legacyMainResolve               ProcessBinding_Fs_legacyMainResolve             Function 1
     link                            ProcessBinding_Fs_link                          Function 1

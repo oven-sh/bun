@@ -207,10 +207,10 @@ pub fn doPatchCommit(
             }, .posix);
         };
 
-        const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
+        const random_tempdir = bun.fs.FileSystem.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
             Output.err(e, "failed to make tempdir", .{});
             Global.crash();
-        });
+        };
 
         // If the package has nested a node_modules folder, we don't want this to
         // appear in the patch file when we run git diff.
@@ -235,10 +235,10 @@ pub fn doPatchCommit(
             break :has_nested_node_modules true;
         };
 
-        const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
+        const patch_tag_tmpname = bun.fs.FileSystem.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
             Output.err(e, "failed to make tempdir", .{});
             Global.crash();
-        });
+        };
 
         var bunpatchtagbuf: BuntagHashBuf = undefined;
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -395,7 +395,7 @@ pub fn doPatchCommit(
 
     // write the patch contents to temp file then rename
     var tmpname_buf: [1024]u8 = undefined;
-    const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
+    const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
     const tmpdir = manager.getTemporaryDirectory().handle;
     const tmpfd = switch (bun.sys.openat(
         .fromStdDir(tmpdir),

@@ -577,7 +577,7 @@ test("node_modules missing .bun are deleted", async () => {
       readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
       readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
     ]),
-  ).toEqual([[".bun", "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
+  ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
 });
 
 describe("--linker flag", () => {

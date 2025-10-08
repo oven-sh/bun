@@ -272,12 +272,11 @@ pub const PatchTask = struct {
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
-        const tempdir_name = bun.span(
-            bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |err| switch (err) {
-                // max len is 1+16+1+8+3, well below 1024
-                error.NoSpaceLeft => unreachable,
-            },
-        );
+        const tempdir_name = bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |err| switch (err) {
+            // max len is 1+16+1+8+3, well below 1024
+            error.NoSpaceLeft => unreachable,
+        };
+
         const system_tmpdir = this.tempdir;
 
         const pkg_name = this.callback.apply.pkgname;

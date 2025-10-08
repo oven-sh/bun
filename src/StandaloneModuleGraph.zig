@@ -540,10 +540,10 @@ pub const StandaloneModuleGraph = struct {
 
     pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
-        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
+        var zname: [:0]const u8 = bun.fs.FileSystem.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             return bun.invalid_fd;
-        });
+        };
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {

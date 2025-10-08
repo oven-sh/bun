@@ -1100,7 +1100,14 @@ it("should add dependency alongside workspaces", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".bun", ".cache", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+    "bar",
+    "baz",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
@@ -2139,7 +2146,11 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bun", ".cache"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+  ]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {

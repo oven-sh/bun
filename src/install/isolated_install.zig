@@ -559,8 +559,6 @@ pub fn installIsolatedPackages(
         };
     };
 
-    const cwd = FD.cwd();
-
     {
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
@@ -637,56 +635,88 @@ pub fn installIsolatedPackages(
             const node_modules_path = bun.OSPathLiteral("node_modules");
             const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
 
-            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch {
-                sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch {
+            sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch {
+                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch {
                     break :is_new_bun_modules false;
                 };
 
-                // existing node_modules and missing node_modules/.bun folder. move and delete all
-                // node_modules to prevent hoisted package pollution
+                // 'node_modules' exists and 'node_modules/.bun' doesn't:
+                //
+                // 1. rename existing 'node_modules' to temp location
+                // 2. create new 'node_modules' directory
+                // 3. rename temp into 'node_modules/.old_modules-{hex}'
+                // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
+                // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
 
-                var delete_path: bun.AutoRelPath = .init();
-                defer delete_path.deinit();
+                var temp_node_modules_buf: bun.PathBuffer = undefined;
+                const temp_node_modules = bun.fs.FileSystem.tmpname("tmp_modules", &temp_node_modules_buf, bun.fastRandom()) catch unreachable;
 
-                delete_path.append("node_modules");
+                // 1
+                sys.renameat(FD.cwd(), "node_modules", FD.cwd(), temp_node_modules).unwrap() catch |err| {
+                    Output.err(err, "failed to rename './node_modules' to './{s}'", .{temp_node_modules});
+                    Global.exit(1);
+                };
 
-                {
-                    const node_modules = bun.openDirForIterationOSPath(cwd, node_modules_path).unwrap() catch |err| {
-                        Output.err(err, "failed to open './node_modules'", .{});
-                        Global.exit(1);
-                    };
-                    defer node_modules.close();
+                // 2
+                sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules'", .{});
+                    Global.exit(1);
+                };
 
-                    var node_modules_iter = bun.DirIterator.iterate(node_modules, .u8);
-                    while (node_modules_iter.next().unwrap() catch |err| {
-                        Output.err(err, "failed to read './node_modules'", .{});
-                        Global.exit(1);
-                    }) |entry| {
-                        if (bun.strings.startsWithChar(entry.name.slice(), '.')) {
-                            continue;
-                        }
+                var rename_path: bun.AutoRelPath = .from("node_modules");
+                defer rename_path.deinit();
 
-                        var delete_path_save = delete_path.save();
-                        defer delete_path_save.restore();
-                        delete_path.append(entry.name.slice());
+                rename_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
 
-                        installer.startDeleteTask(delete_path.sliceZ());
-                    }
-                }
+                // 3
+                sys.renameat(FD.cwd(), temp_node_modules, FD.cwd(), rename_path.sliceZ()).unwrap() catch |err| {
+                    Output.err(err, "failed to rename './{s}' to './{s}'", .{
+                        temp_node_modules,
+                        rename_path.slice(),
+                    });
+                    Global.exit(1);
+                };
 
+                rename_path.append(".cache");
+
+                var cache_path: bun.AutoRelPath = .from("node_modules");
+                defer cache_path.deinit();
+
+                cache_path.append(".cache");
+
+                // 4
+                sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {};
+
+                // remove .cache so we can append destination for each workspace
+                rename_path.undo(1);
+
+                // 5
                 for (lockfile.workspace_paths.values()) |workspace_path| {
-                    delete_path.clear();
-                    delete_path.append(workspace_path.slice(lockfile.buffers.string_bytes.items));
-                    delete_path.append("node_modules");
+                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(string_buf));
+                    defer workspace_node_modules.deinit();
 
-                    installer.startDeleteTask(delete_path.sliceZ());
+                    const basename = workspace_node_modules.basename();
+
+                    workspace_node_modules.append("node_modules");
+
+                    var rename_path_save = rename_path.save();
+                    defer rename_path_save.restore();
+
+                    rename_path.appendFmt(".old_{s}_modules", .{basename});
+
+                    sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
                 }
+
+                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules/.bun'", .{});
+                    Global.exit(1);
+                };
 
                 break :is_new_bun_modules true;
             };
 
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create './node_modules/.bun' directory", .{});
+            sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create './node_modules/.bun'", .{});
                 Global.exit(1);
             };
 

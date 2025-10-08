@@ -953,7 +953,7 @@ fn openDirAtWindowsNtPath(
         return openWindowsDevicePath(
             path,
             flags,
-            if (options.create != .only_open) w.FILE_OPEN_IF else w.FILE_OPEN,
+            if (options.op != .only_open) w.FILE_OPEN_IF else w.FILE_OPEN,
             w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         );
 

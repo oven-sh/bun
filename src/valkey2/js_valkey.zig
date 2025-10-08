@@ -121,6 +121,12 @@ pub const JsValkey = struct {
             // do is resolve the user's promise.
             if (new_state.* == .linked and new_state.linked.state == .normal) {
                 const js_this = pp._js_this.tryGet().?;
+                js_this.ensureStillAlive();
+
+                // Call onconnect callback if defined by the user
+                if (JsValkey.js.onconnectGetCached(js_this)) |on_connect| {
+                    pp._global_obj.queueMicrotask(on_connect, &[_]bun.jsc.JSValue{js_this});
+                }
 
                 // Means we just connected to Valkey. Let's resolve the connection promise.
                 const js_promise = JsValkey.js.connectionPromiseGetCached(js_this) orelse {
@@ -365,6 +371,17 @@ pub const JsValkey = struct {
 
     pub fn getBufferedAmount(self: *const Self, _: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
         return bun.jsc.JSValue.jsNumber(self._client.bufferedBytesCount());
+    }
+
+    pub fn getOnConnect(_: *const Self, js_this: bun.jsc.JSValue, _: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
+        if (Self.js.onconnectGetCached(js_this)) |value| {
+            return value;
+        }
+        return .js_undefined;
+    }
+
+    pub fn setOnConnect(_: *Self, js_this: bun.jsc.JSValue, go: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) void {
+        Self.js.onconnectSetCached(js_this, go, value);
     }
 
     pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.jsc.JSValue {

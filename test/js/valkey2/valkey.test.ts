@@ -6293,7 +6293,7 @@ describeValkey(
         });
 
         test("should be 0 for disconnected client", () => {
-          const redis = new RedisClient2("redis://localhost:6379");
+          const redis = ctx.newDisconnectedClient();
           // Disconnected client should have 0 buffered amount
           expect(redis.bufferedAmount).toBe(0);
         });
@@ -6360,6 +6360,156 @@ describeValkey(
 
           await redis.del("test-key");
           expect(redis.bufferedAmount).toBeGreaterThanOrEqual(0);
+        });
+      });
+
+      describe("onconnect", () => {
+        test("should call onconnect callback when connection is established", async () => {
+          const redis = ctx.newDisconnectedClient();
+          const { promise, resolve } = Promise.withResolvers<void>();
+
+          redis.onconnect = () => {
+            resolve();
+          };
+
+          // Trigger connection
+          await redis.connect();
+
+          // Wait for the callback to be called
+          await promise;
+
+          expect(redis.connected).toBe(true);
+        });
+
+        test("should be called before first command completes", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let connectCalled = false;
+
+          redis.onconnect = () => {
+            connectCalled = true;
+          };
+
+          // First command should trigger connection
+          await redis.set("onconnect-test-key", "value");
+
+          expect(connectCalled).toBe(true);
+          expect(redis.connected).toBe(true);
+        });
+
+        test("should support changing onconnect handler", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let firstHandlerCalled = false;
+          let secondHandlerCalled = false;
+
+          redis.onconnect = () => {
+            firstHandlerCalled = true;
+          };
+
+          // Replace with new handler before connection
+          redis.onconnect = () => {
+            secondHandlerCalled = true;
+          };
+
+          await redis.connect();
+
+          // Only the second handler should have been called
+          expect(firstHandlerCalled).toBe(false);
+          expect(secondHandlerCalled).toBe(true);
+        });
+
+        test("should be called only once per connection", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let callCount = 0;
+
+          redis.onconnect = () => {
+            callCount++;
+          };
+
+          await redis.connect();
+          await redis.set("key1", "value1");
+          await redis.get("key1");
+
+          // Should only have been called once
+          expect(callCount).toBe(1);
+        });
+
+        test("should accept null to clear the handler", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let handlerCalled = false;
+
+          redis.onconnect = () => {
+            handlerCalled = true;
+          };
+
+          // Clear the handler
+          redis.onconnect = null;
+
+          await redis.connect();
+
+          // Handler should not have been called
+          expect(handlerCalled).toBe(false);
+        });
+
+        test("should accept undefined to clear the handler", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let handlerCalled = false;
+
+          redis.onconnect = () => {
+            handlerCalled = true;
+          };
+
+          // Clear the handler
+          redis.onconnect = undefined;
+
+          await redis.connect();
+
+          // Handler should not have been called
+          expect(handlerCalled).toBe(false);
+        });
+
+        test("should handle errors in onconnect callback gracefully", async () => {
+          const redis = ctx.newDisconnectedClient();
+
+          redis.onconnect = () => {
+            throw new Error("Callback error");
+          };
+
+          // Connection should still succeed even if callback throws
+          await redis.connect();
+          expect(redis.connected).toBe(true);
+
+          // Should still be able to execute commands
+          const result = await redis.set("error-test-key", "value");
+          expect(result).toBeDefined();
+        });
+
+        test("should have access to client instance in callback", async () => {
+          const redis = ctx.newDisconnectedClient();
+          let callbackThis: any = null;
+
+          redis.onconnect = function (this: any) {
+            callbackThis = this;
+          };
+
+          await redis.connect();
+
+          // The callback should have been called with the redis instance as 'this'
+          expect(callbackThis).toBe(redis);
+        });
+
+        test("should be gettable", () => {
+          const redis = ctx.newDisconnectedClient();
+          const handler = () => {};
+
+          redis.onconnect = handler;
+
+          expect(redis.onconnect).toBe(handler);
+        });
+
+        test("should initially be undefined", () => {
+          const redis = ctx.newDisconnectedClient();
+
+          expect(redis.onconnect).toBeUndefined();
         });
       });
     });

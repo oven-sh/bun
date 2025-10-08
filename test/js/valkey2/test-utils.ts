@@ -21,6 +21,9 @@ export interface ValkeyContext {
   /** Fetch a Redis client. Subsequent invocations return the same object. */
   client: () => RedisClient2,
   connectedClient: () => Promise<RedisClient2>,
+
+  /** Create a new disconnected client. Each invocation creates a new instance. */
+  newDisconnectedClient: () => RedisClient2,
 };
 
 /**
@@ -60,6 +63,7 @@ export function describeValkey(
 
       return client;
     },
+    newDisconnectedClient: () => new RedisClient2(context.serverUrl),
   };
 
   beforeEach(async () => {

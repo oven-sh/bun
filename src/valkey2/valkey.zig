@@ -714,6 +714,10 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                     }
                 },
                 else => {
+                    Self.debug(
+                        "{*} Received an unexpected request in {s} state.",
+                        .{ self, @tagName(self._state) },
+                    );
                     @panic("Not implemented");
                 },
             }

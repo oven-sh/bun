@@ -761,6 +761,7 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
+    pub const getBuffer = MetFactory.@"(key: RedisKey, options)"("getBuffer", .GET, "key", .{ .return_as_buffer = true }).fxn;
     pub const @"type" = MetFactory.@"(key: RedisKey)"("type", .TYPE, "key").fxn;
     pub const append = MetFactory.@"(key: RedisKey, value: RedisValue)"("append", .APPEND, "key", "value").fxn;
     pub const bitcount = MetFactory.@"(key: RedisKey)"("bitcount", .BITCOUNT, "key").fxn;
@@ -967,6 +968,41 @@ const MetFactory = struct {
                     cf.this(),
                     Command.initById(command, .{ .args = &.{key} }),
                     .{},
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ command.toString(),
+                        err,
+                    );
+                };
+                return promise.toJS();
+            }
+        };
+    }
+
+    /// 1-arity method with custom request options
+    pub fn @"(key: RedisKey, options)"(
+        comptime name: []const u8,
+        comptime command: CommandDescriptor,
+        comptime arg0_name: []const u8,
+        comptime options: JsValkey.RequestOptions,
+    ) type {
+        return struct {
+            pub fn fxn(
+                self: *JsValkey,
+                go: *bun.jsc.JSGlobalObject,
+                cf: *bun.jsc.CallFrame,
+            ) bun.JSError!bun.jsc.JSValue {
+                const key = (try jsValueToJsArgument(go, cf.argument(0))) orelse {
+                    return go.throwInvalidArgumentType(name, arg0_name, "string or buffer");
+                };
+                defer key.deinit();
+
+                const promise = self.request(
+                    go,
+                    cf.this(),
+                    Command.initById(command, .{ .args = &.{key} }),
+                    options,
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(
                         go,

@@ -759,7 +759,7 @@ pub fn Calc(comptime V: type) type {
                                 .err => |e| return .{ .err = e },
                             };
                             return .{
-                                .result = if (This.applyMap(&v, i.allocator(), absf)) |vv| vv else This{
+                                .result = if (This.applyMap(&v, i.allocator(), .absf)) |vv| vv else This{
                                     .function = bun.create(
                                         i.allocator(),
                                         MathFunction(V),
@@ -818,9 +818,11 @@ pub fn Calc(comptime V: type) type {
             }
         }
 
-        pub fn parseNumericFn(input: *css.Parser, comptime op: enum { sqrt, exp }, ctx: anytype, comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This) Result(This) {
-            const Closure = struct { ctx: @TypeOf(ctx) };
-            var closure = Closure{ .ctx = ctx };
+        pub const NumericOp = enum { sqrt, exp };
+
+        pub fn parseNumericFn(input: *css.Parser, op: NumericOp, ctx: anytype, comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This) Result(This) {
+            const Closure = struct { ctx: @TypeOf(ctx), op: NumericOp };
+            var closure = Closure{ .ctx = ctx, .op = op };
             return input.parseNestedBlock(This, &closure, struct {
                 pub fn parseNestedBlockFn(self: *Closure, i: *css.Parser) Result(This) {
                     const v = switch (This.parseNumeric(i, self.ctx, parse_ident)) {
@@ -830,7 +832,7 @@ pub fn Calc(comptime V: type) type {
 
                     return .{
                         .result = This{
-                            .number = switch (op) {
+                            .number = switch (self.op) {
                                 .sqrt => std.math.sqrt(v),
                                 .exp => std.math.exp(v),
                             },
@@ -1261,7 +1263,7 @@ pub fn Calc(comptime V: type) type {
             const first = if (This.applyMap(
                 &args.items[0],
                 allocator,
-                powi2,
+                .powi2,
             )) |v| v else return .{ .result = null };
             i += 1;
             var errored: bool = false;
@@ -1280,7 +1282,7 @@ pub fn Calc(comptime V: type) type {
 
             if (errored) return .{ .result = null };
 
-            return .{ .result = This.applyMap(&sum, allocator, sqrtf32) };
+            return .{ .result = This.applyMap(&sum, allocator, .sqrtf32) };
         }
 
         pub fn applyOp(
@@ -1312,19 +1314,31 @@ pub fn Calc(comptime V: type) type {
             return null;
         }
 
-        pub fn applyMap(this: *const This, allocator: Allocator, comptime op: *const fn (f32) f32) ?This {
+        pub const MapOp = enum { absf, sqrtf32, powi2 };
+
+        pub fn applyMap(this: *const This, allocator: Allocator, op: MapOp) ?This {
             switch (this.*) {
-                .number => |n| return This{ .number = op(n) },
+                .number => |n| return This{
+                    .number = switch (op) {
+                        .absf => absf(n),
+                        .sqrtf32 => sqrtf32(n),
+                        .powi2 => powi2(n),
+                    },
+                },
                 .value => |v| {
-                    if (css.generic.tryMap(V, v, op)) |new_v| {
-                        return This{
-                            .value = bun.create(
-                                allocator,
-                                V,
-                                new_v,
-                            ),
-                        };
-                    }
+                    const new_v = switch (op) {
+                        .absf => css.generic.tryMap(V, v, absf),
+                        .sqrtf32 => css.generic.tryMap(V, v, sqrtf32),
+                        .powi2 => css.generic.tryMap(V, v, powi2),
+                    } orelse return null;
+
+                    return This{
+                        .value = bun.create(
+                            allocator,
+                            V,
+                            new_v,
+                        ),
+                    };
                 },
                 else => {},
             }

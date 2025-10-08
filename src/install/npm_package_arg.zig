@@ -1605,9 +1605,9 @@ pub const TestingAPIs = struct {
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
-const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
+const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");

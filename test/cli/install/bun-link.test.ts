@@ -419,12 +419,13 @@ it("should link dependency without crashing", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
     ["package.json", `${link_name}.py`].sort(),
   );
-  // Verify that the shebang was normalized from \r\n to \n
+  // Verify that the shebang was normalized from \r\n to \n (only on non-Windows)
   const binContent = await file(join(package_dir, "node_modules", link_name, `${link_name}.py`)).text();
   if (isWindows) {
     expect(binContent).toStartWith("#!/usr/bin/env python\r\nprint");
   } else {
     expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
+    expect(binContent).not.toContain("\r\n");
   }
   await access(join(package_dir, "bun.lockb"));
 

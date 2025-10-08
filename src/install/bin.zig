@@ -676,7 +676,7 @@ pub const Bin = extern struct {
                 }
 
                 // Reapply original permissions (umask was applied during openat, so we need to restore)
-                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o7777)), 0).unwrap() catch return;
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o777)), 0).unwrap() catch return;
             }
 
             // Atomic replace: rename temp file to original

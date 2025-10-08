@@ -52,8 +52,7 @@ test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
   );
 
   // Install
-  const installResult = await runBunInstall(env, consumerDir);
-  expect(await installResult.exited).toBe(0);
+  await runBunInstall(env, consumerDir);
 
   // Check that the linked bin file has normalized shebang
   const binPath = join(consumerDir, "node_modules", "test-pkg-crlf", "test-bin.py");

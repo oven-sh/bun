@@ -10,7 +10,7 @@ pub const NpaSpec = union(enum) {
         git_committish: ?[]const u8,
         git_range: ?[]const u8,
         git_subdir: ?[]const u8,
-        //hosted: hgi.HostedGitInfo,
+        hosted: ?HostedGitInfo,
         _allocator: std.mem.Allocator,
     },
     file: struct {
@@ -158,6 +158,7 @@ pub const NpaSpec = union(enum) {
                 if (g.git_committish) |gc| g._allocator.free(gc);
                 if (g.git_range) |gr| g._allocator.free(gr);
                 if (g.git_subdir) |gs| g._allocator.free(gs);
+                if (g.hosted) |*h| h.deinit();
             },
             .file => |*f| {
                 f._allocator.free(f.raw);
@@ -884,7 +885,7 @@ fn fromFile(
 
 /// Strips leading slashes before Windows drive letters: /C:/foo -> C:/foo
 /// Matches the regex: /^\/+([a-z]:\/)/i
-fn stripWindowsLeadingSlashes(path: []const u8) []const u8 {
+fn stripWindowsLeadingSlashes(path: anytype) @TypeOf(path) {
     if (path.len < 3) return path;
 
     var slash_count: usize = 0;
@@ -1106,6 +1107,7 @@ fn fromURL(
                         .git_committish = git_attrs.committish,
                         .git_range = git_attrs.range,
                         .git_subdir = git_attrs.subdir,
+                        .hosted = null,
                         ._allocator = allocator,
                     },
                 };
@@ -1274,7 +1276,7 @@ fn fromURL(
                 .git_committish = git_attrs.committish,
                 .git_range = git_attrs.range,
                 .git_subdir = git_attrs.subdir,
-                //.hosted = .{ .type = "git" },
+                .hosted = null,
                 ._allocator = allocator,
             },
         };
@@ -1307,11 +1309,10 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
     const mut_spec_str: []u8 = try allocator.dupe(u8, raw_spec);
     errdefer allocator.free(mut_spec_str);
 
-    const hosted = try hgi.HostedGitInfo.fromUrl(allocator, mut_spec_str) orelse {
+    const hosted = try HostedGitInfo.fromUrl(allocator, mut_spec_str) orelse {
         allocator.free(mut_spec_str);
         return null;
     };
-    defer hosted.deinit();
 
     // This returns the appropriate format based on default_representation
     const save_spec = try hosted.toString(allocator);
@@ -1327,7 +1328,7 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
         null
     else blk: {
         // Always strip committish from fetchSpec by creating temp hosted without it
-        const temp_hosted = hgi.HostedGitInfo{
+        const temp_hosted = HostedGitInfo{
             .host_provider = hosted.host_provider,
             .committish = null, // Always strip committish for fetchSpec
             .project = hosted.project,
@@ -1357,7 +1358,7 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
             .git_committish = git_attrs.committish,
             .git_range = git_attrs.range,
             .git_subdir = git_attrs.subdir,
-            //.hosted = hosted,
+            .hosted = hosted,
             ._allocator = allocator,
         },
     };
@@ -1578,9 +1579,13 @@ pub const TestingAPIs = struct {
                 "gitSubdir",
                 if (spec.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
             );
-            // TODO(@markovejnovic): Implement hosted field serialization
-            // For now, return null to match test expectations
-            object.put(go, "hosted", .null);
+
+            // Serialize hosted field
+            if (spec.git.hosted) |*hosted| {
+                object.put(go, "hosted", hosted.toJS(go));
+            } else {
+                object.put(go, "hosted", .null);
+            }
         }
 
         if (spec.* == .alias) {
@@ -1600,7 +1605,7 @@ pub const TestingAPIs = struct {
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
-const hgi = @import("./hosted_git_info.zig");
+const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
 const PercentEncoding = @import("../url.zig").PercentEncoding;

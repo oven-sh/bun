@@ -167,6 +167,46 @@ pub const HostedGitInfo = struct {
         self._allocator.free(self._memory_buffer);
     }
 
+    /// Convert this HostedGitInfo to a JavaScript object
+    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(go, 6);
+        obj.put(
+            go,
+            jsc.ZigString.static("type"),
+            bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("domain"),
+            bun.String.fromBytes(self.host_provider.domain()).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("project"),
+            bun.String.fromBytes(self.project).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("user"),
+            if (self.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("committish"),
+            if (self.committish) |committish|
+                bun.String.fromBytes(committish).toJS(go)
+            else
+                .null,
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("default"),
+            bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
+        );
+
+        return obj;
+    }
+
     /// Generate a URL string based on the default representation.
     /// Mimics hosted-git-info's toString() method
     pub fn toString(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
@@ -1568,43 +1608,7 @@ pub const TestingAPIs = struct {
             return .null;
         };
 
-        // Create a JavaScript object with all fields
-        const obj = jsc.JSValue.createEmptyObject(go, 6);
-        obj.put(
-            go,
-            jsc.ZigString.static("type"),
-            bun.String.fromBytes(parsed.host_provider.typeStr()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("domain"),
-            bun.String.fromBytes(parsed.host_provider.domain()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("project"),
-            bun.String.fromBytes(parsed.project).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("user"),
-            if (parsed.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("committish"),
-            if (parsed.committish) |committish|
-                bun.String.fromBytes(committish).toJS(go)
-            else
-                .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("default"),
-            bun.String.fromBytes(@tagName(parsed.default_representation)).toJS(go),
-        );
-
-        return obj;
+        return parsed.toJS(go);
     }
 };
 

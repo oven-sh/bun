@@ -16,8 +16,9 @@ test("09041", async () => {
   const runs = await Promise.all(buns);
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i];
+    console.log("===== STDERR =====\n" + run.stderr.toString("utf-8") + "\n=====");
 
-    expect(condense(buffer.toString("utf-8"))).toEqual(condense(run.stdout.toString("utf-8")));
+    expect(condense(run.stdout.toString("utf-8"))).toEqual(condense(buffer.toString("utf-8")));
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toHaveLength(len);
     expect(run.stdout).toEqual(buffer);
@@ -25,7 +26,7 @@ test("09041", async () => {
 }, 30000);
 
 function condense(str: string) {
-  const nums = str.split(",").map(n => +n);
+  const nums = str.split(",").map(n => (isNaN(+n) ? n : +n));
   let out: { len: number; start: number | string }[] = [];
   for (let i = 0; i < nums.length; i++) {
     const val = nums[i]!;

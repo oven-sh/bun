@@ -855,7 +855,6 @@ fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modu
 /// Find a package in the isolated install structure (.bun directory)
 /// Returns a path like "node_modules/.bun/name@version/node_modules/name"
 /// or for scoped packages: "node_modules/.bun/@scope+name@version/node_modules/@scope/name"
-/// Handles packages with peer dependencies that have paths like "react-dom@18.2.0_react@18.2.0"
 fn findPackageInIsolatedStore(
     lockfile: *Lockfile,
     pkg_id: PackageID,
@@ -873,48 +872,26 @@ fn findPackageInIsolatedStore(
     else
         pkg_name;
 
-    // Format the expected prefix like: name@version or @scope+name@version
-    var prefix_buf: bun.PathBuffer = undefined;
-    const expected_prefix = std.fmt.bufPrint(&prefix_buf, "{s}@{}", .{
+    // Format the store path like: name@version or @scope+name@version
+    var store_path_buf: bun.PathBuffer = undefined;
+    const store_path = std.fmt.bufPrint(&store_path_buf, "{s}@{}", .{
         store_name,
         pkg.resolution.fmt(strbuf, .posix),
     }) catch return null;
 
-    // Open the .bun directory to search for the package
-    // The store path can include peer dependency hashes (e.g., react-dom@18.2.0_react@18.2.0)
-    // so we need to search for directories matching the prefix
-    const bun_dir = "node_modules/.bun";
-    var bun_dir_handle = std.fs.cwd().openDir(bun_dir, .{ .iterate = true }) catch return null;
-    defer bun_dir_handle.close();
+    // The actual path in isolated installs is:
+    // node_modules/.bun/{store_path}/node_modules/{name}
+    const full_path = bun.path.join(&[_][]const u8{ "node_modules", ".bun", store_path, "node_modules", pkg_name }, .auto);
 
-    var iter = bun_dir_handle.iterate();
-    while (iter.next() catch null) |entry| {
-        if (entry.kind != .directory) continue;
+    // Check if this path exists
+    var path_buf: bun.PathBuffer = undefined;
+    @memcpy(path_buf[0..full_path.len], full_path);
+    path_buf[full_path.len] = 0;
+    const path_z = path_buf[0..full_path.len :0];
 
-        // Check if directory name starts with our expected prefix
-        if (!bun.strings.hasPrefix(entry.name, expected_prefix)) continue;
-
-        // If exact match or has peer hash suffix (starts with _ or +), this could be our package
-        // Valid suffixes: nothing (exact match), _peerHash, or +peerHash
-        if (entry.name.len == expected_prefix.len or
-            (entry.name.len > expected_prefix.len and
-                (entry.name[expected_prefix.len] == '_' or entry.name[expected_prefix.len] == '+')))
-        {
-
-            // Construct full path: node_modules/.bun/{store_path}/node_modules/{name}
-            var full_path_buf: bun.PathBuffer = undefined;
-            const full_path = bun.path.joinStringBuf(&full_path_buf, &[_][]const u8{ bun_dir, entry.name, "node_modules", pkg_name }, .auto);
-
-            // Verify the package actually exists at this path
-            var path_z_buf: bun.PathBuffer = undefined;
-            @memcpy(path_z_buf[0..full_path.len], full_path);
-            path_z_buf[full_path.len] = 0;
-            const path_z = path_z_buf[0..full_path.len :0];
-
-            if (bun.sys.exists(path_z)) {
-                return allocator.dupe(u8, full_path) catch return null;
-            }
-        }
+    const result = bun.sys.exists(path_z);
+    if (result) {
+        return allocator.dupe(u8, full_path) catch return null;
     }
 
     return null;

@@ -1217,6 +1217,120 @@ fn startCopy(this: *PostgresSQLConnection, overall_format: u8, column_format_cod
     }
 }
 
+fn emitChunkToJS(this: *PostgresSQLConnection, data: []const u8) AnyPostgresError!void {
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onCopyChunkFn.get()) |callback| {
+        this.copy_callback_in_progress = true;
+        defer this.copy_callback_in_progress = false;
+
+        const loop = vm.eventLoop();
+        var js_chunk: jsc.JSValue = .zero;
+
+        if (this.copy_format == 0) {
+            js_chunk = bun.String.createUTF8ForJS(this.globalObject, data) catch |e| {
+                this.cleanupCopyState();
+                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
+                return error.OutOfMemory;
+            };
+        } else {
+            js_chunk = jsc.ArrayBuffer.create(this.globalObject, data, .ArrayBuffer) catch |e| {
+                this.cleanupCopyState();
+                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
+                return error.OutOfMemory;
+            };
+        }
+
+        loop.runCallback(callback, this.globalObject, this.js_value, &.{js_chunk});
+
+        if (this.globalObject.hasException()) {
+            this.cleanupCopyState();
+            this.fail("COPY chunk callback threw an exception", error.JSError);
+            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
+        }
+    }
+}
+
+fn emitChunkToJSArrayBuffer(this: *PostgresSQLConnection, data: []const u8) AnyPostgresError!void {
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onCopyChunkFn.get()) |callback| {
+        this.copy_callback_in_progress = true;
+        defer this.copy_callback_in_progress = false;
+
+        const loop = vm.eventLoop();
+        const js_chunk = jsc.ArrayBuffer.create(this.globalObject, data, .ArrayBuffer) catch |e| {
+            this.cleanupCopyState();
+            this.globalObject.reportActiveExceptionAsUnhandled(e);
+            this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
+            return error.OutOfMemory;
+        };
+
+        loop.runCallback(callback, this.globalObject, this.js_value, &.{js_chunk});
+
+        if (this.globalObject.hasException()) {
+            this.cleanupCopyState();
+            this.fail("COPY chunk callback threw an exception", error.JSError);
+            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
+        }
+    }
+}
+
+fn flushBufferedChunkToJS(this: *PostgresSQLConnection) AnyPostgresError!void {
+    if (this.copy_data_buffer.items.len == 0) return;
+    try this.emitChunkToJS(this.copy_data_buffer.items);
+    this.copy_data_buffer.clearRetainingCapacity();
+}
+
+fn finishCopy(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_tag_str: []const u8) AnyPostgresError!void {
+    debug("finishCopy: state={s} bytes={}", .{ @tagName(this.copy_state), this.copy_data_buffer.items.len });
+
+    // For COPY TO (copy_out_progress), emit any pending buffered data (streaming mode) and onCopyEnd callback.
+    if (this.copy_state == .copy_out_progress) {
+        // Late flush of any pending buffered data (streaming mode)
+        if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0) {
+            try this.flushBufferedChunkToJS();
+        }
+
+        // Emit streaming end callback if registered
+        var vm = jsc.VirtualMachine.get();
+        if (vm.rareData().postgresql_context.onCopyEndFn.get()) |callback_end| {
+            const loop = vm.eventLoop();
+            loop.runCallback(callback_end, this.globalObject, this.js_value, &.{});
+        }
+
+        if (this.copy_streaming_mode) {
+            // In streaming mode, do not return accumulated buffer (we did not accumulate).
+            this.cleanupCopyState();
+            request.onResult(command_tag_str, this.globalObject, this.js_value, false);
+            return;
+        }
+
+        // Non-streaming: pass COPY TO accumulated data to JavaScript (even if empty), with safety guard
+        if (this.copy_data_buffer.items.len > this.max_copy_buffer_size) {
+            const err_msg = std.fmt.allocPrint(
+                bun.default_allocator,
+                "COPY buffer exceeded limit at completion: {d} bytes (limit: {d} bytes)",
+                .{ this.copy_data_buffer.items.len, this.max_copy_buffer_size },
+            ) catch "COPY buffer too large";
+            defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
+            this.cleanupCopyState();
+            this.fail(err_msg, error.CopyBufferTooLarge);
+            return error.CopyBufferTooLarge;
+        }
+
+        // onCopyResult will convert buffer -> JS value, cleanup copy state, and call onResult
+        this.onCopyResult(request, command_tag_str);
+        return;
+    }
+
+    // For COPY FROM (copy_in_progress) or unknown/none, cleanup and complete
+    this.cleanupCopyState();
+    request.onResult(command_tag_str, this.globalObject, this.js_value, false);
+}
+
 pub fn stopTimers(this: *PostgresSQLConnection) void {
     if (this.timer.state == .ACTIVE) {
         this.vm.timer.remove(&this.timer);
@@ -1858,7 +1972,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     if (elapsed > this.copy_timeout_ms) {
                         debug("CopyData: timeout after {}ms (limit: {}ms)", .{ elapsed, this.copy_timeout_ms });
                         this.cleanupCopyState();
-                        this.fail("COPY operation timed out", error.CopyTimeout);
+                        this.fail("COPY operation timeout", error.CopyTimeout);
                         return error.CopyTimeout;
                     }
                 }
@@ -1919,29 +2033,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                         }
 
                         // Emit the buffered header+data as a single chunk
-                        var vm_stream = jsc.VirtualMachine.get();
-                        if (vm_stream.rareData().postgresql_context.onCopyChunkFn.get()) |callback_chunk_stream| {
-                            this.copy_callback_in_progress = true;
-                            defer this.copy_callback_in_progress = false;
-
-                            const loop_stream = vm_stream.eventLoop();
-                            var js_chunk_stream: jsc.JSValue = .zero;
-                            js_chunk_stream = jsc.ArrayBuffer.create(this.globalObject, this.copy_data_buffer.items, .ArrayBuffer) catch |e| {
-                                this.cleanupCopyState();
-                                this.globalObject.reportActiveExceptionAsUnhandled(e);
-                                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
-                                return;
-                            };
-
-                            loop_stream.runCallback(callback_chunk_stream, this.globalObject, this.js_value, &.{js_chunk_stream});
-
-                            if (this.globalObject.hasException()) {
-                                this.cleanupCopyState();
-                                this.fail("COPY chunk callback threw an exception", error.JSError);
-                                this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
-                                return;
-                            }
-                        }
+                        try this.emitChunkToJSArrayBuffer(this.copy_data_buffer.items);
 
                         // Clear buffered header/data after emission and update progress
                         this.copy_data_buffer.clearRetainingCapacity();
@@ -1949,11 +2041,32 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                         this.copy_chunks_processed = this.copy_chunks_processed +| 1;
                         return;
                     } else {
-                        // Non-streaming: allow fragmented first chunk; validate once we have enough in the current chunk
-                        if (this.copy_data_buffer.items.len == 0 and data_slice.len >= COPY_BINARY_SIGNATURE.len) {
-                            const has_valid_signature = std.mem.eql(u8, data_slice[0..COPY_BINARY_SIGNATURE.len], &COPY_BINARY_SIGNATURE);
+                        // Non-streaming: allow fragmented first chunk; validate once we have enough bytes across buffer + incoming chunk
+                        const sig_len: usize = COPY_BINARY_SIGNATURE.len;
+                        const buffered_len: usize = this.copy_data_buffer.items.len;
+                        if (buffered_len == 0) {
+                            // Fast-path: entire signature is in this chunk
+                            if (data_slice.len >= sig_len) {
+                                const has_valid_signature = std.mem.eql(u8, data_slice[0..sig_len], &COPY_BINARY_SIGNATURE);
+                                if (!has_valid_signature) {
+                                    debug("CopyData: invalid binary COPY signature", .{});
+                                    this.cleanupCopyState();
+                                    this.fail("Invalid binary COPY format: missing or incorrect signature", error.InvalidBinaryData);
+                                    return error.InvalidBinaryData;
+                                }
+                                this.copy_binary_header_validated = true;
+                            }
+                        } else if (buffered_len < sig_len and buffered_len + data_slice.len >= sig_len) {
+                            // Signature split across previous buffer and this chunk; stitch minimal prefix into scratch and validate
+                            var scratch: [COPY_BINARY_SIGNATURE.len]u8 = undefined;
+                            // Copy already-buffered prefix
+                            @memcpy(scratch[0..buffered_len], this.copy_data_buffer.items[0..buffered_len]);
+                            // Copy needed bytes from the head of the new chunk
+                            const need: usize = sig_len - buffered_len;
+                            @memcpy(scratch[buffered_len .. buffered_len + need], data_slice[0..need]);
+                            const has_valid_signature = std.mem.eql(u8, scratch[0..sig_len], &COPY_BINARY_SIGNATURE);
                             if (!has_valid_signature) {
-                                debug("CopyData: invalid binary COPY signature", .{});
+                                debug("CopyData: invalid binary COPY signature (split across frames)", .{});
                                 this.cleanupCopyState();
                                 this.fail("Invalid binary COPY format: missing or incorrect signature", error.InvalidBinaryData);
                                 return error.InvalidBinaryData;
@@ -2034,76 +2147,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
                 // Emit streaming chunk callback if registered (flush pending first if any)
                 if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0 and this.copy_binary_header_validated and !this.copy_callback_in_progress) {
-                    var vm_flush = jsc.VirtualMachine.get();
-                    if (vm_flush.rareData().postgresql_context.onCopyChunkFn.get()) |callback_flush| {
-                        this.copy_callback_in_progress = true;
-                        defer this.copy_callback_in_progress = false;
-
-                        const loop_flush = vm_flush.eventLoop();
-                        var js_flush: jsc.JSValue = .zero;
-                        js_flush = if (this.copy_format == 0)
-                            (bun.String.createUTF8ForJS(this.globalObject, this.copy_data_buffer.items) catch |e| {
-                                this.cleanupCopyState();
-                                this.globalObject.reportActiveExceptionAsUnhandled(e);
-                                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
-                                return;
-                            })
-                        else
-                            (jsc.ArrayBuffer.create(this.globalObject, this.copy_data_buffer.items, .ArrayBuffer) catch |e| {
-                                this.cleanupCopyState();
-                                this.globalObject.reportActiveExceptionAsUnhandled(e);
-                                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
-                                return;
-                            });
-
-                        loop_flush.runCallback(callback_flush, this.globalObject, this.js_value, &.{js_flush});
-
-                        if (this.globalObject.hasException()) {
-                            this.cleanupCopyState();
-                            this.fail("COPY chunk callback threw an exception", error.JSError);
-                            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
-                            return;
-                        }
-                    }
-                    this.copy_data_buffer.clearRetainingCapacity();
+                    try this.flushBufferedChunkToJS();
                 }
                 // Emit streaming chunk callback if registered
-                var vm = jsc.VirtualMachine.get();
-                if (vm.rareData().postgresql_context.onCopyChunkFn.get()) |callback_chunk| {
-                    this.copy_callback_in_progress = true;
-                    defer this.copy_callback_in_progress = false;
-
-                    const event_loop = vm.eventLoop();
-                    var js_chunk: jsc.JSValue = .zero;
-                    if (this.copy_format == 0) {
-                        js_chunk = bun.String.createUTF8ForJS(this.globalObject, data_slice) catch |e| {
-                            // On error creating the chunk, abort the COPY operation
-                            this.cleanupCopyState();
-                            this.globalObject.reportActiveExceptionAsUnhandled(e);
-                            this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
-                            return;
-                        };
-                    } else {
-                        // Binary format - create proper ArrayBuffer for instanceof checks
-                        js_chunk = jsc.ArrayBuffer.create(this.globalObject, data_slice, .ArrayBuffer) catch |e| {
-                            // On error creating the chunk, abort the COPY operation
-                            this.cleanupCopyState();
-                            this.globalObject.reportActiveExceptionAsUnhandled(e);
-                            this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
-                            return;
-                        };
-                    }
-
-                    event_loop.runCallback(callback_chunk, this.globalObject, this.js_value, &.{js_chunk});
-
-                    // Check if callback threw an exception
-                    if (this.globalObject.hasException()) {
-                        this.cleanupCopyState();
-                        this.fail("COPY chunk callback threw an exception", error.JSError);
-                        this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
-                        return;
-                    }
-                }
+                try this.emitChunkToJS(data_slice);
             } else if (this.copy_state == .copy_in_progress) {
                 // For COPY FROM STDIN, we shouldn't receive CopyData from server
                 debug("CopyData: unexpected in copy_in_progress state", .{});
@@ -2157,68 +2204,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             // Check if this is completing a COPY operation
             if (this.copy_state != .none) {
                 debug("CommandComplete: COPY operation completed with {} bytes", .{this.copy_data_buffer.items.len});
-
-                // In streaming mode, flush any pending buffered data before signaling end
-                if (this.copy_state == .copy_out_progress and this.copy_streaming_mode and this.copy_data_buffer.items.len > 0) {
-                    var vm_flush_end = jsc.VirtualMachine.get();
-                    if (vm_flush_end.rareData().postgresql_context.onCopyChunkFn.get()) |callback_flush_end| {
-                        const loop_flush_end = vm_flush_end.eventLoop();
-                        var js_last: jsc.JSValue = .zero;
-                        js_last = if (this.copy_format == 0)
-                            (bun.String.createUTF8ForJS(this.globalObject, this.copy_data_buffer.items) catch |e| {
-                                this.cleanupCopyState();
-                                this.globalObject.reportActiveExceptionAsUnhandled(e);
-                                this.fail("Failed to create final chunk for COPY callback", error.OutOfMemory);
-                                return;
-                            })
-                        else
-                            (jsc.ArrayBuffer.create(this.globalObject, this.copy_data_buffer.items, .ArrayBuffer) catch |e| {
-                                this.cleanupCopyState();
-                                this.globalObject.reportActiveExceptionAsUnhandled(e);
-                                this.fail("Failed to create final chunk for COPY callback", error.OutOfMemory);
-                                return;
-                            });
-                        loop_flush_end.runCallback(callback_flush_end, this.globalObject, this.js_value, &.{js_last});
-                        this.copy_data_buffer.clearRetainingCapacity();
-                    }
-                }
-
-                // Emit streaming end callback if registered
-                var vm2 = jsc.VirtualMachine.get();
-                if (vm2.rareData().postgresql_context.onCopyEndFn.get()) |callback_end| {
-                    const loop2 = vm2.eventLoop();
-                    loop2.runCallback(callback_end, this.globalObject, this.js_value, &.{});
-                }
-
-                if (this.copy_state == .copy_out_progress) {
-                    if (this.copy_streaming_mode) {
-                        // In streaming mode, do not return accumulated buffer (we did not accumulate).
-                        this.cleanupCopyState();
-                        request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-                    } else {
-                        // Pass COPY TO data to JavaScript (even if empty)
-                        if (this.copy_data_buffer.items.len > this.max_copy_buffer_size) {
-                            const err_msg = std.fmt.allocPrint(
-                                bun.default_allocator,
-                                "COPY buffer exceeded limit at completion: {d} bytes (limit: {d} bytes)",
-                                .{ this.copy_data_buffer.items.len, this.max_copy_buffer_size },
-                            ) catch "COPY buffer too large";
-                            defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
-                            this.cleanupCopyState();
-                            this.fail(err_msg, error.CopyBufferTooLarge);
-                            return error.CopyBufferTooLarge;
-                        }
-                        this.onCopyResult(request, cmd.command_tag.slice());
-                    }
-                } else if (this.copy_state == .copy_in_progress) {
-                    // COPY FROM STDIN completion: no data payload to return
-                    this.cleanupCopyState();
-                    request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-                } else {
-                    // Unknown/none state fallback
-                    this.cleanupCopyState();
-                    request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-                }
+                try this.finishCopy(request, cmd.command_tag.slice());
             } else {
                 request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
             }

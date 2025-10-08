@@ -556,6 +556,50 @@ if (isDockerEnabled()) {
       expect(verify[0]?.count).toBe(count);
     });
 
+    // Progress verification for batched text COPY FROM
+    test("copyFrom (text) progress bytes/chunks match server output", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS copy_progress", []);
+      await conn.unsafe("CREATE TABLE copy_progress (id INT, name TEXT)", []);
+
+      const total = 200;
+      let expected = "";
+      for (let i = 0; i < total; i++) {
+        expected += `${i}\tName ${i}\n`;
+      }
+
+      let bytesSent = 0;
+      let chunksSent = 0;
+
+      async function* genRows() {
+        for (let i = 0; i < total; i++) {
+          // Ensure we exercise the row-batching path (flushBatch will send aggregated chunks)
+          yield [i, `Name ${i}`] as [number, string];
+        }
+      }
+
+      const res = await conn.copyFrom("copy_progress", ["id", "name"], genRows(), {
+        format: "text",
+        onProgress: ({ bytesSent: b, chunksSent: c }: { bytesSent: number; chunksSent: number }) => {
+          bytesSent = b;
+          chunksSent = c;
+        },
+      });
+      expect(res?.command).toBe("COPY");
+      expect(res?.count).toBe(total);
+
+      // At least one batch should have been sent
+      expect(chunksSent).toBeGreaterThan(0);
+
+      // Progress bytes should equal the serialized payload length we generated
+      expect(bytesSent).toBe(expected.length);
+
+      // Dump back from server in a deterministic order and compare to expected payload
+      const out = await conn`COPY (SELECT id, name FROM copy_progress ORDER BY id) TO STDOUT`;
+      const outStr = String(out[0] ?? "");
+      expect(outStr.length).toBe(bytesSent);
+      expect(outStr).toBe(expected);
+    });
+
     // Phase 9: COPY guardrails (timeout)
 
     test("copyTo timeout triggers when too small", async () => {

@@ -1610,7 +1610,7 @@ const SQL: typeof Bun.SQL = function SQL(
           const maxBytes =
             options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
               ? Number((options as any).maxBytes)
-              : __fromDefaults__.maxBytes | 0;
+              : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
 
           if (maxBytes && bytesSent + bLen > maxBytes) {
             throw new Error("copyFrom: maxBytes exceeded");
@@ -1643,10 +1643,10 @@ const SQL: typeof Bun.SQL = function SQL(
         }
       };
 
-      const addToBatch = (chunk: string) => {
+      const addToBatch = async (chunk: string) => {
         batch += chunk;
         if (batch.length >= BATCH_SIZE) {
-          flushBatch();
+          await flushBatch();
         }
       };
 
@@ -1666,11 +1666,11 @@ const SQL: typeof Bun.SQL = function SQL(
         const maxBytes =
           options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
             ? Number((options as any).maxBytes)
-            : __fromDefaults__.maxBytes | 0;
+            : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
         const maxChunkSize =
           options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
             ? Number((options as any).maxChunkSize)
-            : __fromDefaults__.maxChunkSize | 0;
+            : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
 
         if (payload.length <= maxChunkSize) {
           if (maxBytes && bytesSent + payload.length > maxBytes) {
@@ -1756,7 +1756,7 @@ const SQL: typeof Bun.SQL = function SQL(
               });
             } else {
               // text/csv: treat as row[]
-              addToBatch(serializeRow(item));
+              await addToBatch(serializeRow(item));
             }
           } else if (typeof item === "string") {
             // raw string chunk
@@ -1779,11 +1779,11 @@ const SQL: typeof Bun.SQL = function SQL(
             const maxBytes =
               options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
                 ? Number((options as any).maxBytes)
-                : __fromDefaults__.maxBytes | 0;
+                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
             const maxChunkSize =
               options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
                 ? Number((options as any).maxChunkSize)
-                : __fromDefaults__.maxChunkSize | 0;
+                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
 
             if (src.byteLength <= maxChunkSize) {
               if (maxBytes && bytesSent + src.byteLength > maxBytes) {
@@ -1824,7 +1824,7 @@ const SQL: typeof Bun.SQL = function SQL(
             }
           } else {
             // fallback: attempt to serialize as a row
-            addToBatch(serializeRow(item));
+            await addToBatch(serializeRow(item));
           }
         }
         await flushBatch();
@@ -1852,6 +1852,9 @@ const SQL: typeof Bun.SQL = function SQL(
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
               (reserved as any).copySendData(payload);
+              bytesSent += payload.byteLength;
+              chunksSent += 1;
+              notifyProgress();
               // If awaitWritable exists on reserved, also use it
               if (typeof (reserved as any).awaitWritable === "function") {
                 await new Promise<void>(resolve => {
@@ -1887,7 +1890,7 @@ const SQL: typeof Bun.SQL = function SQL(
                 });
               }
             } else {
-              addToBatch(serializeRow(item));
+              await addToBatch(serializeRow(item));
             }
           } else if (typeof item === "string") {
             addToBatch(sanitizeString(item));
@@ -1908,11 +1911,11 @@ const SQL: typeof Bun.SQL = function SQL(
             const maxBytes =
               options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
                 ? Number((options as any).maxBytes)
-                : __fromDefaults__.maxBytes | 0;
+                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
             const maxChunkSize =
               options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
                 ? Number((options as any).maxChunkSize)
-                : __fromDefaults__.maxChunkSize | 0;
+                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
 
             const sendAwaitWritable = async () => {
               if (typeof (reserved as any).awaitWritable === "function") {
@@ -1955,6 +1958,9 @@ const SQL: typeof Bun.SQL = function SQL(
                 throw new Error("copyFrom: maxBytes exceeded");
               }
               (reserved as any).copySendData(src);
+              bytesSent += src.byteLength;
+              chunksSent += 1;
+              notifyProgress();
               await sendAwaitWritable();
             } else {
               for (let i = 0; i < src.byteLength; i += maxChunkSize) {
@@ -1963,11 +1969,14 @@ const SQL: typeof Bun.SQL = function SQL(
                   throw new Error("copyFrom: maxBytes exceeded");
                 }
                 (reserved as any).copySendData(part);
+                bytesSent += part.byteLength;
+                chunksSent += 1;
+                notifyProgress();
                 await sendAwaitWritable();
               }
             }
           } else {
-            addToBatch(serializeRow(item));
+            await addToBatch(serializeRow(item));
           }
         }
         flushBatch();
@@ -1986,7 +1995,7 @@ const SQL: typeof Bun.SQL = function SQL(
         }
         for (const row of data as any[]) {
           if (aborted) throw new Error("AbortError");
-          addToBatch(serializeRow(row));
+          await addToBatch(serializeRow(row));
         }
         await flushBatch();
         (reserved as any).copyDone();

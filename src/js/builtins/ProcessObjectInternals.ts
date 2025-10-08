@@ -106,14 +106,12 @@ export function getStdinStream(
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
-  let pendingDisown = false;
 
   function own() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
     shouldDisown = false;
-    pendingDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
@@ -140,7 +138,6 @@ export function getStdinStream(
     } else if (source) {
       source.updateRef(false);
     }
-    pendingDisown = false;
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -254,17 +251,13 @@ export function getStdinStream(
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
-    if (!pendingDisown) {
-      pendingDisown = true;
-      process.nextTick(() => {
-        if (pendingDisown) {
-          if (!stream.readableFlowing) {
-            stream._readableState.reading = false;
-          }
-          disown();
-        }
-      });
-    }
+    process.nextTick(() => {
+      // Only disown if the stream is still paused (not resumed in the meantime)
+      if (!stream.readableFlowing) {
+        stream._readableState.reading = false;
+        disown();
+      }
+    });
   });
 
   stream.on("close", () => {

@@ -17,7 +17,7 @@
  *
  */
 
-const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1";
+const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1" || true;
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "events";

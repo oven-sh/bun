@@ -4,6 +4,7 @@ import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isWindows,
   readdirSorted,
   runBunInstall,
   stderrForInstall,
@@ -420,7 +421,11 @@ it("should link dependency without crashing", async () => {
   );
   // Verify that the shebang was normalized from \r\n to \n
   const binContent = await file(join(package_dir, "node_modules", link_name, `${link_name}.py`)).text();
-  expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
+  if (isWindows) {
+    expect(binContent).toStartWith("#!/usr/bin/env python\r\nprint");
+  } else {
+    expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
+  }
   expect(binContent).not.toContain("\r\n");
   await access(join(package_dir, "bun.lockb"));
 

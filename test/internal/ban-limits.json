@@ -8,7 +8,7 @@
   ".jsBoolean(false)": 0,
   ".jsBoolean(true)": 0,
   ".stdDir()": 41,
-  ".stdFile()": 17,
+  ".stdFile()": 16,
   "// autofix": 167,
   ": [^=]+= undefined,$": 256,
   "== alloc.ptr": 0,

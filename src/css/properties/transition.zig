@@ -112,10 +112,10 @@ pub const TransitionHandler = struct {
 
     pub fn handleProperty(this: *@This(), prop: *const Property, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) bool {
         switch (prop.*) {
-            .@"transition-property" => |*x| this.property(dest, context, Feature.transition_property, "properties", &x.*[0], x.*[1]),
-            .@"transition-duration" => |*x| this.property(dest, context, Feature.transition_duration, "durations", &x.*[0], x.*[1]),
-            .@"transition-delay" => |*x| this.property(dest, context, Feature.transition_delay, "delays", &x.*[0], x.*[1]),
-            .@"transition-timing-function" => |*x| this.property(dest, context, Feature.transition_timing_function, "timing_functions", &x.*[0], x.*[1]),
+            .@"transition-property" => |*x| this.propertyProperties(dest, context, Feature.transition_property, &x.*[0], x.*[1]),
+            .@"transition-duration" => |*x| this.propertyDurations(dest, context, Feature.transition_duration, &x.*[0], x.*[1]),
+            .@"transition-delay" => |*x| this.propertyDelays(dest, context, Feature.transition_delay, &x.*[0], x.*[1]),
+            .@"transition-timing-function" => |*x| this.propertyTimingFunctions(dest, context, Feature.transition_timing_function, &x.*[0], x.*[1]),
             .transition => |*x| {
                 const val: *const SmallList(Transition, 1) = &x.*[0];
                 const vp: VendorPrefix = x.*[1];
@@ -132,27 +132,27 @@ pub const TransitionHandler = struct {
                 for (val.slice(), properties.slice_mut()) |*item, *out_prop| {
                     out_prop.* = item.property.deepClone(context.allocator);
                 }
-                this.maybeFlush(dest, context, "properties", &properties, vp);
+                this.maybeFlushProperties(dest, context, &properties, vp);
 
                 for (val.slice(), durations.slice_mut()) |*item, *out_dur| {
                     out_dur.* = item.duration.deepClone(context.allocator);
                 }
-                this.maybeFlush(dest, context, "durations", &durations, vp);
+                this.maybeFlushDurations(dest, context, &durations, vp);
 
                 for (val.slice(), delays.slice_mut()) |*item, *out_delay| {
                     out_delay.* = item.delay.deepClone(context.allocator);
                 }
-                this.maybeFlush(dest, context, "delays", &delays, vp);
+                this.maybeFlushDelays(dest, context, &delays, vp);
 
                 for (val.slice(), timing_functions.slice_mut()) |*item, *out_timing| {
                     out_timing.* = item.timing_function.deepClone(context.allocator);
                 }
-                this.maybeFlush(dest, context, "timing_functions", &timing_functions, vp);
+                this.maybeFlushTimingFunctions(dest, context, &timing_functions, vp);
 
-                this.property(dest, context, Feature.transition_property, "properties", &properties, vp);
-                this.property(dest, context, Feature.transition_duration, "durations", &durations, vp);
-                this.property(dest, context, Feature.transition_delay, "delays", &delays, vp);
-                this.property(dest, context, Feature.transition_timing_function, "timing_functions", &timing_functions, vp);
+                this.propertyProperties(dest, context, Feature.transition_property, &properties, vp);
+                this.propertyDurations(dest, context, Feature.transition_duration, &durations, vp);
+                this.propertyDelays(dest, context, Feature.transition_delay, &delays, vp);
+                this.propertyTimingFunctions(dest, context, Feature.transition_timing_function, &timing_functions, vp);
             },
             .unparsed => |*x| if (isTransitionProperty(&x.property_id)) {
                 this.flush(dest, context);
@@ -171,11 +171,10 @@ pub const TransitionHandler = struct {
         this.flush(dest, context);
     }
 
-    fn property(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
-        this.maybeFlush(dest, context, prop, val, vp);
+    fn propertyProperties(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, val: *const SmallList(PropertyId, 1), vp: VendorPrefix) void {
+        this.maybeFlushProperties(dest, context, val, vp);
 
-        // Otherwise, update the value and add the prefix.
-        if (@field(this, prop)) |*p| {
+        if (this.properties) |*p| {
             const v = &p.*[0];
             const prefixes = &p.*[1];
             v.* = val.deepClone(context.allocator);
@@ -184,15 +183,94 @@ pub const TransitionHandler = struct {
         } else {
             const prefixes = context.targets.prefixes(vp, feature);
             const cloned_val = val.deepClone(context.allocator);
-            @field(this, prop) = .{ cloned_val, prefixes };
+            this.properties = .{ cloned_val, prefixes };
             this.has_any = true;
         }
     }
 
-    fn maybeFlush(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
-        // If two vendor prefixes for the same property have different
-        // values, we need to flush what we have immediately to preserve order.
-        if (@field(this, prop)) |*p| {
+    fn propertyDurations(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, val: *const SmallList(Time, 1), vp: VendorPrefix) void {
+        this.maybeFlushDurations(dest, context, val, vp);
+
+        if (this.durations) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            v.* = val.deepClone(context.allocator);
+            bun.bits.insert(VendorPrefix, prefixes, vp);
+            prefixes.* = context.targets.prefixes(prefixes.*, feature);
+        } else {
+            const prefixes = context.targets.prefixes(vp, feature);
+            const cloned_val = val.deepClone(context.allocator);
+            this.durations = .{ cloned_val, prefixes };
+            this.has_any = true;
+        }
+    }
+
+    fn propertyDelays(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, val: *const SmallList(Time, 1), vp: VendorPrefix) void {
+        this.maybeFlushDelays(dest, context, val, vp);
+
+        if (this.delays) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            v.* = val.deepClone(context.allocator);
+            bun.bits.insert(VendorPrefix, prefixes, vp);
+            prefixes.* = context.targets.prefixes(prefixes.*, feature);
+        } else {
+            const prefixes = context.targets.prefixes(vp, feature);
+            const cloned_val = val.deepClone(context.allocator);
+            this.delays = .{ cloned_val, prefixes };
+            this.has_any = true;
+        }
+    }
+
+    fn propertyTimingFunctions(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, val: *const SmallList(EasingFunction, 1), vp: VendorPrefix) void {
+        this.maybeFlushTimingFunctions(dest, context, val, vp);
+
+        if (this.timing_functions) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            v.* = val.deepClone(context.allocator);
+            bun.bits.insert(VendorPrefix, prefixes, vp);
+            prefixes.* = context.targets.prefixes(prefixes.*, feature);
+        } else {
+            const prefixes = context.targets.prefixes(vp, feature);
+            const cloned_val = val.deepClone(context.allocator);
+            this.timing_functions = .{ cloned_val, prefixes };
+            this.has_any = true;
+        }
+    }
+
+    fn maybeFlushProperties(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const SmallList(PropertyId, 1), vp: VendorPrefix) void {
+        if (this.properties) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            if (!val.eql(v) and !bun.bits.contains(VendorPrefix, prefixes.*, vp)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn maybeFlushDurations(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const SmallList(Time, 1), vp: VendorPrefix) void {
+        if (this.durations) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            if (!val.eql(v) and !bun.bits.contains(VendorPrefix, prefixes.*, vp)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn maybeFlushDelays(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const SmallList(Time, 1), vp: VendorPrefix) void {
+        if (this.delays) |*p| {
+            const v = &p.*[0];
+            const prefixes = &p.*[1];
+            if (!val.eql(v) and !bun.bits.contains(VendorPrefix, prefixes.*, vp)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn maybeFlushTimingFunctions(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const SmallList(EasingFunction, 1), vp: VendorPrefix) void {
+        if (this.timing_functions) |*p| {
             const v = &p.*[0];
             const prefixes = &p.*[1];
             if (!val.eql(v) and !bun.bits.contains(VendorPrefix, prefixes.*, vp)) {

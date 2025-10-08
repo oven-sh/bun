@@ -1501,8 +1501,14 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it includes a
-            // breakpoint which makes crashes easier to debug.
+            // On Windows, use RaiseFailFastException to generate a crash dump via WER
+            // This triggers Windows Error Reporting and creates a minidump
+            _ = windows.kernel32.RaiseFailFastException(
+                null, // EXCEPTION_RECORD
+                null, // CONTEXT
+                0, // flags
+            );
+            // Fallback to abort if RaiseFailFastException returns (shouldn't happen)
             std.posix.abort();
         },
         else => {

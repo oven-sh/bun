@@ -237,29 +237,23 @@ if (options["coredump-upload"]) {
     coresDir = join(tmpdir(), `bun-dumps-${timestamp}`);
     mkdirSync(coresDir, { recursive: true });
 
-    // Configure Windows Error Reporting to save minidumps locally
-    // See: https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps
-    const werKey = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps";
+    // Per-application WER settings for bun-profile.exe
+    const werKey = "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\bun-profile.exe";
 
-    // Set dump folder
     await spawnSafe({
       command: "reg",
       args: ["add", werKey, "/v", "DumpFolder", "/t", "REG_EXPAND_SZ", "/d", coresDir, "/f"],
     });
 
-    // Set dump type to 2 (full dump with heap)
     await spawnSafe({
       command: "reg",
       args: ["add", werKey, "/v", "DumpType", "/t", "REG_DWORD", "/d", "2", "/f"],
     });
 
-    // Set dump count to 10 (keep up to 10 dumps)
     await spawnSafe({
       command: "reg",
       args: ["add", werKey, "/v", "DumpCount", "/t", "REG_DWORD", "/d", "10", "/f"],
     });
-
-    console.log(`Configured Windows minidumps to save in: ${coresDir}`);
   }
 }
 

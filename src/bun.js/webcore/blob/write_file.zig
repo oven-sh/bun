@@ -353,7 +353,7 @@ pub const WriteFileWindows = struct {
 
     const log = bun.Output.scoped(.WriteFile, .hidden);
 
-    pub const WriteFileWindowsError = error{WriteFileWindowsDeinitialized};
+    pub const WriteFileWindowsError = error{ WriteFileWindowsDeinitialized, JSTerminated };
 
     pub fn createWithCtx(
         file_blob: Blob,
@@ -464,6 +464,7 @@ pub const WriteFileWindows = struct {
                 .syscall = .open,
             })) {
                 error.WriteFileWindowsDeinitialized => {},
+                error.JSTerminated => {}, // TODO: properly propagate exception upwards
             }
             return;
         }
@@ -473,6 +474,7 @@ pub const WriteFileWindows = struct {
         // the loop must be copied
         this.doWriteLoop(this.loop()) catch |e| switch (e) {
             error.WriteFileWindowsDeinitialized => {},
+            error.JSTerminated => {}, // TODO: properly propagate exception upwards
         };
     }
 
@@ -500,12 +502,14 @@ pub const WriteFileWindows = struct {
             defer bun.default_allocator.free(err_.path);
             switch (this.throw(err_)) {
                 error.WriteFileWindowsDeinitialized => {},
+                error.JSTerminated => {}, // TODO: properly propagate exception upwards
             }
             return;
         }
 
         this.open() catch |e| switch (e) {
             error.WriteFileWindowsDeinitialized => {},
+            error.JSTerminated => {}, // TODO: properly propagate exception upwards
         };
     }
 
@@ -526,6 +530,7 @@ pub const WriteFileWindows = struct {
                 .syscall = .write,
             })) {
                 error.WriteFileWindowsDeinitialized => {},
+                error.JSTerminated => {}, // TODO: properly propagate exception upwards
             }
             return;
         }
@@ -533,6 +538,7 @@ pub const WriteFileWindows = struct {
         this.total_written += @intCast(rc.int());
         this.doWriteLoop(this.loop()) catch |e| switch (e) {
             error.WriteFileWindowsDeinitialized => {},
+            error.JSTerminated => {}, // TODO: properly propagate exception upwards
         };
     }
 

@@ -1018,6 +1018,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 options.mkdirp_if_not_exists orelse true,
             ) catch |e| switch (e) {
                 error.WriteFileWindowsDeinitialized => {},
+                error.JSTerminated => |ex| return ex,
             };
             return promise_value;
         }

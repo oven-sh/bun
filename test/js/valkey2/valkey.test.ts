@@ -2185,6 +2185,97 @@ describeValkey(
     });
 
     describe("Set Operations", () => {
+      describe("SADD", () => {
+        test("should add a single member to a set", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-single-test";
+
+          const result = await redis.sadd(key, "member1");
+          expect(result).toBe(1);
+
+          const members = await redis.smembers(key);
+          expect(members).toEqual(["member1"]);
+        });
+
+        test("should add multiple members to a set", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-multiple-test";
+
+          const result = await redis.sadd(key, "one", "two", "three");
+          expect(result).toBe(3);
+
+          const members = await redis.smembers(key);
+          expect(members.sort()).toEqual(["one", "three", "two"]);
+        });
+
+        test("should return count of newly added members", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-count-test";
+
+          const result1 = await redis.sadd(key, "a", "b", "c");
+          expect(result1).toBe(3);
+
+          // Add some duplicates and one new member
+          const result2 = await redis.sadd(key, "b", "c", "d");
+          expect(result2).toBe(1); // Only "d" is new
+
+          const members = await redis.smembers(key);
+          expect(members.sort()).toEqual(["a", "b", "c", "d"]);
+        });
+
+        test("should handle adding duplicate members", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-duplicate-test";
+
+          await redis.sadd(key, "existing");
+          const result = await redis.sadd(key, "existing");
+          expect(result).toBe(0); // No new members added
+
+          const count = await redis.scard(key);
+          expect(count).toBe(1);
+        });
+
+        test("should create new set if key does not exist", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-new-key-test";
+
+          // Verify key doesn't exist
+          const exists = await redis.exists(key);
+          expect(exists).toBe(false);
+
+          // Add members
+          const result = await redis.sadd(key, "x", "y", "z");
+          expect(result).toBe(3);
+
+          // Verify set was created
+          const type = await redis.type(key);
+          expect(type).toBe("set");
+        });
+
+        test("should handle large number of members", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-large-test";
+
+          const members = Array.from({ length: 100 }, (_, i) => `member${i}`);
+          const result = await redis.sadd(key, ...members);
+          expect(result).toBe(100);
+
+          const count = await redis.scard(key);
+          expect(count).toBe(100);
+        });
+
+        test("should work with numeric string values", async () => {
+          const redis = await ctx.connectedClient();
+          const key = "sadd-numeric-test";
+
+          const result = await redis.sadd(key, "1", "2", "3");
+          expect(result).toBe(3);
+
+          const isMember = await redis.sismember(key, "2");
+          expect(isMember).toBe(true);
+        });
+      });
+
       test("should get set cardinality with SCARD", async () => {
         const redis = await ctx.connectedClient();
         const key = "scard-test";

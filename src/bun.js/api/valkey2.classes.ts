@@ -111,7 +111,6 @@ export default [
       rpoplpush: { fn: "rpoplpush", length: 2 },
       rpush: { fn: "rpush" },
       rpushx: { fn: "rpushx" },
-      //sadd: { fn: "sadd", length: 2 },
       scan: { fn: "scan" },
       scard: { fn: "scard" },
       script: { fn: "script" },

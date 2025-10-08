@@ -431,7 +431,8 @@ pub const FetchTasklet = struct {
                     this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                     readable.ptr.Bytes.onData(
                         .{
-                            .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
+                            // .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );

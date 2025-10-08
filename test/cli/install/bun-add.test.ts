@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { readlinkSync } from "fs";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {

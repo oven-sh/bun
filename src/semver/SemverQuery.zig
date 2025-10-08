@@ -238,6 +238,10 @@ pub const Group = struct {
             this.tail == null;
     }
 
+    pub fn isEmpty(this: *const Group) bool {
+        return !this.head.head.range.hasLeft() and !this.head.head.range.hasRight();
+    }
+
     pub fn @"is *"(this: *const Group) bool {
         const left = this.head.head.range.left;
         return this.head.head.range.right.op == .unset and

@@ -1,3 +1,4 @@
+/// Owns all of its memory. Required because NpaSpecs can be nested in the alias type case.
 pub const NpaSpec = struct {
     const Self = @This();
 
@@ -23,16 +24,12 @@ pub const NpaSpec = struct {
 
     pub const Type = union(enum) {
         git: struct {
-            git_committish: ?[]const u8,
-            git_range: ?[]const u8,
-            git_subdir: ?[]const u8,
+            attrs: ?GitAttrs,
             hosted: ?HostedGitInfo,
 
-            pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-                if (self.git_committish) |gc| allocator.free(gc);
-                if (self.git_range) |gr| allocator.free(gr);
-                if (self.git_subdir) |gs| allocator.free(gs);
+            pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
                 if (self.hosted) |*h| h.deinit();
+                if (self.attrs) |*a| a.deinit();
             }
         },
         file,
@@ -41,6 +38,11 @@ pub const NpaSpec = struct {
         range,
         tag,
         alias: struct {
+            // TODO(markovejnovic): This is actually a slightly lazy implementation -- sub_spec
+            //                      does not actually need to be a pointer, since alias specs
+            //                      cannot be nested. A less lazy implementation could embed an
+            //                      "AliasedNpaSpec" struct here, which omits the alias type case.
+            //                      That saves a pointer dereference and an allocation.
             sub_spec: *NpaSpec,
 
             pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -160,21 +162,27 @@ pub const NpaSpec = struct {
 
         // Add gitCommittish for git types
         if (self.type == .git) {
-            object.put(
-                go,
-                "gitCommittish",
-                if (self.type.git.git_committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
-            );
-            object.put(
-                go,
-                "gitRange",
-                if (self.type.git.git_range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
-            );
-            object.put(
-                go,
-                "gitSubdir",
-                if (self.type.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
-            );
+            if (self.type.git.attrs) |*attrs| {
+                object.put(
+                    go,
+                    "gitCommittish",
+                    if (attrs.committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
+                );
+                object.put(
+                    go,
+                    "gitRange",
+                    if (attrs.range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
+                );
+                object.put(
+                    go,
+                    "gitSubdir",
+                    if (attrs.subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
+                );
+            } else {
+                object.put(go, "gitCommittish", .null);
+                object.put(go, "gitRange", .null);
+                object.put(go, "gitSubdir", .null);
+            }
 
             // Serialize hosted field
             if (self.type.git.hosted) |*hosted| {
@@ -198,6 +206,8 @@ pub const NpaSpec = struct {
     }
 
     /// Parses a spec which is assumed to be a registry spec. Matches `fromRegistry` in npa.js.
+    ///
+    /// Borrows all arguments.
     fn fromRegistry(
         allocator: std.mem.Allocator,
         name: ?[]const u8,
@@ -205,67 +215,172 @@ pub const NpaSpec = struct {
         raw: []const u8,
     ) !NpaSpec {
         const trimmed = bun.strings.trimSpaces(raw_spec);
-        const sliced = Semver.SlicedString.init(trimmed, trimmed);
 
-        // Duplicate the strings we need to own
+        // TODO(markovejnovic): This would be better if we made one contiguous page allocation.
+        const raw_owned = try allocator.dupe(u8, raw);
+        errdefer allocator.free(raw_owned);
+        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+        errdefer if (name_owned) |n| allocator.free(n);
         const raw_spec_owned = try allocator.dupe(u8, raw_spec);
         errdefer allocator.free(raw_spec_owned);
         const fetch_spec_owned = try allocator.dupe(u8, trimmed);
         errdefer allocator.free(fetch_spec_owned);
 
-        const query = Semver.Query.parse(allocator, trimmed, sliced) catch {
-            // If parsing fails, treat as a tag if it doesn't need URL encoding
-            if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-                return .{
-                    .raw = raw,
-                    .name = name,
-                    .raw_spec = raw_spec_owned,
-                    .fetch_spec = fetch_spec_owned,
-                    .save_spec = null,
-                    .type = .tag,
-                    ._allocator = allocator,
-                };
-            }
-            return error.InvalidRegistrySpec;
-        };
-        defer query.deinit();
-
-        // If the query has no left comparator, it means the parser skipped over a tag name
-        // (e.g., "baz", "latest", etc.) and returned an empty query
-        if (!query.head.head.range.hasLeft()) {
-            if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-                return .{
-                    .raw = raw,
-                    .name = name,
-                    .raw_spec = raw_spec_owned,
-                    .fetch_spec = fetch_spec_owned,
-                    .save_spec = null,
-                    .type = .tag,
-                    ._allocator = allocator,
-                };
-            }
-            return error.InvalidRegistrySpec;
-        }
-
-        if (query.isExact()) {
-            return .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = fetch_spec_owned,
-                .save_spec = null,
-                .type = .version,
-                ._allocator = allocator,
-            };
-        }
-
-        return .{
-            .raw = raw,
-            .name = name,
+        var res: NpaSpec = .{
+            .raw = raw_owned,
+            .name = name_owned,
             .raw_spec = raw_spec_owned,
             .fetch_spec = fetch_spec_owned,
             .save_spec = null,
-            .type = .range,
+            .type = undefined,
+            ._allocator = allocator,
+        };
+
+        const query = Semver.Query.parse(
+            allocator,
+            trimmed,
+            Semver.SlicedString.init(trimmed, trimmed),
+        ) catch {
+            if (bun.strings.indexOfNeedsURLEncode(trimmed) != null) {
+                return error.InvalidRegistrySpec;
+            }
+
+            res.type = .tag;
+            return res;
+        };
+        defer query.deinit();
+
+        // If the query is empty (e.g., "latest", "next"), treat it as a tag
+        if (query.isEmpty()) {
+            if (bun.strings.indexOfNeedsURLEncode(trimmed) != null) {
+                return error.InvalidRegistrySpec;
+            }
+
+            res.type = .tag;
+            return res;
+        }
+
+        res.type = if (query.isExact()) .version else .range;
+        return res;
+    }
+
+    /// Parses a spec which is assumed to be an alias spec. Matches `fromAlias` in npa.js.
+    fn fromAlias(
+        allocator: std.mem.Allocator,
+        name: ?[]const u8,
+        raw_spec: []const u8,
+        where: []const u8,
+        raw: []const u8,
+    ) NpaError!NpaSpec {
+        const sub_spec = try npa(allocator, raw_spec["npm:".len..], where);
+
+        if (sub_spec.type == .alias) {
+            return error.NestedAlias;
+        }
+
+        if (!sub_spec.isRegistry()) {
+            return error.NotAliasingRegistry;
+        }
+
+        if (sub_spec.name == null) {
+            return error.AliasMissingName;
+        }
+
+        // TODO(markovejnovic): This allocation is a consequence of the lazy implementation. See
+        //                      the documentation around the alias type variant.
+        const sub_spec_ptr = try allocator.create(NpaSpec);
+        errdefer allocator.destroy(sub_spec_ptr);
+        sub_spec_ptr.* = sub_spec;
+
+        const my_raw = try allocator.dupe(u8, raw);
+        errdefer allocator.free(my_raw);
+        const my_raw_spec = try allocator.dupe(u8, raw_spec);
+        errdefer allocator.free(my_raw_spec);
+        const my_name = if (name) |n| try allocator.dupe(u8, n) else null;
+        errdefer if (my_name) |n| allocator.free(n);
+
+        return .{
+            .raw = my_raw,
+            .name = my_name,
+            .raw_spec = my_raw_spec,
+            .fetch_spec = null,
+            .save_spec = null,
+            .type = .{
+                .alias = .{
+                    .sub_spec = sub_spec_ptr,
+                },
+            },
+            ._allocator = allocator,
+        };
+    }
+
+    fn fromGitSpec(
+        allocator: std.mem.Allocator,
+        name: ?[]const u8,
+        raw_spec: []const u8,
+        raw: []const u8,
+    ) !?NpaSpec {
+        // We need a mutable reference to spec_str
+        const mut_spec_str: []u8 = try allocator.dupe(u8, raw_spec);
+        errdefer allocator.free(mut_spec_str);
+
+        const hosted = try HostedGitInfo.fromUrl(allocator, mut_spec_str) orelse {
+            allocator.free(mut_spec_str);
+            return null;
+        };
+
+        // This returns the appropriate format based on default_representation
+        const save_spec = try hosted.toString(allocator);
+
+        // Parse the committish to extract gitCommittish, gitRange, and gitSubdir
+        var git_attrs = if (hosted.committish) |c|
+            try GitAttrs.fromCommittish(allocator, c)
+        else
+            null;
+        errdefer if (git_attrs) |*g| g.deinit();
+
+        // npa.js line 363: res.fetchSpec = hosted.getDefaultRepresentation() === 'shortcut' ? null : hosted.toString()
+        // For shortcuts, fetchSpec is null; otherwise it's the string representation
+        // fetchSpec should NEVER include the hash/committish
+        // Also, fetchSpec has git+ prefix stripped
+        const fetch_spec = if (hosted.default_representation == .shortcut)
+            null
+        else blk: {
+            // Always strip committish from fetchSpec by creating temp hosted without it
+            const temp_hosted = HostedGitInfo{
+                .host_provider = hosted.host_provider,
+                .committish = null, // Always strip committish for fetchSpec
+                .project = hosted.project,
+                .user = hosted.user,
+                .default_representation = hosted.default_representation,
+                ._allocator = hosted._allocator,
+                ._memory_buffer = hosted._memory_buffer,
+            };
+            const url_str = try temp_hosted.toString(allocator);
+
+            // Strip git+ prefix from fetchSpec
+            if (bun.strings.hasPrefixComptime(url_str, "git+")) {
+                const without_prefix = try allocator.dupe(u8, url_str[4..]);
+                allocator.free(url_str);
+                break :blk without_prefix;
+            }
+            break :blk url_str;
+        };
+
+        const raw_owned = try allocator.dupe(u8, raw);
+
+        return .{
+            .raw = raw_owned,
+            .name = name,
+            .raw_spec = mut_spec_str, // Use the duplicated string
+            .fetch_spec = fetch_spec,
+            .save_spec = save_spec,
+            .type = .{
+                .git = .{
+                    .attrs = git_attrs,
+                    .hosted = hosted,
+                },
+            },
             ._allocator = allocator,
         };
     }
@@ -281,10 +396,106 @@ pub const NpaError = error{
     Unexpected,
     CurrentWorkingDirectoryUnlinked,
     InvalidRegistrySpec,
-    OverridingCommittish,
-    OverridingRange,
-    OverridingPath,
-    DuplicateCommittish,
+    InvalidCommittish,
+};
+
+/// Parsed git attributes from a committish string (the part after `#` in git URLs).
+/// Corresponds to npa.js `setGitAttrs()` function (lines 214-252).
+///
+/// Git URLs support special syntax for specifying:
+/// - Plain commit-ish: branch name, tag, or commit SHA
+/// - Semver range: `semver:<range>` filters git tags by semver (percent-encoded)
+/// - Subdirectory: `path:<dir>` specifies a subdirectory within the repo
+///
+/// Multiple attributes can be combined with `::` separator.
+///
+/// Examples:
+/// - `github:user/repo#main` → committish = "main"
+/// - `github:user/repo#semver:^1.0.0` → range = "^1.0.0"
+/// - `github:user/repo#main::path:packages/foo` → committish = "main", subdir = "/packages/foo"
+const GitAttrs = struct {
+    const Self = @This();
+
+    committish: ?[]const u8,
+    range: ?[]const u8,
+    subdir: ?[]const u8,
+
+    _allocator: std.mem.Allocator,
+    _range_buf: ?[]const u8,
+
+    pub fn deinit(self: *Self) void {
+        if (self.committish) |c| self._allocator.free(c);
+        // Don't free range - it's a slice into _range_buf
+        if (self.subdir) |s| self._allocator.free(s);
+        if (self._range_buf) |b| self._allocator.free(b);
+    }
+
+    pub fn fromCommittish(allocator: std.mem.Allocator, committish: []const u8) !Self {
+        var res: Self = .{
+            .committish = null,
+            .range = null,
+            .subdir = null,
+            ._range_buf = null,
+            ._allocator = allocator,
+        };
+        errdefer res.deinit();
+
+        var parts_iter = std.mem.splitSequence(u8, committish, "::");
+        while (parts_iter.next()) |part| {
+            if (!bun.strings.containsScalar(part, ':')) {
+                if (res.range != null or res.committish != null) {
+                    return error.InvalidCommittish;
+                }
+
+                res.committish = try allocator.dupe(u8, part);
+                continue;
+            }
+
+            const colon_idx = bun.strings.indexOfScalar(part, ':').?;
+            const name = part[0..colon_idx];
+            const value = part[colon_idx + 1 ..];
+
+            if (std.mem.eql(u8, name, "semver")) {
+                if (res.committish != null or res.range != null) {
+                    return error.InvalidCommittish;
+                }
+
+                const decode_buf = try allocator.alloc(u8, value.len);
+                errdefer allocator.free(decode_buf);
+                res._range_buf = decode_buf;
+
+                var fbs = std.io.fixedBufferStream(decode_buf);
+                const bytes_written = PercentEncoding.decode(
+                    @TypeOf(fbs.writer()),
+                    fbs.writer(),
+                    value,
+                ) catch |err| {
+                    switch (err) {
+                        error.NoSpaceLeft => {
+                            @panic("Failed to decode semver range: no space left in buffer. " ++
+                                "This is a bug in Bun, please report it on Github.");
+                        },
+                        error.DecodingError => {
+                            return error.InvalidCommittish;
+                        },
+                    }
+                };
+                res.range = decode_buf[0..bytes_written];
+                continue;
+            }
+
+            if (std.mem.eql(u8, name, "path")) {
+                if (res.subdir != null) {
+                    return error.InvalidCommittish;
+                }
+
+                res.subdir = try std.fmt.allocPrint(allocator, "/{s}", .{value});
+                continue;
+            }
+        }
+
+        return res;
+    }
 };
 
 /// Matches the semantics of the default export of npa.
@@ -335,24 +546,24 @@ fn resolve(
     defer if (maybe_where == null) allocator.free(where);
 
     // Compute raw as "name@spec" or just spec, matching npa.js Result constructor
-    // We always duplicate so the from* functions own the memory
+    // We always duplicate so the from* functions can borrow it
     const raw = if (raw_arg) |arg|
         try allocator.dupe(u8, arg)
     else if (name) |n|
         try std.fmt.allocPrint(allocator, "{s}@{s}", .{ n, spec })
     else
         try allocator.dupe(u8, spec);
-    errdefer allocator.free(raw);
+    defer allocator.free(raw);
 
     if (SpecStrUtils.isFile(spec)) {
         return fromFile(allocator, name, spec, where, raw);
     }
 
     if (SpecStrUtils.isAlias(spec)) {
-        return fromAlias(allocator, name, spec, where, raw);
+        return NpaSpec.fromAlias(allocator, name, spec, where, raw);
     }
 
-    if (try fromGitSpec(allocator, name, spec, raw)) |git_s| {
+    if (try NpaSpec.fromGitSpec(allocator, name, spec, raw)) |git_s| {
         return git_s;
     }
 
@@ -368,48 +579,6 @@ fn resolve(
     }
 
     return NpaSpec.fromRegistry(allocator, name, spec, raw);
-}
-
-fn fromAlias(
-    allocator: std.mem.Allocator,
-    name: ?[]const u8,
-    raw_spec: []const u8,
-    where: []const u8,
-    raw: []const u8,
-) NpaError!NpaSpec {
-    const sub_spec = try npa(allocator, raw_spec["npm:".len..], where);
-
-    if (sub_spec.type == .alias) {
-        return error.NestedAlias;
-    }
-
-    if (!sub_spec.isRegistry()) {
-        return error.NotAliasingRegistry;
-    }
-
-    if (sub_spec.name == null) {
-        return error.AliasMissingName;
-    }
-
-    const sub_spec_ptr = try allocator.create(NpaSpec);
-    sub_spec_ptr.* = sub_spec;
-
-    // Duplicate raw_spec so we own it
-    const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-
-    return .{
-        .raw = raw,
-        .name = name,
-        .raw_spec = raw_spec_owned,
-        .fetch_spec = null,
-        .save_spec = null,
-        .type = .{
-            .alias = .{
-                .sub_spec = sub_spec_ptr,
-            },
-        },
-        ._allocator = allocator,
-    };
 }
 
 const PathToFileUrlUtils = struct {
@@ -811,12 +980,13 @@ fn fromFile(
         }
     }
 
-    // Duplicate raw_spec so we own it
+    // Duplicate raw and raw_spec so we own them
+    const raw_owned = try allocator.dupe(u8, raw);
     const raw_spec_owned = try allocator.dupe(u8, raw_spec);
 
     return switch (spec_type) {
         .file => .{
-            .raw = raw,
+            .raw = raw_owned,
             .name = name,
             .raw_spec = raw_spec_owned,
             .fetch_spec = fetch_spec,
@@ -825,7 +995,7 @@ fn fromFile(
             ._allocator = allocator,
         },
         .directory => .{
-            .raw = raw,
+            .raw = raw_owned,
             .name = name,
             .raw_spec = raw_spec_owned,
             .fetch_spec = fetch_spec,
@@ -1048,6 +1218,7 @@ fn fromURL(
 
             // If it doesn't contain a port number, it's SCP-style
             if (!contains_port and before_colon.len > 0) {
+                const raw_owned = try allocator.dupe(u8, raw);
                 const fetch_spec = try allocator.dupe(u8, before_hash);
                 const save_spec = try allocator.dupe(u8, raw_spec);
                 const raw_spec_owned = try allocator.dupe(u8, raw_spec);
@@ -1062,20 +1233,22 @@ fn fromURL(
                     null;
 
                 // Parse the committish for special syntax like semver:, path:
-                const git_attrs = try parseGitAttrs(allocator, raw_committish);
+                var git_attrs = if (raw_committish) |c|
+                    try GitAttrs.fromCommittish(allocator, c)
+                else
+                    null;
+                errdefer if (git_attrs) |*a| a.deinit();
 
                 return .{
-                    .raw = raw,
+                    .raw = raw_owned,
                     .name = name,
                     .raw_spec = raw_spec_owned,
                     .fetch_spec = fetch_spec,
                     .save_spec = save_spec,
                     .type = .{
                         .git = .{
-                            .git_committish = git_attrs.committish,
-                            .git_range = git_attrs.range,
-                            .git_subdir = git_attrs.subdir,
                             .hosted = null,
+                            .attrs = git_attrs,
                         },
                     },
                     ._allocator = allocator,
@@ -1218,6 +1391,7 @@ fn fromURL(
             break :blk without_prefix;
         } else fetch_spec;
 
+        const raw_owned = try allocator.dupe(u8, raw);
         const save_spec = try allocator.dupe(u8, raw_spec);
         const raw_spec_owned = try allocator.dupe(u8, raw_spec);
 
@@ -1233,19 +1407,21 @@ fn fromURL(
             null;
 
         // Parse the committish for special syntax like semver:, path:
-        const git_attrs = try parseGitAttrs(allocator, raw_committish);
+        var git_attrs = if (raw_committish) |c|
+            try GitAttrs.fromCommittish(allocator, c)
+        else
+            null;
+        errdefer if (git_attrs) |*a| a.deinit();
 
         return .{
-            .raw = raw,
+            .raw = raw_owned,
             .name = name,
             .raw_spec = raw_spec_owned,
             .fetch_spec = final_fetch_spec,
             .save_spec = save_spec,
             .type = .{
                 .git = .{
-                    .git_committish = git_attrs.committish,
-                    .git_range = git_attrs.range,
-                    .git_subdir = git_attrs.subdir,
+                    .attrs = git_attrs,
                     .hosted = null,
                 },
             },
@@ -1258,9 +1434,10 @@ fn fromURL(
     if (bun.strings.eqlComptime(protocol_slice, "http") or
         bun.strings.eqlComptime(protocol_slice, "https"))
     {
+        const raw_owned = try allocator.dupe(u8, raw);
         const raw_spec_owned = try allocator.dupe(u8, raw_spec);
         return .{
-            .raw = raw,
+            .raw = raw_owned,
             .name = name,
             .raw_spec = raw_spec_owned,
             .fetch_spec = raw_spec_owned,
@@ -1272,119 +1449,6 @@ fn fromURL(
 
     // Unsupported protocol
     return error.InvalidURL;
-}
-
-fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []const u8, raw: []const u8) !?NpaSpec {
-    // We need a mutable reference to spec_str
-    const mut_spec_str: []u8 = try allocator.dupe(u8, raw_spec);
-    errdefer allocator.free(mut_spec_str);
-
-    const hosted = try HostedGitInfo.fromUrl(allocator, mut_spec_str) orelse {
-        allocator.free(mut_spec_str);
-        return null;
-    };
-
-    // This returns the appropriate format based on default_representation
-    const save_spec = try hosted.toString(allocator);
-
-    // Parse the committish to extract gitCommittish, gitRange, and gitSubdir
-    const git_attrs = try parseGitAttrs(allocator, hosted.committish);
-
-    // npa.js line 363: res.fetchSpec = hosted.getDefaultRepresentation() === 'shortcut' ? null : hosted.toString()
-    // For shortcuts, fetchSpec is null; otherwise it's the string representation
-    // fetchSpec should NEVER include the hash/committish
-    // Also, fetchSpec has git+ prefix stripped
-    const fetch_spec = if (hosted.default_representation == .shortcut)
-        null
-    else blk: {
-        // Always strip committish from fetchSpec by creating temp hosted without it
-        const temp_hosted = HostedGitInfo{
-            .host_provider = hosted.host_provider,
-            .committish = null, // Always strip committish for fetchSpec
-            .project = hosted.project,
-            .user = hosted.user,
-            .default_representation = hosted.default_representation,
-            ._allocator = hosted._allocator,
-            ._memory_buffer = hosted._memory_buffer,
-        };
-        const url_str = try temp_hosted.toString(allocator);
-
-        // Strip git+ prefix from fetchSpec
-        if (bun.strings.hasPrefixComptime(url_str, "git+")) {
-            const without_prefix = try allocator.dupe(u8, url_str[4..]);
-            allocator.free(url_str);
-            break :blk without_prefix;
-        }
-        break :blk url_str;
-    };
-
-    return .{
-        .raw = raw,
-        .name = name,
-        .raw_spec = mut_spec_str, // Use the duplicated string
-        .fetch_spec = fetch_spec,
-        .save_spec = save_spec,
-        .type = .{
-            .git = .{
-                .git_committish = git_attrs.committish,
-                .git_range = git_attrs.range,
-                .git_subdir = git_attrs.subdir,
-                .hosted = hosted,
-            },
-        },
-        ._allocator = allocator,
-    };
-}
-
-/// Parse git committish for special syntax like semver:, path:, and :: separators
-/// Matches npa.js setGitAttrs function (lines 214-252)
-fn parseGitAttrs(allocator: std.mem.Allocator, committish: ?[]const u8) !struct {
-    committish: ?[]const u8,
-    range: ?[]const u8,
-    subdir: ?[]const u8,
-} {
-    const c = committish orelse return .{ .committish = null, .range = null, .subdir = null };
-
-    var result_committish: ?[]const u8 = null;
-    var result_range: ?[]const u8 = null;
-    var result_subdir: ?[]const u8 = null;
-
-    // Split on :: (double colon separator)
-    var parts_iter = std.mem.splitSequence(u8, c, "::");
-    while (parts_iter.next()) |part| {
-        if (part.len == 0) continue;
-
-        // Check if this part has a : (name:value pattern)
-        if (std.mem.indexOfScalar(u8, part, ':')) |colon_idx| {
-            const key = part[0..colon_idx];
-            const value = part[colon_idx + 1 ..];
-
-            if (bun.strings.eqlComptime(key, "semver")) {
-                if (result_committish != null) return error.OverridingCommittish;
-                if (result_range != null) return error.OverridingRange;
-                // URL decode the value (npa.js: decodeURIComponent(value))
-                var decoded_list = std.ArrayList(u8).init(allocator);
-                defer decoded_list.deinit();
-                _ = PercentEncoding.decode(@TypeOf(decoded_list.writer()), decoded_list.writer(), value) catch value;
-                result_range = try decoded_list.toOwnedSlice();
-            } else if (bun.strings.eqlComptime(key, "path")) {
-                if (result_subdir != null) return error.OverridingPath;
-                result_subdir = try std.fmt.allocPrint(allocator, "/{s}", .{value});
-            }
-            // Ignore unknown keys
-        } else {
-            // No colon, so this is a plain committish
-            if (result_range != null) return error.OverridingCommittish;
-            if (result_committish != null) return error.DuplicateCommittish;
-            result_committish = try allocator.dupe(u8, part);
-        }
-    }
-
-    return .{
-        .committish = result_committish,
-        .range = result_range,
-        .subdir = result_subdir,
-    };
 }
 
 pub const TestingAPIs = struct {

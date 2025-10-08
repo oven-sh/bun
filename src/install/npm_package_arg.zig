@@ -1590,7 +1590,7 @@ pub const TestingAPIs = struct {
 
         // Add registry field for registry types
         if (spec.isRegistry()) {
-            object.put(go, "registry", jsc.JSValue.jsBoolean(true));
+            object.put(go, "registry", .true);
         }
 
         return object;

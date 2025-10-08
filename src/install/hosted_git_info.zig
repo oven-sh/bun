@@ -49,12 +49,24 @@
 //! It's noteworthy that `WellDefinedProtocol` doesn't refer to "true" protocols, but includes fake
 //! tags like `github:` which are handled as "shortcuts" by this library.
 
+/// Represents how a URL should be reported when formatting it as a string.
+///
+/// Input strings may be given in any format and they may be formatted in any format. If you wish
+/// to format a URL in a specific format, you can use its `format*` methods. However, each input
+/// string has a "default" representation which is used when calling `toString()`. Depending on the
+/// input, the default representation may be different.
 const Representation = enum {
+    /// foo/bar
     shortcut,
+    /// git+ssh://git@domain/user/project.git#committish
     sshurl,
+    /// https://domain/user/project.git#committish
     ssh,
+    /// git://domain/user/project.git#committish
     https,
+    /// git://domain/user/project.git#committish
     git,
+    /// http://domain/user/project.git#committish
     http,
 };
 
@@ -158,11 +170,23 @@ pub const HostedGitInfo = struct {
     /// Generate a URL string based on the default representation.
     /// Mimics hosted-git-info's toString() method
     pub fn toString(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
-        _ = self;
-        _ = allocator;
-        @panic("Not Implemented");
+        return switch (self.default_representation) {
+            .shortcut => self.host_provider.formatShortcut(allocator, self.user, self.project, self.committish),
+            .sshurl => self.host_provider.formatSshUrl(allocator, self.user, self.project, self.committish),
+            .ssh => self.host_provider.formatSsh(allocator, self.user, self.project, self.committish),
+            .https => self.host_provider.formatHttps(allocator, null, self.user, self.project, self.committish),
+            .git => {
+                const git_formatter = HostProvider.configs.get(self.host_provider).format_git;
+                if (git_formatter) |formatter| {
+                    return formatter(self.host_provider, allocator, null, self.user, self.project, self.committish);
+                }
+                @panic("No git formatter for this provider. This is a bug in Bun.");
+            },
+            .http => @panic("No http formatter exists. This is a bug in Bun."),
+        };
     }
 
+    /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
     pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?Self {
         // git_url_mut may carry two ownership semantics:
         //  - It aliases `git_url`, in which case it must not be freed.
@@ -186,29 +210,20 @@ pub const HostedGitInfo = struct {
         };
         defer parsed.url.deinit();
 
-        // Check if this is a shortcut (e.g., github:user/repo)
-        const is_shortcut = if (parsed.proto == .well_formed)
-            parsed.proto.well_formed.isShortcut()
-        else
-            false;
-
         const host_provider = switch (parsed.proto) {
             .well_formed => |p| p.hostProvider() orelse HostProvider.fromUrlDomain(parsed.url),
             .unknown => HostProvider.fromUrlDomain(parsed.url),
             .custom => HostProvider.fromUrl(parsed.url),
         } orelse return null;
 
+        const is_shortcut = parsed.proto == .well_formed and parsed.proto.well_formed.isShortcut();
         if (!is_shortcut) {
-            // Determine default representation from the parsed protocol
-            const default_repr = switch (parsed.proto) {
-                .well_formed => |p| p.defaultRepresentation(),
-                else => .sshurl, // Unknown/custom protocols default to sshurl
-            };
-
-            // Use host-specific extract logic - extract functions decode the strings
             var extracted = host_provider.extract(allocator, parsed.url) orelse return null;
-
-            return HostedGitInfo.moveFromExtracted(&extracted, host_provider, default_repr);
+            return HostedGitInfo.moveFromExtracted(
+                &extracted,
+                host_provider,
+                parsed.proto.defaultRepresentation(),
+            );
         }
 
         // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
@@ -443,6 +458,14 @@ const UrlProtocol = union(enum) {
 
     // Either no protocol was specified or the library couldn't figure it out.
     unknown: void,
+
+    /// Deduces the default representation for this protocol.
+    pub fn defaultRepresentation(self: UrlProtocol) Representation {
+        return switch (self) {
+            .well_formed => self.well_formed.defaultRepresentation(),
+            else => .sshurl, // Unknown/custom protocols default to sshurl
+        };
+    }
 };
 
 const UrlProtocolPair = struct {
@@ -909,7 +932,7 @@ const HostProvider = enum {
 
                     return std.fmt.allocPrint(
                         alloc,
-                        "{s}:{s}/{s}{s}{s}",
+                        "{s}{s}/{s}{s}{s}",
                         .{ self.shortcut(), user.?, project, cmsh_sep, cmsh },
                     );
                 }
@@ -928,7 +951,7 @@ const HostProvider = enum {
 
                     return std.fmt.allocPrint(
                         alloc,
-                        "{s}:{s}{s}{s}",
+                        "{s}{s}{s}{s}",
                         .{ self.shortcut(), project, cmsh_sep, cmsh },
                     );
                 }

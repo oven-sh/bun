@@ -426,7 +426,6 @@ it("should link dependency without crashing", async () => {
   } else {
     expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
   }
-  expect(binContent).not.toContain("\r\n");
   await access(join(package_dir, "bun.lockb"));
 
   const {

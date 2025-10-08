@@ -1571,7 +1571,7 @@ pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: 
 
 /// suffix is of type []const u8 or []const u16
 pub fn trimSuffixComptime(comptime T: type, buffer: []const T, comptime suffix: anytype) []const T {
-    return if (hasSuffixComptimeType(buffer, suffix))
+    return if (hasSuffixComptimeType(T, buffer, suffix))
         buffer[0 .. buffer.len - suffix.len]
     else
         buffer;

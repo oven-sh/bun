@@ -119,7 +119,7 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
     };
     defer parsed.deinit();
 
-    const host_provider = deduceHostProvider(allocator, parsed) orelse {
+    const host_provider = HostProvider.fromUrl(parsed) orelse {
         return null;
     };
 
@@ -182,23 +182,20 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
     } else {
         // Regular URL path: git+ssh://github.com/user/repo (from-url.js line 97-111)
         // Use host-specific extract logic
-        // TODO(markovejnovic): This currently does not invoke deinit which means it is leaking.
         const extracted = host_provider.extract(allocator, parsed) orelse {
             return null;
         };
+        defer extracted.deinit();
 
-        // Transfer ownership of user and project from extracted to our variables
-        user = extracted.user;
-        project = extracted.project;
+        // Duplicate all fields from extracted (they are slices into extracted's buffer)
+        user = if (extracted.user) |u| try allocator.dupe(u8, u) else null;
+        project = try allocator.dupe(u8, extracted.project);
 
         // We prefer raw_committish if available, otherwise use extracted committish
         if (raw_committish) |rc| {
-            // Free the extracted committish since we're not using it
-            if (extracted.committish) |c| allocator.free(c);
             committish = try allocator.dupe(u8, rc);
         } else {
-            // Transfer ownership of committish from extracted
-            committish = extracted.committish;
+            committish = if (extracted.committish) |c| try allocator.dupe(u8, c) else null;
         }
     }
 
@@ -209,7 +206,11 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
         // Get the protocol and append colon (URL.protocol() returns without colon)
         const proto_slice = proto_str.byteSlice();
         var proto_with_colon_buf: [32]u8 = undefined;
-        const proto_with_colon = std.fmt.bufPrint(&proto_with_colon_buf, "{s}:", .{proto_slice}) catch unreachable;
+        const proto_with_colon = std.fmt.bufPrint(
+            &proto_with_colon_buf,
+            "{s}:",
+            .{proto_slice},
+        ) catch unreachable;
         const result = defaultRepresentationFromProtocol(proto_with_colon);
         debug("fromUrl: protocol={s}, default_repr={s}\n", .{ proto_with_colon, @tagName(result) });
         break :blk result;
@@ -224,99 +225,6 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
         ._allocator = allocator,
     };
 }
-
-pub const TestingAPIs = struct {
-    pub fn jsParseUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.parseUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.parseUrl takes a string as its " ++
-                    "first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all
-        // to give us a slice. Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = parseUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        };
-        defer parsed.deinit();
-
-        return parsed.href().toJS(go);
-    }
-
-    pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const allocator = bun.default_allocator;
-
-        // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
-        //                      allows you to inject options. Seems untested so we didn't implement
-        //                      it.
-        if (callframe.argumentsCount() != 1) {
-            return go.throw("hostedGitInfo.prototype.fromUrl takes exactly 1 argument", .{});
-        }
-
-        const arg0 = callframe.argument(0);
-        if (!arg0.isString()) {
-            return go.throw(
-                "hostedGitInfo.prototype.fromUrl takes a string as its first argument",
-                .{},
-            );
-        }
-
-        // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
-        // Maybe there's a better way to code this up.
-        const npa_str = try arg0.toBunString(go);
-        defer npa_str.deref();
-        var as_utf8 = npa_str.toUTF8(allocator);
-        defer as_utf8.deinit();
-        const parsed = fromUrl(allocator, as_utf8.mut()) catch |err| {
-            return go.throw("Invalid Git URL: {}", .{err});
-        } orelse {
-            return .null;
-        };
-
-        // Create a JavaScript object with all fields
-        const obj = jsc.JSValue.createEmptyObject(go, 5);
-        obj.put(
-            go,
-            jsc.ZigString.static("type"),
-            bun.String.fromBytes(parsed.host_provider.typeStr()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("domain"),
-            bun.String.fromBytes(parsed.host_provider.domain()).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("project"),
-            bun.String.fromBytes(parsed.project).toJS(go),
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("user"),
-            if (parsed.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
-        );
-        obj.put(
-            go,
-            jsc.ZigString.static("committish"),
-            if (parsed.committish) |committish| bun.String.fromBytes(committish).toJS(go) else .null,
-        );
-
-        return obj;
-    }
-};
 
 /// Enumeration of possible URL protocols. Note that this enumeration has a
 /// many-to-one relationship with Protocol.
@@ -364,6 +272,270 @@ const UrlProtocol = enum {
         };
     }
 };
+/// Determine the default representation from a protocol string
+/// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
+fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) Representation {
+    // Protocol mappings from hosted-git-info/lib/index.js #protocols
+    if (bun.strings.eqlComptime(protocol_with_colon, "git+ssh:")) return .sshurl;
+    if (bun.strings.eqlComptime(protocol_with_colon, "ssh:")) return .sshurl;
+    if (bun.strings.eqlComptime(protocol_with_colon, "git+https:")) return .https;
+
+    // For other protocols, use the protocol name (without colon) as the representation
+    // git: -> git, http: -> http, https: -> https, git+http: -> git+http (which falls back to sshurl)
+    const protocol_without_colon = protocol_with_colon[0 .. protocol_with_colon.len - 1];
+
+    if (bun.strings.eqlComptime(protocol_without_colon, "git")) return .git;
+    if (bun.strings.eqlComptime(protocol_without_colon, "http")) return .http;
+    if (bun.strings.eqlComptime(protocol_without_colon, "https")) return .https;
+
+    // Default fallback for unknown protocols (like git+http)
+    return .sshurl;
+}
+
+/// Test whether the given node-package-arg string is a GitHub shorthand.
+///
+/// This mirrors the implementation of hosted-git-info, though it is significantly faster.
+fn isGithubShorthand(npa_str: []const u8) bool {
+    // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
+    // single-pass algorithm for better performance.
+    //
+    // This could be even faster with SIMD but this is probably good enough for now.
+    if (npa_str.len < 1) {
+        return false;
+    }
+
+    // Implements doesNotStartWithDot
+    if (npa_str[0] == '.' or npa_str[0] == '/') {
+        return false;
+    }
+
+    var pound_idx: ?u32 = null;
+    var seen_slash = false;
+
+    for (npa_str, 0..) |c, i| {
+        switch (c) {
+            // Implement atOnlyAfterHash and colonOnlyAfterHash
+            ':', '@' => {
+                if (pound_idx == null) {
+                    return false;
+                }
+            },
+
+            '#' => {
+                pound_idx = @intCast(i);
+            },
+            '/' => {
+                // Implements secondSlashOnlyAfterHash
+                if (seen_slash and pound_idx == null) {
+                    return false;
+                }
+
+                seen_slash = true;
+            },
+            else => {
+                // Implement spaceOnlyAfterHash
+                if (std.ascii.isWhitespace(c) and pound_idx == null) {
+                    return false;
+                }
+            },
+        }
+    }
+
+    // Implements doesNotEndWithSlash
+    const does_not_end_with_slash =
+        if (pound_idx) |pi|
+            npa_str[pi - 1] != '/'
+        else
+            npa_str.len >= 1 and npa_str[npa_str.len - 1] != '/';
+
+    // Implement hasSlash
+    return seen_slash and does_not_end_with_slash;
+}
+
+const UrlProtocolPair = struct {
+    url: []u8,
+    protocol: union(enum) {
+        well_formed: UrlProtocol,
+
+        // A protocol which is not known by the library. Includes the : character, but not the
+        // double-slash, so `foo://bar` would yield `foo:`.
+        custom: []u8,
+
+        // Either no protocol was specified or the library couldn't figure it out.
+        unknown: void,
+    },
+
+    /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
+    pub fn toUrl(self: *const UrlProtocolPair, allocator: std.mem.Allocator) ?*jsc.URL {
+        // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
+        // statistical distribution of URL lengths and found nothing.
+        const long_url_thresh = 2048;
+
+        var alloc = std.heap.stackFallback(long_url_thresh, allocator);
+
+        return concatPartsToUrl(
+            alloc.get(),
+            switch (self.protocol) {
+                // If we have no protocol, we can assume it is git+ssh.
+                .unknown => &.{ "git+ssh://", self.url },
+                .custom => |proto_str| &.{ proto_str, "//", self.url },
+                // This feels counter-intuitive but is correct. It's not github://foo/bar, it's
+                // github:foo/bar.
+                .well_formed => |proto_tag| &.{
+                    UrlProtocol.strings.getKey(proto_tag).?,
+                    // Wordy name for a double-slash or empty string. github:foo/bar is valid, but
+                    // git+ssh://foo/bar is also valid.
+                    proto_tag.protocolResourceIdentifierConcatenationToken(),
+                    self.url,
+                },
+            },
+        );
+    }
+
+    fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*jsc.URL {
+        // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
+        // get rid of -- in theory, URL.zig could allocate once.
+        const new_str = bun.handleOom(bun.strings.concat(allocator, parts));
+        defer allocator.free(new_str);
+        return jsc.URL.fromString(bun.String.init(new_str));
+    }
+};
+
+/// Given a loose string that may or may not be a valid URL, attempt to normalize it.
+///
+/// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
+/// enumeration. If the protocol is known, it is returned as a UrlProtocol. If the protocol is
+/// specified in the URL, it is given as a slice and if it is not specified, the `unknown` field is
+/// returned. The result is a view into `npa_str` which must, consequently, remain stable.
+///
+/// This mirrors the `correctProtocol` function in `hosted-git-info/parse-url.js`.
+fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
+    var first_colon_idx: i32 = -1;
+    if (bun.strings.indexOfChar(npa_str, ':')) |idx| {
+        first_colon_idx = @intCast(idx);
+    }
+
+    // The cast here is safe -- first_colon_idx is guaranteed to be [-1, infty)
+    const proto_slice = npa_str[0..@intCast(first_colon_idx + 1)];
+
+    if (UrlProtocol.strings.get(proto_slice)) |url_protocol| {
+        // We need to slice off the protocol from the string. Note there are two very annoying
+        // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
+        var post_colon = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1));
+
+        return .{
+            .url = if (bun.strings.hasPrefixComptime(post_colon, "//"))
+                post_colon[2..post_colon.len]
+            else
+                post_colon,
+            .protocol = .{ .well_formed = url_protocol },
+        };
+    }
+
+    // Now we search for the @ character to see if we have a user@host:path GIT+SSH style URL.
+    const first_at_idx = bun.strings.indexOfChar(npa_str, '@');
+    if (first_at_idx) |at_idx| {
+        // We have an @ in the string
+        if (first_colon_idx != -1) {
+            // We have a : in the string.
+            if (at_idx > first_colon_idx) {
+                // The @ is after the :, so we have something like user:pass@host which is a valid
+                // URL. and should be promoted to git_plus_ssh. It's guaranteed that the issue is
+                // not that we have proto://user@host:path because we would've caught that above.
+                return .{ .url = npa_str, .protocol = .{ .well_formed = .git_plus_ssh } };
+            } else {
+                // Otherwise we have something like user@host:path which is also a valid URL.
+                // Things are, however, different, since we don't really know what the protocol is.
+                // Remember, we would've hit the proto://user@host:path above.
+
+                // NOTE(markovejnovic): I don't, at this moment, understand how exactly
+                // hosted-git-info and npm-package-arg handle this "unknown" protocol as of now.
+                // We can't really guess either -- there's no :// which comes before @
+                return .{ .url = npa_str, .protocol = .unknown };
+            }
+        } else {
+            // Something like user@host which is also a valid URL. Since no :, that means that the
+            // URL is as good as it gets. No need to slice.
+            return .{ .url = npa_str, .protocol = .{ .well_formed = .git_plus_ssh } };
+        }
+    }
+
+    // The next thing we can try is to search for the double slash and treat this protocol as a
+    // custom one.
+    //
+    // NOTE(markovejnovic): I also think this is wrong in parse-url.js.
+    // They:
+    // 1. Test the protocol against known protocols (which is fine)
+    // 2. Then, if not found, they go through that hoop of checking for @ and : guessing if it is a
+    //    git+ssh URL or not
+    // 3. And finally, they search for ://.
+    //
+    // The last two steps feel like they should happen in reverse order:
+    //
+    // If I have a foobar://user:host@path URL (and foobar is not given as a known protocol), their
+    // implementation will not report this as a foobar protocol, but rather as
+    // git+ssh://foobar://user:host@path which, I think, is wrong.
+    //
+    // I even tested it: https://tinyurl.com/5y4e6zrw
+    //
+    // Our goal is to be bug-for-bug compatible, at least for now, so this is how I re-implemented
+    // it.
+    const maybe_dup_slash_idx = bun.strings.indexOf(npa_str, "//");
+    if (maybe_dup_slash_idx) |dup_slash_idx| {
+        if (dup_slash_idx == first_colon_idx + 1) {
+            return .{
+                .url = bun.strings.drop(npa_str, dup_slash_idx + 2),
+                .protocol = .{ .custom = npa_str[0..dup_slash_idx] },
+            };
+        }
+    }
+
+    // Well, otherwise we have to split the original URL into two pieces,
+    // right at the colon.
+    if (first_colon_idx != -1) {
+        return .{
+            .url = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1)),
+            .protocol = .{ .custom = npa_str[0..@intCast(first_colon_idx + 1)] },
+        };
+    }
+
+    // Well we couldn't figure out anything.
+    return .{ .url = npa_str, .protocol = .unknown };
+}
+
+/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL. Potentially
+/// mutates the original input.
+///
+/// This function assumes that the input is an scp-style URL.
+fn correctUrlMut(url_proto_pair: UrlProtocolPair) UrlProtocolPair {
+    var at_idx: i32 = undefined;
+    var col_idx: i32 = undefined;
+    if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, '@', '#')) |idx| {
+        at_idx = @intCast(idx);
+    } else {
+        at_idx = -1;
+    }
+
+    if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, ':', '#')) |idx| {
+        col_idx = @intCast(idx);
+    } else {
+        col_idx = -1;
+    }
+
+    if (col_idx > at_idx) {
+        url_proto_pair.url[@intCast(col_idx)] = '/';
+        return url_proto_pair;
+    }
+
+    if (col_idx == -1 and url_proto_pair.protocol == .unknown) {
+        return .{
+            .url = url_proto_pair.url,
+            .protocol = .{ .well_formed = .git_plus_ssh },
+        };
+    }
+
+    return url_proto_pair;
+}
 
 /// This enumeration encapsulates all known host providers and their configurations.
 ///
@@ -699,16 +871,15 @@ const HostProvider = enum {
                     defer pathname_str.deref();
                     const pathname_utf8 = pathname_str.toUTF8(allocator);
                     defer pathname_utf8.deinit();
-                    const pathname = bun.strings.trimPrefixComptime(pathname_utf8.slice(), "/");
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
 
                     var iter = std.mem.splitScalar(u8, pathname, '/');
-                    _ = iter.next();
                     const user_part = iter.next() orelse return null;
                     const project_part = iter.next() orelse return null;
                     const type_part = iter.next();
                     const committish_part = iter.next();
 
-                    const project = bun.strings.trimSuffixComptime(project_part, ".git");
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
 
                     if (user_part.len == 0 or project.len == 0) {
                         return null;
@@ -761,7 +932,7 @@ const HostProvider = enum {
                     defer pathname_str.deref();
                     const pathname_utf8 = pathname_str.toUTF8(allocator);
                     defer pathname_utf8.deinit();
-                    const pathname = bun.strings.trimPrefixComptime(pathname_utf8.slice(), "/");
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
 
                     var iter = std.mem.splitScalar(u8, pathname, '/');
                     const user_part = iter.next() orelse return null;
@@ -774,7 +945,7 @@ const HostProvider = enum {
                         }
                     }
 
-                    const project = bun.strings.trimSuffixComptime(project_part, ".git");
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
 
                     if (user_part.len == 0 or project.len == 0) {
                         return null;
@@ -812,7 +983,7 @@ const HostProvider = enum {
                     defer pathname_str.deref();
                     const pathname_utf8 = pathname_str.toUTF8(allocator);
                     defer pathname_utf8.deinit();
-                    const pathname = bun.strings.trimPrefixComptime(pathname_utf8.slice(), "/");
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
 
                     if (bun.strings.contains(pathname, "/-/") or
                         bun.strings.contains(pathname, "/archive.tar.gz"))
@@ -824,7 +995,7 @@ const HostProvider = enum {
                     const project_part = pathname[end_slash + 1 ..];
                     const user_part = pathname[0..end_slash];
 
-                    const project = bun.strings.trimSuffixComptime(project_part, ".git");
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
 
                     if (user_part.len == 0 or project.len == 0) {
                         return null;
@@ -864,10 +1035,9 @@ const HostProvider = enum {
                     defer pathname_str.deref();
                     const pathname_utf8 = pathname_str.toUTF8(allocator);
                     defer pathname_utf8.deinit();
-                    const pathname = bun.strings.trimPrefixComptime(pathname_utf8.slice(), "/");
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
 
                     var iter = std.mem.splitScalar(u8, pathname, '/');
-                    _ = iter.next();
                     var user_part = iter.next() orelse return null;
                     var project_part = iter.next();
                     const aux = iter.next();
@@ -883,7 +1053,7 @@ const HostProvider = enum {
                         user_part = "";
                     }
 
-                    const project = bun.strings.trimSuffixComptime(project_part.?, ".git");
+                    const project = bun.strings.trimSuffixComptime(u8, project_part.?, ".git");
                     const user = if (user_part.len > 0) user_part else null;
 
                     if (project.len == 0) {
@@ -922,7 +1092,7 @@ const HostProvider = enum {
                     defer pathname_str.deref();
                     const pathname_utf8 = pathname_str.toUTF8(allocator);
                     defer pathname_utf8.deinit();
-                    const pathname = bun.strings.trimPrefixComptime(pathname_utf8.slice(), "/");
+                    const pathname = bun.strings.trimPrefixComptime(u8, pathname_utf8.slice(), "/");
 
                     var iter = std.mem.splitScalar(u8, pathname, '/');
                     const user_part = iter.next() orelse return null;
@@ -935,7 +1105,7 @@ const HostProvider = enum {
                         }
                     }
 
-                    const project = bun.strings.trimSuffixComptime(project_part, ".git");
+                    const project = bun.strings.trimSuffixComptime(u8, project_part, ".git");
 
                     if (user_part.len == 0 or project.len == 0) {
                         return null;
@@ -1157,294 +1327,127 @@ const HostProvider = enum {
 
         return null;
     }
+
+    /// Parse a URL and return the appropriate host provider, if any.
+    pub fn fromUrl(url: *jsc.URL) ?HostProvider {
+        const max_hostname_len: comptime_int = 253;
+
+        const proto_str = url.protocol();
+        defer proto_str.deref();
+
+        // Try shortcut first (github:, gitlab:, etc.)
+        if (HostProvider.fromShortcut(proto_str.byteSlice(), .without_colon)) |provider| {
+            return provider;
+        }
+
+        const hostname_str = url.hostname();
+        defer hostname_str.deref();
+
+        var fba_mem: [max_hostname_len]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&fba_mem);
+        const hostname_utf8 = hostname_str.toUTF8(fba.allocator());
+        defer hostname_utf8.deinit();
+        const hostname = bun.strings.withoutPrefixComptime(hostname_utf8.slice(), "www.");
+
+        return HostProvider.fromDomain(hostname);
+    }
 };
 
-/// Determine the default representation from a protocol string
-/// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
-fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) Representation {
-    // Protocol mappings from hosted-git-info/lib/index.js #protocols
-    if (bun.strings.eqlComptime(protocol_with_colon, "git+ssh:")) return .sshurl;
-    if (bun.strings.eqlComptime(protocol_with_colon, "ssh:")) return .sshurl;
-    if (bun.strings.eqlComptime(protocol_with_colon, "git+https:")) return .https;
+pub const TestingAPIs = struct {
+    pub fn jsParseUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const allocator = bun.default_allocator;
 
-    // For other protocols, use the protocol name (without colon) as the representation
-    // git: -> git, http: -> http, https: -> https, git+http: -> git+http (which falls back to sshurl)
-    const protocol_without_colon = protocol_with_colon[0 .. protocol_with_colon.len - 1];
-
-    if (bun.strings.eqlComptime(protocol_without_colon, "git")) return .git;
-    if (bun.strings.eqlComptime(protocol_without_colon, "http")) return .http;
-    if (bun.strings.eqlComptime(protocol_without_colon, "https")) return .https;
-
-    // Default fallback for unknown protocols (like git+http)
-    return .sshurl;
-}
-
-/// Deduce the appropriate `HostProvider` from the URL.
-fn deduceHostProvider(allocator: std.mem.Allocator, url: *jsc.URL) ?HostProvider {
-    const proto_str = url.protocol();
-    defer proto_str.deref();
-
-    // Try shortcut first (github:, gitlab:, etc.)
-    if (HostProvider.fromShortcut(proto_str.byteSlice(), .without_colon)) |provider| {
-        return provider;
-    }
-
-    // Try by domain (github.com, gitlab.com, etc.)
-    const hostname_str = url.hostname();
-    defer hostname_str.deref();
-    const hostname_utf8 = hostname_str.toUTF8(allocator);
-    defer hostname_utf8.deinit();
-    const hostname = bun.strings.withoutPrefixComptime(hostname_utf8.slice(), "www.");
-
-    return HostProvider.fromDomain(hostname);
-}
-
-/// Test whether the given node-package-arg string is a GitHub shorthand.
-///
-/// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-fn isGithubShorthand(npa_str: []const u8) bool {
-    // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
-    // single-pass algorithm for better performance.
-    //
-    // This could be even faster with SIMD but this is probably good enough for now.
-    if (npa_str.len < 1) {
-        return false;
-    }
-
-    // Implements doesNotStartWithDot
-    if (npa_str[0] == '.' or npa_str[0] == '/') {
-        return false;
-    }
-
-    var pound_idx: ?u32 = null;
-    var seen_slash = false;
-
-    for (npa_str, 0..) |c, i| {
-        switch (c) {
-            // Implement atOnlyAfterHash and colonOnlyAfterHash
-            ':', '@' => {
-                if (pound_idx == null) {
-                    return false;
-                }
-            },
-
-            '#' => {
-                pound_idx = @intCast(i);
-            },
-            '/' => {
-                // Implements secondSlashOnlyAfterHash
-                if (seen_slash and pound_idx == null) {
-                    return false;
-                }
-
-                seen_slash = true;
-            },
-            else => {
-                // Implement spaceOnlyAfterHash
-                if (std.ascii.isWhitespace(c) and pound_idx == null) {
-                    return false;
-                }
-            },
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("hostedGitInfo.prototype.parseUrl takes exactly 1 argument", .{});
         }
+
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw(
+                "hostedGitInfo.prototype.parseUrl takes a string as its " ++
+                    "first argument",
+                .{},
+            );
+        }
+
+        // TODO(markovejnovic): This feels like there's too much going on all
+        // to give us a slice. Maybe there's a better way to code this up.
+        const npa_str = try arg0.toBunString(go);
+        defer npa_str.deref();
+        var as_utf8 = npa_str.toUTF8(allocator);
+        defer as_utf8.deinit();
+        const parsed = parseUrl(allocator, as_utf8.mut()) catch |err| {
+            return go.throw("Invalid Git URL: {}", .{err});
+        };
+        defer parsed.deinit();
+
+        return parsed.href().toJS(go);
     }
 
-    // Implements doesNotEndWithSlash
-    const does_not_end_with_slash =
-        if (pound_idx) |pi|
-            npa_str[pi - 1] != '/'
-        else
-            npa_str.len >= 1 and npa_str[npa_str.len - 1] != '/';
+    pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const allocator = bun.default_allocator;
 
-    // Implement hasSlash
-    return seen_slash and does_not_end_with_slash;
-}
+        // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
+        //                      allows you to inject options. Seems untested so we didn't implement
+        //                      it.
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("hostedGitInfo.prototype.fromUrl takes exactly 1 argument", .{});
+        }
 
-const UrlProtocolPair = struct {
-    url: []u8,
-    protocol: union(enum) {
-        well_formed: UrlProtocol,
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw(
+                "hostedGitInfo.prototype.fromUrl takes a string as its first argument",
+                .{},
+            );
+        }
 
-        // A protocol which is not known by the library. Includes the : character, but not the
-        // double-slash, so `foo://bar` would yield `foo:`.
-        custom: []u8,
+        // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
+        // Maybe there's a better way to code this up.
+        const npa_str = try arg0.toBunString(go);
+        defer npa_str.deref();
+        var as_utf8 = npa_str.toUTF8(allocator);
+        defer as_utf8.deinit();
+        const parsed = fromUrl(allocator, as_utf8.mut()) catch |err| {
+            return go.throw("Invalid Git URL: {}", .{err});
+        } orelse {
+            return .null;
+        };
 
-        // Either no protocol was specified or the library couldn't figure it out.
-        unknown: void,
-    },
-
-    /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    pub fn toUrl(self: *const UrlProtocolPair, allocator: std.mem.Allocator) ?*jsc.URL {
-        // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
-        // statistical distribution of URL lengths and found nothing.
-        const long_url_thresh = 2048;
-
-        var alloc = std.heap.stackFallback(long_url_thresh, allocator);
-
-        return concatPartsToUrl(
-            alloc.get(),
-            switch (self.protocol) {
-                // If we have no protocol, we can assume it is git+ssh.
-                .unknown => &.{ "git+ssh://", self.url },
-                .custom => |proto_str| &.{ proto_str, "//", self.url },
-                // This feels counter-intuitive but is correct. It's not github://foo/bar, it's
-                // github:foo/bar.
-                .well_formed => |proto_tag| &.{
-                    UrlProtocol.strings.getKey(proto_tag).?,
-                    // Wordy name for a double-slash or empty string. github:foo/bar is valid, but
-                    // git+ssh://foo/bar is also valid.
-                    proto_tag.protocolResourceIdentifierConcatenationToken(),
-                    self.url,
-                },
-            },
+        // Create a JavaScript object with all fields
+        const obj = jsc.JSValue.createEmptyObject(go, 5);
+        obj.put(
+            go,
+            jsc.ZigString.static("type"),
+            bun.String.fromBytes(parsed.host_provider.typeStr()).toJS(go),
         );
+        obj.put(
+            go,
+            jsc.ZigString.static("domain"),
+            bun.String.fromBytes(parsed.host_provider.domain()).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("project"),
+            bun.String.fromBytes(parsed.project).toJS(go),
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("user"),
+            if (parsed.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
+        );
+        obj.put(
+            go,
+            jsc.ZigString.static("committish"),
+            if (parsed.committish) |committish|
+                bun.String.fromBytes(committish).toJS(go)
+            else
+                .null,
+        );
+
+        return obj;
     }
 };
-
-/// Given a loose string that may or may not be a valid URL, attempt to normalize it.
-///
-/// Requires `npa_str` be stable.
-///
-/// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
-/// enumeration. If the protocol is known, it is returned as a UrlProtocol. If the protocol is
-/// specified in the URL, it is given as a slice and if it is not specified, the `unknown` field is
-/// returned.
-///
-/// This mirrors the `correctProtocol` function in `hosted-git-info/parse-url.js`.
-fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
-    var first_colon_idx: i32 = -1;
-    if (bun.strings.indexOfChar(npa_str, ':')) |idx| {
-        first_colon_idx = @intCast(idx);
-    }
-
-    // The cast here is safe -- first_colon_idx is guaranteed to be [-1, infty)
-    const proto_slice = npa_str[0..@intCast(first_colon_idx + 1)];
-
-    if (UrlProtocol.strings.get(proto_slice)) |url_protocol| {
-        // We need to slice off the protocol from the string. Note there are two very annoying
-        // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
-        var post_colon = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1));
-
-        return .{
-            .url = if (bun.strings.hasPrefixComptime(post_colon, "//"))
-                post_colon[2..post_colon.len]
-            else
-                post_colon,
-            .protocol = .{ .well_formed = url_protocol },
-        };
-    }
-
-    // Now we search for the @ character to see if we have a user@host:path GIT+SSH style URL.
-    const first_at_idx = bun.strings.indexOfChar(npa_str, '@');
-    if (first_at_idx) |at_idx| {
-        // We have an @ in the string
-        if (first_colon_idx != -1) {
-            // We have a : in the string.
-            if (at_idx > first_colon_idx) {
-                // The @ is after the :, so we have something like user:pass@host which is a valid
-                // URL. and should be promoted to git_plus_ssh. It's guaranteed that the issue is
-                // not that we have proto://user@host:path because we would've caught that above.
-                return .{ .url = npa_str, .protocol = .{ .well_formed = .git_plus_ssh } };
-            } else {
-                // Otherwise we have something like user@host:path which is also a valid URL.
-                // Things are, however, different, since we don't really know what the protocol is.
-                // Remember, we would've hit the proto://user@host:path above.
-
-                // NOTE(markovejnovic): I don't, at this moment, understand how exactly
-                // hosted-git-info and npm-package-arg handle this "unknown" protocol as of now.
-                // We can't really guess either -- there's no :// which comes before @
-                return .{ .url = npa_str, .protocol = .unknown };
-            }
-        } else {
-            // Something like user@host which is also a valid URL. Since no :, that means that the
-            // URL is as good as it gets. No need to slice.
-            return .{ .url = npa_str, .protocol = .{ .well_formed = .git_plus_ssh } };
-        }
-    }
-
-    // The next thing we can try is to search for the double slash and treat this protocol as a
-    // custom one.
-    //
-    // NOTE(markovejnovic): I also think this is wrong in parse-url.js.
-    // They:
-    // 1. Test the protocol against known protocols (which is fine)
-    // 2. Then, if not found, they go through that hoop of checking for @ and : guessing if it is a
-    //    git+ssh URL or not
-    // 3. And finally, they search for ://.
-    //
-    // The last two steps feel like they should happen in reverse order:
-    //
-    // If I have a foobar://user:host@path URL (and foobar is not given as a known protocol), their
-    // implementation will not report this as a foobar protocol, but rather as
-    // git+ssh://foobar://user:host@path which, I think, is wrong.
-    //
-    // I even tested it: https://tinyurl.com/5y4e6zrw
-    //
-    // Our goal is to be bug-for-bug compatible, at least for now, so this is how I re-implemented
-    // it.
-    const maybe_dup_slash_idx = bun.strings.indexOf(npa_str, "//");
-    if (maybe_dup_slash_idx) |dup_slash_idx| {
-        if (dup_slash_idx == first_colon_idx + 1) {
-            return .{
-                .url = bun.strings.drop(npa_str, dup_slash_idx + 2),
-                .protocol = .{ .custom = npa_str[0..dup_slash_idx] },
-            };
-        }
-    }
-
-    // Well, otherwise we have to split the original URL into two pieces,
-    // right at the colon.
-    if (first_colon_idx != -1) {
-        return .{
-            .url = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1)),
-            .protocol = .{ .custom = npa_str[0..@intCast(first_colon_idx + 1)] },
-        };
-    }
-
-    // Well we couldn't figure out anything.
-    return .{ .url = npa_str, .protocol = .unknown };
-}
-
-/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL. Potentially
-/// mutates the original input.
-///
-/// This function assumes that the input is an scp-style URL.
-fn correctUrlMut(url_proto_pair: UrlProtocolPair) UrlProtocolPair {
-    var at_idx: i32 = undefined;
-    var col_idx: i32 = undefined;
-    if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, '@', '#')) |idx| {
-        at_idx = @intCast(idx);
-    } else {
-        at_idx = -1;
-    }
-
-    if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, ':', '#')) |idx| {
-        col_idx = @intCast(idx);
-    } else {
-        col_idx = -1;
-    }
-
-    if (col_idx > at_idx) {
-        url_proto_pair.url[@intCast(col_idx)] = '/';
-        return url_proto_pair;
-    }
-
-    if (col_idx == -1 and url_proto_pair.protocol == .unknown) {
-        return .{
-            .url = url_proto_pair.url,
-            .protocol = .{ .well_formed = .git_plus_ssh },
-        };
-    }
-
-    return url_proto_pair;
-}
-
-fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*jsc.URL {
-    // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to get
-    // rid of -- in theory, URL.zig could allocate once.
-    const new_str = bun.handleOom(bun.strings.concat(allocator, parts));
-    defer allocator.free(new_str);
-    return jsc.URL.fromString(bun.String.init(new_str));
-}
 
 const debug = bun.Output.scoped(.hosted_git_info, .visible);
 

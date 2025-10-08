@@ -210,10 +210,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
-  private readonly values: unknown[];
+  private readonly values: unknown[] | Record<string, unknown>;
   private readonly parsedInfo: SQLParsedInfo;
 
-  public constructor(sql: string, values: unknown[]) {
+  public constructor(sql: string, values: unknown[] | Record<string, unknown>) {
     this.sql = sql;
     this.values = values;
     // Parse the SQL query once when creating the handle
@@ -243,11 +243,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         let result: unknown[] | undefined;
 
         if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
+          result = $isArray(values) ? stmt.values.$apply(stmt, values) : stmt.values(values);
         } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
+          result = $isArray(values) ? stmt.raw.$apply(stmt, values) : stmt.raw(values);
         } else {
-          result = stmt.all.$apply(stmt, values);
+          result = $isArray(values) ? stmt.all.$apply(stmt, values) : stmt.all(values);
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -259,7 +259,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        const changes = $isArray(values) ? db.run.$apply(db, [sql].concat(values)) : db.run(sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
@@ -346,7 +346,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
-  createQueryHandle(sql: string, values: unknown[] | undefined | null = []): SQLiteQueryHandle {
+  createQueryHandle(
+    sql: string,
+    values: unknown[] | Record<string, unknown> | undefined | null = [],
+  ): SQLiteQueryHandle {
     return new SQLiteQueryHandle(sql, values ?? []);
   }
   escapeIdentifier(str: string) {

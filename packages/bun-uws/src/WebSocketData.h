@@ -70,6 +70,8 @@ public:
                 inflationStream = new InflationStream(compressOptions);
             }
         }
+        // never close websocket sockets when closing idle connections
+        this->isIdle = false;
         this->socketData = socketData;
         this->onSocketClosed = onSocketClosed;
     }

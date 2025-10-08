@@ -404,6 +404,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (timeout_ms.len > 0) {
                 ctx.test_options.default_timeout_ms = std.fmt.parseInt(u32, timeout_ms, 10) catch {
                     Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
+                    Output.flush();
                     Global.exit(1);
                 };
             }
@@ -468,11 +469,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number: {s}", .{@errorName(e)});
+                    Output.flush();
                     Global.exit(1);
                 };
 
                 if (ctx.test_options.bail == 0) {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number greater than 0", .{});
+                    Output.flush();
                     Global.exit(1);
                 }
             } else {

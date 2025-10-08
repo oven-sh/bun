@@ -421,3 +421,6 @@ test/bake/dev/react-spa.test.ts
 test/bake/dev/sourcemap.test.ts
 test/bake/dev/ssg-pages-router.test.ts
 test/bake/dev/deinitialization.test.ts
+
+# Need to terminate HTTP thread.
+test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

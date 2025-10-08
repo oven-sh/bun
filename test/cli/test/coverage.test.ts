@@ -387,7 +387,7 @@ FNF:1
 FNH:1
 DA:2,11
 DA:3,17
-LF:5
+LF:2
 LH:2
 end_of_record
 TN:
@@ -401,7 +401,7 @@ DA:6,42
 DA:7,39
 DA:8,36
 DA:9,2
-LF:10
+LF:7
 LH:7
 end_of_record"
 `);

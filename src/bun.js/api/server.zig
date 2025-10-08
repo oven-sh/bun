@@ -812,10 +812,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                                 sec_websocket_extensions = protocol;
                             }
-
-                            // we must write the status first so that 200 OK isn't written
-                            nodeHttpResponse.raw_response.writeStatus("101 Switching Protocols");
-                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.raw_response.socket());
+                            if (nodeHttpResponse.raw_response) |raw_response| {
+                                // we must write the status first so that 200 OK isn't written
+                                raw_response.writeStatus("101 Switching Protocols");
+                                fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, raw_response.socket());
+                            }
                         }
 
                         if (globalThis.hasException()) {
@@ -1186,7 +1187,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                existing_request = Request.init(
+                existing_request = Request.init2(
                     bun.String.cloneUTF8(url.href),
                     headers,
                     bun.handleOom(this.vm.initRequestBodyValue(body)),
@@ -1228,7 +1229,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (response_value.as(jsc.WebCore.Response)) |resp| {
-                resp.url = existing_request.url.clone();
+                resp.setUrl(existing_request.url.clone());
             }
             return jsc.JSPromise.resolvedPromiseValue(ctx, response_value);
         }
@@ -1936,12 +1937,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
-                            if (node_response.raw_response.state().isHttpStatusCalled()) {
-                                node_response.raw_response.writeStatus("500 Internal Server Error");
-                                node_response.raw_response.endWithoutBody(true);
-                            } else {
-                                node_response.raw_response.endStream(true);
+                        if (!node_response.flags.upgraded and node_response.raw_response != null) {
+                            const raw_response = node_response.raw_response.?;
+                            if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
+                                if (raw_response.state().isHttpStatusCalled()) {
+                                    raw_response.writeStatus("500 Internal Server Error");
+                                    raw_response.endWithoutBody(true);
+                                } else {
+                                    raw_response.endStream(true);
+                                }
                             }
                         }
                         node_response.onRequestComplete();
@@ -1952,8 +1956,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.flags.upgraded) {
-                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                if (!node_response.flags.upgraded and node_response.raw_response != null) {
+                    const raw_response = node_response.raw_response.?;
+                    if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
                         node_response.setOnAbortedHandler();
                     }
                     // If we ended the response without attaching an ondata handler, we discard the body read stream
@@ -2213,13 +2218,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.signal = signal;
             signal.pendingActivityRef();
 
-            const request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            const request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
@@ -2314,13 +2319,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            var request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            var request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.upgrade_context = upgrade_ctx;
             ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.

@@ -2677,7 +2677,9 @@ pub fn remapZigException(
             }
 
             // Workaround for being unable to hide that specific frame without also hiding the frame before it
-            if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+            if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+            {
                 start_index = 0;
                 break;
             }
@@ -2693,7 +2695,9 @@ pub fn remapZigException(
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+                if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                    NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+                {
                     continue;
                 }
 
@@ -2715,7 +2719,9 @@ pub fn remapZigException(
                 frame.source_url.hasPrefixComptime("node:") or
                 frame.source_url.isEmpty() or
                 frame.source_url.eqlComptime("native") or
-                frame.source_url.eqlComptime("unknown"))
+                frame.source_url.eqlComptime("unknown") or
+                frame.source_url.eqlComptime("[unknown]") or
+                frame.source_url.hasPrefixComptime("[source:"))
             {
                 top_frame_is_builtin = true;
                 continue;

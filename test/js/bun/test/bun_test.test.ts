@@ -272,6 +272,7 @@ test("--only flag with multiple files", async () => {
     cmd: [
       bunExe(),
       "test",
+      import.meta.dir + "/only-flag-fixtures/file0.test.ts",
       import.meta.dir + "/only-flag-fixtures/file1.test.ts",
       import.meta.dir + "/only-flag-fixtures/file2.test.ts",
       "--only",
@@ -284,20 +285,39 @@ test("--only flag with multiple files", async () => {
   const stdout = await result.stdout.text();
   const stderr = await result.stderr.text();
 
-  // Should only run tests from file1 (which has test.only) and skip file2 entirely
-  expect(exitCode).toBe(0);
-  expect(stdout).toInclude("file1: only test executed");
-  expect(stdout).not.toInclude("file1: regular test executed");
-  expect(stdout).not.toInclude("file2: test1 executed");
-  expect(stdout).not.toInclude("file2: test2 executed");
-  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "test/js/bun/test/only-flag-fixtures/file1.test.ts:
-    (pass) file1: should only execute
-
-    test/js/bun/test/only-flag-fixtures/file2.test.ts:
-
-     1 pass
-     0 fail
-    Ran 1 test across 2 files."
+  // Should only run test 1.0 which has `.only()`
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    file1.0 (only)"
   `);
+  expect(exitCode).toBe(0);
+});
+
+test("no --only flag with multiple files", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/only-flag-fixtures/file0.test.ts",
+      import.meta.dir + "/only-flag-fixtures/file1.test.ts",
+      import.meta.dir + "/only-flag-fixtures/file2.test.ts",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, CI: "false" },
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  // Should run tests from other files, but only test 1.0 for file1.test.ts
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    file0.0
+    file0.1
+    file1.0 (only)
+    file2.0
+    file2.1"
+  `);
+  expect(exitCode).toBe(0);
 });

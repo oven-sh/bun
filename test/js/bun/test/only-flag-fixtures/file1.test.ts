@@ -1,10 +1,10 @@
 import { test } from "bun:test";
 
-test.only("file1: should only execute", () => {
-  console.log("file1: only test executed");
+test.only("file1.0 (only)", () => {
+  console.log("file1.0 (only)");
 });
 
-test("file1: should not execute", () => {
-  console.log("file1: regular test executed");
-  throw new Error("This test should not run");
+test("file1.1", () => {
+  console.log("file1.1");
+  throw new Error("this test should never run beacuse it is in a file which has `.only()`");
 });

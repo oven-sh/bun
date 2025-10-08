@@ -11,7 +11,7 @@ test("stdin pause should stop reading so child can read from stdin", async () =>
   const runtime = process.env.TEST_RUNTIME || bunExe();
 
   await using proc = Bun.spawn({
-    cmd: ["python3", pty, runtime, script],
+    cmd: [Bun.which("python3") ?? Bun.which("python") ?? "python", pty, runtime, script],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",

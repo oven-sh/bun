@@ -160,7 +160,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["coredump-upload"]: {
       type: "boolean",
-      default: isBuildkite && isLinux,
+      default: isBuildkite && (isLinux || isWindows),
     },
     ["parallel"]: {
       type: "boolean",
@@ -218,17 +218,48 @@ if (isBuildkite) {
 let coresDir;
 
 if (options["coredump-upload"]) {
-  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
-  const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-  coresDir = sysctl.stdout;
-  if (sysctl.ok) {
-    if (coresDir.startsWith("|")) {
-      throw new Error("cores are being piped not saved");
+  if (isLinux) {
+    // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+    const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+    coresDir = sysctl.stdout;
+    if (sysctl.ok) {
+      if (coresDir.startsWith("|")) {
+        throw new Error("cores are being piped not saved");
+      }
+      // change /foo/bar/%e-%p.core to /foo/bar
+      coresDir = dirname(sysctl.stdout);
+    } else {
+      throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
     }
-    // change /foo/bar/%e-%p.core to /foo/bar
-    coresDir = dirname(sysctl.stdout);
-  } else {
-    throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+  } else if (isWindows) {
+    // Create a temporary directory for Windows minidumps
+    const timestamp = Date.now();
+    coresDir = join(tmpdir(), `bun-dumps-${timestamp}`);
+    mkdirSync(coresDir, { recursive: true });
+
+    // Configure Windows Error Reporting to save minidumps locally
+    // See: https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps
+    const werKey = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps";
+
+    // Set dump folder
+    await spawnSafe({
+      command: "reg",
+      args: ["add", werKey, "/v", "DumpFolder", "/t", "REG_EXPAND_SZ", "/d", coresDir, "/f"],
+    });
+
+    // Set dump type to 2 (full dump with heap)
+    await spawnSafe({
+      command: "reg",
+      args: ["add", werKey, "/v", "DumpType", "/t", "REG_DWORD", "/d", "2", "/f"],
+    });
+
+    // Set dump count to 10 (keep up to 10 dumps)
+    await spawnSafe({
+      command: "reg",
+      args: ["add", werKey, "/v", "DumpCount", "/t", "REG_DWORD", "/d", "10", "/f"],
+    });
+
+    console.log(`Configured Windows minidumps to save in: ${coresDir}`);
   }
 }
 
@@ -791,61 +822,73 @@ async function runTests() {
   }
 
   if (options["coredump-upload"]) {
-    try {
-      const coresDirBase = dirname(coresDir);
-      const coresDirName = basename(coresDir);
+    if (isWindows) {
+      // TODO: Windows minidump upload is not yet implemented (need age encryption setup on Windows)
+      // For now, minidumps are collected and symbolized during test runs but not uploaded
       const coreFileNames = readdirSync(coresDir);
-
       if (coreFileNames.length > 0) {
-        console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
-        let totalBytes = 0;
-        let totalBlocks = 0;
-        for (const f of coreFileNames) {
-          const stat = statSync(join(coresDir, f));
-          totalBytes += stat.size;
-          totalBlocks += stat.blocks;
-        }
-        console.log(`total apparent size = ${totalBytes} bytes`);
-        console.log(`total size on disk = ${512 * totalBlocks} bytes`);
-        const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
-        const outfileName = `${coresDirName}.tar.gz.age`;
-        const outfileAbs = join(outdir, outfileName);
-
-        // This matches an age identity known by Bun employees. Core dumps from CI have to be kept
-        // secret since they will contain API keys.
-        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu"; // reject external PRs changing this, see above
-
-        // Run tar in the parent directory of coresDir so that it creates archive entries with
-        // coresDirName in them. This way when you extract the tarball you get a folder named
-        // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
-        // current directory
-        const before = Date.now();
-        const zipAndEncrypt = await spawnSafe({
-          command: "bash",
-          args: [
-            "-c",
-            // tar -S: handle sparse files efficiently
-            `set -euo pipefail && tar -Sc "$0" | gzip -1 | age -e -r ${ageRecipient} -o "$1"`,
-            // $0
-            coresDirName,
-            // $1
-            outfileAbs,
-          ],
-          cwd: coresDirBase,
-          stdout: () => {},
-          timeout: 60_000,
-        });
-        const elapsed = Date.now() - before;
-        if (!zipAndEncrypt.ok) {
-          throw new Error(zipAndEncrypt.error);
-        }
-        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
-        await uploadArtifact(outfileAbs);
+        console.log(`found ${coreFileNames.length} minidumps in ${coresDir}`);
+        console.log(`(minidump upload not yet implemented for Windows)`);
       } else {
-        console.log(`no cores found in ${coresDir}`);
+        console.log(`no minidumps found in ${coresDir}`);
       }
-    } catch (err) {
-      console.error("Error collecting and uploading core dumps:", err);
+    } else {
+      try {
+        const coresDirBase = dirname(coresDir);
+        const coresDirName = basename(coresDir);
+        const coreFileNames = readdirSync(coresDir);
+
+        if (coreFileNames.length > 0) {
+          console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
+          let totalBytes = 0;
+          let totalBlocks = 0;
+          for (const f of coreFileNames) {
+            const stat = statSync(join(coresDir, f));
+            totalBytes += stat.size;
+            totalBlocks += stat.blocks;
+          }
+          console.log(`total apparent size = ${totalBytes} bytes`);
+          console.log(`total size on disk = ${512 * totalBlocks} bytes`);
+          const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
+          const outfileName = `${coresDirName}.tar.gz.age`;
+          const outfileAbs = join(outdir, outfileName);
+
+          // This matches an age identity known by Bun employees. Core dumps from CI have to be kept
+          // secret since they will contain API keys.
+          const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu"; // reject external PRs changing this, see above
+
+          // Run tar in the parent directory of coresDir so that it creates archive entries with
+          // coresDirName in them. This way when you extract the tarball you get a folder named
+          // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
+          // current directory
+          const before = Date.now();
+          const zipAndEncrypt = await spawnSafe({
+            command: "bash",
+            args: [
+              "-c",
+              // tar -S: handle sparse files efficiently
+              `set -euo pipefail && tar -Sc "$0" | gzip -1 | age -e -r ${ageRecipient} -o "$1"`,
+              // $0
+              coresDirName,
+              // $1
+              outfileAbs,
+            ],
+            cwd: coresDirBase,
+            stdout: () => {},
+            timeout: 60_000,
+          });
+          const elapsed = Date.now() - before;
+          if (!zipAndEncrypt.ok) {
+            throw new Error(zipAndEncrypt.error);
+          }
+          console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
+          await uploadArtifact(outfileAbs);
+        } else {
+          console.log(`no cores found in ${coresDir}`);
+        }
+      } catch (err) {
+        console.error("Error collecting and uploading core dumps:", err);
+      }
     }
   }
 
@@ -1177,42 +1220,159 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     const newCores = options["coredump-upload"] ? readdirSync(coresDir).filter(c => !existingCores.includes(c)) : [];
     let crashes = "";
     if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
-      // warn if the main PID crashed and we don't have a core
-      if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
-        crashes += `main process killed by ${result.signalCode} but no core file found\n`;
-      }
+      if (isLinux) {
+        // warn if the main PID crashed and we don't have a core
+        if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
+          crashes += `main process killed by ${result.signalCode} but no core file found\n`;
+        }
 
-      if (newCores.length > 0) {
-        result.ok = false;
-        if (!isAlwaysFailure(result.error)) result.error = "core dumped";
-      }
+        if (newCores.length > 0) {
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "core dumped";
+        }
 
-      for (const coreName of newCores) {
-        const corePath = join(coresDir, coreName);
-        let out = "";
-        const gdb = await spawnSafe({
-          command: "gdb",
-          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
-          timeout: 240_000,
-          stderr: () => {},
-          stdout(text) {
-            out += text;
-          },
-        });
-        if (!gdb.ok) {
-          crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
-        } else {
-          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
-          for (const line of out.split("\n")) {
-            // filter GDB output since it is pretty verbose
-            if (
-              line.startsWith("Program terminated") ||
-              line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
-              line.startsWith("[Current thread is")
-            ) {
-              crashes += line + "\n";
+        for (const coreName of newCores) {
+          const corePath = join(coresDir, coreName);
+          let out = "";
+          const gdb = await spawnSafe({
+            command: "gdb",
+            args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+            timeout: 240_000,
+            stderr: () => {},
+            stdout(text) {
+              out += text;
+            },
+          });
+          if (!gdb.ok) {
+            crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
+          } else {
+            crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
+            for (const line of out.split("\n")) {
+              // filter GDB output since it is pretty verbose
+              if (
+                line.startsWith("Program terminated") ||
+                line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+                line.startsWith("[Current thread is")
+              ) {
+                crashes += line + "\n";
+              }
             }
           }
+        }
+      } else if (isWindows) {
+        // Windows minidumps (.dmp files)
+        const minidumps = newCores.filter(f => f.endsWith(".dmp"));
+
+        if (minidumps.length > 0) {
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "minidump created";
+
+          crashes += `${minidumps.length} minidump(s) created\n`;
+
+          // Try to download bun-profile.zip artifact with .pdb symbols
+          let pdbPath = null;
+          try {
+            const artifacts = await getBuildArtifacts();
+            const profileArtifact = artifacts?.find(
+              a => a.path.includes("bun-profile") && a.path.endsWith(".zip"),
+            );
+
+            if (profileArtifact) {
+              const profileDir = join(tmpdir(), `bun-profile-symbols-${Date.now()}`);
+              mkdirSync(profileDir, { recursive: true });
+
+              console.log(`Downloading bun-profile.zip from ${profileArtifact.url}`);
+              const zipResponse = await fetch(profileArtifact.url);
+              const zipBuffer = Buffer.from(await zipResponse.arrayBuffer());
+              const zipPath = join(profileDir, "bun-profile.zip");
+              writeFileSync(zipPath, zipBuffer);
+
+              // Extract .pdb file
+              await spawnSafe({
+                command: "powershell",
+                args: ["-Command", `Expand-Archive -Path '${zipPath}' -DestinationPath '${profileDir}' -Force`],
+              });
+
+              // Find the .pdb file
+              const files = readdirSync(profileDir);
+              const pdbFile = files.find(f => f.endsWith(".pdb"));
+              if (pdbFile) {
+                pdbPath = join(profileDir, pdbFile);
+                console.log(`Found symbols: ${pdbPath}`);
+              }
+            }
+          } catch (err) {
+            crashes += `Failed to download symbols: ${err.message}\n`;
+          }
+
+          // Symbolize each minidump using cdb.exe
+          for (const dumpName of minidumps) {
+            const dumpPath = join(coresDir, dumpName);
+            crashes += `\n======== Minidump: ${dumpName} ========\n`;
+
+            let out = "";
+            const cdbArgs = [
+              "-z",
+              dumpPath, // minidump file
+              "-c",
+              "!analyze -v; k; q", // analyze, print stack, quit
+            ];
+
+            // Add symbol path if we have the .pdb
+            if (pdbPath) {
+              cdbArgs.splice(2, 0, "-y", dirname(pdbPath));
+            }
+
+            const cdb = await spawnSafe({
+              command: "cdb.exe",
+              args: cdbArgs,
+              timeout: 240_000,
+              stderr: () => {},
+              stdout(text) {
+                out += text;
+              },
+            });
+
+            if (!cdb.ok) {
+              crashes += `Failed to analyze with cdb.exe: ${cdb.error}\n`;
+              crashes += `(Note: cdb.exe requires Windows SDK to be installed)\n`;
+            } else {
+              crashes += `======== Stack trace from cdb.exe for ${dumpName}: ========\n`;
+              // Parse and filter cdb output to show the most relevant parts
+              const lines = out.split("\n");
+              let inStackTrace = false;
+              let inAnalysis = false;
+
+              for (const line of lines) {
+                // Capture crash analysis
+                if (line.includes("EXCEPTION_RECORD:") || line.includes("FAULTING_")) {
+                  inAnalysis = true;
+                }
+                if (inAnalysis && line.trim() === "") {
+                  inAnalysis = false;
+                }
+                if (inAnalysis) {
+                  crashes += line + "\n";
+                }
+
+                // Capture stack trace
+                if (line.trim().match(/^(Child-SP|ChildEBP)/)) {
+                  inStackTrace = true;
+                  crashes += "\nStack trace:\n";
+                }
+                if (inStackTrace) {
+                  if (line.trim() === "" || line.includes("quit:")) {
+                    inStackTrace = false;
+                  } else {
+                    crashes += line + "\n";
+                  }
+                }
+              }
+            }
+          }
+        } else if (result.exitCode !== 0) {
+          // Process exited with error but no minidump was created
+          crashes += `Process exited with code ${result.exitCode} but no minidump found\n`;
         }
       }
     }

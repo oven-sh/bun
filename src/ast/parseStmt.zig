@@ -1223,8 +1223,9 @@ pub fn ParseStmt(
                                 // "module Foo {}"
                                 // "declare module 'fs' {}"
                                 // "declare module 'fs';"
-                                if (((opts.is_module_scope or opts.is_namespace_scope) and (p.lexer.token == .t_identifier or
-                                    (p.lexer.token == .t_string_literal and opts.is_typescript_declare))))
+                                if (!p.lexer.has_newline_before and
+                                    (opts.is_module_scope or opts.is_namespace_scope) and
+                                    (p.lexer.token == .t_identifier or (p.lexer.token == .t_string_literal and opts.is_typescript_declare)))
                                 {
                                     return p.parseTypeScriptNamespaceStmt(loc, opts);
                                 }

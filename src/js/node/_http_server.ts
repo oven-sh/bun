@@ -304,7 +304,7 @@ Server.prototype.closeAllConnections = function () {
 
 Server.prototype.closeIdleConnections = function () {
   const server = this[serverSymbol];
-  server.closeIdleConnections();
+  server?.closeIdleConnections();
 };
 
 Server.prototype.close = function (optionalCallback?) {
@@ -904,7 +904,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
-    this.emit("close");
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

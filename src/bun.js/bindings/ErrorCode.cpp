@@ -271,7 +271,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
             if (str->contains('\'')) {
                 builder.append('"');
                 if (str->is8Bit()) {
-                    const auto span = str->span<LChar>();
+                    const auto span = str->span<Latin1Character>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -420,7 +420,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
-                const auto span = view.span<LChar>();
+                const auto span = view.span<Latin1Character>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -590,10 +590,10 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
 {
-    auto arg_name = std::span<const LChar>(arg_name_string->ptr, arg_name_string->len);
+    auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto expected_type = std::span<const LChar>(expected_type_string->ptr, expected_type_string->len);
+    auto expected_type = std::span<const Latin1Character>(expected_type_string->ptr, expected_type_string->len);
     ASSERT(WTF::charactersAreAllASCII(expected_type));
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value);

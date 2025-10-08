@@ -15,8 +15,6 @@ import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 import * as numeric from "_util/numeric.ts";
 
-type Awaitable<T> = T | Promise<T>;
-
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
@@ -62,6 +60,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
+  AGENT: "false",
 };
 
 const ciEnv = { ...bunEnv };
@@ -184,7 +183,7 @@ export type DirectoryTree = {
     | string
     | Buffer
     | DirectoryTree
-    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {

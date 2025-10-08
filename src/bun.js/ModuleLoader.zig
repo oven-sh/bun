@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
@@ -1600,9 +1600,10 @@ pub export fn Bun__transpileFile(
     ret: *jsc.ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
-    force_loader_type: bun.options.Loader.Optional,
+    _force_loader_type: bun.schema.api.Loader,
 ) ?*anyopaque {
     jsc.markBinding(@src());
+    const force_loader_type: bun.options.Loader.Optional = .fromAPI(_force_loader_type);
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 

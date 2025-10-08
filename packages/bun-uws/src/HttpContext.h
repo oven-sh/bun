@@ -253,6 +253,7 @@ private:
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
             httpResponseData->isIdle = false;
+            
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 

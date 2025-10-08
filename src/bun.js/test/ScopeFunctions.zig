@@ -249,7 +249,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = timeout,
-            }, base);
+            }, base, .collection);
         },
     }
 }
@@ -278,7 +278,6 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: bun_te
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
-    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
     if (bun.detectCI()) |_| {
         return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
     }

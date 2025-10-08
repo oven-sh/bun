@@ -281,7 +281,7 @@ pub const FileSystemRouter = struct {
                 }
 
                 if (argument.as(jsc.WebCore.Response)) |resp| {
-                    break :brk resp.url.toUTF8(globalThis.allocator());
+                    break :brk resp.getUTF8Url(globalThis.allocator());
                 }
             }
 

@@ -4028,19 +4028,21 @@ declare module "bun" {
      * Files to include in the archive.
      *
      * Keys are the paths inside the tar archive.
-     * Values can be:
-     * - `string`: path to a file on the filesystem
-     * - `Blob`: in-memory file content
+     * Values are the file contents, which can be:
+     * - `string`: text content
+     * - `Blob`: binary or text content
+     * - `ArrayBuffer` / `TypedArray`: binary data
      *
      * @example
      * ```ts
      * {
-     *   "README.md": "./README.md",                    // from filesystem
-     *   "data.json": new Blob([JSON.stringify(data)])  // from memory
+     *   "README.md": "# My Project\n\nDescription here",  // string content
+     *   "data.json": new Blob([JSON.stringify(data)]),     // from Blob
+     *   "binary.dat": new Uint8Array([1, 2, 3])            // from TypedArray
      * }
      * ```
      */
-    files: Record<string, string | Blob>;
+    files: Record<string, string | Blob | ArrayBufferView | ArrayBuffer>;
 
     /**
      * Optional destination for the archive.

@@ -2045,19 +2045,11 @@ pub const TarballJob = struct {
 
     const FileEntry = struct {
         archive_path: []const u8,
-        source: Source,
-
-        const Source = union(enum) {
-            file_path: []const u8,
-            blob_data: []const u8,
-        };
+        data: []const u8,
 
         fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             allocator.free(self.archive_path);
-            switch (self.source) {
-                .file_path => |path| allocator.free(path),
-                .blob_data => |data| allocator.free(data),
-            }
+            allocator.free(self.data);
         }
     };
 
@@ -2122,15 +2114,7 @@ pub const TarballJob = struct {
             var estimated_size: usize = 0;
             for (this.files.entries) |entry| {
                 estimated_size += 512; // header
-                const content_size = switch (entry.source) {
-                    .file_path => |path| blk: {
-                        const file = std.fs.cwd().openFile(path, .{}) catch break :blk 0;
-                        defer file.close();
-                        const stat = file.stat() catch break :blk 0;
-                        break :blk stat.size;
-                    },
-                    .blob_data => |data| data.len,
-                };
+                const content_size = entry.data.len;
                 const blocks = (content_size + 511) / 512;
                 estimated_size += blocks * 512;
             }
@@ -2189,16 +2173,7 @@ pub const TarballJob = struct {
         const entry = lib.Archive.Entry.new();
         defer entry.free();
 
-        // Read content
-        const content = switch (file_entry.source) {
-            .file_path => |path| try std.fs.cwd().readFileAlloc(
-                allocator,
-                path,
-                100 * 1024 * 1024, // 100MB max
-            ),
-            .blob_data => |data| data,
-        };
-        defer if (file_entry.source == .file_path) allocator.free(content);
+        const content = file_entry.data;
 
         // Set metadata
         const path_z = try allocator.dupeZ(u8, file_entry.archive_path);
@@ -2255,7 +2230,7 @@ pub const TarballJob = struct {
             var blob = jsc.WebCore.Blob.initWithStore(store, globalThis);
             blob.content_type = "application/x-tar";
             this.output_buffer = &[_]u8{}; // ownership transferred
-            break :blk blob.toJS(globalThis);
+            break :blk jsc.WebCore.Blob.new(blob).toJS(globalThis);
         };
 
         promise.resolve(globalThis, result_value);
@@ -2416,23 +2391,25 @@ fn parseFileList(globalThis: *JSGlobalObject, files_obj: JSValue) !TarballJob.Fi
         const archive_path = try allocator.dupe(u8, prop_slice.slice());
         errdefer allocator.free(archive_path);
 
-        const source = if (value.isString()) blk: {
-            const path_str = try value.toSlice(globalThis, allocator);
-            defer path_str.deinit();
-            const path = try allocator.dupe(u8, path_str.slice());
-            break :blk TarballJob.FileEntry.Source{ .file_path = path };
-        } else if (value.as(jsc.WebCore.Blob)) |blob| blk: {
-            const data = blob.sharedView();
-            const data_copy = try allocator.dupe(u8, data);
-            break :blk TarballJob.FileEntry.Source{ .blob_data = data_copy };
-        } else {
+        // Get data from blob, string, or buffer
+        const blob_or_str_or_buf = try jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(
+            globalThis,
+            allocator,
+            value,
+            .js_undefined, // encoding - use default (utf8)
+            true, // is_async - we need thread-safe
+        ) orelse {
             allocator.free(archive_path);
-            return globalThis.throwInvalidArguments("File values must be string or Blob", .{});
+            return globalThis.throwInvalidArguments("File values must be string, Blob, or Buffer", .{});
         };
+        defer blob_or_str_or_buf.deinit();
+
+        const data = try allocator.dupe(u8, blob_or_str_or_buf.slice());
+        errdefer allocator.free(data);
 
         try entries.append(.{
             .archive_path = archive_path,
-            .source = source,
+            .data = data,
         });
     }
 

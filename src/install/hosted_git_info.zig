@@ -368,7 +368,7 @@ fn isGithubShorthand(npa_str: []const u8) bool {
         return false;
     }
 
-    var pound_idx: ?u32 = null;
+    var pound_idx: ?usize = null;
     var seen_slash = false;
 
     for (npa_str, 0..) |c, i| {
@@ -381,7 +381,7 @@ fn isGithubShorthand(npa_str: []const u8) bool {
             },
 
             '#' => {
-                pound_idx = @intCast(i);
+                pound_idx = i;
             },
             '/' => {
                 // Implements secondSlashOnlyAfterHash

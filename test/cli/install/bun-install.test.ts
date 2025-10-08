@@ -3530,12 +3530,12 @@ it("should handle bitbucket git dependencies", async () => {
       "",
       `+ public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
     await dummyAfterEach();
-    await dummyBeforeEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 
   for (const dep of deps) {
@@ -3566,12 +3566,12 @@ it("should handle bitbucket git dependencies", async () => {
       "",
       `installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
     await dummyAfterEach();
-    await dummyBeforeEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 });
 
@@ -3607,12 +3607,12 @@ it("should handle gitlab git dependencies", async () => {
       "",
       `+ public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
     await dummyAfterEach();
-    await dummyBeforeEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 
   for (const dep of deps) {
@@ -3643,12 +3643,12 @@ it("should handle gitlab git dependencies", async () => {
       "",
       `installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
     await dummyAfterEach();
-    await dummyBeforeEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 });
 

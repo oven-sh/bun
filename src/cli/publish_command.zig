@@ -998,6 +998,9 @@ pub const PublishCommand = struct {
         const tarball_url_slice = tarball_url.toSlice(bun.default_allocator);
         defer tarball_url_slice.deinit();
 
+        // Duplicate the tarball URL string so it persists beyond the defer
+        const tarball_url_str_duped = try allocator.dupe(u8, tarball_url_slice.slice());
+
         dist_props[2] = .{
             .key = Expr.init(
                 E.String,
@@ -1007,7 +1010,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = tarball_url_slice.slice(),
+                    .data = tarball_url_str_duped,
                 },
                 logger.Loc.Empty,
             ),

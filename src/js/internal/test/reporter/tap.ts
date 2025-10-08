@@ -19,7 +19,7 @@ const kLineBreakRegExp = /\n|\r\n/;
 const kDefaultTAPVersion = 13;
 const inspectOptions = { __proto__: null, colors: false, breakLength: Infinity };
 
-let testModule; // Lazy loaded due to circular dependency.
+let testModule = undefined; // Lazy loaded due to circular dependency.
 function lazyLoadTest() {
   // testModule ??= require("internal/test_runner/test");
   return testModule;

@@ -177,10 +177,7 @@ pub fn doPatchCommit(
                     Output.prettyError("<r><red>error<r>: {s}<r>\n", .{@errorName(e)});
                     Global.crash();
                 };
-                // Copy the path to pathbuf so we own it with the same lifetime as hoisted paths
-                defer manager.allocator.free(info.relative_path);
-                const folder_path = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{info.relative_path}, .auto);
-                break :isolated .{ info.pkg_id, folder_path };
+                break :isolated .{ info.pkg_id, info.relative_path };
             } else hoisted: {
                 const pkg_id_val, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
                 const folder_path = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
@@ -587,7 +584,6 @@ pub fn preparePatch(manager: *PackageManager) !void {
     var resolution_buf: [1024]u8 = undefined;
 
     var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
-    var isolated_path_buf: bun.PathBuffer = undefined;
 
     const not_in_workspace_root = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash) != 0;
     var free_argument = false;
@@ -707,11 +703,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
 
             const pkg_id: PackageID, const module_folder_: []const u8 = if (using_isolated_installs) isolated: {
                 const info = try pkgInfoForNameAndVersionIsolated(manager.lockfile, pkg_maybe_version_to_patch, name, version, manager.allocator);
-                // Copy to local buffer so we can free the allocated string
-                defer manager.allocator.free(info.relative_path);
-                @memcpy(isolated_path_buf[0..info.relative_path.len], info.relative_path);
-                const folder_path = isolated_path_buf[0..info.relative_path.len];
-                break :isolated .{ info.pkg_id, folder_path };
+                break :isolated .{ info.pkg_id, info.relative_path };
             } else hoisted: {
                 const pkg_id_val, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
                 const folder_path = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
@@ -928,8 +920,8 @@ fn findPackageInIsolatedStore(
     return null;
 }
 
-/// Search for a package in the root isolated store
-/// TODO: Support workspace-specific isolated stores
+/// Search for a package in isolated store by checking all possible locations
+/// This handles cases where the package might be in a workspace's node_modules
 fn searchIsolatedStore(
     lockfile: *Lockfile,
     pkg_id: PackageID,

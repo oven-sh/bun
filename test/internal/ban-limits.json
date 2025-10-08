@@ -9,7 +9,7 @@
   ".jsBoolean(true)": 0,
   ".stdDir()": 41,
   ".stdFile()": 17,
-  "// autofix": 164,
+  "// autofix": 165,
   ": [^=]+= undefined,$": 256,
   "== alloc.ptr": 0,
   "== allocator.ptr": 0,

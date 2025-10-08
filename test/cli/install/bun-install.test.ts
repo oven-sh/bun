@@ -67,7 +67,9 @@ beforeAll(() => {
 });
 
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(() => {
+  dummyBeforeEach({ linker: "hoisted" });
+});
 afterEach(dummyAfterEach);
 
 for (let input of ["abcdef", "65537", "-1"]) {

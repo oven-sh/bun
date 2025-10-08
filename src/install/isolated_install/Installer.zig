@@ -959,7 +959,7 @@ pub const Installer = struct {
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
                     if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) {
-                        const pkg_scripts: *Package.Scripts = &pkg_script_lists[pkg_id];
+                        var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
 
                         var log = bun.logger.Log.init(bun.default_allocator);
                         defer log.deinit();

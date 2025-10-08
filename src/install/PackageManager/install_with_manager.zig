@@ -38,7 +38,7 @@ pub fn installWithManager(
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
         (load_result == .ok and
             // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+            (load_result.ok.migrated != .none or
 
                 // if loaded from binary and save-text-lockfile is passed
                 (load_result.ok.format == .binary and
@@ -775,20 +775,28 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        const linker: Options.NodeLinker = switch (manager.options.node_linker) {
-            .hoisted => .hoisted,
-            .isolated => .isolated,
-            .auto => linker: {
-                if (manager.lockfile.workspace_paths.count() > 0) {
-                    break :linker .isolated;
+        switch (manager.options.node_linker) {
+            .auto => {
+                if (manager.lockfile.workspace_paths.count() > 0 and
+                    !load_result.migratedFromNpm())
+                {
+                    break :install_summary bun.handleOom(installIsolatedPackages(
+                        manager,
+                        ctx,
+                        install_root_dependencies,
+                        workspace_filters,
+                        null,
+                    ));
                 }
-                break :linker .hoisted;
+                break :install_summary try installHoistedPackages(
+                    manager,
+                    ctx,
+                    workspace_filters,
+                    install_root_dependencies,
+                    log_level,
+                    null,
+                );
             },
-        };
-
-        switch (linker) {
-            // handled above
-            .auto => unreachable,
 
             .hoisted,
             => break :install_summary try installHoistedPackages(
@@ -801,15 +809,13 @@ pub fn installWithManager(
             ),
 
             .isolated,
-            => break :install_summary installIsolatedPackages(
+            => break :install_summary bun.handleOom(installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
                 workspace_filters,
                 null,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-            },
+            )),
         }
     };
 

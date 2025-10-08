@@ -733,23 +733,7 @@ fn overwritePackageInNodeModulesFolder(
     cache_dir_subpath: []const u8,
     node_modules_folder_path: []const u8,
 ) !void {
-    {
-        var dest_subpath: bun.RelPath(.{ .sep = .auto }) = .from(node_modules_folder_path);
-        defer dest_subpath.deinit();
-
-        var link_buf: bun.PathBuffer = undefined;
-        switch (bun.sys.readlink(dest_subpath.sliceZ(), &link_buf)) {
-            .err => {},
-            .result => {
-                bun.sys.unlinkat(FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {
-                    if (comptime Environment.isWindows) {
-                        bun.sys.rmdirat(FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {};
-                    }
-                };
-                bun.sys.mkdir(dest_subpath.sliceZ(), 0o755).unwrap() catch {};
-            },
-        }
-    }
+    FD.cwd().deleteTree(node_modules_folder_path) catch {};
 
     var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
     defer dest_subpath.deinit();

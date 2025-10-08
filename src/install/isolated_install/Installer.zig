@@ -77,8 +77,6 @@ pub const Installer = struct {
                         this.onTaskFail(entry_id, .{ .patching = log });
                         continue;
                     }
-                    // Success - cleanup the log
-                    log.deinit();
                 }
 
                 this.startTask(entry_id);
@@ -140,13 +138,11 @@ pub const Installer = struct {
                 });
             },
             .patching => |patch_log| {
-                var log = patch_log;
-                defer log.deinit();
                 Output.errGeneric("failed to patch package: {s}@{}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
-                log.print(Output.errorWriter()) catch {};
+                patch_log.print(Output.errorWriter()) catch {};
             },
             else => {},
         }

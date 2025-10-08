@@ -57,12 +57,8 @@ pub fn doPatchCommit(
 
     const not_in_workspace_root = manager.root_package_id.get(lockfile, manager.workspace_name_hash) != 0;
     var free_argument = false;
-    // Don't adjust paths that start with node_modules/.bun/ as they're relative to workspace root
-    const is_isolated_path = bun.strings.hasPrefixComptime(argument, "node_modules/.bun/") or
-        (bun.Environment.isWindows and bun.strings.hasPrefixComptime(argument, "node_modules\\.bun\\"));
     argument = if (arg_kind == .path and
         not_in_workspace_root and
-        !is_isolated_path and
         (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
     brk: {
         if (pathArgumentRelativeToRootWorkspacePackage(manager, lockfile, argument)) |rel_path| {
@@ -164,29 +160,12 @@ pub fn doPatchCommit(
         },
         .name_and_version => brk: {
             const name, const version = Dependency.splitNameAndMaybeVersion(argument);
+            const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
 
-            // Determine if using isolated installs (same logic as preparePatch)
-            const using_isolated_installs = switch (manager.options.node_linker) {
-                .hoisted => false,
-                .isolated => true,
-                .auto => lockfile.workspace_paths.count() > 0,
-            };
-
-            const pkg_id, const changes_dir = if (using_isolated_installs) isolated: {
-                const info = pkgInfoForNameAndVersionIsolated(lockfile, argument, name, version, manager.allocator) catch |e| {
-                    Output.prettyError("<r><red>error<r>: {s}<r>\n", .{@errorName(e)});
-                    Global.crash();
-                };
-                break :isolated .{ info.pkg_id, info.relative_path };
-            } else hoisted: {
-                const pkg_id_val, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
-                const folder_path = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
-                    node_modules.relative_path,
-                    name,
-                }, .auto);
-                break :hoisted .{ pkg_id_val, folder_path };
-            };
-
+            const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
+                node_modules.relative_path,
+                name,
+            }, .auto);
             const pkg = lockfile.packages.get(pkg_id);
 
             const cache_result = manager.computeCacheDirAndSubpath(
@@ -587,12 +566,8 @@ pub fn preparePatch(manager: *PackageManager) !void {
 
     const not_in_workspace_root = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash) != 0;
     var free_argument = false;
-    // Don't adjust paths that start with node_modules/.bun/ as they're relative to workspace root
-    const is_isolated_path = bun.strings.hasPrefixComptime(argument, "node_modules/.bun/") or
-        (bun.Environment.isWindows and bun.strings.hasPrefixComptime(argument, "node_modules\\.bun\\"));
     argument = if (arg_kind == .path and
         not_in_workspace_root and
-        !is_isolated_path and
         (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
     brk: {
         if (pathArgumentRelativeToRootWorkspacePackage(manager, manager.lockfile, argument)) |rel_path| {
@@ -614,7 +589,6 @@ pub fn preparePatch(manager: *PackageManager) !void {
                     .result => |s| break :src s,
                     .err => |e| {
                         Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
-                        Output.flush();
                         Global.crash();
                     },
                 }
@@ -998,7 +972,6 @@ fn pkgInfoForNameAndVersionIsolated(
                 const pkg = lockfile.packages.get(pkgid);
                 Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
             }
-            Output.flush();
             Global.crash();
         }
     }
@@ -1007,7 +980,6 @@ fn pkgInfoForNameAndVersionIsolated(
         "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
         .{pkg_maybe_version_to_patch},
     );
-    Output.flush();
     Global.crash();
 }
 

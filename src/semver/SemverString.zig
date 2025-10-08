@@ -180,6 +180,8 @@ pub const String = extern struct {
                 switch (c) {
                     '/' => try writer.writeByte('+'),
                     '\\' => try writer.writeByte('+'),
+                    ':' => try writer.writeByte('+'),
+                    '#' => try writer.writeByte('+'),
                     else => try writer.writeByte(c),
                 }
             }

@@ -67,8 +67,8 @@ beforeAll(() => {
 });
 
 afterAll(dummyAfterAll);
-beforeEach(() => {
-  dummyBeforeEach({ linker: "hoisted" });
+beforeEach(async () => {
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(dummyAfterEach);
 
@@ -3534,8 +3534,8 @@ it("should handle bitbucket git dependencies", async () => {
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach();
   }
 
   for (const dep of deps) {
@@ -3570,8 +3570,8 @@ it("should handle bitbucket git dependencies", async () => {
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach();
   }
 });
 
@@ -3611,8 +3611,8 @@ it("should handle gitlab git dependencies", async () => {
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach();
   }
 
   for (const dep of deps) {
@@ -3647,8 +3647,8 @@ it("should handle gitlab git dependencies", async () => {
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach();
   }
 });
 

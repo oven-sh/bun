@@ -171,7 +171,7 @@ pub const TransitionHandler = struct {
         this.flush(dest, context);
     }
 
-    fn property(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime feature: Feature, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
+    fn property(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext, feature: Feature, comptime prop: []const u8, val: anytype, vp: VendorPrefix) void {
         this.maybeFlush(dest, context, prop, val, vp);
 
         // Otherwise, update the value and add the prefix.

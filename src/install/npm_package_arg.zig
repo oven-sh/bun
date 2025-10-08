@@ -1,12 +1,24 @@
 pub const NpaSpec = struct {
     const Self = @This();
 
+    /// The original unmodified input string.
     raw: []const u8,
+
+    /// The package name, if any. URLs resolve to null.
     name: ?[]const u8,
+
+    /// Contains the original specifier string (the part after the '@' in name@spec).
     raw_spec: []const u8,
+
+    /// The path or URL which would be used to fetch the package.
     fetch_spec: ?[]const u8,
+
+    /// The spec string formatted for saving to package.json
     save_spec: ?[]const u8,
+
+    /// Encodes additional information on the type of specifier.
     type: Type,
+
     _allocator: std.mem.Allocator,
 
     pub const Type = union(enum) {
@@ -51,6 +63,7 @@ pub const NpaSpec = struct {
         return null;
     }
 
+    /// Returns a string representation of the type enum.
     pub fn typeStr(self: *const Self) []const u8 {
         return switch (self.type) {
             .git => "git",
@@ -64,6 +77,7 @@ pub const NpaSpec = struct {
         };
     }
 
+    /// Returns true if this spec is one of the types referring to the npm registry.
     pub fn isRegistry(self: *const Self) bool {
         return switch (self.type) {
             .version, .range, .tag, .alias => true,
@@ -107,7 +121,11 @@ pub const NpaSpec = struct {
     }
 
     /// Convert this NpaSpec to a JavaScript object
-    pub fn toJS(self: *const Self, allocator: std.mem.Allocator, go: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(
+        self: *const Self,
+        allocator: std.mem.Allocator,
+        go: *jsc.JSGlobalObject,
+    ) jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(go, 8);
 
         object.put(go, "raw", bun.String.fromBytes(self.raw).toJS(go));
@@ -115,8 +133,16 @@ pub const NpaSpec = struct {
         object.put(go, "name", if (self.name) |n| bun.String.fromBytes(n).toJS(go) else .null);
         object.put(go, "type", bun.String.fromBytes(self.typeStr()).toJS(go));
 
-        object.put(go, "fetchSpec", if (self.fetch_spec) |f| bun.String.fromBytes(f).toJS(go) else .null);
-        object.put(go, "saveSpec", if (self.save_spec) |s| bun.String.fromBytes(s).toJS(go) else .null);
+        object.put(
+            go,
+            "fetchSpec",
+            if (self.fetch_spec) |f| bun.String.fromBytes(f).toJS(go) else .null,
+        );
+        object.put(
+            go,
+            "saveSpec",
+            if (self.save_spec) |s| bun.String.fromBytes(s).toJS(go) else .null,
+        );
 
         const escaped_name = bun.handleOom(self.escapedName(allocator));
         defer if (escaped_name) |e| allocator.free(e);
@@ -171,11 +197,78 @@ pub const NpaSpec = struct {
         return object;
     }
 
-    pub fn fromDepStr(npa_str: []const u8) Self {
-        _ = npa_str;
-    }
+    /// Parses a spec which is assumed to be a registry spec. Matches `fromRegistry` in npa.js.
+    fn fromRegistry(
+        allocator: std.mem.Allocator,
+        name: ?[]const u8,
+        raw_spec: []const u8,
+        raw: []const u8,
+    ) !NpaSpec {
+        const trimmed = bun.strings.trimSpaces(raw_spec);
+        const sliced = Semver.SlicedString.init(trimmed, trimmed);
 
-    const jsc = bun.jsc;
+        // Duplicate the strings we need to own
+        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+        errdefer allocator.free(raw_spec_owned);
+        const fetch_spec_owned = try allocator.dupe(u8, trimmed);
+        errdefer allocator.free(fetch_spec_owned);
+
+        const query = Semver.Query.parse(allocator, trimmed, sliced) catch {
+            // If parsing fails, treat as a tag if it doesn't need URL encoding
+            if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
+                return .{
+                    .raw = raw,
+                    .name = name,
+                    .raw_spec = raw_spec_owned,
+                    .fetch_spec = fetch_spec_owned,
+                    .save_spec = null,
+                    .type = .tag,
+                    ._allocator = allocator,
+                };
+            }
+            return error.InvalidRegistrySpec;
+        };
+        defer query.deinit();
+
+        // If the query has no left comparator, it means the parser skipped over a tag name
+        // (e.g., "baz", "latest", etc.) and returned an empty query
+        if (!query.head.head.range.hasLeft()) {
+            if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
+                return .{
+                    .raw = raw,
+                    .name = name,
+                    .raw_spec = raw_spec_owned,
+                    .fetch_spec = fetch_spec_owned,
+                    .save_spec = null,
+                    .type = .tag,
+                    ._allocator = allocator,
+                };
+            }
+            return error.InvalidRegistrySpec;
+        }
+
+        if (query.isExact()) {
+            return .{
+                .raw = raw,
+                .name = name,
+                .raw_spec = raw_spec_owned,
+                .fetch_spec = fetch_spec_owned,
+                .save_spec = null,
+                .type = .version,
+                ._allocator = allocator,
+            };
+        }
+
+        return .{
+            .raw = raw,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = fetch_spec_owned,
+            .save_spec = null,
+            .type = .range,
+            ._allocator = allocator,
+        };
+    }
 };
 
 pub const NpaError = error{
@@ -204,14 +297,14 @@ pub fn npa(allocator: std.mem.Allocator, raw_spec: []const u8, where: []const u8
     const name_ends_at = bun.strings.indexOfCharPos(raw_spec, '@', 1);
     const name_part = if (name_ends_at) |idx| raw_spec[0..idx] else raw_spec;
 
-    if (isUrl(raw_spec)) {
+    if (SpecStrUtils.isUrl(raw_spec)) {
         spec = raw_spec;
-    } else if (isGitScp(raw_spec)) {
+    } else if (SpecStrUtils.isGit(raw_spec)) {
         // Convert git SCP syntax to git+ssh:// URL (like npa.js line 40)
         spec = try std.fmt.allocPrint(allocator, "git+ssh://{s}", .{raw_spec});
         spec_allocated = spec;
     } else if (!bun.strings.hasPrefixComptime(name_part, "@") and
-        (hasSlashes(name_part) or inodeType(name_part) == .file))
+        (bun.path.hasPathSlashes(name_part) or SpecStrUtils.inodeType(name_part) == .file))
     {
         spec = raw_spec;
     } else if (name_ends_at) |idx| {
@@ -251,11 +344,11 @@ fn resolve(
         try allocator.dupe(u8, spec);
     errdefer allocator.free(raw);
 
-    if (isFileSpec(spec)) {
+    if (SpecStrUtils.isFile(spec)) {
         return fromFile(allocator, name, spec, where, raw);
     }
 
-    if (isAliasSpec(spec)) {
+    if (SpecStrUtils.isAlias(spec)) {
         return fromAlias(allocator, name, spec, where, raw);
     }
 
@@ -263,18 +356,18 @@ fn resolve(
         return git_s;
     }
 
-    if (isUrl(spec)) {
+    if (SpecStrUtils.isUrl(spec)) {
         return fromURL(allocator, name, spec, raw);
     }
 
     // These are now best-guesses.
     // TODO(markovejnovic): This feels like an odd heuristic but it's what npm-package-arg does.
-    // Notice how we don't use the isFileSpec function here. This matches npa.
-    if (hasSlashes(spec) or inodeType(spec) == .file) {
+    // Notice how we don't use the SpecStrUtils.isFile function here. This matches npa.
+    if (bun.path.hasPathSlashes(spec) or SpecStrUtils.inodeType(spec) == .file) {
         return fromFile(allocator, name, spec, where, raw);
     }
 
-    return fromRegistry(allocator, name, spec, raw);
+    return NpaSpec.fromRegistry(allocator, name, spec, raw);
 }
 
 fn fromAlias(
@@ -315,96 +408,6 @@ fn fromAlias(
                 .sub_spec = sub_spec_ptr,
             },
         },
-        ._allocator = allocator,
-    };
-}
-
-fn inodeType(spec_str: []const u8) enum { file, directory } {
-    const file_extensions = [_][]const u8{ ".tgz", ".tar.gz", ".tar" };
-    inline for (file_extensions) |ext| {
-        if (bun.strings.endsWithComptime(spec_str, ext)) {
-            return .file;
-        }
-    }
-
-    return .directory;
-}
-
-fn fromRegistry(
-    allocator: std.mem.Allocator,
-    name: ?[]const u8,
-    raw_spec: []const u8,
-    raw: []const u8,
-) !NpaSpec {
-    const trimmed = bun.strings.trimSpaces(raw_spec);
-    const sliced = Semver.SlicedString.init(trimmed, trimmed);
-
-    // Duplicate the strings we need to own
-    const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-    errdefer allocator.free(raw_spec_owned);
-    const fetch_spec_owned = try allocator.dupe(u8, trimmed);
-    errdefer allocator.free(fetch_spec_owned);
-
-    const query = Semver.Query.parse(allocator, trimmed, sliced) catch {
-        // If parsing fails, treat as a tag if it doesn't need URL encoding
-        if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-            return .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = fetch_spec_owned,
-                .save_spec = null,
-                .type = .tag,
-                ._allocator = allocator,
-            };
-        }
-        return error.InvalidRegistrySpec;
-    };
-    defer query.deinit();
-
-    // If the query has no left comparator, it means the parser skipped over a tag name
-    // (e.g., "baz", "latest", etc.) and returned an empty query
-    if (!query.head.head.range.hasLeft()) {
-        if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-            return .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = fetch_spec_owned,
-                .save_spec = null,
-                .type = .tag,
-                ._allocator = allocator,
-            };
-        }
-        return error.InvalidRegistrySpec;
-    }
-
-    const is_exact_version = query.head.head.range.left.op == .eql and
-        query.head.head.range.right.op == .unset and
-        query.head.head.next == null and
-        query.head.tail == null and
-        query.head.next == null and
-        query.tail == null;
-
-    if (is_exact_version) {
-        return .{
-            .raw = raw,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .fetch_spec = fetch_spec_owned,
-            .save_spec = null,
-            .type = .version,
-            ._allocator = allocator,
-        };
-    }
-
-    return .{
-        .raw = raw,
-        .name = name,
-        .raw_spec = raw_spec_owned,
-        .fetch_spec = fetch_spec_owned,
-        .save_spec = null,
-        .type = .range,
         ._allocator = allocator,
     };
 }
@@ -601,7 +604,7 @@ fn fromFile(
     raw: []const u8,
 ) !NpaSpec {
     // Determine type: file or directory based on extension
-    const spec_type = inodeType(raw_spec);
+    const spec_type = SpecStrUtils.inodeType(raw_spec);
 
     // Clean the raw_spec using pathToFileURL transformations
     var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(allocator, raw_spec) catch return error.InvalidPath;
@@ -711,8 +714,8 @@ fn fromFile(
     }
 
     // Handle special cases for saveSpec and fetchSpec
-    var save_spec: []const u8 = undefined;
-    var fetch_spec: []const u8 = undefined;
+    var save_spec: []u8 = undefined;
+    var fetch_spec: []u8 = undefined;
 
     // Check for homedir pattern: /~/ or /~
     if (spec_path.len >= 2 and spec_path[0] == '/' and spec_path[1] == '~' and
@@ -861,125 +864,139 @@ fn stripWindowsLeadingSlashes(path: anytype) @TypeOf(path) {
     return path;
 }
 
-fn isGitScp(spec_str: []const u8) bool {
-    // Matches: /^[^@]+@[^:.]+\.[^:]+:.+$/i
-    const at_idx = bun.strings.indexOfChar(spec_str, '@') orelse return false;
-    if (at_idx == 0) return false;
+/// Collection of utiltiies for operating on strings.
+///
+/// Used to encapsulate logic, nothing more.
+const SpecStrUtils = struct {
+    /// Tests whether the given string matches /^(?:git[+])?[a-z]+:/i
+    pub fn isUrl(spec_str: []const u8) bool {
+        if (bun.strings.hasPrefixCaseInsensitive(spec_str, "git:")) {
+            return true;
+        }
 
-    var i = at_idx + 1;
-    if (i >= spec_str.len) return false;
-
-    // Find first dot after @, ensuring no : or . before it
-    while (i < spec_str.len) : (i += 1) {
-        if (spec_str[i] == ':' or spec_str[i] == '.') break;
-    }
-    if (i >= spec_str.len or spec_str[i] != '.') return false;
-
-    i += 1;
-    if (i >= spec_str.len) return false;
-
-    // Find colon after the dot, ensuring no colon before it
-    while (i < spec_str.len) : (i += 1) {
-        if (spec_str[i] == ':') break;
-    }
-    if (i >= spec_str.len or spec_str[i] != ':') return false;
-
-    // Ensure there's at least one character after the colon
-    return i + 1 < spec_str.len;
-}
-
-fn isUrl(spec_str: []const u8) bool {
-    // The original regex was ^(?:git[+])?[a-z]+: (note the ^ anchor - must match at START)
-
-    // If the string starts with git:, then it's automatically a URL.
-    if (bun.strings.hasPrefixComptime(spec_str, "git:")) {
-        return true;
-    }
-
-    // If it starts with a git+ prefix, then we need to ensure that it is followed by a legal
-    // scheme (which is just a-z letters).
-    if (bun.strings.hasPrefixComptime(spec_str, "git+")) {
-        for (spec_str["git+".len..]) |c| {
-            if (c == ':') {
-                return true;
+        if (bun.strings.hasPrefixCaseInsensitive(spec_str, "git+")) {
+            for (spec_str["git+".len..]) |c| {
+                if (c == ':') {
+                    return true;
+                }
+                // Check if it's a letter (case-insensitive)
+                if (!((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z'))) {
+                    return false;
+                }
             }
+            // If we reach the terminal case, then that means we missed a colon -- not a URL.
+            return false;
+        }
 
-            if (!(c >= 'a' and c <= 'z')) {
+        // Now, the string may not start with git+ or git: at all, in that case we need to make
+        // sure the characters before the first colon are all letters (case-insensitive).
+        const colon_idx = bun.strings.indexOf(spec_str, ":") orelse return false;
+        // Must have at least one character before the colon
+        if (colon_idx == 0) return false;
+        for (spec_str[0..colon_idx]) |c| {
+            // Check if it's a letter (case-insensitive)
+            if (!((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z'))) {
                 return false;
             }
         }
-
-        // If we reach the terminal case, then that means we missed a colon -- not a URL.
-        return false;
-    }
-
-    // Now, the string may not start with git+ or git: at all, in that case we need to make sure
-    // the characters before the first colon are all a-z letters (and it starts with them).
-    const colon_idx = bun.strings.indexOf(spec_str, ":") orelse return false;
-
-    // Must have at least one character before the colon
-    if (colon_idx == 0) return false;
-
-    for (spec_str[0..colon_idx]) |c| {
-        if (!(c >= 'a' and c <= 'z')) {
-            return false;
-        }
-    }
-
-    // Otherwise, it's a URL.
-    return true;
-}
-
-/// Matches the implementation of isFileSpec in npm-package-arg.
-fn isFileSpec(spec_str: []const u8) bool {
-    if (spec_str.len == 0) {
-        return false;
-    }
-
-    if (bun.strings.hasPrefixCaseInsensitive(spec_str, "file:")) {
+        // Otherwise, it's a URL.
         return true;
     }
 
-    return if (bun.Environment.isWindows)
-        isWindowsFile(spec_str)
-    else
-        isPosixFile(spec_str);
-}
+    /// Determine whether the spec refers to a file.
+    /// Matches /[.](?:tgz|tar\.gz|tar)$/i
+    pub fn inodeType(spec_str: []const u8) enum { file, directory } {
+        const file_extensions = [_][]const u8{ ".tgz", ".tar.gz", ".tar" };
+        inline for (file_extensions) |ext| {
+            if (bun.strings.endsWithCaseInsensitive(spec_str, ext)) {
+                return .file;
+            }
+        }
 
-fn isWindowsFile(spec_str: []const u8) bool {
-    // This is the heuristic npm-package-arg uses. You can debate whether it is good or not, but
-    // this is what they use.
-    if (spec_str.len < 1) return false;
+        return .directory;
+    }
 
-    return switch (spec_str[0]) {
-        '.',
-        '/',
-        '\\',
-        => true,
-        '~' => spec_str.len >= 2 and spec_str[1] == '/',
-        'a'...'z', 'A'...'Z' => spec_str.len >= 2 and spec_str[1] == ':',
-        else => false,
-    };
-}
+    /// Matches the implementation of isAliasSpec in npm-package-arg.
+    pub fn isAlias(spec_str: []const u8) bool {
+        return bun.strings.hasPrefixCaseInsensitive(spec_str, "npm:");
+    }
 
-fn isPosixFile(spec_str: []const u8) bool {
-    // This is kind of weird but npm-package-arg also supports C: as path prefixes on POSIX
-    // platforms. ¯\_(ツ)_/¯ Maybe there's Sun or something.
-    if (spec_str.len < 1) return false;
+    /// Test whether the given string matches /^[^@]+@[^:.]+\.[^:]+:.+$/i (isGit in npa.js)
+    pub fn isGit(spec_str: []const u8) bool {
+        // Matches: /^[^@]+@[^:.]+\.[^:]+:.+$/i
+        const at_idx = bun.strings.indexOfChar(spec_str, '@') orelse return false;
+        if (at_idx == 0) return false;
 
-    return switch (spec_str[0]) {
-        '.',
-        '/',
-        => true,
-        '~' => spec_str.len >= 2 and spec_str[1] == '/',
-        'a'...'z', 'A'...'Z' => spec_str.len >= 2 and spec_str[1] == ':',
-        else => false,
-    };
-}
+        var i = at_idx + 1;
+        if (i >= spec_str.len) return false;
 
-fn isAliasSpec(spec_str: []const u8) bool {
-    return bun.strings.hasPrefixCaseInsensitive(spec_str, "npm:");
-}
+        // Match [^:.]+ - at least one character that is not : or .
+        const start_after_at = i;
+        while (i < spec_str.len) : (i += 1) {
+            if (spec_str[i] == ':' or spec_str[i] == '.') break;
+        }
+        // Ensure we consumed at least one character and hit a dot
+        if (i == start_after_at or i >= spec_str.len or spec_str[i] != '.') return false;
+
+        i += 1;
+        if (i >= spec_str.len) return false;
+
+        // Match [^:]+ - at least one character that is not :
+        const start_after_dot = i;
+        while (i < spec_str.len) : (i += 1) {
+            if (spec_str[i] == ':') break;
+        }
+        // Ensure we consumed at least one character and hit a colon
+        if (i == start_after_dot or i >= spec_str.len or spec_str[i] != ':') return false;
+
+        // Ensure there's at least one character after the colon (.+)
+        return i + 1 < spec_str.len;
+    }
+
+    /// Matches the implementation of isFileSpec in npm-package-arg.
+    pub fn isFile(spec_str: []const u8) bool {
+        if (spec_str.len == 0) {
+            return false;
+        }
+
+        if (bun.strings.hasPrefixCaseInsensitive(spec_str, "file:")) {
+            return true;
+        }
+
+        return if (bun.Environment.isWindows)
+            isWindowsFile(spec_str)
+        else
+            isPosixFile(spec_str);
+    }
+
+    /// Equivalent to /^(?:[.]|~[/]|[/\\]|[a-zA-Z]:)/ (isWindowsFile in npa.js)
+    fn isWindowsFile(spec_str: []const u8) bool {
+        // This is the heuristic npm-package-arg uses. You can debate whether it is good or not,
+        // but this is what they use.
+        if (spec_str.len < 1) return false;
+
+        return switch (spec_str[0]) {
+            '.', '/', '\\' => true,
+            '~' => spec_str.len >= 2 and spec_str[1] == '/',
+            'a'...'z', 'A'...'Z' => spec_str.len >= 2 and spec_str[1] == ':',
+            else => false,
+        };
+    }
+
+    /// Equivalent to /^(?:[.]|~[/]|[/]|[a-zA-Z]:)/ (isPosixFile in npa.js)
+    fn isPosixFile(spec_str: []const u8) bool {
+        // This is kind of weird but npm-package-arg also supports C: as path prefixes on POSIX
+        // platforms. ¯\_(ツ)_/¯ Maybe there's Sun or something.
+        if (spec_str.len < 1) return false;
+
+        return switch (spec_str[0]) {
+            '.', '/' => true,
+            '~' => spec_str.len >= 2 and spec_str[1] == '/',
+            'a'...'z', 'A'...'Z' => spec_str.len >= 2 and spec_str[1] == ':',
+            else => false,
+        };
+    }
+};
 
 fn fromURL(
     allocator: std.mem.Allocator,
@@ -1370,10 +1387,6 @@ fn parseGitAttrs(allocator: std.mem.Allocator, committish: ?[]const u8) !struct 
     };
 }
 
-fn hasSlashes(spec_str: []const u8) bool {
-    return bun.path.hasPathSlashes(spec_str);
-}
-
 pub const TestingAPIs = struct {
     /// Shares semantics with npm-package-arg's default export.
     pub fn jsNpa(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1472,8 +1485,6 @@ pub const TestingAPIs = struct {
 
         return resolved.toJS(allocator, go);
     }
-
-    const jsc = bun.jsc;
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
@@ -1483,4 +1494,5 @@ const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
+const jsc = bun.jsc;
 const Semver = bun.Semver;

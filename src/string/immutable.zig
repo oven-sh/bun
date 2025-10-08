@@ -1023,6 +1023,15 @@ pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
     return hasPrefixCaseInsensitiveT(u8, str, prefix);
 }
 
+pub fn endsWithCaseInsensitiveT(comptime T: type, str: []const T, suffix: []const u8) bool {
+    if (str.len < suffix.len) return false;
+    return eqlCaseInsensitiveT(T, str[str.len - suffix.len ..], suffix);
+}
+
+pub fn endsWithCaseInsensitive(str: []const u8, suffix: []const u8) bool {
+    return endsWithCaseInsensitiveT(u8, str, suffix);
+}
+
 pub fn eqlLongT(comptime T: type, a_str: []const T, b_str: []const T, comptime check_len: bool) bool {
     if (comptime check_len) {
         const len = b_str.len;

@@ -163,6 +163,15 @@ pub const Action = union(enum) {
     }
 };
 
+/// Print crash report without terminating the process (Windows only, for WER minidumps)
+fn crashHandlerWithoutTerminating(
+    reason: CrashReason,
+    error_return_trace: ?*std.builtin.StackTrace,
+    begin_addr: ?usize,
+) void {
+    crashHandlerImpl(reason, error_return_trace, begin_addr, false);
+}
+
 /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
@@ -170,6 +179,16 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
+    crashHandlerImpl(reason, error_return_trace, begin_addr, true);
+    unreachable;
+}
+
+fn crashHandlerImpl(
+    reason: CrashReason,
+    error_return_trace: ?*std.builtin.StackTrace,
+    begin_addr: ?usize,
+    should_terminate: bool,
+) void {
     @branchHint(.cold);
 
     if (bun.Environment.isDebug)
@@ -468,7 +487,9 @@ pub fn crashHandler(
         },
     };
 
-    crash();
+    if (should_terminate) {
+        crash();
+    }
 }
 
 /// This is called when `main` returns a Zig error.
@@ -877,24 +898,27 @@ pub fn resetSegfaultHandler() void {
 }
 
 pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
-    crashHandler(
-        switch (info.ExceptionRecord.ExceptionCode) {
-            windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
-            windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
-            windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
-            windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
+    const reason = switch (info.ExceptionRecord.ExceptionCode) {
+        windows.EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason{ .datatype_misalignment = {} },
+        windows.EXCEPTION_ACCESS_VIOLATION => CrashReason{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
+        windows.EXCEPTION_ILLEGAL_INSTRUCTION => CrashReason{ .illegal_instruction = info.ContextRecord.getRegs().ip },
+        windows.EXCEPTION_STACK_OVERFLOW => CrashReason{ .stack_overflow = {} },
 
-            // exception used for thread naming
-            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
-            // related commit
-            // https://github.com/go-delve/delve/pull/1384
-            bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
+        // exception used for thread naming
+        // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+        // related commit
+        // https://github.com/go-delve/delve/pull/1384
+        bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
 
-            else => return windows.EXCEPTION_CONTINUE_SEARCH,
-        },
-        null,
-        @intFromPtr(info.ExceptionRecord.ExceptionAddress),
-    );
+        else => return windows.EXCEPTION_CONTINUE_SEARCH,
+    };
+
+    // Print crash report but don't terminate - let WER handle the exception
+    crashHandlerWithoutTerminating(reason, null, @intFromPtr(info.ExceptionRecord.ExceptionAddress));
+
+    // Return EXCEPTION_CONTINUE_SEARCH to let WER create a minidump
+    // This makes Windows see the exception as unhandled, triggering WER's LocalDumps functionality
+    return windows.EXCEPTION_CONTINUE_SEARCH;
 }
 
 extern "c" fn gnu_get_libc_version() ?[*:0]const u8;

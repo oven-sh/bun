@@ -163,15 +163,6 @@ pub const Action = union(enum) {
     }
 };
 
-/// Print crash report without terminating the process (Windows only, for WER minidumps)
-fn crashHandlerWithoutTerminating(
-    reason: CrashReason,
-    error_return_trace: ?*std.builtin.StackTrace,
-    begin_addr: ?usize,
-) void {
-    crashHandlerImpl(reason, error_return_trace, begin_addr, false);
-}
-
 /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
@@ -179,7 +170,7 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    crashHandlerImpl(reason, error_return_trace, begin_addr, true);
+    crashHandlerImpl(reason, error_return_trace, begin_addr);
     unreachable;
 }
 
@@ -187,7 +178,6 @@ fn crashHandlerImpl(
     reason: CrashReason,
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
-    should_terminate: bool,
 ) void {
     @branchHint(.cold);
 
@@ -436,6 +426,11 @@ fn crashHandlerImpl(
 
             report(trace_str_buf.slice());
 
+            // Write minidump on Windows before terminating
+            if (bun.Environment.isWindows) {
+                writeMiniDumpWindows() catch {};
+            }
+
             // At this point, the crash handler has performed it's job. Reset the segfault handler
             // so that a crash will actually crash. We need this because we want the process to
             // exit with a signal, and allow tools to be able to gather core dumps.
@@ -487,9 +482,7 @@ fn crashHandlerImpl(
         },
     };
 
-    if (should_terminate) {
-        crash();
-    }
+    crash();
 }
 
 /// This is called when `main` returns a Zig error.
@@ -897,28 +890,70 @@ pub fn resetSegfaultHandler() void {
     updatePosixSegfaultHandler(&act) catch {};
 }
 
+extern "dbghelp" fn MiniDumpWriteDump(
+    hProcess: windows.HANDLE,
+    ProcessId: windows.DWORD,
+    hFile: windows.HANDLE,
+    DumpType: windows.DWORD,
+    ExceptionParam: ?*anyopaque,
+    UserStreamParam: ?*anyopaque,
+    CallbackParam: ?*anyopaque,
+) callconv(windows.WINAPI) windows.BOOL;
+
+fn writeMiniDumpWindows() !void {
+    const dump_dir = std.posix.getenv("BUN_MINIDUMP_DIR") orelse return;
+
+    // Create filename: bun-profile.exe.<pid>.dmp
+    const pid = windows.kernel32.GetCurrentProcessId();
+    var filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const filename = try std.fmt.bufPrintZ(&filename_buf, "{s}\\bun-profile.exe.{d}.dmp", .{ dump_dir, pid });
+
+    var filename_w_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
+    const filename_w_len = try std.unicode.utf8ToUtf16Le(&filename_w_buf, filename);
+    filename_w_buf[filename_w_len] = 0;
+
+    const file = windows.kernel32.CreateFileW(
+        &filename_w_buf,
+        windows.GENERIC_WRITE,
+        0,
+        null,
+        windows.CREATE_ALWAYS,
+        windows.FILE_ATTRIBUTE_NORMAL,
+        null,
+    ) catch return;
+    defer _ = windows.kernel32.CloseHandle(file);
+
+    const MiniDumpWithFullMemory: windows.DWORD = 0x00000002;
+    _ = MiniDumpWriteDump(
+        windows.kernel32.GetCurrentProcess(),
+        pid,
+        file,
+        MiniDumpWithFullMemory,
+        null,
+        null,
+        null,
+    );
+}
+
 pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
-    const reason = switch (info.ExceptionRecord.ExceptionCode) {
-        windows.EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason{ .datatype_misalignment = {} },
-        windows.EXCEPTION_ACCESS_VIOLATION => CrashReason{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
-        windows.EXCEPTION_ILLEGAL_INSTRUCTION => CrashReason{ .illegal_instruction = info.ContextRecord.getRegs().ip },
-        windows.EXCEPTION_STACK_OVERFLOW => CrashReason{ .stack_overflow = {} },
+    crashHandler(
+        switch (info.ExceptionRecord.ExceptionCode) {
+            windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
+            windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
+            windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
+            windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
 
-        // exception used for thread naming
-        // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
-        // related commit
-        // https://github.com/go-delve/delve/pull/1384
-        bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
+            // exception used for thread naming
+            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+            // related commit
+            // https://github.com/go-delve/delve/pull/1384
+            bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
 
-        else => return windows.EXCEPTION_CONTINUE_SEARCH,
-    };
-
-    // Print crash report but don't terminate - let WER handle the exception
-    crashHandlerWithoutTerminating(reason, null, @intFromPtr(info.ExceptionRecord.ExceptionAddress));
-
-    // Return EXCEPTION_CONTINUE_SEARCH to let WER create a minidump
-    // This makes Windows see the exception as unhandled, triggering WER's LocalDumps functionality
-    return windows.EXCEPTION_CONTINUE_SEARCH;
+            else => return windows.EXCEPTION_CONTINUE_SEARCH,
+        },
+        null,
+        @intFromPtr(info.ExceptionRecord.ExceptionAddress),
+    );
 }
 
 extern "c" fn gnu_get_libc_version() ?[*:0]const u8;

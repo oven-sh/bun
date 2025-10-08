@@ -70,6 +70,28 @@ pub const HostedGitInfo = struct {
     _memory_buffer: []const u8,
     _allocator: std.mem.Allocator,
 
+    /// Helper function to decode a percent-encoded string and append it to a StringBuilder.
+    /// Returns the decoded slice and updates the StringBuilder's length.
+    ///
+    /// The reason we need to do this is because we get URLs like github:user%20name/repo and we
+    /// need to decode them to 'user name/repo'. It would be nice if we could get all the
+    /// functionality of jsc.URL WITHOUT the percent-encoding, but alas, we cannot. And we need the
+    /// jsc.URL functionality for parsing, validating and punycode-decoding the URL.
+    ///
+    /// Therefore, we use this function to first take a URL string, encode it into a *jsc.URL and
+    /// then decode it back to a normal string. Kind of a lot of work, but it works.
+    fn decodeAndAppend(sb: *bun.StringBuilder, input: []const u8) []const u8 {
+        const writable = sb.writable();
+        var stream = std.io.fixedBufferStream(writable);
+        const decoded_len = PercentEncoding.decode(
+            @TypeOf(stream.writer()),
+            stream.writer(),
+            input,
+        ) catch unreachable;
+        sb.len += decoded_len;
+        return writable[0..decoded_len];
+    }
+
     fn copyFrom(
         committish: ?[]const u8,
         project: []const u8,
@@ -86,9 +108,11 @@ pub const HostedGitInfo = struct {
 
         sb.allocate(allocator) catch return error.OutOfMemory;
 
-        const user_part = if (user) |u| sb.append(u) else null;
-        const project_part = sb.append(project);
-        const committish_part = if (committish) |c| sb.append(c) else null;
+        // Decode user, project, committish while copying
+        const user_part = if (user) |u| decodeAndAppend(&sb, u) else null;
+        const project_part = decodeAndAppend(&sb, project);
+        const committish_part = if (committish) |c| decodeAndAppend(&sb, c) else null;
+
         const owned_buffer = sb.allocatedSlice();
 
         return .{
@@ -156,16 +180,6 @@ pub const HostedGitInfo = struct {
             git_url_mut = bun.handleOom(bun.strings.concat(allocator, &.{ "github:", git_url }));
         }
 
-        // Extract committish from the original string before URL parsing to avoid encoding issues
-        const raw_committish: ?[]const u8 =
-            if (bun.strings.indexOfChar(git_url_mut, '#')) |hash_idx|
-                if (hash_idx + 1 < git_url_mut.len)
-                    git_url_mut[hash_idx + 1 ..]
-                else
-                    null
-            else
-                null;
-
         const parsed = parseUrl(allocator, git_url_mut) catch |err| {
             debug("fromUrl: parseUrl failed: {any}\n", .{err});
             return null;
@@ -184,61 +198,70 @@ pub const HostedGitInfo = struct {
             .custom => HostProvider.fromUrl(parsed.url),
         } orelse return null;
 
-        if (is_shortcut) {
-            // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
-            const pathname_str = parsed.url.pathname();
-            defer pathname_str.deref();
-            const pathname_utf8 = pathname_str.toUTF8(allocator);
-            defer pathname_utf8.deinit();
-            var pathname = pathname_utf8.slice();
-
-            // Strip leading / (from-url.js line 69)
-            pathname = bun.strings.trimPrefixComptime(u8, pathname, "/");
-
-            // Strip auth (from-url.js line 70-74)
-            if (bun.strings.indexOfChar(pathname, '@')) |first_at| {
-                pathname = pathname[first_at + 1 ..];
-            }
-
-            // Extract user and project from pathname (from-url.js line 76-86)
-            var user_part: ?[]const u8 = null;
-            var project_part: []const u8 = undefined;
-            if (bun.strings.lastIndexOfChar(pathname, '/')) |last_slash| {
-                const user_str = pathname[0..last_slash];
-                // We want nulls only, never empty strings (from-url.js line 79-82)
-                if (user_str.len > 0) {
-                    user_part = user_str;
-                }
-                project_part = pathname[last_slash + 1 ..];
-            } else {
-                project_part = pathname;
-            }
-
-            // Strip .git suffix (from-url.js line 88-90)
-            const project_trimmed = bun.strings.trimSuffixComptime(u8, project_part, ".git");
-
-            return try HostedGitInfo.copyFrom(
-                raw_committish,
-                project_trimmed,
-                user_part,
-                host_provider,
-                .shortcut, // Shortcuts always use shortcut representation
-                allocator,
-            );
-        } else {
+        if (!is_shortcut) {
             // Determine default representation from the parsed protocol
             const default_repr = switch (parsed.proto) {
                 .well_formed => |p| p.defaultRepresentation(),
                 else => .sshurl, // Unknown/custom protocols default to sshurl
             };
 
-            // Use host-specific extract logic
+            // Use host-specific extract logic - extract functions decode the strings
             var extracted = host_provider.extract(allocator, parsed.url) orelse return null;
 
-            // TODO(markovejnovic): This won't really work as-is, because extracted contains
-            // URL-encoded strings. We need to decode them first, but that's a problem for later.
             return HostedGitInfo.moveFromExtracted(&extracted, host_provider, default_repr);
         }
+
+        // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
+        const pathname_str = parsed.url.pathname();
+        defer pathname_str.deref();
+        const pathname_utf8 = pathname_str.toUTF8(allocator);
+        defer pathname_utf8.deinit();
+        var pathname = pathname_utf8.slice();
+
+        // Strip leading / (from-url.js line 69)
+        pathname = bun.strings.trimPrefixComptime(u8, pathname, "/");
+
+        // Strip auth (from-url.js line 70-74)
+        if (bun.strings.indexOfChar(pathname, '@')) |first_at| {
+            pathname = pathname[first_at + 1 ..];
+        }
+
+        // Extract user and project from pathname (from-url.js line 76-86)
+        var user_part: ?[]const u8 = null;
+        var project_part: []const u8 = undefined;
+        if (bun.strings.lastIndexOfChar(pathname, '/')) |last_slash| {
+            const user_str = pathname[0..last_slash];
+            // We want nulls only, never empty strings (from-url.js line 79-82)
+            if (user_str.len > 0) {
+                user_part = user_str;
+            }
+            project_part = pathname[last_slash + 1 ..];
+        } else {
+            project_part = pathname;
+        }
+
+        // Strip .git suffix (from-url.js line 88-90)
+        const project_trimmed = bun.strings.trimSuffixComptime(u8, project_part, ".git");
+
+        // Get committish from URL fragment (from-url.js line 92-94)
+        const committish: ?[]const u8 = blk: {
+            const fragment_str = parsed.url.fragmentIdentifier();
+            defer fragment_str.deref();
+            const fragment_utf8 = fragment_str.toUTF8(allocator);
+            defer fragment_utf8.deinit();
+            const fragment = fragment_utf8.slice();
+            break :blk if (fragment.len > 0) fragment else null;
+        };
+
+        // copyFrom will URL-decode user, project, and committish
+        return try HostedGitInfo.copyFrom(
+            committish,
+            project_trimmed,
+            user_part,
+            host_provider,
+            .shortcut, // Shortcuts always use shortcut representation
+            allocator,
+        );
     }
 };
 
@@ -318,7 +341,7 @@ const WellDefinedProtocol = enum {
     }
 
     /// Determine the default representation for this protocol.
-    /// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
+    /// Mirrors the logic in from-url.js line 110.
     fn defaultRepresentation(self: Self) Representation {
         return switch (self) {
             .git_plus_ssh, .ssh, .git_plus_http => .sshurl,
@@ -465,9 +488,9 @@ const UrlProtocolPair = struct {
 /// Given a loose string that may or may not be a valid URL, attempt to normalize it.
 ///
 /// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
-/// enumeration. If the protocol is known, it is returned as a WellDefinedProtocol. If the protocol is
-/// specified in the URL, it is given as a slice and if it is not specified, the `unknown` field is
-/// returned. The result is a view into `npa_str` which must, consequently, remain stable.
+/// enumeration. If the protocol is known, it is returned as a WellDefinedProtocol. If the protocol
+/// is specified in the URL, it is given as a slice and if it is not specified, the `unknown` field
+/// is returned. The result is a view into `npa_str` which must, consequently, remain stable.
 ///
 /// This mirrors the `correctProtocol` function in `hosted-git-info/parse-url.js`.
 fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
@@ -1002,9 +1025,9 @@ const HostProvider = enum {
 
                     sb.allocate(allocator) catch return null;
 
-                    const user_slice = sb.append(user_part);
-                    const project_slice = sb.append(project);
-                    const committish_slice = if (committish) |c| sb.append(c) else null;
+                    const user_slice = HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project);
+                    const committish_slice = if (committish) |c| HostedGitInfo.decodeAndAppend(&sb, c) else null;
 
                     return .{
                         .user = user_slice,
@@ -1053,9 +1076,9 @@ const HostProvider = enum {
 
                     sb.allocate(allocator) catch return null;
 
-                    const user_slice = sb.append(user_part);
-                    const project_slice = sb.append(project);
-                    const committish_slice = if (committish) |c| sb.append(c) else null;
+                    const user_slice = HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project);
+                    const committish_slice = if (committish) |c| HostedGitInfo.decodeAndAppend(&sb, c) else null;
 
                     return .{
                         .user = user_slice,
@@ -1102,12 +1125,9 @@ const HostProvider = enum {
 
                     sb.allocate(allocator) catch return null;
 
-                    const user_slice = sb.append(user_part);
-                    const project_slice = sb.append(project);
-                    const committish_slice = if (committish.len > 0)
-                        sb.append(committish)
-                    else
-                        null;
+                    const user_slice = HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project);
+                    const committish_slice = if (committish.len > 0) HostedGitInfo.decodeAndAppend(&sb, committish) else null;
 
                     return .{
                         .user = user_slice,
@@ -1162,9 +1182,9 @@ const HostProvider = enum {
 
                     sb.allocate(allocator) catch return null;
 
-                    const user_slice = if (user) |u| sb.append(u) else null;
-                    const project_slice = sb.append(project);
-                    const committish_slice = if (committish) |c| sb.append(c) else null;
+                    const user_slice = if (user) |u| HostedGitInfo.decodeAndAppend(&sb, u) else null;
+                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project);
+                    const committish_slice = if (committish) |c| HostedGitInfo.decodeAndAppend(&sb, c) else null;
 
                     return .{
                         .user = user_slice,
@@ -1213,9 +1233,27 @@ const HostProvider = enum {
 
                     sb.allocate(allocator) catch return null;
 
-                    const user_slice = sb.append(user_part);
-                    const project_slice = sb.append(project);
-                    const committish_slice = if (committish) |c| sb.append(c) else null;
+                    const user_slice = blk: {
+                        const writable = sb.writable();
+                        var stream = std.io.fixedBufferStream(writable);
+                        const decoded_len = PercentEncoding.decode(@TypeOf(stream.writer()), stream.writer(), user_part) catch unreachable;
+                        sb.len += decoded_len;
+                        break :blk writable[0..decoded_len];
+                    };
+                    const project_slice = blk: {
+                        const writable = sb.writable();
+                        var stream = std.io.fixedBufferStream(writable);
+                        const decoded_len = PercentEncoding.decode(@TypeOf(stream.writer()), stream.writer(), project) catch unreachable;
+                        sb.len += decoded_len;
+                        break :blk writable[0..decoded_len];
+                    };
+                    const committish_slice = if (committish) |c| blk: {
+                        const writable = sb.writable();
+                        var stream = std.io.fixedBufferStream(writable);
+                        const decoded_len = PercentEncoding.decode(@TypeOf(stream.writer()), stream.writer(), c) catch unreachable;
+                        sb.len += decoded_len;
+                        break :blk writable[0..decoded_len];
+                    } else null;
 
                     return .{
                         .user = user_slice,
@@ -1508,7 +1546,7 @@ pub const TestingAPIs = struct {
         };
 
         // Create a JavaScript object with all fields
-        const obj = jsc.JSValue.createEmptyObject(go, 5);
+        const obj = jsc.JSValue.createEmptyObject(go, 6);
         obj.put(
             go,
             jsc.ZigString.static("type"),
@@ -1537,6 +1575,11 @@ pub const TestingAPIs = struct {
             else
                 .null,
         );
+        obj.put(
+            go,
+            jsc.ZigString.static("default"),
+            bun.String.fromBytes(@tagName(parsed.default_representation)).toJS(go),
+        );
 
         return obj;
     }
@@ -1548,3 +1591,4 @@ const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
+const PercentEncoding = @import("../url.zig").PercentEncoding;

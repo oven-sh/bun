@@ -10,6 +10,9 @@ describe("fromUrl", () => {
           ...(expected.type && { type: expected.type }),
           ...(expected.domain && { domain: expected.domain }),
           ...(expected.user && { user: expected.user }),
+          ...(expected.project && { project: expected.project }),
+          ...(expected.committish && { committish: expected.committish }),
+          ...(expected.default && { default: expected.default }),
         });
       });
     });

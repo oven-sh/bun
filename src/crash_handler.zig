@@ -1496,6 +1496,12 @@ fn report(url: []const u8) void {
     }
 }
 
+extern "kernel32" fn RaiseFailFastException(
+    pExceptionRecord: ?*anyopaque,
+    pContextRecord: ?*anyopaque,
+    dwFlags: windows.DWORD,
+) callconv(windows.WINAPI) noreturn;
+
 /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
 /// This causes a segfault on posix systems to try to get a core dump.
 fn crash() noreturn {
@@ -1503,13 +1509,7 @@ fn crash() noreturn {
         .windows => {
             // On Windows, use RaiseFailFastException to generate a crash dump via WER
             // This triggers Windows Error Reporting and creates a minidump
-            _ = windows.kernel32.RaiseFailFastException(
-                null, // EXCEPTION_RECORD
-                null, // CONTEXT
-                0, // flags
-            );
-            // Fallback to abort if RaiseFailFastException returns (shouldn't happen)
-            std.posix.abort();
+            RaiseFailFastException(null, null, 0);
         },
         else => {
             // Install default handler so that the tkill below will terminate.

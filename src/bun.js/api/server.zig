@@ -1186,7 +1186,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                existing_request = Request.init(
+                existing_request = Request.init2(
                     bun.String.cloneUTF8(url.href),
                     headers,
                     bun.handleOom(this.vm.initRequestBodyValue(body)),
@@ -1228,7 +1228,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (response_value.as(jsc.WebCore.Response)) |resp| {
-                resp.url = existing_request.url.clone();
+                resp.setUrl(existing_request.url.clone());
             }
             return jsc.JSPromise.resolvedPromiseValue(ctx, response_value);
         }
@@ -2213,13 +2213,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.signal = signal;
             signal.pendingActivityRef();
 
-            const request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            const request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
@@ -2314,13 +2314,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            var request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            var request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.upgrade_context = upgrade_ctx;
             ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
@@ -2741,7 +2741,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // apply SNI routes if any
                 if (this.config.sni) |*sni| {
                     for (sni.slice()) |*sni_ssl_config| {
-                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name);
+                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {

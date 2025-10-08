@@ -249,6 +249,46 @@ This is useful for:
 
 The `--concurrent` CLI flag will override this setting when specified.
 
+### `test.randomize`
+
+Run tests in random order. Default `false`.
+
+```toml
+[test]
+randomize = true
+```
+
+This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+
+The `--randomize` CLI flag will override this setting when specified.
+
+### `test.seed`
+
+Set the random seed for test randomization. This option requires `randomize` to be `true`.
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+
+The `--seed` CLI flag will override this setting when specified.
+
+### `test.rerunEach`
+
+Re-run each test file a specified number of times. Default `0` (run once).
+
+```toml
+[test]
+rerunEach = 3
+```
+
+This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+
+The `--rerun-each` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -569,6 +609,20 @@ Valid values are:
 - Link dependencies inside each package installation.
 
 {% /table %}
+
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
 
 <!-- ## Debugging -->
 

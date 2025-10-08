@@ -195,7 +195,7 @@ private:
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            
+
             if(httpResponseData && httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
@@ -203,7 +203,7 @@ private:
                 if(httpResponseData->inStream) {
                     httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                     httpResponseData->inStream = nullptr;
-                }                
+                }
             }
 
 
@@ -253,7 +253,7 @@ private:
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
             httpResponseData->isIdle = false;
-            
+
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -266,7 +266,7 @@ private:
 
             auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
-                
+
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -478,7 +478,7 @@ private:
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
-            
+
             /* Attempt to drain the socket buffer before triggering onWritable callback */
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
@@ -549,7 +549,7 @@ private:
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             asyncSocket->uncorkWithoutSending();
-            
+
             /* We do not care for half closed sockets */
             return asyncSocket->close();
         });

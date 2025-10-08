@@ -51,6 +51,19 @@ pub const NpaSpec = struct {
             }
         },
         remote,
+
+        /// Determine whether the spec refers to a file.
+        /// Matches /[.](?:tgz|tar\.gz|tar)$/i
+        pub fn fromInodePath(spec_str: []const u8) Type {
+            const file_extensions = [_][]const u8{ ".tgz", ".tar.gz", ".tar" };
+            inline for (file_extensions) |ext| {
+                if (bun.strings.endsWithCaseInsensitive(spec_str, ext)) {
+                    return .file;
+                }
+            }
+
+            return .directory;
+        }
     };
 
     /// The caller is responsible for freeing the resulting slice, if one is created.
@@ -384,6 +397,186 @@ pub const NpaSpec = struct {
             ._allocator = allocator,
         };
     }
+
+    fn fromFile(
+        allocator: std.mem.Allocator,
+        name: ?[]const u8,
+        raw_spec: []const u8,
+        where: []const u8,
+        raw: []const u8,
+    ) !Self {
+
+        // Clean the raw_spec using pathToFileURL transformations
+        var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(allocator, raw_spec) catch {
+            return error.InvalidPath;
+        };
+        defer allocator.free(raw_spec_cleaned);
+
+        // Create resolvedUrl: new URL(rawSpec, `${pathToFileURL(path.resolve(where))}/`)
+        // First, resolve the "where" path
+        var where_buf: bun.PathBuffer = undefined;
+        var where_buf2: bun.PathBuffer = undefined;
+        const resolved_where = if (bun.Environment.isWindows)
+            PathResolver.resolveWindowsT(u8, &.{where}, &where_buf, &where_buf2)
+        else
+            PathResolver.resolvePosixT(u8, &.{where}, &where_buf, &where_buf2);
+
+        const resolved_where_path = switch (resolved_where) {
+            .result => |r| r,
+            .err => return error.InvalidPath,
+        };
+
+        // Build where file URL with trailing slash using StringBuilder
+        // Calculate the required capacity
+        var where_url_len = PathToFileUrlUtils.pathToFileUrlLength(resolved_where_path);
+        where_url_len += 1; // Add 1 for trailing slash
+
+        var where_url_builder = bun.StringBuilder{ .cap = where_url_len, .len = 0, .ptr = null };
+        try where_url_builder.allocate(allocator);
+        defer where_url_builder.deinit(allocator);
+
+        // Manually build the pathToFileURL result with trailing slash in one go
+        if (!bun.strings.hasPrefixComptime(resolved_where_path, "file:")) {
+            _ = where_url_builder.append("file:");
+        }
+
+        // Encode the path
+        for (resolved_where_path) |c| {
+            if (PathToFileUrlUtils.encoded_path_cars[c]) |encoded| {
+                _ = where_url_builder.append(encoded);
+            } else {
+                _ = where_url_builder.append(&[_]u8{c});
+            }
+        }
+
+        // Add trailing slash
+        _ = where_url_builder.append("/");
+
+        const where_with_slash = where_url_builder.ptr.?[0..where_url_builder.len];
+
+        // RFC 8089 backwards compatibility: turn file://path into file:/path
+        // This handles file:// followed by a non-slash character
+        if (raw_spec_cleaned.len >= 7 and
+            bun.strings.hasPrefixComptime(raw_spec_cleaned, "file://") and
+            raw_spec_cleaned[7] != '/')
+        {
+            // file://path/to/foo -> file:/path/to/foo
+            var compat_builder = std.ArrayList(u8).init(allocator);
+            defer compat_builder.deinit();
+            try compat_builder.appendSlice("file:/");
+            try compat_builder.appendSlice(raw_spec_cleaned[7..]);
+            const old_cleaned = raw_spec_cleaned;
+            raw_spec_cleaned = try compat_builder.toOwnedSlice();
+            allocator.free(old_cleaned);
+        }
+
+        const resolved_href = bun.jsc.URL.join(bun.String.init(where_with_slash), bun.String.init(raw_spec_cleaned));
+        defer resolved_href.deref();
+
+        if (comptime bun.Environment.allow_assert) {
+            const resolved_href_utf8 = resolved_href.toUTF8(allocator);
+            defer resolved_href_utf8.deinit();
+        }
+
+        const resolved_url = bun.jsc.URL.fromString(resolved_href) orelse return error.InvalidURL;
+        defer resolved_url.deinit();
+
+        const spec_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_cleaned)) orelse return error.InvalidURL;
+        defer spec_url.deinit();
+
+        // Decode spec_url.pathname
+        const spec_pathname_str = spec_url.pathname();
+        defer spec_pathname_str.deref();
+        const spec_pathname = spec_pathname_str.toUTF8(allocator);
+        defer spec_pathname.deinit();
+
+        var spec_path_list = std.ArrayList(u8).init(allocator);
+        defer spec_path_list.deinit();
+        _ = PercentEncoding.decode(@TypeOf(spec_path_list.writer()), spec_path_list.writer(), spec_pathname.slice()) catch return error.InvalidPath;
+        var spec_path = try spec_path_list.toOwnedSlice();
+        defer allocator.free(spec_path);
+
+        // Decode resolved_url.pathname
+        const resolved_pathname_str = resolved_url.pathname();
+        defer resolved_pathname_str.deref();
+
+        const resolved_pathname = resolved_pathname_str.toUTF8(allocator);
+        defer resolved_pathname.deinit();
+
+        var resolved_path_list = std.ArrayList(u8).init(allocator);
+        defer resolved_path_list.deinit();
+        _ = PercentEncoding.decode(@TypeOf(resolved_path_list.writer()), resolved_path_list.writer(), resolved_pathname.slice()) catch return error.InvalidPath;
+        var resolved_path = try resolved_path_list.toOwnedSlice();
+        defer allocator.free(resolved_path);
+
+        // On Windows, strip leading slashes before drive letters
+        if (bun.Environment.isWindows) {
+            spec_path = stripWindowsLeadingSlashes(spec_path);
+            resolved_path = stripWindowsLeadingSlashes(resolved_path);
+        }
+
+        // Handle special cases for saveSpec and fetchSpec
+        var save_spec: []u8 = undefined;
+        var fetch_spec: []u8 = undefined;
+
+        // Check for homedir pattern: /~/ or /~
+        if (spec_path.len >= 2 and spec_path[0] == '/' and spec_path[1] == '~' and
+            (spec_path.len == 2 or spec_path[2] == '/'))
+        {
+            // res.saveSpec = `file:${specPath.substr(1)}`
+            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{spec_path[1..]});
+
+            // res.fetchSpec = path.resolve(homedir(), specPath.substr(3))
+            // Get the home directory and resolve the path against it
+            const home = bun.getenvZ("HOME") orelse return error.InvalidPath;
+            const path_after_tilde = spec_path[3..]; // Skip "/~/"
+
+            fetch_spec = try PathHelpers.resolve(allocator, &.{ home, path_after_tilde });
+        } else if (!std.fs.path.isAbsolute(if (raw_spec_cleaned.len > 5) raw_spec_cleaned[5..] else "")) { // Check if path after "file:" is relative
+            // res.saveSpec = `file:${path.relative(where, resolvedPath)}`
+            const relative_path = try PathHelpers.relative(allocator, resolved_where_path, resolved_path);
+            defer allocator.free(relative_path);
+            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{relative_path});
+
+            // res.fetchSpec = path.resolve(where, resolvedPath)
+            fetch_spec = try PathHelpers.resolve(allocator, &.{ where, resolved_path });
+        } else {
+            // res.saveSpec = `file:${path.resolve(resolvedPath)}`
+            save_spec = try PathHelpers.resolveWithPrefix(allocator, "file:", &.{resolved_path});
+
+            // res.fetchSpec = path.resolve(where, resolvedPath)
+            fetch_spec = try PathHelpers.resolve(allocator, &.{ where, resolved_path });
+        }
+
+        // Normalize slashes in saveSpec (replace backslashes with forward slashes on Windows)
+        if (bun.Environment.isWindows) {
+            for (save_spec) |*c| {
+                if (c.* == '\\') c.* = '/';
+            }
+
+            // Fix double slashes: file://C:/foo -> file:/C:/foo
+            if (bun.strings.hasPrefixComptime(save_spec, "file://")) {
+                const temp = save_spec;
+                save_spec = try std.fmt.allocPrint(allocator, "file:/{s}", .{temp[7..]});
+                allocator.free(temp);
+            }
+        }
+
+        // Duplicate raw and raw_spec so we own them
+        const raw_owned = try allocator.dupe(u8, raw);
+        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+
+        // Determine type: file or directory based on extension
+        return .{
+            .raw = raw_owned,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = fetch_spec,
+            .save_spec = save_spec,
+            .type = Self.Type.fromInodePath(raw_spec),
+            ._allocator = allocator,
+        };
+    }
 };
 
 pub const NpaError = error{
@@ -515,7 +708,7 @@ pub fn npa(allocator: std.mem.Allocator, raw_spec: []const u8, where: []const u8
         spec = try std.fmt.allocPrint(allocator, "git+ssh://{s}", .{raw_spec});
         spec_allocated = spec;
     } else if (!bun.strings.hasPrefixComptime(name_part, "@") and
-        (bun.path.hasPathSlashes(name_part) or SpecStrUtils.inodeType(name_part) == .file))
+        (bun.path.hasPathSlashes(name_part) or NpaSpec.Type.fromInodePath(name_part) == .file))
     {
         spec = raw_spec;
     } else if (name_ends_at) |idx| {
@@ -556,7 +749,7 @@ fn resolve(
     defer allocator.free(raw);
 
     if (SpecStrUtils.isFile(spec)) {
-        return fromFile(allocator, name, spec, where, raw);
+        return NpaSpec.fromFile(allocator, name, spec, where, raw);
     }
 
     if (SpecStrUtils.isAlias(spec)) {
@@ -574,8 +767,8 @@ fn resolve(
     // These are now best-guesses.
     // TODO(markovejnovic): This feels like an odd heuristic but it's what npm-package-arg does.
     // Notice how we don't use the SpecStrUtils.isFile function here. This matches npa.
-    if (bun.path.hasPathSlashes(spec) or SpecStrUtils.inodeType(spec) == .file) {
-        return fromFile(allocator, name, spec, where, raw);
+    if (bun.path.hasPathSlashes(spec) or NpaSpec.Type.fromInodePath(spec) == .file) {
+        return NpaSpec.fromFile(allocator, name, spec, where, raw);
     }
 
     return NpaSpec.fromRegistry(allocator, name, spec, raw);
@@ -765,247 +958,6 @@ const PathToFileUrlUtils = struct {
     }
 };
 
-fn fromFile(
-    allocator: std.mem.Allocator,
-    name: ?[]const u8,
-    raw_spec: []const u8,
-    where: []const u8,
-    raw: []const u8,
-) !NpaSpec {
-    // Determine type: file or directory based on extension
-    const spec_type = SpecStrUtils.inodeType(raw_spec);
-
-    // Clean the raw_spec using pathToFileURL transformations
-    var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(allocator, raw_spec) catch return error.InvalidPath;
-    defer allocator.free(raw_spec_cleaned);
-
-    // Create resolvedUrl: new URL(rawSpec, `${pathToFileURL(path.resolve(where))}/`)
-    // First, resolve the "where" path
-    var where_buf: bun.PathBuffer = undefined;
-    var where_buf2: bun.PathBuffer = undefined;
-    const resolved_where = if (bun.Environment.isWindows)
-        PathResolver.resolveWindowsT(u8, &.{where}, &where_buf, &where_buf2)
-    else
-        PathResolver.resolvePosixT(u8, &.{where}, &where_buf, &where_buf2);
-
-    const resolved_where_path = switch (resolved_where) {
-        .result => |r| r,
-        .err => return error.InvalidPath,
-    };
-
-    // Build where file URL with trailing slash using StringBuilder
-    // Calculate the required capacity
-    var where_url_len = PathToFileUrlUtils.pathToFileUrlLength(resolved_where_path);
-    where_url_len += 1; // Add 1 for trailing slash
-
-    var where_url_builder = bun.StringBuilder{ .cap = where_url_len, .len = 0, .ptr = null };
-    try where_url_builder.allocate(allocator);
-    defer where_url_builder.deinit(allocator);
-
-    // Manually build the pathToFileURL result with trailing slash in one go
-    if (!bun.strings.hasPrefixComptime(resolved_where_path, "file:")) {
-        _ = where_url_builder.append("file:");
-    }
-
-    // Encode the path
-    for (resolved_where_path) |c| {
-        if (PathToFileUrlUtils.encoded_path_cars[c]) |encoded| {
-            _ = where_url_builder.append(encoded);
-        } else {
-            _ = where_url_builder.append(&[_]u8{c});
-        }
-    }
-
-    // Add trailing slash
-    _ = where_url_builder.append("/");
-
-    const where_with_slash = where_url_builder.ptr.?[0..where_url_builder.len];
-
-    // RFC 8089 backwards compatibility: turn file://path into file:/path
-    // This handles file:// followed by a non-slash character
-    if (raw_spec_cleaned.len >= 7 and
-        bun.strings.hasPrefixComptime(raw_spec_cleaned, "file://") and
-        raw_spec_cleaned[7] != '/')
-    {
-        // file://path/to/foo -> file:/path/to/foo
-        var compat_builder = std.ArrayList(u8).init(allocator);
-        defer compat_builder.deinit();
-        try compat_builder.appendSlice("file:/");
-        try compat_builder.appendSlice(raw_spec_cleaned[7..]);
-        const old_cleaned = raw_spec_cleaned;
-        raw_spec_cleaned = try compat_builder.toOwnedSlice();
-        allocator.free(old_cleaned);
-    }
-
-    const resolved_href = bun.jsc.URL.join(bun.String.init(where_with_slash), bun.String.init(raw_spec_cleaned));
-    defer resolved_href.deref();
-
-    if (comptime bun.Environment.allow_assert) {
-        const resolved_href_utf8 = resolved_href.toUTF8(allocator);
-        defer resolved_href_utf8.deinit();
-    }
-
-    const resolved_url = bun.jsc.URL.fromString(resolved_href) orelse return error.InvalidURL;
-    defer resolved_url.deinit();
-
-    const spec_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_cleaned)) orelse return error.InvalidURL;
-    defer spec_url.deinit();
-
-    // Decode spec_url.pathname
-    const spec_pathname_str = spec_url.pathname();
-    defer spec_pathname_str.deref();
-    const spec_pathname = spec_pathname_str.toUTF8(allocator);
-    defer spec_pathname.deinit();
-
-    var spec_path_list = std.ArrayList(u8).init(allocator);
-    defer spec_path_list.deinit();
-    _ = PercentEncoding.decode(@TypeOf(spec_path_list.writer()), spec_path_list.writer(), spec_pathname.slice()) catch return error.InvalidPath;
-    var spec_path = try spec_path_list.toOwnedSlice();
-    defer allocator.free(spec_path);
-
-    // Decode resolved_url.pathname
-    const resolved_pathname_str = resolved_url.pathname();
-    defer resolved_pathname_str.deref();
-
-    const resolved_pathname = resolved_pathname_str.toUTF8(allocator);
-    defer resolved_pathname.deinit();
-
-    var resolved_path_list = std.ArrayList(u8).init(allocator);
-    defer resolved_path_list.deinit();
-    _ = PercentEncoding.decode(@TypeOf(resolved_path_list.writer()), resolved_path_list.writer(), resolved_pathname.slice()) catch return error.InvalidPath;
-    var resolved_path = try resolved_path_list.toOwnedSlice();
-    defer allocator.free(resolved_path);
-
-    // On Windows, strip leading slashes before drive letters
-    if (bun.Environment.isWindows) {
-        spec_path = stripWindowsLeadingSlashes(spec_path);
-        resolved_path = stripWindowsLeadingSlashes(resolved_path);
-    }
-
-    // Handle special cases for saveSpec and fetchSpec
-    var save_spec: []u8 = undefined;
-    var fetch_spec: []u8 = undefined;
-
-    // Check for homedir pattern: /~/ or /~
-    if (spec_path.len >= 2 and spec_path[0] == '/' and spec_path[1] == '~' and
-        (spec_path.len == 2 or spec_path[2] == '/'))
-    {
-        // res.saveSpec = `file:${specPath.substr(1)}`
-        save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{spec_path[1..]});
-
-        // res.fetchSpec = path.resolve(homedir(), specPath.substr(3))
-        // Get the home directory and resolve the path against it
-        const home = bun.getenvZ("HOME") orelse return error.InvalidPath;
-        const path_after_tilde = spec_path[3..]; // Skip "/~/"
-
-        var fetch_buf: bun.PathBuffer = undefined;
-        var fetch_buf2: bun.PathBuffer = undefined;
-        const fetch_resolved = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, &.{ home, path_after_tilde }, &fetch_buf, &fetch_buf2)
-        else
-            PathResolver.resolvePosixT(u8, &.{ home, path_after_tilde }, &fetch_buf, &fetch_buf2);
-
-        fetch_spec = try allocator.dupe(u8, switch (fetch_resolved) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        });
-    } else if (!std.fs.path.isAbsolute(if (raw_spec_cleaned.len > 5) raw_spec_cleaned[5..] else "")) { // Check if path after "file:" is relative
-        // res.saveSpec = `file:${path.relative(where, resolvedPath)}`
-        var rel_buf: bun.PathBuffer = undefined;
-        var rel_buf2: bun.PathBuffer = undefined;
-        var rel_buf3: bun.PathBuffer = undefined;
-        const relative_result = if (bun.Environment.isWindows)
-            PathResolver.relativeWindowsT(u8, resolved_where_path, resolved_path, &rel_buf, &rel_buf2, &rel_buf3)
-        else
-            PathResolver.relativePosixT(u8, resolved_where_path, resolved_path, &rel_buf, &rel_buf2, &rel_buf3);
-
-        const relative_path = switch (relative_result) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        };
-
-        save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{relative_path});
-
-        // res.fetchSpec = path.resolve(where, resolvedPath)
-        var fetch_buf: bun.PathBuffer = undefined;
-        var fetch_buf2: bun.PathBuffer = undefined;
-        const fetch_resolved = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, &.{ where, resolved_path }, &fetch_buf, &fetch_buf2)
-        else
-            PathResolver.resolvePosixT(u8, &.{ where, resolved_path }, &fetch_buf, &fetch_buf2);
-
-        fetch_spec = try allocator.dupe(u8, switch (fetch_resolved) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        });
-    } else {
-        // res.saveSpec = `file:${path.resolve(resolvedPath)}`
-        var save_buf: bun.PathBuffer = undefined;
-        var save_buf2: bun.PathBuffer = undefined;
-        const save_resolved = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, &.{resolved_path}, &save_buf, &save_buf2)
-        else
-            PathResolver.resolvePosixT(u8, &.{resolved_path}, &save_buf, &save_buf2);
-
-        save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{switch (save_resolved) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        }});
-
-        // res.fetchSpec = path.resolve(where, resolvedPath)
-        var fetch_buf: bun.PathBuffer = undefined;
-        var fetch_buf2: bun.PathBuffer = undefined;
-        const fetch_resolved = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, &.{ where, resolved_path }, &fetch_buf, &fetch_buf2)
-        else
-            PathResolver.resolvePosixT(u8, &.{ where, resolved_path }, &fetch_buf, &fetch_buf2);
-
-        fetch_spec = try allocator.dupe(u8, switch (fetch_resolved) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        });
-    }
-
-    // Normalize slashes in saveSpec (replace backslashes with forward slashes on Windows)
-    if (bun.Environment.isWindows) {
-        for (save_spec) |*c| {
-            if (c.* == '\\') c.* = '/';
-        }
-
-        // Fix double slashes: file://C:/foo -> file:/C:/foo
-        if (bun.strings.hasPrefixComptime(save_spec, "file://")) {
-            const temp = save_spec;
-            save_spec = try std.fmt.allocPrint(allocator, "file:/{s}", .{temp[7..]});
-            allocator.free(temp);
-        }
-    }
-
-    // Duplicate raw and raw_spec so we own them
-    const raw_owned = try allocator.dupe(u8, raw);
-    const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-
-    return switch (spec_type) {
-        .file => .{
-            .raw = raw_owned,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .fetch_spec = fetch_spec,
-            .save_spec = save_spec,
-            .type = .file,
-            ._allocator = allocator,
-        },
-        .directory => .{
-            .raw = raw_owned,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .fetch_spec = fetch_spec,
-            .save_spec = save_spec,
-            .type = .directory,
-            ._allocator = allocator,
-        },
-    };
-}
-
 /// Strips leading slashes before Windows drive letters: /C:/foo -> C:/foo
 /// Matches the regex: /^\/+([a-z]:\/)/i
 fn stripWindowsLeadingSlashes(path: anytype) @TypeOf(path) {
@@ -1071,19 +1023,6 @@ const SpecStrUtils = struct {
         }
         // Otherwise, it's a URL.
         return true;
-    }
-
-    /// Determine whether the spec refers to a file.
-    /// Matches /[.](?:tgz|tar\.gz|tar)$/i
-    pub fn inodeType(spec_str: []const u8) enum { file, directory } {
-        const file_extensions = [_][]const u8{ ".tgz", ".tar.gz", ".tar" };
-        inline for (file_extensions) |ext| {
-            if (bun.strings.endsWithCaseInsensitive(spec_str, ext)) {
-                return .file;
-            }
-        }
-
-        return .directory;
     }
 
     /// Matches the implementation of isAliasSpec in npm-package-arg.
@@ -1560,3 +1499,64 @@ const PercentEncoding = @import("../url.zig").PercentEncoding;
 const bun = @import("bun");
 const Semver = bun.Semver;
 const jsc = bun.jsc;
+
+/// Helper functions for path operations that reduce boilerplate.
+/// These return heap-allocated results since we typically need to own the paths anyway.
+///
+/// TODO(markovejnovic): This feels like it shouldn't be in npm-package-arg, but in a more generic
+/// location.
+const PathHelpers = struct {
+    /// Resolves path segments and returns an owned heap-allocated slice.
+    fn resolve(allocator: std.mem.Allocator, segments: []const []const u8) ![]u8 {
+        var buf1: bun.PathBuffer = undefined;
+        var buf2: bun.PathBuffer = undefined;
+        const result = if (bun.Environment.isWindows)
+            PathResolver.resolveWindowsT(u8, segments, &buf1, &buf2)
+        else
+            PathResolver.resolvePosixT(u8, segments, &buf1, &buf2);
+
+        return allocator.dupe(u8, switch (result) {
+            .result => |r| r,
+            .err => return error.InvalidPath,
+        });
+    }
+
+    /// Resolves path segments, prepends a prefix, and returns an owned heap-allocated slice.
+    fn resolveWithPrefix(
+        allocator: std.mem.Allocator,
+        comptime prefix: []const u8,
+        segments: []const []const u8,
+    ) ![]u8 {
+        var buf1: bun.PathBuffer = undefined;
+        var buf2: bun.PathBuffer = undefined;
+        const result = if (bun.Environment.isWindows)
+            PathResolver.resolveWindowsT(u8, segments, &buf1, &buf2)
+        else
+            PathResolver.resolvePosixT(u8, segments, &buf1, &buf2);
+
+        return std.fmt.allocPrint(allocator, prefix ++ "{s}", .{switch (result) {
+            .result => |r| r,
+            .err => return error.InvalidPath,
+        }});
+    }
+
+    /// Computes relative path and returns an owned heap-allocated slice.
+    fn relative(
+        allocator: std.mem.Allocator,
+        from: []const u8,
+        to: []const u8,
+    ) ![]u8 {
+        var buf1: bun.PathBuffer = undefined;
+        var buf2: bun.PathBuffer = undefined;
+        var buf3: bun.PathBuffer = undefined;
+        const result = if (bun.Environment.isWindows)
+            PathResolver.relativeWindowsT(u8, from, to, &buf1, &buf2, &buf3)
+        else
+            PathResolver.relativePosixT(u8, from, to, &buf1, &buf2, &buf3);
+
+        return allocator.dupe(u8, switch (result) {
+            .result => |r| r,
+            .err => return error.InvalidPath,
+        });
+    }
+};

@@ -266,3 +266,40 @@ test("multi-file", async () => {
     preload: after last file"
   `);
 });
+
+test("--only flag with multiple files", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/only-flag-fixtures/file1.test.ts",
+      import.meta.dir + "/only-flag-fixtures/file2.test.ts",
+      "--only",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, CI: "false" },
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  // Should only run the test.only() tests and skip the regular tests
+  expect(exitCode).toBe(0);
+  expect(stdout).toInclude("file1: only test executed");
+  expect(stdout).toInclude("file2: only test executed");
+  expect(stdout).not.toInclude("file1: regular test executed");
+  expect(stdout).not.toInclude("file2: regular test executed");
+  expect(stdout).not.toInclude("This test should not run");
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "test/js/bun/test/only-flag-fixtures/file1.test.ts:
+    (pass) file1: should only execute
+
+    test/js/bun/test/only-flag-fixtures/file2.test.ts:
+    (pass) file2: should only execute
+
+     2 pass
+     0 fail
+    Ran 2 tests across 2 files."
+  `);
+});

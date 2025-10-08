@@ -1,74 +1,47 @@
-pub const NpaSpec = union(enum) {
+pub const NpaSpec = struct {
     const Self = @This();
 
-    git: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: ?[]const u8,
-        save_spec: []const u8,
-        git_committish: ?[]const u8,
-        git_range: ?[]const u8,
-        git_subdir: ?[]const u8,
-        hosted: ?HostedGitInfo,
-        _allocator: std.mem.Allocator,
-    },
-    file: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        save_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
-    directory: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        save_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
-    version: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
-    range: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
-    tag: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
-    alias: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        sub_spec: *Self,
-        _allocator: std.mem.Allocator,
-    },
-    remote: struct {
-        raw: []const u8,
-        name: ?[]const u8,
-        raw_spec: []const u8,
-        fetch_spec: []const u8,
-        save_spec: []const u8,
-        _allocator: std.mem.Allocator,
-    },
+    raw: []const u8,
+    name: ?[]const u8,
+    raw_spec: []const u8,
+    fetch_spec: ?[]const u8,
+    save_spec: ?[]const u8,
+    type: Type,
+    _allocator: std.mem.Allocator,
+
+    pub const Type = union(enum) {
+        git: struct {
+            git_committish: ?[]const u8,
+            git_range: ?[]const u8,
+            git_subdir: ?[]const u8,
+            hosted: ?HostedGitInfo,
+
+            pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+                if (self.git_committish) |gc| allocator.free(gc);
+                if (self.git_range) |gr| allocator.free(gr);
+                if (self.git_subdir) |gs| allocator.free(gs);
+                if (self.hosted) |*h| h.deinit();
+            }
+        },
+        file,
+        directory,
+        version,
+        range,
+        tag,
+        alias: struct {
+            sub_spec: *NpaSpec,
+
+            pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+                self.sub_spec.deinit();
+                allocator.destroy(self.sub_spec);
+            }
+        },
+        remote,
+    };
 
     /// The caller is responsible for freeing the resulting slice, if one is created.
     pub fn escapedName(self: *const Self, allocator: std.mem.Allocator) !?[]u8 {
-        if (self.name()) |n| {
+        if (self.name) |n| {
             const size = std.mem.replacementSize(u8, n, "/", "%2f");
             const result = try allocator.alloc(u8, size);
             _ = std.mem.replace(u8, n, "/", "%2f", result);
@@ -78,8 +51,8 @@ pub const NpaSpec = union(enum) {
         return null;
     }
 
-    pub fn @"type"(self: *const Self) []const u8 {
-        return switch (self.*) {
+    pub fn typeStr(self: *const Self) []const u8 {
+        return switch (self.type) {
             .git => "git",
             .file => "file",
             .directory => "directory",
@@ -91,134 +64,36 @@ pub const NpaSpec = union(enum) {
         };
     }
 
-    pub fn raw(self: *const Self) []const u8 {
-        return switch (self.*) {
-            .git => |*g| g.raw,
-            .file => |*f| f.raw,
-            .directory => |*d| d.raw,
-            .version => |*v| v.raw,
-            .range => |*r| r.raw,
-            .tag => |*t| t.raw,
-            .alias => |*a| a.raw,
-            .remote => |*rem| rem.raw,
-        };
-    }
-
-    pub fn rawSpec(self: *const Self) []const u8 {
-        return switch (self.*) {
-            .git => |*g| g.raw_spec,
-            .file => |*f| f.raw_spec,
-            .directory => |*d| d.raw_spec,
-            .version => |*v| v.raw_spec,
-            .range => |*r| r.raw_spec,
-            .tag => |*t| t.raw_spec,
-            .alias => |*a| a.raw_spec,
-            .remote => |*rem| rem.raw_spec,
-        };
-    }
-
-    pub fn fetchSpec(self: *const Self) ?[]const u8 {
-        return switch (self.*) {
-            .git => |*g| g.fetch_spec,
-            .file => |*f| f.fetch_spec,
-            .directory => |*d| d.fetch_spec,
-            .version => |*v| v.fetch_spec,
-            .range => |*r| r.fetch_spec,
-            .tag => |*t| t.fetch_spec,
-            .remote => |*rem| rem.fetch_spec,
-            .alias => null,
-        };
-    }
-
-    pub fn saveSpec(self: *const Self) ?[]const u8 {
-        return switch (self.*) {
-            .git => |*g| g.save_spec,
-            .file => |*f| f.save_spec,
-            .directory => |*d| d.save_spec,
-            .remote => |*rem| rem.save_spec,
-            // Registry types return null for saveSpec
-            .version, .range, .tag, .alias => null,
-        };
-    }
-
     pub fn isRegistry(self: *const Self) bool {
-        return switch (self.*) {
+        return switch (self.type) {
             .version, .range, .tag, .alias => true,
             else => false,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        switch (self.*) {
-            .git => |*g| {
-                g._allocator.free(g.raw);
-                g._allocator.free(g.raw_spec);
-                g._allocator.free(g.save_spec);
-                if (g.fetch_spec) |fs| g._allocator.free(fs);
-                if (g.git_committish) |gc| g._allocator.free(gc);
-                if (g.git_range) |gr| g._allocator.free(gr);
-                if (g.git_subdir) |gs| g._allocator.free(gs);
-                if (g.hosted) |*h| h.deinit();
-            },
-            .file => |*f| {
-                f._allocator.free(f.raw);
-                f._allocator.free(f.raw_spec);
-                f._allocator.free(f.fetch_spec);
-                f._allocator.free(f.save_spec);
-            },
-            .directory => |*d| {
-                d._allocator.free(d.raw);
-                d._allocator.free(d.raw_spec);
-                d._allocator.free(d.fetch_spec);
-                d._allocator.free(d.save_spec);
-            },
-            .version => |*v| {
-                v._allocator.free(v.raw);
-                v._allocator.free(v.raw_spec);
-                v._allocator.free(v.fetch_spec);
-            },
-            .range => |*r| {
-                r._allocator.free(r.raw);
-                r._allocator.free(r.raw_spec);
-                r._allocator.free(r.fetch_spec);
-            },
-            .tag => |*t| {
-                t._allocator.free(t.raw);
-                t._allocator.free(t.raw_spec);
-                t._allocator.free(t.fetch_spec);
-            },
-            .alias => |*a| {
-                a._allocator.free(a.raw);
-                a._allocator.free(a.raw_spec);
-                a.sub_spec.deinit();
-                a._allocator.destroy(a.sub_spec);
-            },
-            .remote => |*rem| {
-                rem._allocator.free(rem.raw);
-                rem._allocator.free(rem.raw_spec);
-                // Note: fetch_spec and save_spec point to the same memory as raw_spec, so we don't free them
-            },
-        }
-    }
+        // Free common fields
+        self._allocator.free(self.raw);
+        self._allocator.free(self.raw_spec);
 
-    /// If known, the name field expected in the resulting pkg.
-    pub fn name(self: *const Self) ?[]const u8 {
-        return switch (self.*) {
-            .git => |*g| g.name,
-            .file => |*f| f.name,
-            .directory => |*d| d.name,
-            .version => |*v| v.name,
-            .range => |*r| r.name,
-            .tag => |*t| t.name,
-            .alias => |*a| a.name,
-            .remote => |*rem| rem.name,
-        };
+        // For remote type, fetch_spec and save_spec point to the same memory as raw_spec
+        if (self.type != .remote) {
+            if (self.fetch_spec) |fs| self._allocator.free(fs);
+            if (self.save_spec) |ss| self._allocator.free(ss);
+        }
+
+        // Free type-specific fields
+        switch (self.type) {
+            .git => |*g| g.deinit(self._allocator),
+            .alias => |*a| a.deinit(self._allocator),
+            else => {},
+        }
     }
 
     /// If a name is something like @org/module then the scope field will be
     /// set to @org. If it doesn't have a scoped name, then scope is null.
     pub fn scope(self: *const Self) ?[]const u8 {
-        const pkg_name = self.name() orelse return null;
+        const pkg_name = self.name orelse return null;
 
         if (pkg_name.len == 0 or pkg_name[0] != '@') {
             return null;
@@ -235,24 +110,13 @@ pub const NpaSpec = union(enum) {
     pub fn toJS(self: *const Self, allocator: std.mem.Allocator, go: *jsc.JSGlobalObject) jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(go, 8);
 
-        object.put(go, "raw", bun.String.fromBytes(self.raw()).toJS(go));
-        object.put(go, "rawSpec", bun.String.fromBytes(self.rawSpec()).toJS(go));
-        object.put(go, "name", if (self.name()) |n| bun.String.fromBytes(n).toJS(go) else .null);
-        object.put(go, "type", bun.String.fromBytes(self.type()).toJS(go));
-        // Alias types should have fetchSpec as null, not undefined
-        // Git shortcuts also have null fetchSpec
-        const fetch_spec_value = if (self.* == .alias)
-            .null
-        else if (self.fetchSpec()) |f|
-            bun.String.fromBytes(f).toJS(go)
-        else
-            .null;
-        object.put(go, "fetchSpec", fetch_spec_value);
-        object.put(
-            go,
-            "saveSpec",
-            if (self.saveSpec()) |s| bun.String.fromBytes(s).toJS(go) else .null,
-        );
+        object.put(go, "raw", bun.String.fromBytes(self.raw).toJS(go));
+        object.put(go, "rawSpec", bun.String.fromBytes(self.raw_spec).toJS(go));
+        object.put(go, "name", if (self.name) |n| bun.String.fromBytes(n).toJS(go) else .null);
+        object.put(go, "type", bun.String.fromBytes(self.typeStr()).toJS(go));
+
+        object.put(go, "fetchSpec", if (self.fetch_spec) |f| bun.String.fromBytes(f).toJS(go) else .null);
+        object.put(go, "saveSpec", if (self.save_spec) |s| bun.String.fromBytes(s).toJS(go) else .null);
 
         const escaped_name = bun.handleOom(self.escapedName(allocator));
         defer if (escaped_name) |e| allocator.free(e);
@@ -269,33 +133,33 @@ pub const NpaSpec = union(enum) {
         );
 
         // Add gitCommittish for git types
-        if (self.* == .git) {
+        if (self.type == .git) {
             object.put(
                 go,
                 "gitCommittish",
-                if (self.git.git_committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
+                if (self.type.git.git_committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
             );
             object.put(
                 go,
                 "gitRange",
-                if (self.git.git_range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
+                if (self.type.git.git_range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
             );
             object.put(
                 go,
                 "gitSubdir",
-                if (self.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
+                if (self.type.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
             );
 
             // Serialize hosted field
-            if (self.git.hosted) |*hosted| {
+            if (self.type.git.hosted) |*hosted| {
                 object.put(go, "hosted", hosted.toJS(go));
             } else {
                 object.put(go, "hosted", .null);
             }
         }
 
-        if (self.* == .alias) {
-            const sub_spec_js = self.alias.sub_spec.toJS(allocator, go);
+        if (self.type == .alias) {
+            const sub_spec_js = self.type.alias.sub_spec.toJS(allocator, go);
             object.put(go, "subSpec", sub_spec_js);
         }
 
@@ -422,7 +286,7 @@ fn fromAlias(
 ) NpaError!NpaSpec {
     const sub_spec = try npa(allocator, raw_spec["npm:".len..], where);
 
-    if (sub_spec == .alias) {
+    if (sub_spec.type == .alias) {
         return error.NestedAlias;
     }
 
@@ -430,7 +294,7 @@ fn fromAlias(
         return error.NotAliasingRegistry;
     }
 
-    if (sub_spec.name() == null) {
+    if (sub_spec.name == null) {
         return error.AliasMissingName;
     }
 
@@ -441,13 +305,17 @@ fn fromAlias(
     const raw_spec_owned = try allocator.dupe(u8, raw_spec);
 
     return .{
-        .alias = .{
-            .raw = raw,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .sub_spec = sub_spec_ptr,
-            ._allocator = allocator,
+        .raw = raw,
+        .name = name,
+        .raw_spec = raw_spec_owned,
+        .fetch_spec = null,
+        .save_spec = null,
+        .type = .{
+            .alias = .{
+                .sub_spec = sub_spec_ptr,
+            },
         },
+        ._allocator = allocator,
     };
 }
 
@@ -480,13 +348,15 @@ fn fromRegistry(
     const query = Semver.Query.parse(allocator, trimmed, sliced) catch {
         // If parsing fails, treat as a tag if it doesn't need URL encoding
         if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-            return .{ .tag = .{
+            return .{
                 .raw = raw,
                 .name = name,
                 .raw_spec = raw_spec_owned,
                 .fetch_spec = fetch_spec_owned,
+                .save_spec = null,
+                .type = .tag,
                 ._allocator = allocator,
-            } };
+            };
         }
         return error.InvalidRegistrySpec;
     };
@@ -496,13 +366,15 @@ fn fromRegistry(
     // (e.g., "baz", "latest", etc.) and returned an empty query
     if (!query.head.head.range.hasLeft()) {
         if (bun.strings.indexOfNeedsURLEncode(trimmed) == null) {
-            return .{ .tag = .{
+            return .{
                 .raw = raw,
                 .name = name,
                 .raw_spec = raw_spec_owned,
                 .fetch_spec = fetch_spec_owned,
+                .save_spec = null,
+                .type = .tag,
                 ._allocator = allocator,
-            } };
+            };
         }
         return error.InvalidRegistrySpec;
     }
@@ -515,22 +387,26 @@ fn fromRegistry(
         query.tail == null;
 
     if (is_exact_version) {
-        return .{ .version = .{
+        return .{
             .raw = raw,
             .name = name,
             .raw_spec = raw_spec_owned,
             .fetch_spec = fetch_spec_owned,
+            .save_spec = null,
+            .type = .version,
             ._allocator = allocator,
-        } };
+        };
     }
 
-    return .{ .range = .{
+    return .{
         .raw = raw,
         .name = name,
         .raw_spec = raw_spec_owned,
         .fetch_spec = fetch_spec_owned,
+        .save_spec = null,
+        .type = .range,
         ._allocator = allocator,
-    } };
+    };
 }
 
 const PathToFileUrlUtils = struct {
@@ -937,26 +813,22 @@ fn fromFile(
 
     return switch (spec_type) {
         .file => .{
-            .file = .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = fetch_spec,
-                .save_spec = save_spec,
-
-                ._allocator = allocator,
-            },
+            .raw = raw,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = fetch_spec,
+            .save_spec = save_spec,
+            .type = .file,
+            ._allocator = allocator,
         },
         .directory => .{
-            .directory = .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = fetch_spec,
-                .save_spec = save_spec,
-
-                ._allocator = allocator,
-            },
+            .raw = raw,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = fetch_spec,
+            .save_spec = save_spec,
+            .type = .directory,
+            ._allocator = allocator,
         },
     };
 }
@@ -1176,18 +1048,20 @@ fn fromURL(
                 const git_attrs = try parseGitAttrs(allocator, raw_committish);
 
                 return .{
-                    .git = .{
-                        .raw = raw,
-                        .name = name,
-                        .raw_spec = raw_spec_owned,
-                        .fetch_spec = fetch_spec,
-                        .save_spec = save_spec,
-                        .git_committish = git_attrs.committish,
-                        .git_range = git_attrs.range,
-                        .git_subdir = git_attrs.subdir,
-                        .hosted = null,
-                        ._allocator = allocator,
+                    .raw = raw,
+                    .name = name,
+                    .raw_spec = raw_spec_owned,
+                    .fetch_spec = fetch_spec,
+                    .save_spec = save_spec,
+                    .type = .{
+                        .git = .{
+                            .git_committish = git_attrs.committish,
+                            .git_range = git_attrs.range,
+                            .git_subdir = git_attrs.subdir,
+                            .hosted = null,
+                        },
                     },
+                    ._allocator = allocator,
                 };
             }
         }
@@ -1345,18 +1219,20 @@ fn fromURL(
         const git_attrs = try parseGitAttrs(allocator, raw_committish);
 
         return .{
-            .git = .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = final_fetch_spec,
-                .save_spec = save_spec,
-                .git_committish = git_attrs.committish,
-                .git_range = git_attrs.range,
-                .git_subdir = git_attrs.subdir,
-                .hosted = null,
-                ._allocator = allocator,
+            .raw = raw,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = final_fetch_spec,
+            .save_spec = save_spec,
+            .type = .{
+                .git = .{
+                    .git_committish = git_attrs.committish,
+                    .git_range = git_attrs.range,
+                    .git_subdir = git_attrs.subdir,
+                    .hosted = null,
+                },
             },
+            ._allocator = allocator,
         };
     }
 
@@ -1367,14 +1243,13 @@ fn fromURL(
     {
         const raw_spec_owned = try allocator.dupe(u8, raw_spec);
         return .{
-            .remote = .{
-                .raw = raw,
-                .name = name,
-                .raw_spec = raw_spec_owned,
-                .fetch_spec = raw_spec_owned,
-                .save_spec = raw_spec_owned,
-                ._allocator = allocator,
-            },
+            .raw = raw,
+            .name = name,
+            .raw_spec = raw_spec_owned,
+            .fetch_spec = raw_spec_owned,
+            .save_spec = raw_spec_owned,
+            .type = .remote,
+            ._allocator = allocator,
         };
     }
 
@@ -1427,18 +1302,20 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
     };
 
     return .{
-        .git = .{
-            .raw = raw,
-            .name = name,
-            .raw_spec = mut_spec_str, // Use the duplicated string
-            .fetch_spec = fetch_spec,
-            .save_spec = save_spec,
-            .git_committish = git_attrs.committish,
-            .git_range = git_attrs.range,
-            .git_subdir = git_attrs.subdir,
-            .hosted = hosted,
-            ._allocator = allocator,
+        .raw = raw,
+        .name = name,
+        .raw_spec = mut_spec_str, // Use the duplicated string
+        .fetch_spec = fetch_spec,
+        .save_spec = save_spec,
+        .type = .{
+            .git = .{
+                .git_committish = git_attrs.committish,
+                .git_range = git_attrs.range,
+                .git_subdir = git_attrs.subdir,
+                .hosted = hosted,
+            },
         },
+        ._allocator = allocator,
     };
 }
 

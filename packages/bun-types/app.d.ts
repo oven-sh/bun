@@ -1437,9 +1437,11 @@ declare module "bun:app" {
 }
 
 declare module "bun" {
-  interface GenericServeOptions {
-    /** Add a fullstack web app to this server using Bun Bake */
-    app?: import("bun:app").Config | import("bun:app").FrameworkDefinitionLike | undefined;
+  namespace Serve {
+    interface BaseServeOptions<WebSocketData> {
+      /** Add a fullstack web app to this server using Bun Bake */
+      app?: import("bun:app").Config | import("bun:app").FrameworkDefinitionLike | undefined;
+    }
   }
 
   // TODO(@alii): Before merging, figure out if this was ever implemented in

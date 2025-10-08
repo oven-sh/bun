@@ -26,22 +26,22 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
   expect(value).toBeInstanceOf(constructor);
 }
 
-function test<T = undefined, R extends string = never>(
+function test<WebSocketData = undefined, R extends string = string>(
   name: string,
-  options: Bun.Serve.Options<T, R>,
+  options: Bun.Serve.Options<WebSocketData, R>,
   {
     onConstructorFailure,
     overrideExpectBehavior,
     skip: skipOptions,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server<WebSocketData>>) => void | Promise<void>;
     skip?: boolean;
   } = {},
 ) {
   const skip = skipOptions || ("unix" in options && typeof options.unix === "string" && process.platform === "win32");
 
-  async function testServer(server: Bun.Server<T>) {
+  async function testServer(server: Bun.Server<WebSocketData>) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);
     } else {
@@ -312,6 +312,13 @@ test(
     },
   },
 );
+
+test("with app", {
+  fetch: () => new Response("hello"),
+  app: {
+    framework: "bun-framework-react",
+  },
+});
 
 test(
   "basic unix socket + upgrade + cheap request to check upgrade",

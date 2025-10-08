@@ -1307,7 +1307,7 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
     const mut_spec_str: []u8 = try allocator.dupe(u8, raw_spec);
     errdefer allocator.free(mut_spec_str);
 
-    const hosted = try hgi.fromUrl(allocator, mut_spec_str) orelse {
+    const hosted = try hgi.HostedGitInfo.fromUrl(allocator, mut_spec_str) orelse {
         allocator.free(mut_spec_str);
         return null;
     };
@@ -1334,6 +1334,7 @@ fn fromGitSpec(allocator: std.mem.Allocator, name: ?[]const u8, raw_spec: []cons
             .user = hosted.user,
             .default_representation = hosted.default_representation,
             ._allocator = hosted._allocator,
+            ._memory_buffer = hosted._memory_buffer,
         };
         const url_str = try temp_hosted.toString(allocator);
 

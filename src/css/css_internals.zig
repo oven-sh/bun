@@ -148,7 +148,7 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
 }
 
 fn parserOptionsFromJS(globalThis: *jsc.JSGlobalObject, allocator: Allocator, opts: *bun.css.ParserOptions, jsobj: JSValue) bun.JSError!void {
-    _ = allocator; // autofix
+    _ = allocator;
     if (try jsobj.getTruthy(globalThis, "flags")) |val| {
         if (val.isArray()) {
             var iter = try val.arrayIterator(globalThis);

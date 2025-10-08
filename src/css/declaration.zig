@@ -43,8 +43,8 @@ pub const DeclarationBlock = struct {
         self: *const DeclarationBlock,
 
         pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt; // autofix
-            _ = options; // autofix
+            _ = fmt;
+            _ = options;
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
@@ -246,14 +246,14 @@ pub const PropertyDeclarationParser = struct {
         pub const QualifiedRule = void;
 
         pub fn parsePrelude(this: *This, input: *css.Parser) Result(Prelude) {
-            _ = this; // autofix
+            _ = this;
             return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
 
         pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
-            _ = this; // autofix
-            _ = prelude; // autofix
-            _ = start; // autofix
+            _ = this;
+            _ = prelude;
+            _ = start;
             return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
     };
@@ -274,12 +274,12 @@ pub const PropertyDeclarationParser = struct {
 
     pub const RuleBodyItemParser = struct {
         pub fn parseQualified(this: *This) bool {
-            _ = this; // autofix
+            _ = this;
             return false;
         }
 
         pub fn parseDeclarations(this: *This) bool {
-            _ = this; // autofix
+            _ = this;
             return true;
         }
     };
@@ -399,7 +399,7 @@ pub const DeclarationHandler = struct {
 
     pub fn finalize(this: *DeclarationHandler, context: *css.PropertyHandlerContext) void {
         const allocator = context.allocator;
-        _ = allocator; // autofix
+        _ = allocator;
         if (this.direction) |direction| {
             this.direction = null;
             bun.handleOom(this.decls.append(context.allocator, css.Property{ .direction = direction }));

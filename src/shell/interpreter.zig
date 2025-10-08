@@ -492,7 +492,7 @@ pub const Interpreter = struct {
 
         /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it before handing it to this function.
         pub fn assignVar(this: *ShellExecEnv, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
-            _ = interp; // autofix
+            _ = interp;
             switch (assign_ctx) {
                 .cmd => this.cmd_local_env.insert(label, value),
                 .shell => this.shell_env.insert(label, value),
@@ -1088,7 +1088,7 @@ pub const Interpreter = struct {
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
-        _ = callframe; // autofix
+        _ = callframe;
 
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
@@ -1267,8 +1267,8 @@ pub const Interpreter = struct {
     }
 
     pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
+        _ = globalThis;
+        _ = callframe;
 
         return jsc.JSValue.jsBoolean(this.started.load(.seq_cst));
     }

@@ -47,8 +47,8 @@ pub const Readable = union(enum) {
     }
 
     pub fn init(stdio: Stdio, event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: ?*MaxBuf, is_sync: bool) Readable {
-        _ = allocator; // autofix
-        _ = is_sync; // autofix
+        _ = allocator;
+        _ = is_sync;
         Subprocess.assertStdioResult(result);
 
         if (comptime Environment.isPosix) {
@@ -115,7 +115,7 @@ pub const Readable = union(enum) {
     }
 
     pub fn toJS(this: *Readable, globalThis: *jsc.JSGlobalObject, exited: bool) bun.JSError!JSValue {
-        _ = exited; // autofix
+        _ = exited;
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
             .memfd => return this.toBufferedValue(globalThis),

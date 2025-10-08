@@ -1844,7 +1844,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
 pub const main_file_name: string = "bun:main";
 
 pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) JSValue {
-    _ = callframe; // autofix
+    _ = callframe;
     globalObject.bunVM().drainMicrotasks();
     return .js_undefined;
 }

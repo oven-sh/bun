@@ -442,7 +442,7 @@ pub const Parser = struct {
     }
 
     fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) OOM!void {
-        _ = this; // autofix
+        _ = this;
         const slice = try arena_allocator.dupe(u8, unesc.items[0..]);
         const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
         if (existing_rope.*) |_r| {

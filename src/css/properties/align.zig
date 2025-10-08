@@ -1334,7 +1334,7 @@ pub const AlignHandler = struct {
         comptime prop_2009: ?struct { type, []const u8 },
         comptime prop_2012: ?struct { type, []const u8 },
     ) void {
-        _ = this; // autofix
+        _ = this;
         if (key.*) |v| {
             const val = v[0];
             var prefix = v[1];
@@ -1393,7 +1393,7 @@ pub const AlignHandler = struct {
     }
 
     fn flushPrefixedProperty(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, key: anytype) void {
-        _ = this; // autofix
+        _ = this;
         if (key) |v| {
             const val = v[0];
             const prefix = v[1];
@@ -1402,7 +1402,7 @@ pub const AlignHandler = struct {
     }
 
     fn flushUnprefixProperty(this: *AlignHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, key: anytype) void {
-        _ = this; // autofix
+        _ = this;
         if (key) |v| {
             const val = v;
             bun.handleOom(dest.append(context.allocator, @unionInit(Property, prop, val)));

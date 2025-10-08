@@ -185,13 +185,13 @@ pub const Image = union(enum) {
     }
 
     // pub fn parse(input: *css.Parser) Result(Image) {
-    //     _ = input; // autofix
+    //     _ = input;
     //     @panic(css.todo_stuff.depth);
     // }
 
     // pub fn toCss(this: *const Image, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-    //     _ = this; // autofix
-    //     _ = dest; // autofix
+    //     _ = this;
+    //     _ = dest;
     //     @panic(css.todo_stuff.depth);
     // }
 };

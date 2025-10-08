@@ -212,14 +212,14 @@ fn writeString32(data: []const u8, w: Writer) !void {
 //     }
 //     if (value.jsType() == .DOMWrapper) {
 //         if (value.as(bun.api.BuildMessage)) |build_error| {
-//             _ = build_error; // autofix
+//             _ = build_error;
 //             //
 //         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
-//             _ = resolve_error; // autofix
+//             _ = resolve_error;
 //             @panic("TODO");
 //         }
 //     }
-//     _ = w; // autofix
+//     _ = w;
 
 //     @panic("TODO");
 // }

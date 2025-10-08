@@ -35,7 +35,7 @@ pub const Border = GenericBorder(LineStyle, 10);
 
 /// A generic type that represents the `border` and `outline` shorthand properties.
 pub fn GenericBorder(comptime S: type, comptime P: u8) type {
-    _ = P; // autofix
+    _ = P;
     return struct {
         /// The width of the border.
         width: BorderSideWidth,
@@ -855,8 +855,8 @@ pub const BorderHandler = struct {
         logical_shorthand_supported: bool,
 
         inline fn logicalProp(f: *FlushContext, comptime ltr: []const u8, comptime ltr_key: []const u8, comptime rtl: []const u8, comptime rtl_key: []const u8, val: anytype) void {
-            _ = ltr_key; // autofix
-            _ = rtl_key; // autofix
+            _ = ltr_key;
+            _ = rtl_key;
             f.ctx.addLogicalRule(f.ctx.allocator, @unionInit(css.Property, ltr, val.deepClone(f.ctx.allocator)), @unionInit(css.Property, rtl, val.deepClone(f.ctx.allocator)));
         }
 
@@ -1413,7 +1413,7 @@ pub const BorderHandler = struct {
 
         const prop = struct {
             inline fn prop(self: *BorderHandler, d: *css.DeclarationList, c: *css.PropertyHandlerContext, up: *const UnparsedProperty, comptime id: []const u8) void {
-                _ = d; // autofix
+                _ = d;
                 var upppppppppp = up.withPropertyId(c.allocator, @unionInit(css.PropertyId, id, {}));
                 c.addUnparsedFallbacks(&upppppppppp);
                 bun.bits.insert(BorderProperty, &self.flushed_properties, @field(BorderProperty, id));

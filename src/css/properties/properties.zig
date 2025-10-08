@@ -147,13 +147,13 @@ pub const CSSWideKeyword = enum {
 //             .fields = union_fields,
 //         };
 //     };
-//     _ = PropertyT; // autofix
+//     _ = PropertyT;
 //     return struct {
 //         pub const PropertyId = PropertyIdT;
 
 //         pub fn propertyIdEq(lhs: PropertyId, rhs: PropertyId) bool {
-//             _ = lhs; // autofix
-//             _ = rhs; // autofix
+//             _ = lhs;
+//             _ = rhs;
 //             @compileError(css.todo_stuff.depth);
 //         }
 
@@ -172,13 +172,13 @@ pub const CSSWideKeyword = enum {
 
 //         /// PropertyId.prefix()
 //         pub fn propertyIdPrefix(id: PropertyId) css.VendorPrefix {
-//             _ = id; // autofix
+//             _ = id;
 //             @compileError(css.todo_stuff.depth);
 //         }
 
 //         /// PropertyId.name()
 //         pub fn propertyIdName(id: PropertyId) []const u8 {
-//             _ = id; // autofix
+//             _ = id;
 //             @compileError(css.todo_stuff.depth);
 //         }
 

@@ -21,8 +21,8 @@ pub fn getBunServerAllClosedPromise(globalThis: *jsc.JSGlobalObject, callframe: 
 }
 
 pub fn getMaxHTTPHeaderSize(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    _ = globalThis; // autofix
-    _ = callframe; // autofix
+    _ = globalThis;
+    _ = callframe;
     return jsc.JSValue.jsNumber(bun.http.max_http_header_size);
 }
 

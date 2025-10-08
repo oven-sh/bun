@@ -62,8 +62,8 @@ pub const ShellAsyncSubprocessDone = struct {
     concurrent_task: jsc.EventLoopTask,
 
     pub fn format(this: *const ShellAsyncSubprocessDone, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+        _ = fmt;
+        _ = opts;
         try writer.print("ShellAsyncSubprocessDone(0x{x}, cmd=0{x})", .{ @intFromPtr(this), @intFromPtr(this.cmd) });
     }
 

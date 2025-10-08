@@ -665,7 +665,7 @@ pub const FontFaceDeclarationParser = struct {
         pub const Declaration = FontFaceProperty;
 
         pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
-            _ = this; // autofix
+            _ = this;
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "src")) {
@@ -721,12 +721,12 @@ pub const FontFaceDeclarationParser = struct {
 
     pub const RuleBodyItemParser = struct {
         pub fn parseQualified(this: *This) bool {
-            _ = this; // autofix
+            _ = this;
             return false;
         }
 
         pub fn parseDeclarations(this: *This) bool {
-            _ = this; // autofix
+            _ = this;
             return true;
         }
     };

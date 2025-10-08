@@ -714,7 +714,7 @@ fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom
         .brace_begin, .brace_end, .comma, .asterisk => 1,
         .double_asterisk => 2,
         .cmd_subst => |subst| {
-            _ = subst; // autofix
+            _ = subst;
 
             // TODO check if the command substitution is comprised entirely of assignments or zero-sized things
             // if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {

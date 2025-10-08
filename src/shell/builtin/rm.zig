@@ -952,21 +952,21 @@ pub const ShellRmTask = struct {
         var dummy: @This() = std.mem.zeroes(@This());
 
         pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            _ = this; // autofix
-            _ = parent_dir_task; // autofix
-            _ = path; // autofix
-            _ = is_absolute; // autofix
-            _ = buf; // autofix
+            _ = this;
+            _ = parent_dir_task;
+            _ = path;
+            _ = is_absolute;
+            _ = buf;
 
             return .success;
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            _ = this; // autofix
-            _ = parent_dir_task; // autofix
-            _ = path; // autofix
-            _ = is_absolute; // autofix
-            _ = buf; // autofix
+            _ = this;
+            _ = parent_dir_task;
+            _ = path;
+            _ = is_absolute;
+            _ = buf;
 
             return .success;
         }
@@ -997,18 +997,18 @@ pub const ShellRmTask = struct {
         enqueued: bool = false,
 
         pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            _ = parent_dir_task; // autofix
-            _ = path; // autofix
-            _ = is_absolute; // autofix
-            _ = buf; // autofix
+            _ = parent_dir_task;
+            _ = path;
+            _ = is_absolute;
+            _ = buf;
 
             this.treat_as_dir = true;
             return .success;
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            _ = is_absolute; // autofix
-            _ = buf; // autofix
+            _ = is_absolute;
+            _ = buf;
 
             this.treat_as_dir = true;
             if (this.allow_enqueue) {

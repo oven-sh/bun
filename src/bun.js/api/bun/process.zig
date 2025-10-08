@@ -685,7 +685,7 @@ pub const PollerWindows = union(enum) {
     }
 
     pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
-        _ = event_loop; // autofix
+        _ = event_loop;
         switch (this.*) {
             .uv => |*process| {
                 process.ref();
@@ -695,7 +695,7 @@ pub const PollerWindows = union(enum) {
     }
 
     pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
-        _ = event_loop; // autofix
+        _ = event_loop;
 
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called

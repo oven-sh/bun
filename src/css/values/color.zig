@@ -798,7 +798,7 @@ pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(s
 }
 
 pub fn parseHSLHWBComponents(comptime T: type, input: *css.Parser, parser: *ComponentParser, allows_legacy: bool) Result(struct { f32, f32, f32, bool }) {
-    _ = T; // autofix
+    _ = T;
     const h = switch (parseAngleOrNumber(input, parser)) {
         .result => |v| v,
         .err => |e| return .{ .err = e },
@@ -966,7 +966,7 @@ pub fn parseLch(
         }
 
         pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
-            _ = this; // autofix
+            _ = this;
             if (p.from) |*from| {
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
@@ -1069,7 +1069,7 @@ pub fn parseHslHwbComponents(
     parser: *ComponentParser,
     allows_legacy: bool,
 ) Result(struct { f32, f32, f32, bool }) {
-    _ = T; // autofix
+    _ = T;
     const h = switch (parseAngleOrNumber(input, parser)) {
         .result => |vv| vv,
         .err => |e| return .{ .err = e },
@@ -1132,7 +1132,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
         }
 
         pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
-            _ = this; // autofix
+            _ = this;
             const r, const g, const b, const is_legacy = switch (parseRGBComponents(i, p)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },

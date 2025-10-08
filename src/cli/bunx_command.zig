@@ -763,7 +763,7 @@ pub const BunxCommand = struct {
             Global.exit(1);
         })) {
             .err => |err| {
-                _ = err; // autofix
+                _ = err;
                 Global.exit(1);
             },
             .result => |result| result,

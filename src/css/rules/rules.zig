@@ -124,13 +124,13 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
         pub fn minify(this: *This, context: *MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
             // var keyframe_rules: keyframes.KeyframesName.HashMap(usize) = .{};
-            // _ = keyframe_rules; // autofix
+            // _ = keyframe_rules;
             // const layer_rules: layer.LayerName.HashMap(usize) = .{};
-            // _ = layer_rules; // autofix
+            // _ = layer_rules;
             // const property_rules: css.css_values.ident.DashedIdent.HashMap(usize) = .{};
-            // _ = property_rules; // autofix
+            // _ = property_rules;
             var style_rules = StyleRuleKey(AtRule).HashMap(usize){};
-            // _ = style_rules; // autofix
+            // _ = style_rules;
             var rules = ArrayList(CssRule(AtRule)){};
 
             for (this.v.items) |*rule| {
@@ -143,7 +143,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                 switch (rule.*) {
                     .keyframes => |*keyframez| {
-                        _ = keyframez; // autofix
+                        _ = keyframez;
                         // if (context.unused_symbols.contains(switch (keyframez.name) {
                         //     .ident => |ident| ident.v,
                         //     .custom => |custom| custom,
@@ -212,19 +212,19 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         if (supp.rules.v.items.len == 0) continue;
                     },
                     .container => |*cont| {
-                        _ = cont; // autofix
+                        _ = cont;
                         debug("TODO: ContainerRule", .{});
                     },
                     .layer_block => |*lay| {
-                        _ = lay; // autofix
+                        _ = lay;
                         debug("TODO: LayerBlockRule", .{});
                     },
                     .layer_statement => |*lay| {
-                        _ = lay; // autofix
+                        _ = lay;
                         debug("TODO: LayerStatementRule", .{});
                     },
                     .moz_document => |*doc| {
-                        _ = doc; // autofix
+                        _ = doc;
                         debug("TODO: MozDocumentRule", .{});
                     },
                     .style => |*sty| {
@@ -292,7 +292,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                                         if (mergeStyleRules(AtRule, &b[0].style, &a[len - 2].style, context)) {
                                             // If we were able to merge the last rule into the previous one, remove the last.
                                             const popped = rules.pop();
-                                            _ = popped; // autofix
+                                            _ = popped;
                                             // TODO: deinit?
                                             // popped.deinit(contet.allocator);
                                             continue;
@@ -425,27 +425,27 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         continue;
                     },
                     .counter_style => |*cntr| {
-                        _ = cntr; // autofix
+                        _ = cntr;
                         debug("TODO: CounterStyleRule", .{});
                     },
                     .scope => |*scpe| {
-                        _ = scpe; // autofix
+                        _ = scpe;
                         debug("TODO: ScopeRule", .{});
                     },
                     .nesting => |*nst| {
-                        _ = nst; // autofix
+                        _ = nst;
                         debug("TODO: NestingRule", .{});
                     },
                     .starting_style => |*rl| {
-                        _ = rl; // autofix
+                        _ = rl;
                         debug("TODO: StartingStyleRule", .{});
                     },
                     .font_palette_values => |*f| {
-                        _ = f; // autofix
+                        _ = f;
                         debug("TODO: FontPaletteValuesRule", .{});
                     },
                     .property => |*prop| {
-                        _ = prop; // autofix
+                        _ = prop;
                         debug("TODO: PropertyRule", .{});
                     },
                     else => {},

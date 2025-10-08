@@ -293,13 +293,13 @@ const Opts = struct {
     }
 
     pub fn parseLong(this: *Opts, flag: []const u8) ?ParseFlagResult {
-        _ = this; // autofix
+        _ = this;
         _ = flag;
         return null;
     }
 
     pub fn parseShort(this: *Opts, char: u8, smallflags: []const u8, i: usize) ?ParseFlagResult {
-        _ = this; // autofix
+        _ = this;
         switch (char) {
             'b' => {
                 return .{ .unsupported = unsupportedFlag("-b") };

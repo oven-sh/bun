@@ -1037,7 +1037,7 @@ pub const SelectorParser = struct {
     }
 
     pub fn namespaceForPrefix(this: *SelectorParser, prefix: css.css_values.ident.Ident) ?[]const u8 {
-        _ = this; // autofix
+        _ = this;
         return prefix.v;
     }
 
@@ -1097,7 +1097,7 @@ pub const SelectorParser = struct {
     }
 
     fn parseIsAndWhere(this: *const SelectorParser) bool {
-        _ = this; // autofix
+        _ = this;
         return true;
     }
 
@@ -1310,23 +1310,23 @@ pub const SelectorParser = struct {
     }
 
     pub fn defaultNamespace(this: *SelectorParser) ?impl.Selectors.SelectorImpl.NamespaceUrl {
-        _ = this; // autofix
+        _ = this;
         return null;
     }
 
     pub fn parsePart(this: *SelectorParser) bool {
-        _ = this; // autofix
+        _ = this;
         return true;
     }
 
     pub fn parseSlotted(this: *SelectorParser) bool {
-        _ = this; // autofix
+        _ = this;
         return true;
     }
 
     /// The error recovery that selector lists inside :is() and :where() have.
     fn isAndWhereErrorRecovery(this: *SelectorParser) ParseErrorRecovery {
-        _ = this; // autofix
+        _ = this;
         return .ignore_invalid_selector;
     }
 
@@ -1386,8 +1386,8 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
             pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
+                _ = fmt;
+                _ = options;
                 try writer.print("SelectorList[\n", .{});
                 const last = this.this.v.len() -| 1;
                 for (this.this.v.slice(), 0..) |*sel, i| {
@@ -1424,8 +1424,8 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
+            _ = this;
+            _ = dest;
             @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
         }
 
@@ -1625,8 +1625,8 @@ pub fn GenericSelector(comptime Impl: type) type {
 
             pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
+                _ = fmt;
+                _ = options;
                 try writer.print("Selector(", .{});
                 var arraylist = ArrayList(u8){};
                 const w = arraylist.writer(bun.default_allocator);
@@ -1654,8 +1654,8 @@ pub fn GenericSelector(comptime Impl: type) type {
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
+            _ = this;
+            _ = dest;
             @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
         }
 
@@ -1949,8 +1949,8 @@ pub fn GenericComponent(comptime Impl: type) type {
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
+            _ = this;
+            _ = dest;
             @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
         }
 
@@ -2241,8 +2241,8 @@ pub const Combinator = enum {
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
+        _ = this;
+        _ = dest;
         @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
     }
 
@@ -2496,7 +2496,7 @@ pub const PseudoElement = union(enum) {
     }
 
     pub fn acceptsStatePseudoClasses(this: *const PseudoElement) bool {
-        _ = this; // autofix
+        _ = this;
         // Be lienient.
         return true;
     }

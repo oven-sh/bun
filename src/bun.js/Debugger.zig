@@ -406,7 +406,7 @@ pub const LifecycleAgent = struct {
     }
 
     pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
-        _ = agent; // autofix
+        _ = agent;
         if (VirtualMachine.get().debugger) |*debugger| {
             debug("disable", .{});
             debugger.lifecycle_reporter_agent.handle = null;

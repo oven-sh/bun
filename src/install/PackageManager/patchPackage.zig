@@ -758,7 +758,7 @@ fn overwritePackageInNodeModulesFolder(
             var copy_file_state: bun.CopyFileState = .{};
             var pathbuf: bun.PathBuffer = undefined;
             var pathbuf2: bun.PathBuffer = undefined;
-            // _ = pathbuf; // autofix
+            // _ = pathbuf;
 
             while (try walker.next().unwrap()) |entry| {
                 if (entry.kind != .file) continue;

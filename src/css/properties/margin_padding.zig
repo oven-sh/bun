@@ -747,8 +747,8 @@ pub fn NewSizeHandler(
             dest: *css.DeclarationList,
             context: *css.PropertyHandlerContext,
         ) void {
-            _ = this; // autofix
-            _ = dest; // autofix
+            _ = this;
+            _ = dest;
             if (val.*) |*_v| {
                 if (@as(css.PropertyIdTag, _v.*) == logical) {
                     const v = &@field(_v, @tagName(logical));
@@ -785,7 +785,7 @@ pub fn NewSizeHandler(
             dest: *css.DeclarationList,
             context: *css.PropertyHandlerContext,
         ) void {
-            _ = this; // autofix
+            _ = this;
             const shorthand_supported = logical_supported and if (comptime shorthand_extra != null) !context.shouldCompileLogical(shorthand_extra.?.shorthand_feature) else true;
 
             if (start.* != null and @as(PropertyIdTag, start.*.?) == start_prop and
@@ -823,7 +823,7 @@ pub fn NewSizeHandler(
             dest: *css.DeclarationList,
             context: *css.PropertyHandlerContext,
         ) void {
-            _ = this; // autofix
+            _ = this;
             if (val.*) |*v| {
                 if (@as(css.PropertyIdTag, v.*) == logical) {
                     dest.append(

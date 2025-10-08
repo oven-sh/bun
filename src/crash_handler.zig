@@ -901,10 +901,23 @@ extern "dbghelp" fn MiniDumpWriteDump(
 ) callconv(windows.WINAPI) windows.BOOL;
 
 fn writeMiniDumpWindows() !void {
-    const dump_dir = std.posix.getenv("BUN_MINIDUMP_DIR") orelse return;
+    // Get environment variable on Windows using wide strings
+    var dump_dir_w_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
+    const dump_dir_w_len = windows.kernel32.GetEnvironmentVariableW(
+        std.unicode.utf8ToUtf16LeStringLiteral("BUN_MINIDUMP_DIR"),
+        &dump_dir_w_buf,
+        dump_dir_w_buf.len,
+    );
+    if (dump_dir_w_len == 0) return;
+    dump_dir_w_buf[dump_dir_w_len] = 0;
 
-    // Create filename: bun-profile.exe.<pid>.dmp
-    const pid = windows.kernel32.GetCurrentProcessId();
+    // Convert wide string to UTF-8 for formatting
+    var dump_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const dump_dir_len = std.unicode.utf16LeToUtf8(&dump_dir_buf, dump_dir_w_buf[0..dump_dir_w_len]) catch return;
+    const dump_dir = dump_dir_buf[0..dump_dir_len];
+
+    // Get process ID
+    const pid = windows.GetCurrentProcessId();
     var filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const filename = try std.fmt.bufPrintZ(&filename_buf, "{s}\\bun-profile.exe.{d}.dmp", .{ dump_dir, pid });
 
@@ -920,8 +933,9 @@ fn writeMiniDumpWindows() !void {
         windows.CREATE_ALWAYS,
         windows.FILE_ATTRIBUTE_NORMAL,
         null,
-    ) catch return;
-    defer _ = windows.kernel32.CloseHandle(file);
+    );
+    if (file == windows.INVALID_HANDLE_VALUE) return;
+    defer _ = bun.windows.CloseHandle(file);
 
     const MiniDumpWithFullMemory: windows.DWORD = 0x00000002;
     _ = MiniDumpWriteDump(

@@ -45,3 +45,8 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCODE_EXTENSION }}
         working-directory: packages/bun-vscode/extension
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bun-vscode-${{ github.event.inputs.version }}.vsix
+          path: packages/bun-vscode/extension/bun-vscode-${{ github.event.inputs.version }}.vsix

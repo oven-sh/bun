@@ -1,5 +1,8 @@
 # List of tests for which we do NOT enable LeakSanitizer when running in ASAN CI
 
+test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
+test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
+
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 test/js/node/test/parallel/test-worker-arraybuffer-zerofill.js
 test/js/node/test/parallel/test-worker-cjs-workerdata.js
@@ -52,6 +55,7 @@ test/js/node/test/parallel/test-worker-terminate-nested.js
 test/js/node/test/parallel/test-worker-terminate-null-handler.js
 test/js/node/test/parallel/test-worker-terminate-timers.js
 test/js/node/test/parallel/test-worker-type-check.js
+test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
@@ -68,14 +72,6 @@ test/js/node/test/parallel/test-fs-readfile-eof.js
 test/js/node/test/parallel/test-child-process-promisified.js
 test/js/node/test/parallel/test-child-process-exec-encoding.js
 test/js/node/test/parallel/test-child-process-execfile.js
-test/bake/dev-and-prod.test.ts
-test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
-test/bake/dev/esm.test.ts
-test/bake/dev/hot.test.ts
-test/bake/dev/react-spa.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/ssg-pages-router.test.ts
 test/bundler/bundler_compile.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/transpiler/bun-pragma.test.ts
@@ -144,6 +140,13 @@ test/cli/install/bun-run.test.ts
 test/bake/dev/import-meta-inline.test.ts
 test/integration/sharp/sharp.test.ts
 test/cli/test/bun-test.test.ts
+test/cli/install/bun-install-security-provider.test.ts
+test/js/node/test/parallel/test-tls-fast-writing.js
+test/js/bun/sqlite/sqlite.test.js
+test/js/workerd/html-rewriter.test.js
+test/regression/issue/12250.test.ts
+test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
+test/cli/install/minimum-release-age.test.ts
 
 
 # crash for reasons not related to LSAN
@@ -188,6 +191,8 @@ test/regression/issue/14338.test.ts
 test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
+test/js/third_party/comlink/comlink.test.ts
+test/regression/issue/22635/22635.test.ts
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
@@ -255,6 +260,8 @@ test/cli/update_interactive_snapshots.test.ts
 test/js/web/websocket/websocket-custom-headers.test.ts
 test/js/third_party/body-parser/express-memory-leak.test.ts
 test/js/bun/http/serve-body-leak.test.ts
+test/cli/install/migration/yarn-lock-migration.test.ts
+test/regression/issue/test_env_loader_threading.test.ts
 
 # Zig::SourceProvider::~SourceProvider()
 test/bundler/bundler_bun.test.ts
@@ -361,6 +368,9 @@ test/js/bun/util/inspect.test.js
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/vm/vm.test.ts
 
+# VM has terminated
+test/js/node/test/parallel/test-net-during-close.js
+
 # JSC::BuiltinNames::~BuiltinNames
 test/js/bun/shell/shell-hang.test.ts
 test/js/bun/util/reportError.test.ts
@@ -372,6 +382,7 @@ test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
+test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts
@@ -386,3 +397,27 @@ test/js/node/net/node-net-server.test.ts
 test/js/third_party/grpc-js/test-channel-credentials.test.ts
 test/js/bun/http/bun-connect-x509.test.ts
 test/js/third_party/rollup-v4/rollup-v4.test.ts
+test/js/web/abort/abort.test.ts
+test/js/third_party/resvg/bbox.test.js
+test/regression/issue/10139.test.ts
+test/js/bun/udp/udp_socket.test.ts
+test/cli/init/init.test.ts
+
+# There are some leaks related to the dev server closing on process exit, the fix is to
+# tick the event loop on globalExit but this breaks like 50 tests. Since the
+# leak is when process exits it should be fine for now but it should be fixed at
+# some point.
+test/bake/dev/react-response.test.ts
+test/bake/dev/react-cookies.test.ts
+test/bake/dev/server-sourcemap.test.ts
+
+# Watcher Thread
+test/bake/dev-and-prod.test.ts
+test/bake/dev/bundle.test.ts
+test/bake/dev/css.test.ts
+test/bake/dev/esm.test.ts
+test/bake/dev/hot.test.ts
+test/bake/dev/react-spa.test.ts
+test/bake/dev/sourcemap.test.ts
+test/bake/dev/ssg-pages-router.test.ts
+test/bake/dev/deinitialization.test.ts

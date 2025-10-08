@@ -145,6 +145,9 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.safety.ThreadLock,
 
+    // if false we can skip TLA validation and propagation
+    has_any_top_level_await_modules: bool = false,
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -175,7 +178,9 @@ pub const BundleV2 = struct {
 
     fn ensureClientTranspiler(this: *BundleV2) void {
         if (this.client_transpiler == null) {
-            _ = bun.handleOom(this.initializeClientTranspiler());
+            _ = this.initializeClientTranspiler() catch |e| {
+                std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+            };
         }
     }
 
@@ -230,7 +235,9 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse bun.handleOom(this.initializeClientTranspiler());
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch |e| {
+                    std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+                };
             }
 
             return this.transpiler;
@@ -3653,6 +3660,8 @@ pub const BundleV2 = struct {
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.transpiler.log, true) catch unreachable;
+
+                this.has_any_top_level_await_modules = this.has_any_top_level_await_modules or !result.ast.top_level_await_keyword.isEmpty();
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.

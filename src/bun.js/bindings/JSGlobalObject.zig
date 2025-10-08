@@ -230,10 +230,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
-    pub fn reload(this: *jsc.JSGlobalObject) void {
+    pub fn reload(this: *jsc.JSGlobalObject) !void {
         this.vm().drainMicrotasks();
         this.vm().collectAsync();
-        bun.cpp.JSC__JSGlobalObject__reload(this);
+        try bun.cpp.JSC__JSGlobalObject__reload(this);
     }
 
     pub const BunPluginTarget = enum(u8) {
@@ -363,6 +363,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
+    /// Throw an Error from a formatted string.
+    ///
+    /// Note: If you are throwing an error within somewhere in the Bun API,
+    /// chances are you should be using `.ERR(...).throw()` instead.
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
         bun.assert(instance != .zero);
@@ -762,6 +766,9 @@ pub const JSGlobalObject = opaque {
         return .{ .globalObject = this };
     }
 
+    /// Throw an error from within the Bun runtime.
+    ///
+    /// The set of errors accepted by `ERR()` is defined in `ErrorCode.ts`.
     pub fn ERR(global: *JSGlobalObject, comptime code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) @import("ErrorCode").ErrorBuilder(code, fmt, @TypeOf(args)) {
         return .{ .global = global, .args = args };
     }
@@ -858,6 +865,12 @@ pub const JSGlobalObject = opaque {
 
         // We're done validating. From now on, deal with extracting the body.
         body.toBlobIfPossible();
+
+        if (body.* == .Locked) {
+            if (response.getBodyReadableStream(this)) |stream| {
+                return stream.value;
+            }
+        }
 
         var any_blob = switch (body.*) {
             .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),

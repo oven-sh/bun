@@ -153,6 +153,10 @@ fn messageWithTypeAndLevel_(
     var writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
 
+    if (bun.jsc.Jest.Jest.runner) |runner| {
+        runner.bun_test_root.onBeforePrint();
+    }
+
     var print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default
     const cli_context = CLI.get();

@@ -45,8 +45,8 @@ To run manually:
 
 - **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
   ```cpp
-  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis, 
-                                        [[ZIG_NONNULL]] JSValue* values, 
+  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis,
+                                        [[ZIG_NONNULL]] JSValue* values,
                                         size_t count) { ... }
   ```
   Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
@@ -397,7 +397,7 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
   };
 }
 
-type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "nothrow";
+type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_throw" | "nothrow";
 
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
@@ -570,7 +570,8 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
         tagStr === "nothrow" ||
         tagStr === "zero_is_throw" ||
         tagStr === "check_slow" ||
-        tagStr === "false_is_throw"
+        tagStr === "false_is_throw" ||
+        tagStr === "null_is_throw"
       ) {
         tag = tagStr;
       } else if (tagStr === "print") {
@@ -580,7 +581,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       } else {
         appendError(
           nodePosition(tagIdentifier, ctx),
-          "tag must be nothrow, zero_is_throw, check_slow, or false_is_throw: " + tagStr,
+          "tag must be nothrow, zero_is_throw, check_slow, false_is_throw, or null_is_throw: " + tagStr,
         );
         tag = "nothrow";
       }
@@ -639,7 +640,7 @@ function generateZigFn(
   resultSourceLinks: string[],
   cfg: Cfg,
 ): void {
-  const returnType = generateZigType(fn.returnType, null);
+  let returnType = generateZigType(fn.returnType, null);
   if (resultBindings.length) resultBindings.push("");
   resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
   if (fn.tag === "nothrow") {
@@ -667,7 +668,7 @@ function generateZigFn(
       );
     }
     resultBindings.push(
-      `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+      `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
       `    if (comptime Environment.ci_assert) {`,
       `        var scope: jsc.CatchScope = undefined;`,
       `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
@@ -697,9 +698,16 @@ function generateZigFn(
     if (returnType !== "bool") {
       appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
     }
+    returnType = "void";
+  } else if (fn.tag === "null_is_throw") {
+    equalsValue = "null";
+    if (!returnType.startsWith("?*")) {
+      appendError(fn.position, "ZIG_EXPORT(null_is_throw) is only allowed for functions that return optional pointer");
+    }
+    returnType = returnType.slice(1);
   } else assertNever(fn.tag);
   resultBindings.push(
-    `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${fn.tag === "false_is_throw" ? "void" : returnType} {`,
+    `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
     `    if (comptime Environment.ci_assert) {`,
     `        var scope: jsc.ExceptionValidationScope = undefined;`,
     `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
@@ -707,11 +715,11 @@ function generateZigFn(
     ``,
     `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
     `        scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
-    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"};`,
+    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"}${fn.tag === "null_is_throw" ? ".?" : ""};`,
     `    } else {`,
     `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
     `        if (value == ${equalsValue}) return error.JSError;`,
-    ...(fn.tag === "false_is_throw" ? [] : [`        return value;`]),
+    ...(fn.tag === "false_is_throw" ? [] : [`        return value${fn.tag === "null_is_throw" ? ".?" : ""};`]),
     `    }`,
     `}`,
   );
@@ -733,14 +741,14 @@ async function main() {
   if (!dstDir) {
     console.error(
       String.raw`
-                   _     _           _ 
+                   _     _           _
                   | |   (_)         | |
    ___ _ __  _ __ | |__  _ _ __   __| |
   / __| '_ \| '_ \| '_ \| | '_ \ / _' |
  | (__| |_) | |_) | |_) | | | | | (_| |
   \___| .__/| .__/|_.__/|_|_| |_|\__,_|
-      | |   | |                        
-      |_|   |_|                        
+      | |   | |
+      |_|   |_|
 `.slice(1),
     );
     console.error("Usage: bun src/codegen/cppbind src build/debug/codegen");

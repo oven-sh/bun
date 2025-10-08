@@ -204,12 +204,14 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var base = this.cfg;
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
-    if (bun.jsc.Jest.Jest.runner) |runner| if (runner.concurrent) {
+    // Use the file's default concurrent setting (determined once when entering the file)
+    // or the global concurrent flag from the runner
+    if (bunTest.default_concurrent or (bun.jsc.Jest.Jest.runner != null and bun.jsc.Jest.Jest.runner.?.concurrent)) {
         // Only set to concurrent if still inheriting
         if (base.self_concurrent == .inherit) {
             base.self_concurrent = .yes;
         }
-    };
+    }
 
     switch (this.mode) {
         .describe => {
@@ -247,7 +249,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = timeout,
-            }, base);
+            }, base, .collection);
         },
     }
 }
@@ -276,7 +278,6 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: bun_te
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
-    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
     if (bun.detectCI()) |_| {
         return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
     }

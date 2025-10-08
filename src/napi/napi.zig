@@ -832,7 +832,7 @@ pub export fn napi_get_typedarray_info(
     maybe_length: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize,
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_typedarray_info", .{});
     const env = env_ orelse {
@@ -859,7 +859,10 @@ pub export fn napi_get_typedarray_info(
         arraybuffer.set(env, JSValue.c(jsc.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), typedarray.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
-        byte_offset.* = array_buffer.offset;
+        // `jsc.ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+        //byte_offset.* = array_buffer.offset;
+        byte_offset.* = 0;
     return env.ok();
 }
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
@@ -881,7 +884,7 @@ pub export fn napi_get_dataview_info(
     maybe_bytelength: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize,
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_dataview_info", .{});
     const env = env_ orelse {
@@ -900,7 +903,10 @@ pub export fn napi_get_dataview_info(
         arraybuffer.set(env, JSValue.c(jsc.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), dataview.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
-        byte_offset.* = array_buffer.offset;
+        // `jsc.ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+        //byte_offset.* = array_buffer.offset;
+        byte_offset.* = 0;
 
     return env.ok();
 }

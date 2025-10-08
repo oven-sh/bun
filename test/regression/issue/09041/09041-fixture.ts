@@ -9,12 +9,13 @@ test("09041", async () => {
     j += 1;
     i += buffer.write(Number(j).toString(10) + ",", i);
   }
-  const buns = Array.from({ length: 5 }, () =>
+  const buns = Array.from({ length: 5 }, (_, i) =>
     $`${process.argv0} run ${join(import.meta.dir, "09041-fixture.mjs")} < ${buffer}`.quiet(),
   );
 
   const runs = await Promise.all(buns);
   for (let i = 0; i < runs.length; i++) {
+    console.log("check ", i);
     const run = runs[i];
     console.log("===== STDERR =====\n" + run.stderr.toString("utf-8") + "\n=====");
 
@@ -37,5 +38,7 @@ function condense(str: string) {
     }
     out.push({ len: 1, start: val });
   }
-  return out.map(o => (o.len === 1 ? `${o.start}` : `${o.start}-${(o.start as number) + o.len - 1}`)).join(",");
+  return out
+    .map(o => (o.len === 1 ? `${o.start}` : `RANGE(${o.start} through ${(o.start as number) + o.len - 1})`))
+    .join(",");
 }

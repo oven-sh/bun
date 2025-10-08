@@ -42,23 +42,33 @@ pub const PosixLoop = extern struct {
     pub fn inc(this: *PosixLoop) void {
         log("inc {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
+        assertCorrectThread(this);
+    }
+
+    inline fn assertCorrectThread(this: *const PosixLoop) void {
+        if (comptime bun.Environment.isDebug or bun.Environment.enable_asan) {
+            this.internal_loop_data.assertCorrectThread();
+        }
     }
 
     pub fn dec(this: *PosixLoop) void {
         log("dec {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
+        assertCorrectThread(this);
     }
 
     pub fn ref(this: *PosixLoop) void {
         log("ref {d} + 1 = {d} | {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1, this.active, this.active + 1 });
         this.num_polls += 1;
         this.active += 1;
+        assertCorrectThread(this);
     }
 
     pub fn unref(this: *PosixLoop) void {
         log("unref {d} - 1 = {d} | {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1, this.active, this.active -| 1 });
         this.num_polls -= 1;
         this.active -|= 1;
+        assertCorrectThread(this);
     }
 
     pub fn isActive(this: *const Loop) bool {
@@ -69,18 +79,21 @@ pub const PosixLoop = extern struct {
     pub fn addActive(this: *PosixLoop, value: u32) void {
         log("add {d} + {d} = {d}", .{ this.active, value, this.active +| value });
         this.active +|= value;
+        assertCorrectThread(this);
     }
 
     // This exists as a method so that we can stick a debugger in here
     pub fn subActive(this: *PosixLoop, value: u32) void {
         log("sub {d} - {d} = {d}", .{ this.active, value, this.active -| value });
         this.active -|= value;
+        assertCorrectThread(this);
     }
 
     pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
         this.num_polls -= count;
         this.active -|= @as(u32, @intCast(count));
+        assertCorrectThread(this);
     }
 
     pub fn get() *Loop {

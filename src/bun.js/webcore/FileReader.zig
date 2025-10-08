@@ -304,15 +304,7 @@ pub fn deinit(this: *FileReader) void {
 
 pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
     var buf = init_buf;
-    log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}, flowing: {}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull), this.flowing });
-
-    // If not flowing (paused), buffer the data but don't process it
-    if (!this.flowing and buf.len > 0) {
-        log("onReadChunk() buffering {d} bytes while paused", .{buf.len});
-        bun.handleOom(this.buffered.appendSlice(bun.default_allocator, buf));
-        // Don't continue reading
-        return false;
-    }
+    log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
 
     if (this.done) {
         this.reader.close();
@@ -598,32 +590,15 @@ pub fn onReaderDone(this: *FileReader) void {
             }
             this.buffered = .{};
             this.pending.run();
-        } else if (this.buffered.items.len > 0) {
-            const this_value = this.parent().this_jsvalue;
-            const globalThis = this.parent().globalThis;
-            if (this_value != .zero) {
-                if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
-                    const buffered = this.buffered;
-                    this.buffered = .{};
-                    this.parent().incrementCount();
-                    defer _ = this.parent().decrementCount();
-                    this.eventLoop().js.runCallback(
-                        cb,
-                        globalThis,
-                        .js_undefined,
-                        &.{
-                            jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
-                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
-                                return;
-                            },
-                        },
-                    );
-                }
-            }
         }
+        // Don't handle buffered data here - it will be returned on the next onPull
+        // This ensures proper ordering of chunks
     }
 
-    this.parent().onClose();
+    // Only close the stream if there's no buffered data left to deliver
+    if (this.buffered.items.len == 0) {
+        this.parent().onClose();
+    }
     if (this.waiting_for_onReaderDone) {
         this.waiting_for_onReaderDone = false;
         _ = this.parent().decrementCount();
@@ -659,22 +634,7 @@ pub fn setFlowing(this: *FileReader, flag: bool) void {
 
     if (flag) {
         this.reader.unpause();
-        // If we have a pending callback and buffered data, fulfill it now
-        if (this.pending.state == .pending and this.buffered.items.len > 0) {
-            var buffer_data = bun.ByteList.moveFromList(&this.buffered);
-            defer buffer_data.deinit(bun.default_allocator);
-
-            if (this.pending_view.len >= buffer_data.len) {
-                @memcpy(this.pending_view[0..buffer_data.len], buffer_data.slice());
-                this.pending.result = .{ .into_array = .{ .value = this.pending_value.get() orelse .zero, .len = buffer_data.len } };
-            } else {
-                this.pending.result = .{ .owned = buffer_data };
-            }
-
-            this.pending_value.clearWithoutDeallocation();
-            this.pending_view = &.{};
-            this.pending.run();
-        } else if (!this.reader.isDone() and !this.reader.hasPendingRead()) {
+        if (!this.reader.isDone() and !this.reader.hasPendingRead()) {
             // Kick off a new read if needed
             this.reader.read();
         }

@@ -6979,7 +6979,7 @@ it("should handle installing workspaces with more complicated globs", async () =
       .toString()
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/),
-  ).toEqual([expect.stringContaining("bun install v1."), "", "4 packages installed"]);
+  ).toEqual([expect.stringContaining("bun install v1."), "", "Checked 7 installs across 5 packages (no changes)"]);
 });
 
 it("should handle installing workspaces with multiple glob patterns", async () => {
@@ -7042,7 +7042,7 @@ it("should handle installing workspaces with multiple glob patterns", async () =
       .toString()
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/),
-  ).toEqual([expect.stringContaining("bun install v1."), "", "4 packages installed"]);
+  ).toEqual([expect.stringContaining("bun install v1."), "", "Checked 7 installs across 5 packages (no changes)"]);
 });
 
 it.todo("should handle installing workspaces with absolute glob patterns", async () => {
@@ -8435,6 +8435,9 @@ saveTextLockfile = true
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
+        dependencies: {
+          "pkg-one": "workspace:*",
+        },
       }),
     ),
     write(
@@ -8458,7 +8461,7 @@ saveTextLockfile = true
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   const out = await stdout.text();
-  expect(out).toContain("1 package installed");
+  expect(out).toContain("Checked 3 installs across 2 packages (no changes)");
 
   expect(await exited).toBe(0);
   expect(await Bun.file(join(package_dir, "node_modules", "pkg-one", "package.json")).json()).toEqual({
@@ -8466,7 +8469,27 @@ saveTextLockfile = true
     version: "1.0.0",
   });
   expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
-  expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
+  expect(await file(join(package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "foo",
+          "dependencies": {
+            "pkg-one": "workspace:*",
+          },
+        },
+        "packages/pkg1": {
+          "name": "pkg-one",
+          "version": "1.0.0",
+        },
+      },
+      "packages": {
+        "pkg-one": ["pkg-one@workspace:packages/pkg1"],
+      }
+    }
+    "
+  `);
 });
 
 test("providing invalid url in lockfile does not crash", async () => {

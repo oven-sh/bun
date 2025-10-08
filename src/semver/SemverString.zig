@@ -177,13 +177,14 @@ pub const String = extern struct {
 
         pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             for (this.str.slice(this.buf)) |c| {
-                switch (c) {
-                    '/' => try writer.writeByte('+'),
-                    '\\' => try writer.writeByte('+'),
-                    ':' => try writer.writeByte('+'),
-                    '#' => try writer.writeByte('+'),
-                    else => try writer.writeByte(c),
-                }
+                const n = switch (c) {
+                    '/' => '+',
+                    '\\' => '+',
+                    ':' => '+',
+                    '#' => '+',
+                    else => c,
+                };
+                try writer.writeByte(n);
             }
         }
     };

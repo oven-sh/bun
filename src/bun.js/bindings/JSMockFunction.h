@@ -28,7 +28,9 @@ public:
     V(Structure, mockModuleStructure)                \
     V(Structure, activeSpySetStructure)              \
     V(JSFunction, withImplementationCleanupFunction) \
-    V(JSC::Structure, mockWithImplementationCleanupDataStructure)
+    V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
+    V(JSMap, originalESModulesMap)                   \
+    V(JSMap, originalCJSModulesMap)
 
 #define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \
     LazyProperty<JSGlobalObject, T> name;

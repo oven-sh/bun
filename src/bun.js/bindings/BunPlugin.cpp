@@ -618,9 +618,18 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
+    // Store original modules before mocking for potential restoration
+    auto* originalESModulesMap = globalObject->mockModule.originalESModulesMap.get(globalObject);
+    auto* originalCJSModulesMap = globalObject->mockModule.originalCJSModulesMap.get(globalObject);
+
     JSValue entryValue = esm->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
+        // Save the original ES module entry before mocking
+        if (originalESModulesMap && !originalESModulesMap->has(globalObject, specifierString)) {
+            originalESModulesMap->set(globalObject, specifierString, entryValue);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         removeFromESM = true;
         JSObject* entry = entryValue ? entryValue.getObject() : nullptr;
         if (entry) {
@@ -671,6 +680,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
+        // Save the original CJS module entry before mocking
+        if (originalCJSModulesMap && !originalCJSModulesMap->has(globalObject, specifierString)) {
+            originalCJSModulesMap->set(globalObject, specifierString, entryValue);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
             JSValue exportsValue = getJSValue();

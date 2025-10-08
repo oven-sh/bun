@@ -27,6 +27,9 @@
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
@@ -777,6 +780,14 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(Bun::MockWithImplementationCleanupData::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
+    mock.originalESModulesMap.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSMap>::Initializer& init) {
+            init.set(JSMap::create(init.vm, init.owner->mapStructure()));
+        });
+    mock.originalCJSModulesMap.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSMap>::Initializer& init) {
+            init.set(JSMap::create(init.vm, init.owner->mapStructure()));
+        });
     return mock;
 }
 
@@ -1450,9 +1461,63 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     return JSValue::encode(callframe->thisValue());
 }
 
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    JSMock__resetSpies(jsCast<Zig::GlobalObject*>(globalObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    JSMock__resetSpies(globalObject);
+
+    // Restore mocked modules to their original state
+    auto* originalESModulesMap = globalObject->mockModule.originalESModulesMap.get(globalObject);
+    auto* originalCJSModulesMap = globalObject->mockModule.originalCJSModulesMap.get(globalObject);
+
+    // Clear virtual modules (the mocks)
+    if (globalObject->onLoadPlugins.virtualModules) {
+        globalObject->onLoadPlugins.virtualModules->clear();
+    }
+
+    // Restore original ES modules
+    if (originalESModulesMap) {
+        auto* esm = globalObject->esmRegistryMap();
+        auto* iterator = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), originalESModulesMap, IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue key, value;
+        while (iterator->nextKeyValue(globalObject, key, value)) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (key.isString()) {
+                esm->set(globalObject, key, value);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+
+        // Clear the map after restoring
+        originalESModulesMap->clear(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Restore original CJS modules
+    if (originalCJSModulesMap) {
+        auto* requireMap = globalObject->requireMap();
+        auto* iterator = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), originalCJSModulesMap, IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue key, value;
+        while (iterator->nextKeyValue(globalObject, key, value)) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (key.isString()) {
+                requireMap->set(globalObject, key, value);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+
+        // Clear the map after restoring
+        originalCJSModulesMap->clear(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     return JSValue::encode(jsUndefined());
 }
 

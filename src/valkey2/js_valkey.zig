@@ -861,6 +861,7 @@ pub const JsValkey = struct {
     pub const sinter = MetFactory.@"(...strings: string[])"("sinter", .SINTER).fxn;
     pub const sintercard = MetFactory.@"(...strings: string[])"("sintercard", .SINTERCARD).fxn;
     pub const sinterstore = MetFactory.@"(...strings: string[])"("sinterstore", .SINTERSTORE).fxn;
+    pub const sadd = MetFactory.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("sadd", .SADD).fxn;
     pub const sismember = MetFactory.@"(key: RedisKey, value: RedisValue)"("sismember", .SISMEMBER, "key", "value").fxn;
     pub const smembers = MetFactory.@"(key: RedisKey)"("smembers", .SMEMBERS, "key").fxn;
     pub const smismember = MetFactory.@"(...strings: string[])"("smismember", .SMISMEMBER).fxn;

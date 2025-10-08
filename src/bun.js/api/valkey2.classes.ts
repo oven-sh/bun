@@ -90,7 +90,6 @@ export default [
       mget: { fn: "mget" },
       mset: { fn: "mset" },
       msetnx: { fn: "msetnx" },
-      // TODO(markovejnovic): Implement these.
       //onclose: { getter: "getOnClose", setter: "setOnClose", this: true },
       //onconnect: { getter: "getOnConnect", setter: "setOnConnect", this: true },
       persist: { fn: "persist" },
@@ -100,10 +99,8 @@ export default [
       pfadd: { fn: "pfadd" },
       ping: { fn: "ping" },
       psetex: { fn: "psetex", length: 3 },
-      // TODO(markovejnovic): Implement these.
       //psubscribe: { fn: "psubscribe" },
       pttl: { fn: "pttl" },
-      // TODO(markovejnovic): Implement these.
       //publish: { fn: "publish" },
       //pubsub: { fn: "pubsub" },
       //punsubscribe: { fn: "punsubscribe" },
@@ -114,7 +111,6 @@ export default [
       rpoplpush: { fn: "rpoplpush", length: 2 },
       rpush: { fn: "rpush" },
       rpushx: { fn: "rpushx" },
-      // TODO(markovejnovic): Implement these.
       //sadd: { fn: "sadd", length: 2 },
       scan: { fn: "scan" },
       scard: { fn: "scard" },
@@ -131,29 +127,25 @@ export default [
       sinter: { fn: "sinter", length: 1 },
       sintercard: { fn: "sintercard", length: 1 },
       sinterstore: { fn: "sinterstore", length: 2 },
-      // TODO(markovejnovic): Implement these.
+      sadd: { fn: "sadd", length: 2 },
       sismember: { fn: "sismember", length: 2 },
       smembers: { fn: "smembers", length: 1 },
       smismember: { fn: "smismember", length: 2 },
       smove: { fn: "smove" },
       //spop: { fn: "spop", length: 1 },
       //spublish: { fn: "spublish" },
-      // TODO(markovejnovic): Implement these.
       //srandmember: { fn: "srandmember", length: 1 },
       srem: { fn: "srem", length: 2 },
       sscan: { fn: "sscan", length: 2 },
       strlen: { fn: "strlen" },
-      // TODO(markovejnovic): Implement these.
       //subscribe: { fn: "subscribe" },
       substr: { fn: "substr" },
       sunion: { fn: "sunion", length: 1 },
       sunionstore: { fn: "sunionstore", length: 2 },
       touch: { fn: "touch" },
-      // TODO(markovejnovic): Implement these.
       ttl: { fn: "ttl", length: 1 },
       type: { fn: "type", length: 1 },
       unlink: { fn: "unlink" },
-      // TODO(markovejnovic): Implement these.
       //unsubscribe: { fn: "unsubscribe" },
       zadd: { fn: "zadd", length: 3 },
       zcard: { fn: "zcard" },

@@ -136,6 +136,7 @@ pub const CommandDescriptor = enum {
     SISMEMBER,
     HTTL,
     SMOVE,
+    SADD,
     HSETNX,
     HPTTL,
 

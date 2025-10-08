@@ -526,31 +526,10 @@ pub fn Calc(comptime V: type) type {
                                 break :brk s;
                             } else RoundingStrategy.default();
 
-                            const OpAndFallbackCtx = struct {
-                                strategy: RoundingStrategy,
-
-                                pub fn op(this: *const @This(), a: f32, b: f32) f32 {
-                                    return round({}, a, b, this.strategy);
-                                }
-
-                                pub fn fallback(this: *const @This(), a: This, b: This) MathFunction(V) {
-                                    return MathFunction(V){
-                                        .round = .{
-                                            .strategy = this.strategy,
-                                            .value = a,
-                                            .interval = b,
-                                        },
-                                    };
-                                }
-                            };
-                            var ctx_for_op_and_fallback = OpAndFallbackCtx{
-                                .strategy = strategy,
-                            };
                             return This.parseMathFn(
                                 i,
-                                &ctx_for_op_and_fallback,
-                                OpAndFallbackCtx.op,
-                                OpAndFallbackCtx.fallback,
+                                .round_mod,
+                                strategy,
                                 self.ctx,
                                 parseIdent,
                             );
@@ -568,24 +547,11 @@ pub fn Calc(comptime V: type) type {
                         pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                             return This.parseMathFn(
                                 i,
-                                {},
-                                @This().rem,
-                                mathFunctionRem,
+                                .rem,
+                                null,
                                 self.ctx,
                                 parseIdent,
                             );
-                        }
-
-                        pub fn rem(_: void, a: f32, b: f32) f32 {
-                            return @mod(a, b);
-                        }
-                        pub fn mathFunctionRem(_: void, a: This, b: This) MathFunction(V) {
-                            return MathFunction(V){
-                                .rem = .{
-                                    .dividend = a,
-                                    .divisor = b,
-                                },
-                            };
                         }
                     };
                     var closure = Closure{
@@ -600,25 +566,11 @@ pub fn Calc(comptime V: type) type {
                         pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                             return This.parseMathFn(
                                 i,
-                                {},
-                                @This().modulo,
-                                mathFunctionMod,
+                                .mod,
+                                null,
                                 self.ctx,
                                 parseIdent,
                             );
-                        }
-
-                        pub fn modulo(_: void, a: f32, b: f32) f32 {
-                            // return ((a % b) + b) % b;
-                            return @mod((@mod(a, b) + b), b);
-                        }
-                        pub fn mathFunctionMod(_: void, a: This, b: This) MathFunction(V) {
-                            return MathFunction(V){
-                                .mod_ = .{
-                                    .dividend = a,
-                                    .divisor = b,
-                                },
-                            };
                         }
                     };
                     var closure = Closure{
@@ -842,11 +794,16 @@ pub fn Calc(comptime V: type) type {
             }.parseNestedBlockFn);
         }
 
+        pub const MathOp = enum {
+            round_mod,
+            rem,
+            mod,
+        };
+
         pub fn parseMathFn(
             input: *css.Parser,
-            ctx_for_op_and_fallback: anytype,
-            comptime op: *const fn (@TypeOf(ctx_for_op_and_fallback), f32, f32) f32,
-            comptime fallback: *const fn (@TypeOf(ctx_for_op_and_fallback), This, This) MathFunction(V),
+            math_op: MathOp,
+            strategy: ?RoundingStrategy,
             ctx_for_parse_ident: anytype,
             comptime parse_ident: *const fn (@TypeOf(ctx_for_parse_ident), []const u8) ?This,
         ) Result(This) {
@@ -860,12 +817,71 @@ pub fn Calc(comptime V: type) type {
                 .err => |e| return .{ .err = e },
             };
 
-            const val = This.applyOp(&a, &b, input.allocator(), ctx_for_op_and_fallback, op) orelse This{
-                .function = bun.create(
-                    input.allocator(),
-                    MathFunction(V),
-                    fallback(ctx_for_op_and_fallback, a, b),
-                ),
+            const val = switch (math_op) {
+                .round_mod => blk: {
+                    const strat = strategy orelse RoundingStrategy.nearest;
+                    const op_fn = struct {
+                        fn op(s: RoundingStrategy, x: f32, y: f32) f32 {
+                            return switch (s) {
+                                .nearest => @round(x / y) * y,
+                                .down => @floor(x / y) * y,
+                                .up => @ceil(x / y) * y,
+                                .@"to-zero" => @trunc(x / y) * y,
+                            };
+                        }
+                    }.op;
+                    break :blk This.applyOp(&a, &b, input.allocator(), strat, op_fn) orelse This{
+                        .function = bun.create(
+                            input.allocator(),
+                            MathFunction(V),
+                            MathFunction(V){
+                                .round = .{
+                                    .strategy = strat,
+                                    .value = a,
+                                    .interval = b,
+                                },
+                            },
+                        ),
+                    };
+                },
+                .rem => blk: {
+                    const op_fn = struct {
+                        fn op(_: void, x: f32, y: f32) f32 {
+                            return @mod(x, y);
+                        }
+                    }.op;
+                    break :blk This.applyOp(&a, &b, input.allocator(), {}, op_fn) orelse This{
+                        .function = bun.create(
+                            input.allocator(),
+                            MathFunction(V),
+                            MathFunction(V){
+                                .rem = .{
+                                    .dividend = a,
+                                    .divisor = b,
+                                },
+                            },
+                        ),
+                    };
+                },
+                .mod => blk: {
+                    const op_fn = struct {
+                        fn op(_: void, x: f32, y: f32) f32 {
+                            return @mod((@mod(x, y) + y), y);
+                        }
+                    }.op;
+                    break :blk This.applyOp(&a, &b, input.allocator(), {}, op_fn) orelse This{
+                        .function = bun.create(
+                            input.allocator(),
+                            MathFunction(V),
+                            MathFunction(V){
+                                .mod_ = .{
+                                    .dividend = a,
+                                    .divisor = b,
+                                },
+                            },
+                        ),
+                    };
+                },
             };
 
             return .{ .result = val };

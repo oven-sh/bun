@@ -366,11 +366,12 @@ it("should link dependency without crashing", async () => {
       name: link_name,
       version: "0.0.1",
       bin: {
-        [link_name]: `${link_name}.js`,
+        [link_name]: `${link_name}.py`,
       },
     }),
   );
-  await writeFile(join(link_dir, `${link_name}.js`), "console.log(42);");
+  // Use a Python script with \r\n shebang to test normalization
+  await writeFile(join(link_dir, `${link_name}.py`), "#!/usr/bin/env python\r\nprint('hello from python')");
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -413,10 +414,14 @@ it("should link dependency without crashing", async () => {
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", link_name].sort());
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([link_name]);
-  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.js`));
+  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.py`));
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
-    ["package.json", `${link_name}.js`].sort(),
+    ["package.json", `${link_name}.py`].sort(),
   );
+  // Verify that the shebang was normalized from \r\n to \n
+  const binContent = await file(join(package_dir, "node_modules", link_name, `${link_name}.py`)).text();
+  expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
+  expect(binContent).not.toContain("\r\n");
   await access(join(package_dir, "bun.lockb"));
 
   const {

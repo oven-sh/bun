@@ -596,25 +596,76 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
-                // any error here is ignored
-                const bin = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
-                defer bin.close();
-
-                var shebang_buf: [1024]u8 = undefined;
-                const read = bin.read(&shebang_buf).unwrap() catch return;
-                const chunk = shebang_buf[0..read];
-                // 123 4 5
-                // #!a\r\n
-                if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
-
-                if (strings.indexOfChar(chunk, '\n')) |newline| {
-                    if (newline > 0 and chunk[newline - 1] == '\r') {
-                        const pos = newline - 1;
-                        bin.handle.stdFile().seekTo(pos) catch return;
-                        bin.writeAll("\n").unwrap() catch return;
-                    }
-                }
+                tryNormalizeShebang(abs_target);
             }
+        }
+
+        fn tryNormalizeShebang(abs_target: [:0]const u8) void {
+            var shebang_buf: [2048]u8 = undefined;
+
+            // any error here is ignored
+            const chunk = brk: {
+                const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
+                defer bin_for_reading.close();
+
+                const read = bin_for_reading.read(&shebang_buf).unwrap() catch return;
+                break :brk shebang_buf[0..read];
+            };
+
+            // 123 4 5
+            // #!a\r\n
+            if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+
+            const newline = strings.indexOfChar(chunk, '\n') orelse return;
+            const chunk_without_newline = chunk[0..newline];
+            if (!(chunk_without_newline.len > 0 and chunk_without_newline[chunk_without_newline.len - 1] == '\r')) {
+                // Nothing to do!
+                return;
+            }
+            log("Normalizing shebang for {s}", .{abs_target});
+
+            // We have to do an atomic replace here, use a randomly generated
+            // filename in the same folder, read the entire original file
+            // contents using bun.sys.File.readFrom, then write the temporary file, then
+            // overwite the old one with the new one via bun.sys.renameat. And
+            // always unlink the old one. If it fails for any reason then exit
+            // early.
+
+            var tmpname_buf: [1024]u8 = undefined;
+            const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return);
+
+            const dir_path = std.fs.path.dirname(abs_target) orelse return;
+
+            // Read the entire original file
+            const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                .result => |contents| contents,
+                .err => return,
+            };
+            defer bun.default_allocator.free(original_contents);
+
+            // Create temporary file path
+            var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const tmppath = std.fmt.bufPrintZ(&tmppath_buf, "{s}/{s}", .{ dir_path, tmpname }) catch return;
+
+            // Write to temporary file with corrected content
+            const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755).unwrap() catch return;
+            defer {
+                tmpfile.close();
+                // Clean up temp file on any error
+                _ = bun.sys.unlinkat(.cwd(), tmppath);
+            }
+
+            // Write the corrected shebang (without \r)
+            tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
+            tmpfile.writeAll("\n").unwrap() catch return;
+
+            // Write the rest of the file (after the newline)
+            if (original_contents.len > newline + 1) {
+                tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
+            }
+
+            // Atomic replace: rename temp file to original
+            _ = bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target).unwrap() catch return;
         }
 
         fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
@@ -1003,6 +1054,7 @@ pub const Bin = extern struct {
     };
 };
 
+const log = bun.Output.scoped(.BinLinker, .hidden);
 const string = []const u8;
 const stringZ = [:0]const u8;
 

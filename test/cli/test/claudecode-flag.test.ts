@@ -1,6 +1,13 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+
+let testEnv: NodeJS.Dict<string>;
+
+beforeAll(() => {
+  testEnv = { ...bunEnv };
+  delete testEnv.AGENTS;
+});
 
 test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
   const dir = tempDirWithFiles("claudecode-test-quiet", {
@@ -25,7 +32,7 @@ test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "test2.test.js"],
-    env: { ...bunEnv, CLAUDECODE: "1" },
+    env: { ...testEnv, CLAUDECODE: "1" },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -63,7 +70,7 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   // Run with CLAUDECODE=0 (normal output)
   const result1 = spawnSync({
     cmd: [bunExe(), "test", "test3.test.js"],
-    env: { ...bunEnv, CLAUDECODE: "0" },
+    env: { ...testEnv, CLAUDECODE: "0" },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -72,7 +79,7 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   // Run with CLAUDECODE=1 (quiet output)
   const result2 = spawnSync({
     cmd: [bunExe(), "test", "test3.test.js"],
-    env: { ...bunEnv, CLAUDECODE: "1" },
+    env: { ...testEnv, CLAUDECODE: "1" },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -116,7 +123,7 @@ test("CLAUDECODE flag handles no test files found", () => {
   // Run with CLAUDECODE=0 (normal output) - no test files
   const result1 = spawnSync({
     cmd: [bunExe(), "test"],
-    env: { ...bunEnv, CLAUDECODE: "0" },
+    env: { ...testEnv, CLAUDECODE: "0" },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -125,7 +132,7 @@ test("CLAUDECODE flag handles no test files found", () => {
   // Run with CLAUDECODE=1 (quiet output) - no test files
   const result2 = spawnSync({
     cmd: [bunExe(), "test"],
-    env: { ...bunEnv, CLAUDECODE: "1" },
+    env: { ...testEnv, CLAUDECODE: "1" },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",

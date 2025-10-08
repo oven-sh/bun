@@ -4,6 +4,7 @@ export default [
   define({
     name: "Request",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     klass: {},
@@ -12,6 +13,7 @@ export default [
     configurable: false,
     overridesToJS: true,
     memoryCost: true,
+    values: ["stream"],
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },
@@ -68,6 +70,7 @@ export default [
   define({
     name: "Response",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     JSType: "0b11101110",
@@ -85,6 +88,7 @@ export default [
         fn: "constructError",
       },
     },
+    values: ["stream"],
     proto: {
       url: {
         getter: "getURL",

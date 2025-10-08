@@ -6,7 +6,7 @@ test("20092", async () => {
     cmd: [bunExe(), "test", import.meta.dir + "/20092.fixture.ts"],
     stdout: "pipe",
     stderr: "pipe",
-    env: bunEnv,
+    env: { ...bunEnv, CI: "false" }, // tests '.only()'
   });
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();

@@ -6,7 +6,6 @@ pub const CommandDescriptor = enum {
     BLMOVE,
     BLMPOP,
     HINCRBY,
-    SMOV,
     BLPOP,
     BRPOP,
     BZMPOP,
@@ -137,6 +136,8 @@ pub const CommandDescriptor = enum {
     HTTL,
     SMOVE,
     SADD,
+    SPOP,
+    SRANDMEMBER,
     HSETNX,
     HPTTL,
 

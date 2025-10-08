@@ -272,9 +272,9 @@ test("--only flag with multiple files", async () => {
     cmd: [
       bunExe(),
       "test",
-      import.meta.dir + "/only-flag-fixtures/file0.test.ts",
-      import.meta.dir + "/only-flag-fixtures/file1.test.ts",
-      import.meta.dir + "/only-flag-fixtures/file2.test.ts",
+      import.meta.dir + "/only-flag-fixtures/file0.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file1.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file2.fixture.ts",
       "--only",
     ],
     stdout: "pipe",

@@ -3465,19 +3465,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
-        init.set(JSC::JSFloat64Array::create(init.owner, init.owner->m_typedArrayFloat64.get(init.owner), 36));
-    });
-    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
-        init.set(JSC::JSBigInt64Array::create(init.owner, init.owner->m_typedArrayBigInt64.get(init.owner), 36));
-    });
-    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
-        init.set(JSC::JSFloat64Array::create(init.owner, init.owner->m_typedArrayFloat64.get(init.owner), 7));
-    });
-    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
-        init.set(JSC::JSBigInt64Array::create(init.owner, init.owner->m_typedArrayBigInt64.get(init.owner), 7));
-    });
-
     // Initialize LazyProperties for stdin/stderr/stdout
     m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
         init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());

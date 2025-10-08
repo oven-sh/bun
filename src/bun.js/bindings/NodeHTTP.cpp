@@ -882,13 +882,12 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         size++;
     }
 
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
-    RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
 
-    args.append(headersObject);
+    HashMap<RefPtr<UniquedStringImpl>, JSValue, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> headersMap;
+    headersMap.reserveInitialCapacity(std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -920,21 +919,37 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, );
                 setCookiesHeaderString = nameString;
-                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
+                headersMap.set(nameIdentifier.impl(), setCookiesHeaderArray);
                 RETURN_IF_EXCEPTION(scope, void());
             }
             arrayValues.append(setCookiesHeaderString);
             arrayValues.append(jsValue);
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
-
         } else {
-            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
+            if (auto prev = headersMap.get(nameIdentifier.impl())) {
+                if (WTF::equal(nameIdentifier.impl(), "host"_s)) {
+                    continue;
+                }
+                headersMap.set(nameIdentifier.impl(), JSValue(jsString(vm, makeString(prev.getString(globalObject), ", "_s, jsValue))));
+                arrayValues.append(nameString);
+                arrayValues.append(jsValue);
+                continue;
+            }
+            headersMap.set(nameIdentifier.impl(), JSValue(jsValue));
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
         }
+    }
+    {
+        JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+        RETURN_IF_EXCEPTION(scope, );
+        for (auto& entry : headersMap) {
+            Identifier identifier = Identifier::fromUid(vm, entry.key.get());
+            headersObject->putDirectMayBeIndex(globalObject, identifier, entry.value);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        args.append(headersObject);
     }
 
     JSC::JSArray* array;

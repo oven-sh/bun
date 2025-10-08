@@ -254,8 +254,6 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
 
   const name = this.getName(options);
   options._agentKey = name;
-
-  $debug("createConnection", name, options);
   options.encoding = null;
 
   const oncreate = once((err, s) => {

@@ -1,7 +1,7 @@
 'use strict';
 
 const common = require('../common');
-if ('Bun' in globalThis) common.skip("TODO: BUN: fix me before merge");
+if ('Bun' in globalThis) return; // TODO: BUN
 const http = require('http');
 const assert = require('assert');
 

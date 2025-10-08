@@ -25,7 +25,6 @@
 // that support it, and dropping duplicates for other fields.
 
 const common = require('../common');
-if ('Bun' in globalThis) common.skip("TODO: BUN: fix me before merge");
 const assert = require('assert');
 const http = require('http');
 

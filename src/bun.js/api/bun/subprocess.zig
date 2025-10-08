@@ -1619,18 +1619,30 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .buffer) {
-        subprocess.stdin.buffer.start().assert();
+        if (subprocess.stdin.buffer.start().asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
     }
 
     if (subprocess.stdout == .pipe) {
-        subprocess.stdout.pipe.start(subprocess, loop).assert();
+        if (subprocess.stdout.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
             subprocess.stdout.pipe.readAll();
         }
     }
 
     if (subprocess.stderr == .pipe) {
-        subprocess.stderr.pipe.start(subprocess, loop).assert();
+        if (subprocess.stderr.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
 
         if ((is_sync or !lazy) and subprocess.stderr == .pipe) {
             subprocess.stderr.pipe.readAll();

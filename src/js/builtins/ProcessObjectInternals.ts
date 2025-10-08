@@ -253,10 +253,11 @@ export function getStdinStream(
 
   stream.on("pause", () => {
     process.nextTick(() => {
+      // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
+        disown();
       }
-      disown();
     });
   });
 

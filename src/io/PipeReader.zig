@@ -843,13 +843,19 @@ pub const WindowsBufferedReader = struct {
 
     fn _onReadChunk(this: *WindowsBufferedReader, buf: []u8, hasMore: ReadState) bool {
         if (this.maxbuf) |m| m.onReadBytes(buf.len);
-        this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
 
-        const onReadChunkFn = this.vtable.onReadChunk orelse return true;
-        return onReadChunkFn(this.parent, buf, hasMore);
+        const onReadChunkFn = this.vtable.onReadChunk orelse {
+            this.flags.has_inflight_read = false;
+            return true;
+        };
+        const result = onReadChunkFn(this.parent, buf, hasMore);
+        // Clear has_inflight_read after the callback completes to prevent
+        // libuv from starting a new read while we're still processing data
+        this.flags.has_inflight_read = false;
+        return result;
     }
 
     fn finish(this: *WindowsBufferedReader) void {
@@ -947,7 +953,10 @@ pub const WindowsBufferedReader = struct {
         switch (nread_int) {
             0 => {
                 // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                return this.onRead(.{ .result = 0 }, "", .drained);
+                // With libuv 1.51.0+, calling onRead(.drained) here causes a race condition
+                // where subsequent reads return truncated data (see logs showing 6024 instead
+                // of 74468 bytes). Just ignore 0-byte reads and let libuv continue.
+                return;
             },
             uv.UV_EOF => {
                 _ = this.stopReading();

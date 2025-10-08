@@ -35,6 +35,51 @@ describe("bun", () => {
     }
   });
 
+  describe("--no-color flag", () => {
+    test("--no-color overrides FORCE_COLOR environment variable", () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "--no-color", "--help"],
+        env: {
+          ...bunEnv,
+          NO_COLOR: undefined,
+          FORCE_COLOR: "1",
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stdout.toString()).not.toMatch(/\u001b\[\d+m/);
+      expect(stdout.toString()).toContain("Usage: bun <command>");
+    });
+
+    test("--no-color can be placed before subcommands", () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "--no-color", "test", "--help"],
+        env: {
+          ...bunEnv,
+          NO_COLOR: undefined,
+          FORCE_COLOR: "1",
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stdout.toString()).not.toMatch(/\u001b\[\d+m/);
+      expect(stdout.toString()).toContain("Usage: bun test");
+    });
+
+    test("--no-color respects NO_COLOR when both are set", () => {
+      const { stdout } = spawnSync({
+        cmd: [bunExe(), "--no-color", "--help"],
+        env: {
+          ...bunEnv,
+          NO_COLOR: "1",
+          FORCE_COLOR: undefined,
+        },
+      });
+
+      expect(stdout.toString()).not.toMatch(/\u001b\[\d+m/);
+    });
+  });
+
   describe("revision", () => {
     test("revision generates version numbers correctly", () => {
       var { stdout, exitCode } = Bun.spawnSync({

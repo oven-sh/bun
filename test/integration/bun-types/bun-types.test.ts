@@ -512,13 +512,13 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
-      // This is expected because we, of course, can't check that our tsx file is passing
-      // when tsx is turned off...
-      {
-        "code": 17004,
-        "line": "[slug].tsx:17:10",
-        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      },
+      // // This is expected because we, of course, can't check that our tsx file is passing
+      // // when tsx is turned off...
+      // {
+      //   "code": 17004,
+      //   "line": "[slug].tsx:17:10",
+      //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      // },
     ]);
   });
 

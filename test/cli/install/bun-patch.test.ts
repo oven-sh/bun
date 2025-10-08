@@ -18,13 +18,9 @@ describe("bun patch <pkg>", async () => {
      * so it should be hoisted to the root node_modules
      */
     describe("inside workspace with hoisting", async () => {
-      // With isolated installs (default for workspaces), packages are in .bun directory
       const args = [
-        [
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-        ],
-        ["@types/ws@8.5.4", "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws"],
+        ["node_modules/@types/ws", "node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
@@ -97,13 +93,9 @@ describe("bun patch <pkg>", async () => {
     });
 
     describe("inside workspace with multiple workspace packages with same dependency", async () => {
-      // In isolated mode, packages go to .bun directory even when in workspaces
       const args = [
-        [
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-        ],
-        ["@types/ws@8.5.4", "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws"],
+        ["node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/@repo/eslint-config/node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
@@ -179,13 +171,9 @@ describe("bun patch <pkg>", async () => {
     });
 
     describe("inside workspace package", async () => {
-      // In isolated mode, packages go to .bun directory
       const args = [
-        [
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-        ],
-        ["@types/ws@8.5.4", "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws"],
+        ["node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/@repo/eslint-config/node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
@@ -258,26 +246,20 @@ describe("bun patch <pkg>", async () => {
     });
 
     describe("inside ROOT workspace package", async () => {
-      // In isolated mode, all packages go to .bun directory
       const args = [
         [
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
+          "packages/eslint-config/node_modules/@types/ws",
+          "packages/eslint-config/node_modules/@types/ws",
           "@types/ws@8.5.4",
           "patches/@types%2Fws@8.5.4.patch",
         ],
         [
           "@types/ws@8.5.4",
-          "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws",
+          "node_modules/@repo/eslint-config/node_modules/@types/ws",
           "@types/ws@8.5.4",
           "patches/@types%2Fws@8.5.4.patch",
         ],
-        [
-          "@types/ws@7.4.7",
-          "node_modules/.bun/@types+ws@7.4.7/node_modules/@types/ws",
-          "@types/ws@7.4.7",
-          "patches/@types%2Fws@7.4.7.patch",
-        ],
+        ["@types/ws@7.4.7", "node_modules/@types/ws", "@types/ws@7.4.7", "patches/@types%2Fws@7.4.7.patch"],
       ];
       for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {

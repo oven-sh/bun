@@ -20,7 +20,8 @@ test("stdin pause should stop reading so child can read from stdin", async () =>
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const lfilter = (l: string): boolean => {
-    if (l === "%ready%") return false;
+    if (!l) return false;
+    if (l.startsWith("%ready%")) return false;
     if (l.startsWith("PYTHON:")) return false;
     return true;
   };

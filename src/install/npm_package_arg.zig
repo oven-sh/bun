@@ -231,9 +231,87 @@ pub const NpaSpec = union(enum) {
         return pkg_name[0..slash_idx];
     }
 
+    /// Convert this NpaSpec to a JavaScript object
+    pub fn toJS(self: *const Self, allocator: std.mem.Allocator, go: *jsc.JSGlobalObject) jsc.JSValue {
+        var object = jsc.JSValue.createEmptyObject(go, 8);
+
+        object.put(go, "raw", bun.String.fromBytes(self.raw()).toJS(go));
+        object.put(go, "rawSpec", bun.String.fromBytes(self.rawSpec()).toJS(go));
+        object.put(go, "name", if (self.name()) |n| bun.String.fromBytes(n).toJS(go) else .null);
+        object.put(go, "type", bun.String.fromBytes(self.type()).toJS(go));
+        // Alias types should have fetchSpec as null, not undefined
+        // Git shortcuts also have null fetchSpec
+        const fetch_spec_value = if (self.* == .alias)
+            .null
+        else if (self.fetchSpec()) |f|
+            bun.String.fromBytes(f).toJS(go)
+        else
+            .null;
+        object.put(go, "fetchSpec", fetch_spec_value);
+        object.put(
+            go,
+            "saveSpec",
+            if (self.saveSpec()) |s| bun.String.fromBytes(s).toJS(go) else .null,
+        );
+
+        const escaped_name = bun.handleOom(self.escapedName(allocator));
+        defer if (escaped_name) |e| allocator.free(e);
+        object.put(
+            go,
+            "escapedName",
+            if (escaped_name) |n| bun.String.fromBytes(n).toJS(go) else .null,
+        );
+
+        object.put(
+            go,
+            "scope",
+            if (self.scope()) |s| bun.String.fromBytes(s).toJS(go) else .null,
+        );
+
+        // Add gitCommittish for git types
+        if (self.* == .git) {
+            object.put(
+                go,
+                "gitCommittish",
+                if (self.git.git_committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
+            );
+            object.put(
+                go,
+                "gitRange",
+                if (self.git.git_range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
+            );
+            object.put(
+                go,
+                "gitSubdir",
+                if (self.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
+            );
+
+            // Serialize hosted field
+            if (self.git.hosted) |*hosted| {
+                object.put(go, "hosted", hosted.toJS(go));
+            } else {
+                object.put(go, "hosted", .null);
+            }
+        }
+
+        if (self.* == .alias) {
+            const sub_spec_js = self.alias.sub_spec.toJS(allocator, go);
+            object.put(go, "subSpec", sub_spec_js);
+        }
+
+        // Add registry field for registry types
+        if (self.isRegistry()) {
+            object.put(go, "registry", .true);
+        }
+
+        return object;
+    }
+
     pub fn fromDepStr(npa_str: []const u8) Self {
         _ = npa_str;
     }
+
+    const jsc = bun.jsc;
 };
 
 pub const NpaError = error{
@@ -269,7 +347,7 @@ pub fn npa(allocator: std.mem.Allocator, raw_spec: []const u8, where: []const u8
         spec = try std.fmt.allocPrint(allocator, "git+ssh://{s}", .{raw_spec});
         spec_allocated = spec;
     } else if (!bun.strings.hasPrefixComptime(name_part, "@") and
-        (hasSlashes(name_part) or heuristicIsFiletype(name_part)))
+        (hasSlashes(name_part) or inodeType(name_part) == .file))
     {
         spec = raw_spec;
     } else if (name_ends_at) |idx| {
@@ -328,7 +406,7 @@ fn resolve(
     // These are now best-guesses.
     // TODO(markovejnovic): This feels like an odd heuristic but it's what npm-package-arg does.
     // Notice how we don't use the isFileSpec function here. This matches npa.
-    if (hasSlashes(spec) or heuristicIsFiletype(spec)) {
+    if (hasSlashes(spec) or inodeType(spec) == .file) {
         return fromFile(allocator, name, spec, where, raw);
     }
 
@@ -1419,10 +1497,6 @@ fn hasSlashes(spec_str: []const u8) bool {
     return bun.path.hasPathSlashes(spec_str);
 }
 
-fn heuristicIsFiletype(spec_str: []const u8) bool {
-    return inodeType(spec_str) == .file;
-}
-
 pub const TestingAPIs = struct {
     /// Shares semantics with npm-package-arg's default export.
     pub fn jsNpa(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1464,7 +1538,7 @@ pub const TestingAPIs = struct {
         };
         defer resolved.deinit();
 
-        return npaSpecToJs(allocator, go, &resolved);
+        return resolved.toJS(allocator, go);
     }
 
     /// Shares semantics with npm-package-arg's resolve function.
@@ -1519,86 +1593,7 @@ pub const TestingAPIs = struct {
         };
         defer resolved.deinit();
 
-        return npaSpecToJs(allocator, go, &resolved);
-    }
-
-    fn npaSpecToJs(
-        allocator: std.mem.Allocator,
-        go: *jsc.JSGlobalObject,
-        spec: *const NpaSpec,
-    ) jsc.JSValue {
-        var object = jsc.JSValue.createEmptyObject(go, 8);
-
-        object.put(go, "raw", bun.String.fromBytes(spec.raw()).toJS(go));
-        object.put(go, "rawSpec", bun.String.fromBytes(spec.rawSpec()).toJS(go));
-        object.put(go, "name", if (spec.name()) |n| bun.String.fromBytes(n).toJS(go) else .null);
-        object.put(go, "type", bun.String.fromBytes(spec.type()).toJS(go));
-        // Alias types should have fetchSpec as null, not undefined
-        // Git shortcuts also have null fetchSpec
-        const fetch_spec_value = if (spec.* == .alias)
-            .null
-        else if (spec.fetchSpec()) |f|
-            bun.String.fromBytes(f).toJS(go)
-        else
-            .null;
-        object.put(go, "fetchSpec", fetch_spec_value);
-        object.put(
-            go,
-            "saveSpec",
-            if (spec.saveSpec()) |s| bun.String.fromBytes(s).toJS(go) else .null,
-        );
-
-        const escaped_name = bun.handleOom(spec.escapedName(allocator));
-        defer if (escaped_name) |e| allocator.free(e);
-        object.put(
-            go,
-            "escapedName",
-            if (escaped_name) |n| bun.String.fromBytes(n).toJS(go) else .null,
-        );
-
-        object.put(
-            go,
-            "scope",
-            if (spec.scope()) |s| bun.String.fromBytes(s).toJS(go) else .null,
-        );
-
-        // Add gitCommittish for git types
-        if (spec.* == .git) {
-            object.put(
-                go,
-                "gitCommittish",
-                if (spec.git.git_committish) |gc| bun.String.fromBytes(gc).toJS(go) else .null,
-            );
-            object.put(
-                go,
-                "gitRange",
-                if (spec.git.git_range) |gr| bun.String.fromBytes(gr).toJS(go) else .null,
-            );
-            object.put(
-                go,
-                "gitSubdir",
-                if (spec.git.git_subdir) |gs| bun.String.fromBytes(gs).toJS(go) else .null,
-            );
-
-            // Serialize hosted field
-            if (spec.git.hosted) |*hosted| {
-                object.put(go, "hosted", hosted.toJS(go));
-            } else {
-                object.put(go, "hosted", .null);
-            }
-        }
-
-        if (spec.* == .alias) {
-            const sub_spec_js = npaSpecToJs(allocator, go, spec.alias.sub_spec);
-            object.put(go, "subSpec", sub_spec_js);
-        }
-
-        // Add registry field for registry types
-        if (spec.isRegistry()) {
-            object.put(go, "registry", .true);
-        }
-
-        return object;
+        return resolved.toJS(allocator, go);
     }
 
     const jsc = bun.jsc;

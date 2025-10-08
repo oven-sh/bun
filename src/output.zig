@@ -463,7 +463,9 @@ pub fn isAIAgent() bool {
         var value = false;
         fn evaluate() bool {
             if (bun.getenvZ("AGENT")) |env| {
-                return strings.eqlComptime(env, "1");
+                if (strings.eqlComptime(env, "1")) {
+                    return true;
+                }
             }
 
             if (isVerbose()) {

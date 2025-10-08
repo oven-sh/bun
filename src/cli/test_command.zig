@@ -62,6 +62,11 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
 }
 
 pub fn writeTestStatusLine(comptime status: bun_test.Execution.Result, writer: anytype) void {
+    // When using AI agents, only print failures
+    if (Output.isAIAgent() and comptime status.basicResult() != .fail) {
+        return;
+    }
+
     switch (Output.enable_ansi_colors_stderr) {
         inline else => |enable_ansi_colors_stderr| writer.print(comptime fmtStatusTextLine(status, enable_ansi_colors_stderr), .{}) catch unreachable,
     }

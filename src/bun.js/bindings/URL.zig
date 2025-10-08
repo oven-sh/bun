@@ -24,11 +24,9 @@ pub const URL = opaque {
         return URL__getHref(&input);
     }
 
-    pub fn join(base: bun.String, relative: bun.String) String {
+    pub fn join(base: *bun.String, relative: *bun.String) String {
         jsc.markBinding(@src());
-        var base_str = base;
-        var relative_str = relative;
-        return URL__getHrefJoin(&base_str, &relative_str);
+        return URL__getHrefJoin(base, relative);
     }
 
     pub fn fileURLFromString(str: bun.String) String {

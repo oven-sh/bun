@@ -983,16 +983,16 @@ pub const PublishCommand = struct {
             registry_url.setProtocol(bun.String.static("http"));
         }
 
-        const registry_url_str = registry_url.href();
+        var registry_url_str = registry_url.href();
         defer registry_url_str.deref();
 
-        const tarball_path_str = bun.String.createFormat("{s}/-/{}", .{
+        var tarball_path_str = bun.String.createFormat("{s}/-/{}", .{
             package_name,
             Pack.fmtTarballFilename(package_name, package_version, .raw),
         }) catch bun.outOfMemory();
         defer tarball_path_str.deref();
 
-        const tarball_url = jsc.URL.join(registry_url_str, tarball_path_str);
+        const tarball_url = jsc.URL.join(&registry_url_str, &tarball_path_str);
         defer tarball_url.deref();
 
         const tarball_url_slice = tarball_url.toSlice(bun.default_allocator);

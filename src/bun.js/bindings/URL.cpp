@@ -76,8 +76,8 @@ extern "C" BunString URL__pathFromFileURL(BunString* _Nonnull input)
 
 extern "C" BunString URL__getHrefJoin(BunString* _Nonnull baseStr, BunString* _Nonnull relativeStr)
 {
-    auto base = baseStr->toWTFString();
-    auto relative = relativeStr->toWTFString();
+    auto base = baseStr->transferToWTFString();
+    auto relative = relativeStr->transferToWTFString();
     auto url = WTF::URL(WTF::URL(base), relative);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };

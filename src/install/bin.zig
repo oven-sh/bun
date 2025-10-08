@@ -645,15 +645,11 @@ pub const Bin = extern struct {
 
             // Create temporary file path
             var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const tmppath = std.fmt.bufPrintZ(&tmppath_buf, "{s}/{s}", .{ dir_path, tmpname }) catch return;
+            const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
 
             // Write to temporary file with corrected content
             const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755).unwrap() catch return;
-            defer {
-                tmpfile.close();
-                // Clean up temp file on any error
-                _ = bun.sys.unlinkat(.cwd(), tmppath);
-            }
+            errdefer _ = bun.sys.unlinkat(.cwd(), tmppath);
 
             // Write the corrected shebang (without \r)
             tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
@@ -664,8 +660,15 @@ pub const Bin = extern struct {
                 tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
             }
 
+            // Close the file before rename
+            tmpfile.close();
+
             // Atomic replace: rename temp file to original
-            _ = bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target).unwrap() catch return;
+            _ = bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target).unwrap() catch {
+                // Clean up temp file if rename fails
+                _ = bun.sys.unlinkat(.cwd(), tmppath);
+                return;
+            };
         }
 
         fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {

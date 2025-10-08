@@ -608,7 +608,8 @@ pub const Bin = extern struct {
                 const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
                 defer bin_for_reading.close();
 
-                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
+                // Use read() not readAll() - readAll would fail with StreamTooLong for files >2KB
+                const read = bin_for_reading.read(&shebang_buf).unwrap() catch return;
                 break :brk shebang_buf[0..read];
             };
 
@@ -665,6 +666,13 @@ pub const Bin = extern struct {
                 if (original_contents.len > newline + 1) {
                     tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
                 }
+
+                // Reapply original permissions (umask was applied during openat, so we need to restore)
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o7777)), 0).unwrap() catch {
+                    _ = bun.sys.unlinkat(.cwd(), tmppath);
+                    return;
+                };
+
                 break :brk;
             }
 

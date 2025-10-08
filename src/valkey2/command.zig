@@ -17,6 +17,7 @@ pub const CommandDescriptor = enum {
     DEL,
     DUMP,
     EXISTS,
+    EXPIRE,
     EXPIREAT,
     EXPIRETIME,
     GET,

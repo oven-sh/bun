@@ -32,7 +32,7 @@ export default [
       dump: { fn: "dump" },
       //duplicate: { fn: "duplicate" },
       exists: { fn: "exists", length: 1 },
-      //expire: { fn: "expire", length: 2 },
+      expire: { fn: "expire", length: 2 },
       expireat: { fn: "expireat", length: 2 },
       expiretime: { fn: "expiretime" },
       get: { fn: "get", length: 1 },

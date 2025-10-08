@@ -761,6 +761,41 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
+    pub fn expire(
+        this: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        const key = (try jsValueToJsArgument(go, cf.argument(0))) orelse {
+            return go.throwInvalidArgumentType("expire", "key", "string or buffer");
+        };
+        defer key.deinit();
+
+        // Validate the seconds argument as an integer in valid range
+        _ = try go.validateIntegerRange(cf.argument(1), i32, 0, .{
+            .min = 0,
+            .max = 2147483647,
+            .field_name = "seconds",
+        });
+
+        // Convert to string argument (numbers get auto-converted by jsValueToJsArgument)
+        const seconds_arg = (try jsValueToJsArgument(go, cf.argument(1))) orelse {
+            return go.throwInvalidArgumentType("expire", "seconds", "number");
+        };
+        defer seconds_arg.deinit();
+
+        // Use the same pattern as MetFactory: call this.request()
+        const promise = this.request(
+            go,
+            cf.this(),
+            Command.initById(.EXPIRE, .{ .args = &.{ key, seconds_arg } }),
+            .{},
+        ) catch |err| {
+            return protocol.valkeyErrorToJS(go, "Failed to send EXPIRE command", err);
+        };
+        return promise.toJS();
+    }
+
     pub const getBuffer = MetFactory.@"(key: RedisKey, options)"("getBuffer", .GET, "key", .{ .return_as_buffer = true }).fxn;
     pub const @"type" = MetFactory.@"(key: RedisKey)"("type", .TYPE, "key").fxn;
     pub const append = MetFactory.@"(key: RedisKey, value: RedisValue)"("append", .APPEND, "key", "value").fxn;

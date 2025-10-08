@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe } from "harness";
 
 test("09041", async () => {
   let { exited, stderr, stdout } = Bun.spawn({

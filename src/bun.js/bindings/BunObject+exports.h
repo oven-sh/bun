@@ -68,6 +68,7 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
+    macro(tarball) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

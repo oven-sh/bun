@@ -4020,6 +4020,92 @@ declare module "bun" {
    */
   function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
 
+  /**
+   * Options for creating a tar archive
+   */
+  interface TarballOptions {
+    /**
+     * Files to include in the archive.
+     *
+     * Keys are the paths inside the tar archive.
+     * Values can be:
+     * - `string`: path to a file on the filesystem
+     * - `Blob`: in-memory file content
+     *
+     * @example
+     * ```ts
+     * {
+     *   "README.md": "./README.md",                    // from filesystem
+     *   "data.json": new Blob([JSON.stringify(data)])  // from memory
+     * }
+     * ```
+     */
+    files: Record<string, string | Blob>;
+
+    /**
+     * Optional destination for the archive.
+     *
+     * - If omitted: returns the archive as a `Blob`
+     * - If string path: writes to file and returns byte count
+     *
+     * @example
+     * ```ts
+     * await Bun.tarball({ files: {...} })                    // returns Blob
+     * await Bun.tarball({ files: {...}, destination: "out.tar" })  // returns number
+     * ```
+     */
+    destination?: string;
+
+    /**
+     * Optional compression.
+     *
+     * - `"gzip"`: use gzip with default level (6)
+     * - `{ type: "gzip", level: 0-9 }`: use gzip with specific compression level
+     *   - 0 = no compression (fastest)
+     *   - 9 = maximum compression (slowest)
+     *
+     * @example
+     * ```ts
+     * await Bun.tarball({ files: {...}, compress: "gzip" })
+     * await Bun.tarball({ files: {...}, compress: { type: "gzip", level: 9 } })
+     * ```
+     */
+    compress?: "gzip" | { type: "gzip"; level?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 };
+  }
+
+  /**
+   * Create a tar archive from files.
+   *
+   * When `destination` is specified, writes to a file and returns the number of bytes written.
+   * When `destination` is omitted, returns the archive as a `Blob`.
+   *
+   * @example
+   * ```ts
+   * // Create tar.gz in memory
+   * const blob = await Bun.tarball({
+   *   files: {
+   *     "README.md": "./README.md",
+   *     "package.json": "./package.json",
+   *     "src/index.ts": "./src/index.ts",
+   *   },
+   *   compress: "gzip",
+   * });
+   * await Bun.write("archive.tar.gz", blob);
+   *
+   * // Write directly to file
+   * const bytes = await Bun.tarball({
+   *   files: {
+   *     "data.json": new Blob([JSON.stringify({ foo: "bar" })]),
+   *   },
+   *   destination: "./output.tar",
+   *   compress: { type: "gzip", level: 9 },
+   * });
+   * console.log(`Wrote ${bytes} bytes`);
+   * ```
+   */
+  function tarball(options: TarballOptions & { destination: string }): Promise<number>;
+  function tarball(options: Omit<TarballOptions, "destination">): Promise<Blob>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,

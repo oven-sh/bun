@@ -37,6 +37,7 @@ pub const BunObject = struct {
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
+    pub const tarball = toJSCallback(Bun.createTarball);
     pub const udpSocket = toJSCallback(host_fn.wrapStaticMethod(api.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(jsc.WebCore.Blob.writeFile);
@@ -173,6 +174,7 @@ pub const BunObject = struct {
         @export(&BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(&BunObject.tarball, .{ .name = callbackName("tarball") });
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
@@ -2012,6 +2014,433 @@ pub const JSZstd = struct {
         return job.promise.value();
     }
 };
+
+pub const TarballJob = struct {
+    files: FileList,
+    destination: ?[]const u8 = null,
+    compress_type: enum { none, gzip } = .none,
+    compress_level: u8 = 6,
+    task: jsc.WorkPoolTask = .{ .callback = &runTask },
+    promise: jsc.JSPromise.Strong = .{},
+    vm: *jsc.VirtualMachine,
+    output_buffer: []u8 = &[_]u8{},
+    bytes_written: usize = 0,
+    error_message: ?[]const u8 = null,
+    any_task: jsc.AnyTask = undefined,
+    poll: Async.KeepAlive = .{},
+
+    pub const new = bun.TrivialNew(@This());
+
+    const FileList = struct {
+        entries: []FileEntry,
+        allocator: std.mem.Allocator,
+
+        fn deinit(self: *@This()) void {
+            for (self.entries) |*entry| {
+                entry.deinit(self.allocator);
+            }
+            self.allocator.free(self.entries);
+        }
+    };
+
+    const FileEntry = struct {
+        archive_path: []const u8,
+        source: Source,
+
+        const Source = union(enum) {
+            file_path: []const u8,
+            blob_data: []const u8,
+        };
+
+        fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.archive_path);
+            switch (self.source) {
+                .file_path => |path| allocator.free(path),
+                .blob_data => |data| allocator.free(data),
+            }
+        }
+    };
+
+    pub fn runTask(task: *jsc.WorkPoolTask) void {
+        const job: *TarballJob = @fieldParentPtr("task", task);
+        defer job.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(job.any_task.task()));
+
+        job.createArchive() catch |err| {
+            const msg = std.fmt.allocPrint(
+                bun.default_allocator,
+                "Failed to create archive: {s}",
+                .{@errorName(err)},
+            ) catch "Failed to create archive";
+            job.error_message = msg;
+        };
+    }
+
+    fn createArchive(this: *TarballJob) !void {
+        const allocator = bun.default_allocator;
+        const lib = @import("../../libarchive/libarchive.zig").lib;
+
+        // Create archive writer
+        const archive = lib.Archive.writeNew();
+        defer {
+            _ = archive.writeClose();
+            _ = archive.writeFinish();
+        }
+
+        // Set POSIX ustar format
+        switch (archive.writeSetFormatUstar()) {
+            .ok => {},
+            else => return error.ArchiveFormatError,
+        }
+
+        // Add compression if requested
+        if (this.compress_type == .gzip) {
+            switch (archive.writeAddFilterGzip()) {
+                .ok => {},
+                else => return error.CompressionError,
+            }
+            var level_buf: [64]u8 = undefined;
+            const level_str = try std.fmt.bufPrintZ(
+                &level_buf,
+                "compression-level={d}",
+                .{this.compress_level},
+            );
+            _ = archive.writeSetOptions(level_str);
+        }
+
+        // Determine output method
+        const write_to_file = this.destination != null;
+        if (write_to_file) {
+            // Write to file
+            const path_z = try allocator.dupeZ(u8, this.destination.?);
+            defer allocator.free(path_z);
+            switch (archive.writeOpenFilename(path_z)) {
+                .ok => {},
+                else => return error.CannotOpenFile,
+            }
+        } else {
+            // Write to memory - estimate size
+            var estimated_size: usize = 0;
+            for (this.files.entries) |entry| {
+                estimated_size += 512; // header
+                const content_size = switch (entry.source) {
+                    .file_path => |path| blk: {
+                        const file = std.fs.cwd().openFile(path, .{}) catch break :blk 0;
+                        defer file.close();
+                        const stat = file.stat() catch break :blk 0;
+                        break :blk stat.size;
+                    },
+                    .blob_data => |data| data.len,
+                };
+                const blocks = (content_size + 511) / 512;
+                estimated_size += blocks * 512;
+            }
+            estimated_size += 1024; // EOF markers
+            estimated_size = @max(estimated_size * 2, 16384); // 2x for compression
+
+            this.output_buffer = try allocator.alloc(u8, estimated_size);
+            switch (archive.writeOpenMemory(
+                this.output_buffer.ptr,
+                this.output_buffer.len,
+                &this.bytes_written,
+            )) {
+                .ok => {},
+                else => {
+                    allocator.free(this.output_buffer);
+                    this.output_buffer = &[_]u8{};
+                    return error.CannotOpenMemory;
+                },
+            }
+        }
+
+        // Write all file entries
+        for (this.files.entries) |file_entry| {
+            try this.writeFileEntry(archive, file_entry, allocator);
+        }
+
+        // Close archive
+        switch (archive.writeClose()) {
+            .ok, .warn => {},
+            else => return error.ArchiveCloseError,
+        }
+
+        if (!write_to_file) {
+            // Shrink buffer to actual size
+            this.output_buffer = allocator.realloc(
+                this.output_buffer,
+                this.bytes_written,
+            ) catch this.output_buffer;
+        } else {
+            // Get file size for byte count
+            const file = std.fs.cwd().openFile(this.destination.?, .{}) catch return error.CannotOpenFile;
+            defer file.close();
+            const stat = file.stat() catch return error.CannotStatFile;
+            this.bytes_written = stat.size;
+        }
+    }
+
+    fn writeFileEntry(
+        _: *TarballJob,
+        archive: *@import("../../libarchive/libarchive.zig").lib.Archive,
+        file_entry: FileEntry,
+        allocator: std.mem.Allocator,
+    ) !void {
+        const lib = @import("../../libarchive/libarchive.zig").lib;
+
+        const entry = lib.Archive.Entry.new();
+        defer entry.free();
+
+        // Read content
+        const content = switch (file_entry.source) {
+            .file_path => |path| try std.fs.cwd().readFileAlloc(
+                allocator,
+                path,
+                100 * 1024 * 1024, // 100MB max
+            ),
+            .blob_data => |data| data,
+        };
+        defer if (file_entry.source == .file_path) allocator.free(content);
+
+        // Set metadata
+        const path_z = try allocator.dupeZ(u8, file_entry.archive_path);
+        defer allocator.free(path_z);
+
+        entry.setPathname(path_z);
+        entry.setSize(@intCast(content.len));
+        entry.setFiletype(@intFromEnum(lib.FileType.regular));
+        entry.setPerm(0o644);
+
+        const now = std.time.timestamp();
+        entry.setMtime(@intCast(now), 0);
+
+        // Write header and data
+        switch (archive.writeHeader(entry)) {
+            .ok => {},
+            else => return error.WriteHeaderError,
+        }
+
+        if (content.len > 0) {
+            const written = archive.writeData(content);
+            if (written < 0 or @as(usize, @intCast(written)) != content.len) {
+                return error.WriteDataError;
+            }
+        }
+    }
+
+    pub fn runFromJS(this: *TarballJob) void {
+        defer this.deinit();
+
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+
+        const globalThis = this.vm.global;
+        const promise = this.promise.swap();
+
+        if (this.error_message) |err_msg| {
+            const err = globalThis.createErrorInstance("{s}", .{err_msg});
+            promise.reject(globalThis, err);
+            return;
+        }
+
+        const result_value = if (this.destination != null) blk: {
+            // Return byte count
+            break :blk jsc.JSValue.jsNumber(@as(f64, @floatFromInt(this.bytes_written)));
+        } else blk: {
+            // Create Blob from buffer
+            const store = jsc.WebCore.Blob.Store.init(
+                this.output_buffer,
+                bun.default_allocator,
+            );
+
+            var blob = jsc.WebCore.Blob.initWithStore(store, globalThis);
+            blob.content_type = "application/x-tar";
+            this.output_buffer = &[_]u8{}; // ownership transferred
+            break :blk blob.toJS(globalThis);
+        };
+
+        promise.resolve(globalThis, result_value);
+    }
+
+    pub fn deinit(this: *TarballJob) void {
+        this.poll.unref(this.vm);
+        this.files.deinit();
+        if (this.destination) |dest| {
+            bun.default_allocator.free(dest);
+        }
+        if (this.error_message) |msg| {
+            bun.default_allocator.free(msg);
+        }
+        this.promise.deinit();
+        if (this.output_buffer.len > 0) {
+            bun.default_allocator.free(this.output_buffer);
+        }
+        bun.destroy(this);
+    }
+
+    pub fn create(
+        vm: *jsc.VirtualMachine,
+        globalThis: *jsc.JSGlobalObject,
+        files: FileList,
+        destination: ?[]const u8,
+        compress_type: @TypeOf(@as(@This(), undefined).compress_type),
+        compress_level: u8,
+    ) *TarballJob {
+        var job = TarballJob.new(.{
+            .files = files,
+            .destination = destination,
+            .compress_type = compress_type,
+            .compress_level = compress_level,
+            .vm = vm,
+            .any_task = undefined,
+        });
+
+        job.promise = jsc.JSPromise.Strong.init(globalThis);
+        job.any_task = jsc.AnyTask.New(@This(), &runFromJS).init(job);
+        job.poll.ref(vm);
+        jsc.WorkPool.schedule(&job.task);
+
+        return job;
+    }
+};
+
+pub fn createTarball(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const args = callframe.arguments_old(1);
+    if (args.len < 1) {
+        return globalThis.throwInvalidArguments("Expected options object", .{});
+    }
+
+    const opts = args.ptr[0];
+    if (!opts.isObject()) {
+        return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+    }
+
+    // Parse files
+    const files_value = try opts.get(globalThis, "files") orelse {
+        return globalThis.throwInvalidArguments("Missing required field: files", .{});
+    };
+
+    var file_list = try parseFileList(globalThis, files_value);
+    errdefer file_list.deinit();
+
+    if (file_list.entries.len == 0) {
+        file_list.deinit();
+        return globalThis.throwInvalidArguments("files object cannot be empty", .{});
+    }
+
+    // Parse optional destination
+    const destination = if (try opts.get(globalThis, "destination")) |dest| blk: {
+        if (!dest.isString()) {
+            file_list.deinit();
+            return globalThis.throwInvalidArguments("destination must be a string", .{});
+        }
+        const str = try dest.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
+        break :blk try bun.default_allocator.dupe(u8, str.slice());
+    } else null;
+    errdefer if (destination) |d| bun.default_allocator.free(d);
+
+    // Parse optional compression
+    var compress_type: @TypeOf(@as(TarballJob, undefined).compress_type) = .none;
+    var compress_level: u8 = 6;
+
+    if (try opts.get(globalThis, "compress")) |comp| {
+        if (comp.isString()) {
+            const str = try comp.toSlice(globalThis, bun.default_allocator);
+            defer str.deinit();
+            if (bun.strings.eqlComptime(str.slice(), "gzip")) {
+                compress_type = .gzip;
+            } else {
+                file_list.deinit();
+                if (destination) |d| bun.default_allocator.free(d);
+                return globalThis.throwInvalidArguments("compress must be 'gzip' or object", .{});
+            }
+        } else if (comp.isObject()) {
+            const type_val = try comp.get(globalThis, "type") orelse {
+                file_list.deinit();
+                if (destination) |d| bun.default_allocator.free(d);
+                return globalThis.throwInvalidArguments("compress.type is required", .{});
+            };
+            const type_str = try type_val.toSlice(globalThis, bun.default_allocator);
+            defer type_str.deinit();
+            if (!bun.strings.eqlComptime(type_str.slice(), "gzip")) {
+                file_list.deinit();
+                if (destination) |d| bun.default_allocator.free(d);
+                return globalThis.throwInvalidArguments("Only 'gzip' compression supported", .{});
+            }
+            compress_type = .gzip;
+
+            if (try comp.get(globalThis, "level")) |level_val| {
+                const num = try level_val.coerce(i32, globalThis);
+                if (num < 0 or num > 9) {
+                    file_list.deinit();
+                    if (destination) |d| bun.default_allocator.free(d);
+                    return globalThis.throwInvalidArguments("compression level must be 0-9", .{});
+                }
+                compress_level = @intCast(num);
+            }
+        }
+    }
+
+    const vm = globalThis.bunVM();
+    var job = TarballJob.create(vm, globalThis, file_list, destination, compress_type, compress_level);
+    return job.promise.value();
+}
+
+fn parseFileList(globalThis: *JSGlobalObject, files_obj: JSValue) !TarballJob.FileList {
+    if (!files_obj.isObject()) {
+        return globalThis.throwInvalidArguments("files must be an object", .{});
+    }
+
+    const allocator = bun.default_allocator;
+    var entries = std.ArrayList(TarballJob.FileEntry).init(allocator);
+    errdefer {
+        for (entries.items) |*entry| entry.deinit(allocator);
+        entries.deinit();
+    }
+
+    // files_obj is JSValue, we need to get it as JSObject
+    const files_object: *jsc.JSObject = @alignCast(@ptrCast(files_obj.asEncoded().asPtr));
+
+    var iter = try jsc.JSPropertyIterator(.{
+        .skip_empty_name = true,
+        .include_value = true,
+    }).init(globalThis, files_object);
+    defer iter.deinit();
+
+    while (try iter.next()) |prop_name| {
+        const value = iter.value;
+        if (value.isUndefined()) continue;
+
+        const prop_slice = prop_name.toSlice(allocator);
+        defer prop_slice.deinit();
+        const archive_path = try allocator.dupe(u8, prop_slice.slice());
+        errdefer allocator.free(archive_path);
+
+        const source = if (value.isString()) blk: {
+            const path_str = try value.toSlice(globalThis, allocator);
+            defer path_str.deinit();
+            const path = try allocator.dupe(u8, path_str.slice());
+            break :blk TarballJob.FileEntry.Source{ .file_path = path };
+        } else if (value.as(jsc.WebCore.Blob)) |blob| blk: {
+            const data = blob.sharedView();
+            const data_copy = try allocator.dupe(u8, data);
+            break :blk TarballJob.FileEntry.Source{ .blob_data = data_copy };
+        } else {
+            allocator.free(archive_path);
+            return globalThis.throwInvalidArguments("File values must be string or Blob", .{});
+        };
+
+        try entries.append(.{
+            .archive_path = archive_path,
+            .source = source,
+        });
+    }
+
+    return .{
+        .entries = try entries.toOwnedSlice(),
+        .allocator = allocator,
+    };
+}
 
 // const InternalTestingAPIs = struct {
 //     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

@@ -103,7 +103,7 @@ function watch(
 function cp(src, dest, options) {
   if (!options) return fs.cp(src, dest);
   if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
     return require("internal/fs/cp")(src, dest, options);

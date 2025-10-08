@@ -109,6 +109,61 @@ copy_binary_header_validated: bool = false,
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
+/// JS: PostgresSQLConnection.setCopyStreamingMode(enable: boolean)
+pub fn setCopyStreamingMode(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    _ = globalObject;
+    const args = callframe.arguments();
+    const enable = if (args.len > 0) args[0].toBoolean() else true;
+    this.copy_streaming_mode = enable;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.setCopyTimeout(ms: number)
+pub fn setCopyTimeout(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setCopyTimeout", 1, args.len);
+    }
+    const n = try args[0].toNumber(globalObject);
+    var ms: u32 = 0;
+    if (n > 0) {
+        const n_u64: u64 = @intFromFloat(n);
+        ms = @intCast(@min(n_u64, @as(u64, std.math.maxInt(u32))));
+    }
+    this.copy_timeout_ms = ms;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.setMaxCopyBufferSize(bytes: number)
+pub fn setMaxCopyBufferSize(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setMaxCopyBufferSize", 1, args.len);
+    }
+    const n = try args[0].toNumber(globalObject);
+    var bytes: usize = MAX_COPY_BUFFER_SIZE;
+    if (n > 0) {
+        const n_u64: u64 = @intFromFloat(n);
+        bytes = @intCast(@min(n_u64, @as(u64, MAX_COPY_BUFFER_SIZE)));
+    }
+    this.max_copy_buffer_size = bytes;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.awaitWritable()
+/// If there is no backpressure, immediately trigger the onWritable JS callback for this connection.
+pub fn awaitWritable(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    _ = globalObject;
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onWritableFn.get()) |callback_writable| {
+        if (!this.flags.has_backpressure and this.status == .connected) {
+            const event_loop = vm.eventLoop();
+            event_loop.runCallback(callback_writable, this.globalObject, this.js_value, &.{});
+        }
+    }
+    return .js_undefined;
+}
+
 pub fn onAutoFlush(this: *@This()) bool {
     if (this.flags.has_backpressure) {
         debug("onAutoFlush: has backpressure", .{});
@@ -1116,6 +1171,52 @@ fn cleanupCopyState(this: *PostgresSQLConnection) void {
     this.copy_binary_header_validated = false;
 }
 
+/// Helper to initialize COPY state for COPY FROM (is_out=false) or COPY TO (is_out=true)
+fn startCopy(this: *PostgresSQLConnection, overall_format: u8, column_format_codes: []const u16, is_out: bool) AnyPostgresError!void {
+    // Prevent concurrent COPY operations
+    if (this.copy_state != .none) {
+        this.cleanupCopyState();
+        return error.UnexpectedMessage;
+    }
+
+    // Duplicate column formats up-front
+    const new_column_formats = bun.default_allocator.dupe(u16, column_format_codes) catch |err| {
+        return err;
+    };
+    errdefer bun.default_allocator.free(new_column_formats);
+
+    // Update state
+    this.copy_state = if (is_out) .copy_out_progress else .copy_in_progress;
+    this.copy_format = overall_format;
+    this.copy_start_timestamp_ms = @intCast(std.time.milliTimestamp());
+
+    // Replace column formats
+    if (this.copy_column_formats.len > 0) {
+        bun.default_allocator.free(this.copy_column_formats);
+    }
+    this.copy_column_formats = new_column_formats;
+
+    // Reset binary header validation; clear buffer for COPY TO
+    this.copy_binary_header_validated = false;
+    if (is_out) {
+        this.copy_data_buffer.clearRetainingCapacity();
+    }
+
+    // Fire onCopyStart callback if registered
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onCopyStartFn.get()) |callback| {
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(callback, this.globalObject, this.js_value, &.{});
+
+        if (this.globalObject.hasException()) {
+            this.cleanupCopyState();
+            this.fail("onCopyStart callback threw an exception", error.JSError);
+            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
+        }
+    }
+}
+
 pub fn stopTimers(this: *PostgresSQLConnection) void {
     if (this.timer.state == .ACTIVE) {
         this.vm.timer.remove(&this.timer);
@@ -2057,6 +2158,31 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             if (this.copy_state != .none) {
                 debug("CommandComplete: COPY operation completed with {} bytes", .{this.copy_data_buffer.items.len});
 
+                // In streaming mode, flush any pending buffered data before signaling end
+                if (this.copy_state == .copy_out_progress and this.copy_streaming_mode and this.copy_data_buffer.items.len > 0) {
+                    var vm_flush_end = jsc.VirtualMachine.get();
+                    if (vm_flush_end.rareData().postgresql_context.onCopyChunkFn.get()) |callback_flush_end| {
+                        const loop_flush_end = vm_flush_end.eventLoop();
+                        var js_last: jsc.JSValue = .zero;
+                        js_last = if (this.copy_format == 0)
+                            (bun.String.createUTF8ForJS(this.globalObject, this.copy_data_buffer.items) catch |e| {
+                                this.cleanupCopyState();
+                                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                                this.fail("Failed to create final chunk for COPY callback", error.OutOfMemory);
+                                return;
+                            })
+                        else
+                            (jsc.ArrayBuffer.create(this.globalObject, this.copy_data_buffer.items, .ArrayBuffer) catch |e| {
+                                this.cleanupCopyState();
+                                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                                this.fail("Failed to create final chunk for COPY callback", error.OutOfMemory);
+                                return;
+                            });
+                        loop_flush_end.runCallback(callback_flush_end, this.globalObject, this.js_value, &.{js_last});
+                        this.copy_data_buffer.clearRetainingCapacity();
+                    }
+                }
+
                 // Emit streaming end callback if registered
                 var vm2 = jsc.VirtualMachine.get();
                 if (vm2.rareData().postgresql_context.onCopyEndFn.get()) |callback_end| {
@@ -2394,62 +2520,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             defer resp.deinit();
 
             debug("CopyInResponse: format={} columns={}", .{ resp.overall_format, resp.column_format_codes.len });
-
-            // Validate state - prevent concurrent COPY operations
-            if (this.copy_state != .none) {
-                debug("CopyInResponse: rejecting - already in COPY state: {s}", .{@tagName(this.copy_state)});
-                this.cleanupCopyState();
-                this.fail("Cannot start COPY operation: another COPY operation is already in progress", error.UnexpectedMessage);
-                return error.UnexpectedMessage;
-            }
-
-            // Allocate new column formats first before modifying state
-            const new_column_formats = bun.default_allocator.dupe(u16, resp.column_format_codes) catch |err| {
-                // Allocation failed - don't modify state
-                return err;
-            };
-
-            // Ensure cleanup happens if anything fails from here on
-            var formats_cleanup_needed = true;
-            defer if (formats_cleanup_needed) bun.default_allocator.free(new_column_formats);
-
-            // Now that allocation succeeded, we can safely update state
-            this.copy_state = .copy_in_progress;
-            this.copy_format = resp.overall_format;
-
-            // Record start timestamp for timeout tracking
-            this.copy_start_timestamp_ms = @intCast(std.time.milliTimestamp());
-
-            // Free old column formats and assign new ones
-            if (this.copy_column_formats.len > 0) {
-                bun.default_allocator.free(this.copy_column_formats);
-            }
-            this.copy_column_formats = new_column_formats;
-            formats_cleanup_needed = false; // Ownership transferred
-
-            // If anything fails after this point, clean up everything including the formats we just assigned
-            errdefer this.cleanupCopyState();
-
-            // The request will remain in .running state
-            // User can now call sendCopyData() to send data, then sendCopyDone() to complete
-            // The query will complete when CommandComplete message arrives
+            // Initialize COPY FROM state
+            try this.startCopy(resp.overall_format, resp.column_format_codes, false);
             debug("CopyInResponse: ready to accept COPY data", .{});
-
-            // Fire onCopyStart callback if registered
-            var vm = jsc.VirtualMachine.get();
-            if (vm.rareData().postgresql_context.onCopyStartFn.get()) |callback| {
-                const event_loop = vm.eventLoop();
-                // Use the connection object as both thisArg and the sole argument for now
-                event_loop.runCallback(callback, this.globalObject, this.js_value, &.{});
-
-                // Check if callback threw an exception
-                if (this.globalObject.hasException()) {
-                    this.cleanupCopyState();
-                    this.fail("onCopyStart callback threw an exception", error.JSError);
-                    this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
-                    return error.JSError;
-                }
-            }
         },
         .NoticeResponse => {
             debug("UNSUPPORTED NoticeResponse", .{});
@@ -2470,61 +2543,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             defer resp.deinit();
 
             debug("CopyOutResponse: format={} columns={}", .{ resp.overall_format, resp.column_format_codes.len });
-
-            // Validate state - prevent concurrent COPY operations
-            if (this.copy_state != .none) {
-                debug("CopyOutResponse: rejecting - already in COPY state: {s}", .{@tagName(this.copy_state)});
-                this.cleanupCopyState();
-                this.fail("Cannot start COPY operation: another COPY operation is already in progress", error.UnexpectedMessage);
-                return error.UnexpectedMessage;
-            }
-
-            // Allocate new column formats first before modifying state
-            const new_column_formats = bun.default_allocator.dupe(u16, resp.column_format_codes) catch |err| {
-                // Allocation failed - don't modify state
-                return err;
-            };
-
-            // Ensure cleanup happens if anything fails from here on
-            var formats_cleanup_needed = true;
-            defer if (formats_cleanup_needed) bun.default_allocator.free(new_column_formats);
-
-            // Now that allocation succeeded, we can safely update state
-            this.copy_state = .copy_out_progress;
-            this.copy_format = resp.overall_format;
-
-            // Record start timestamp for timeout tracking
-            this.copy_start_timestamp_ms = @intCast(std.time.milliTimestamp());
-
-            // Free old column formats and assign new ones
-            if (this.copy_column_formats.len > 0) {
-                bun.default_allocator.free(this.copy_column_formats);
-            }
-            this.copy_column_formats = new_column_formats;
-            formats_cleanup_needed = false; // Ownership transferred
-
-            // If anything fails after this point, clean up everything including the formats we just assigned
-            errdefer this.cleanupCopyState();
-
-            // Clear any previous data
-            this.copy_data_buffer.clearRetainingCapacity();
-
-            // Data will arrive in subsequent CopyData messages
-            // Fire onCopyStart callback if registered
-            var vm = jsc.VirtualMachine.get();
-            if (vm.rareData().postgresql_context.onCopyStartFn.get()) |callback| {
-                const event_loop = vm.eventLoop();
-                // Use the connection object as both thisArg and the sole argument for now
-                event_loop.runCallback(callback, this.globalObject, this.js_value, &.{});
-
-                // Check if callback threw an exception
-                if (this.globalObject.hasException()) {
-                    this.cleanupCopyState();
-                    this.fail("onCopyStart callback threw an exception", error.JSError);
-                    this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
-                    return error.JSError;
-                }
-            }
+            // Initialize COPY TO state
+            try this.startCopy(resp.overall_format, resp.column_format_codes, true);
+            debug("CopyOutResponse: ready to stream COPY data", .{});
         },
         .CopyDone => {
             try reader.eatMessage(protocol.CopyDone);

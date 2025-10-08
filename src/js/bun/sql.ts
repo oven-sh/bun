@@ -1596,7 +1596,31 @@ const SQL: typeof Bun.SQL = function SQL(
 
       const flushBatch = async () => {
         if (batch.length > 0) {
+          // Enforce maxBytes and update progress before sending this batch
+          const bLen = batch.length;
+          // Resolve maxBytes from options or adapter defaults
+          let __fromDefaults__: { maxChunkSize: number; maxBytes: number } = { maxChunkSize: 256 * 1024, maxBytes: 0 };
+          try {
+            const __defaults__ =
+              (pool as any)?.getCopyDefaults?.() || (reserved as any)?.getCopyDefaults?.() || undefined;
+            if (__defaults__?.from) {
+              __fromDefaults__ = __defaults__.from;
+            }
+          } catch {}
+          const maxBytes =
+            options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
+              ? Number((options as any).maxBytes)
+              : __fromDefaults__.maxBytes | 0;
+
+          if (maxBytes && bytesSent + bLen > maxBytes) {
+            throw new Error("copyFrom: maxBytes exceeded");
+          }
+
           (reserved as any).copySendData(batch);
+          bytesSent += bLen;
+          chunksSent += 1;
+          notifyProgress();
+
           {
             await new Promise<void>(resolve => {
               let settled = false;

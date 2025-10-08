@@ -987,7 +987,7 @@ fn openDirAtWindowsNtPath(
         null,
         0,
         FILE_SHARE,
-        switch (options.create) {
+        switch (options.op) {
             .only_open => w.FILE_OPEN,
             .only_create => w.FILE_CREATE,
             .open_or_create => w.FILE_OPEN_IF,

@@ -1494,5 +1494,5 @@ const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Semver = bun.Semver;
+const jsc = bun.jsc;

@@ -303,7 +303,7 @@ Server.prototype.closeAllConnections = function () {
 
 Server.prototype.closeIdleConnections = function () {
   const server = this[serverSymbol];
-  server.closeIdleConnections();
+  server?.closeIdleConnections();
 };
 
 Server.prototype.close = function (optionalCallback?) {

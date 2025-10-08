@@ -1320,10 +1320,6 @@ pub const RunCommand = struct {
             };
         }
 
-        if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
-
         _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
         return true;
     }
@@ -1368,21 +1364,20 @@ pub const RunCommand = struct {
             }
         }
 
+        if (!ctx.debug.loaded_bunfig) {
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
         // try fast run (check if the file exists and is not a folder, then run it)
         if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
 
         // setup
-
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
-
-        if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
 
         // check for empty command
 

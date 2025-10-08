@@ -596,24 +596,95 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
-                // any error here is ignored
-                const bin = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
-                defer bin.close();
+                tryNormalizeShebang(abs_target);
+            }
+        }
 
-                var shebang_buf: [1024]u8 = undefined;
-                const read = bin.read(&shebang_buf).unwrap() catch return;
-                const chunk = shebang_buf[0..read];
-                // 123 4 5
-                // #!a\r\n
-                if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+        fn tryNormalizeShebang(abs_target: [:0]const u8) void {
+            var shebang_buf: [2048]u8 = undefined;
 
-                if (strings.indexOfChar(chunk, '\n')) |newline| {
-                    if (newline > 0 and chunk[newline - 1] == '\r') {
-                        const pos = newline - 1;
-                        bin.handle.stdFile().seekTo(pos) catch return;
-                        bin.writeAll("\n").unwrap() catch return;
-                    }
+            // any error here is ignored
+            const chunk = brk: {
+                const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
+                defer bin_for_reading.close();
+
+                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
+                break :brk shebang_buf[0..read];
+            };
+
+            // 123 4 5
+            // #!a\r\n
+            if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+
+            const newline = strings.indexOfChar(chunk, '\n') orelse return;
+            const chunk_without_newline = chunk[0..newline];
+            if (!(chunk_without_newline.len > 0 and chunk_without_newline[chunk_without_newline.len - 1] == '\r')) {
+                // Nothing to do!
+                return;
+            }
+            log("Normalizing shebang for {s}", .{abs_target});
+
+            // We have to do an atomic replace here, use a randomly generated
+            // filename in the same folder, read the entire original file
+            // contents using bun.sys.File.readFrom, then write the temporary file, then
+            // overwite the old one with the new one via bun.sys.renameat. And
+            // always unlink the old one. If it fails for any reason then exit
+            // early.
+            var tmpname_buf: [1024]u8 = undefined;
+            const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return);
+
+            const dir_path = std.fs.path.dirname(abs_target) orelse return;
+
+            const content: []const u8, const content_to_free: []const u8 = brk: {
+                if (chunk.len >= shebang_buf.len) {
+                    // Partial read. Need to read the rest of the file.
+                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                        .result => |contents| contents,
+                        .err => return,
+                    };
+                    break :brk .{ original_contents, original_contents };
                 }
+
+                break :brk .{ chunk, "" };
+            };
+            defer bun.default_allocator.free(content_to_free);
+
+            // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
+            const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
+            const original_mode = @as(bun.Mode, @intCast(original_stat.mode));
+
+            // Create temporary file path
+            var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
+            var needs_unlink = true;
+            defer {
+                if (needs_unlink) _ = bun.sys.unlinkat(.cwd(), tmppath);
+            }
+
+            // Write to temporary file with corrected content
+            {
+                const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, original_mode).unwrap() catch return;
+                defer tmpfile.close();
+
+                // Write the corrected shebang (without \r)
+                tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
+                tmpfile.writeAll("\n").unwrap() catch return;
+
+                // Write the rest of the file (after the newline)
+                if (content.len > newline + 1) {
+                    tmpfile.writeAll(content[newline + 1 ..]).unwrap() catch return;
+                }
+
+                // Reapply original permissions (umask was applied during openat, so we need to restore)
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o777)), 0).unwrap() catch return;
+            }
+
+            // Atomic replace: rename temp file to original
+            switch (bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target)) {
+                .result => {
+                    needs_unlink = false;
+                },
+                .err => {},
             }
         }
 
@@ -1003,6 +1074,7 @@ pub const Bin = extern struct {
     };
 };
 
+const log = bun.Output.scoped(.BinLinker, .hidden);
 const string = []const u8;
 const stringZ = [:0]const u8;
 

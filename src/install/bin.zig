@@ -608,8 +608,7 @@ pub const Bin = extern struct {
                 const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
                 defer bin_for_reading.close();
 
-                // Use read() not readAll() - readAll would fail with StreamTooLong for files >2KB
-                const read = bin_for_reading.read(&shebang_buf).unwrap() catch return;
+                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
                 break :brk shebang_buf[0..read];
             };
 
@@ -631,18 +630,24 @@ pub const Bin = extern struct {
             // overwite the old one with the new one via bun.sys.renameat. And
             // always unlink the old one. If it fails for any reason then exit
             // early.
-
             var tmpname_buf: [1024]u8 = undefined;
             const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return);
 
             const dir_path = std.fs.path.dirname(abs_target) orelse return;
 
-            // Read the entire original file
-            const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
-                .result => |contents| contents,
-                .err => return,
+            const content: []const u8, const content_to_free: []const u8 = brk: {
+                if (chunk.len >= shebang_buf.len) {
+                    // Partial read. Need to read the rest of the file.
+                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                        .result => |contents| contents,
+                        .err => return,
+                    };
+                    break :brk .{ original_contents, original_contents };
+                }
+
+                break :brk .{ chunk, "" };
             };
-            defer bun.default_allocator.free(original_contents);
+            defer bun.default_allocator.free(content_to_free);
 
             // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
             const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
@@ -651,37 +656,36 @@ pub const Bin = extern struct {
             // Create temporary file path
             var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
+            var needs_unlink = true;
+            defer {
+                if (needs_unlink) _ = bun.sys.unlinkat(.cwd(), tmppath);
+            }
 
             // Write to temporary file with corrected content
-            brk: {
+            {
                 const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, original_mode).unwrap() catch return;
                 defer tmpfile.close();
-                errdefer _ = bun.sys.unlinkat(.cwd(), tmppath);
 
                 // Write the corrected shebang (without \r)
                 tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
                 tmpfile.writeAll("\n").unwrap() catch return;
 
                 // Write the rest of the file (after the newline)
-                if (original_contents.len > newline + 1) {
-                    tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
+                if (content.len > newline + 1) {
+                    tmpfile.writeAll(content[newline + 1 ..]).unwrap() catch return;
                 }
 
                 // Reapply original permissions (umask was applied during openat, so we need to restore)
-                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o7777)), 0).unwrap() catch {
-                    _ = bun.sys.unlinkat(.cwd(), tmppath);
-                    return;
-                };
-
-                break :brk;
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o7777)), 0).unwrap() catch return;
             }
 
             // Atomic replace: rename temp file to original
-            _ = bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target).unwrap() catch {
-                // Clean up temp file if rename fails
-                _ = bun.sys.unlinkat(.cwd(), tmppath);
-                return;
-            };
+            switch (bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target)) {
+                .result => {
+                    needs_unlink = false;
+                },
+                .err => {},
+            }
         }
 
         fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {

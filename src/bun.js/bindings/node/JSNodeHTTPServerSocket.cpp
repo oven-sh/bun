@@ -28,6 +28,10 @@ const JSC::ClassInfo JSNodeHTTPServerSocket::s_info = { "NodeHTTPServerSocket"_s
 
 JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
 {
+    if (socket && us_socket_is_closed(is_ssl, socket)) {
+        // dont attach closed socket because the callback will never be called
+        socket = nullptr;
+    }
     auto* object = new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl, response);
     object->finishCreation(vm);
     return object;
@@ -317,12 +321,6 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
         return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
     }
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
-}
-
-extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(JSC::EncodedJSValue thisValue, us_socket_t* socket)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->socket = socket;
 }
 
 extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)

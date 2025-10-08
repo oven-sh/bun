@@ -6,7 +6,7 @@ let testEnv: NodeJS.Dict<string>;
 
 beforeAll(() => {
   testEnv = { ...bunEnv };
-  delete testEnv.AGENTS;
+  delete testEnv.AGENT;
 });
 
 test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {

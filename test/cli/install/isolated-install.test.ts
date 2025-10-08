@@ -532,6 +532,54 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   });
 }
 
+test("node_modules missing .bun are deleted", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { isolated: true },
+    files: {
+      "package.json": JSON.stringify({
+        name: "delete-node-modules",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+      "packages/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "no-deps": "1.0.1",
+        },
+      }),
+      "packages/pkg2/package.json": JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "no-deps": "2.0.0",
+        },
+      }),
+      "node_modules/oops": "delete me!",
+      "packages/pkg1/node_modules/oops1": "delete me!",
+      "packages/pkg2/node_modules/oops2": "delete me!",
+    },
+  });
+
+  let { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  expect(await exited).toBe(0);
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules")),
+      readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+      readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+    ]),
+  ).toEqual([[".bun", "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
+});
+
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });

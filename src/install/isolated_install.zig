@@ -561,69 +561,6 @@ pub fn installIsolatedPackages(
 
     const cwd = FD.cwd();
 
-    const root_node_modules_dir, const is_new_root_node_modules, const bun_modules_dir, const is_new_bun_modules = root_dirs: {
-        const node_modules_path = bun.OSPathLiteral("node_modules");
-        const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
-        const existing_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                new_root_node_modules_dir,
-                true,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        const existing_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                existing_root_node_modules_dir,
-                false,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        break :root_dirs .{
-            existing_root_node_modules_dir,
-            false,
-            existing_bun_modules_dir,
-            false,
-        };
-    };
-    _ = root_node_modules_dir;
-    _ = is_new_root_node_modules;
-    _ = bun_modules_dir;
-    // _ = is_new_bun_modules;
-
     {
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
@@ -695,6 +632,57 @@ pub fn installIsolatedPackages(
                 .next = null,
             };
         }
+
+        const is_new_bun_modules = is_new_bun_modules: {
+            const node_modules_path = bun.OSPathLiteral("node_modules");
+            const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
+
+            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch {
+                sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch {
+                    break :is_new_bun_modules false;
+                };
+
+                // existing node_modules and missing node_modules/.bun folder. move and delete all
+                // node_modules to prevent hoisted package pollution
+
+                var abs_node_modules_path_buf: bun.AutoAbsPath = .initTopLevelDir();
+                defer abs_node_modules_path_buf.deinit();
+
+                abs_node_modules_path_buf.append("node_modules");
+
+                installer.startDeleteTask("node_modules");
+
+                var node_modules_path_buf: bun.AutoRelPath = .init();
+                defer node_modules_path_buf.deinit();
+
+                for (lockfile.workspace_paths.values()) |workspace_path| {
+                    node_modules_path_buf.clear();
+                    node_modules_path_buf.append(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                    node_modules_path_buf.append("node_modules");
+
+                    installer.startDeleteTask(node_modules_path_buf.sliceZ());
+                }
+
+                sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules' directory", .{});
+                    Global.exit(1);
+                };
+
+                sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules/.bun' directory", .{});
+                    Global.exit(1);
+                };
+
+                break :is_new_bun_modules true;
+            };
+
+            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create './node_modules/.bun' directory", .{});
+                Global.exit(1);
+            };
+
+            break :is_new_bun_modules true;
+        };
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));

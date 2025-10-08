@@ -41,6 +41,54 @@ pub const Installer = struct {
         this.manager.thread_pool.schedule(.from(&task.task));
     }
 
+    pub fn startDeleteTask(this: *Installer, subpath: [:0]const u8) void {
+        const DeleteTask = struct {
+            pub const new = bun.TrivialNew(@This());
+
+            installer: *Installer,
+            abs_path: []const u8,
+
+            task: ThreadPool.Task = .{ .callback = &callback },
+
+            fn callback(task: *ThreadPool.Task) void {
+                var delete_task: *@This() = @fieldParentPtr("task", task);
+
+                delete_task.run();
+            }
+
+            fn run(task: *@This()) void {
+                std.fs.deleteTreeAbsolute(task.abs_path) catch {};
+
+                task.installer.manager.decrementPendingTasks();
+                task.installer.manager.wake();
+                task.deinit();
+            }
+
+            fn deinit(task: *@This()) void {
+                bun.default_allocator.free(task.abs_path);
+                bun.destroy(task);
+            }
+        };
+
+        var rand_path_buf: [48]u8 = undefined;
+        const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
+        bun.sys.renameat(FD.cwd(), subpath, FD.cwd(), temp_path).unwrap() catch {
+            return;
+        };
+
+        var abs_path: bun.AutoAbsPath = .initTopLevelDir();
+        defer abs_path.deinit();
+
+        abs_path.append(temp_path);
+
+        var task: *DeleteTask = .new(.{
+            .installer = this,
+            .abs_path = bun.handleOom(bun.default_allocator.dupe(u8, abs_path.slice())),
+        });
+        this.manager.incrementPendingTasks(1);
+        this.manager.thread_pool.schedule(.from(&task.task));
+    }
+
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
             const store = this.store;

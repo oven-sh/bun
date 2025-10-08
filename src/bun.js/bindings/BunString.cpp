@@ -632,10 +632,11 @@ extern "C" BunString URL__hash(WTF::URL* url)
     return Bun::toStringRef(fragment);
 }
 
-extern "C" BunString URL__fragmentIdentifier(WTF::URL* url) {
+extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
+{
     const auto& fragment = url->fragmentIdentifier().isEmpty()
-      ? emptyString()
-      : url->fragmentIdentifier().toString();
+        ? emptyString()
+        : url->fragmentIdentifier().toString();
     return Bun::toStringRef(fragment);
 }
 

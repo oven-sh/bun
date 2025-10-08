@@ -752,9 +752,7 @@ pub fn installIsolatedPackages(
                     cache_path.append(".cache");
 
                     // 4
-                    sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {
-                        break :is_new_bun_modules true;
-                    };
+                    sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {};
 
                     // remove .cache so we can append destination for each workspace
                     rename_path.undo(1);

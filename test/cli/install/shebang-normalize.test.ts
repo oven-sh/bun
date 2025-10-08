@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -56,10 +56,15 @@ test("bin linking normalizes CRLF in shebang", async () => {
   expect(await installResult.exited).toBe(0);
 
   // Check that the linked bin file has normalized shebang
-  const binContent = await readFile(join(consumerDir, "node_modules", "test-pkg-crlf", "test-bin.py"), "utf-8");
+  const binPath = join(consumerDir, "node_modules", "test-pkg-crlf", "test-bin.py");
+  const binContent = await readFile(binPath, "utf-8");
 
   console.log("Bin content first 50 chars:", JSON.stringify(binContent.slice(0, 50)));
 
   expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
   expect(binContent).not.toContain("\r\n");
+
+  // Verify that the file is executable (bin linking sets this)
+  const binStat = await stat(binPath);
+  expect(binStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit should be set
 });

@@ -643,25 +643,30 @@ pub const Bin = extern struct {
             };
             defer bun.default_allocator.free(original_contents);
 
+            // Get original file permissions to preserve them
+            const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
+            const original_mode = @as(bun.Mode, @intCast(original_stat.mode & 0o777));
+
             // Create temporary file path
             var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
 
             // Write to temporary file with corrected content
-            const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755).unwrap() catch return;
-            errdefer _ = bun.sys.unlinkat(.cwd(), tmppath);
+            brk: {
+                const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, original_mode).unwrap() catch return;
+                defer tmpfile.close();
+                errdefer _ = bun.sys.unlinkat(.cwd(), tmppath);
 
-            // Write the corrected shebang (without \r)
-            tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
-            tmpfile.writeAll("\n").unwrap() catch return;
+                // Write the corrected shebang (without \r)
+                tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
+                tmpfile.writeAll("\n").unwrap() catch return;
 
-            // Write the rest of the file (after the newline)
-            if (original_contents.len > newline + 1) {
-                tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
+                // Write the rest of the file (after the newline)
+                if (original_contents.len > newline + 1) {
+                    tmpfile.writeAll(original_contents[newline + 1 ..]).unwrap() catch return;
+                }
+                break :brk;
             }
-
-            // Close the file before rename
-            tmpfile.close();
 
             // Atomic replace: rename temp file to original
             _ = bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target).unwrap() catch {

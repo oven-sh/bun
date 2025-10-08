@@ -1588,7 +1588,7 @@ pub const TestingAPIs = struct {
 const debug = bun.Output.scoped(.hosted_git_info, .visible);
 
 const std = @import("std");
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
 const jsc = bun.jsc;
-const PercentEncoding = @import("../url.zig").PercentEncoding;

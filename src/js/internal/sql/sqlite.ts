@@ -259,7 +259,9 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = $isArray(values) ? db.run.$apply(db, [sql].concat(values)) : db.run(sql, values);
+        const changes = $isArray(values) 
+          ? db.run.$apply(db, [sql].concat(values)) 
+          : db.run(sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);

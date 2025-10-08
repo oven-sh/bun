@@ -896,6 +896,14 @@ fn eqlComptimeDebugRuntimeFallback(a: []const u8, b: []const u8, check_len: bool
 }
 
 fn eqlComptimeCheckLenU8Impl(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
+    if (@inComptime()) {
+        return eqlComptimeCheckLenU8ImplActuallyComptime(a, b, check_len);
+    }
+
+    return eqlComptimeDebugRuntimeFallback(a, b, check_len);
+}
+
+fn eqlComptimeCheckLenU8ImplActuallyComptime(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
 
     if (comptime check_len) {

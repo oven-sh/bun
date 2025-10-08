@@ -111,6 +111,7 @@ export function getStdinStream(
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
+    source?.setFlowing?.(true);
 
     shouldDisown = false;
     if (needsInternalReadRefresh) {
@@ -121,6 +122,7 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+    source?.setFlowing?.(false);
 
     if (reader) {
       try {

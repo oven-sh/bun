@@ -317,7 +317,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         while (true) {
             const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), bun.span(tmpname), .{
                 .can_rename_or_delete = true,
-                .create = false,
                 .iterable = false,
                 .read_only = true,
             }).unwrap() catch |err| {

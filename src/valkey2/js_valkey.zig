@@ -363,6 +363,10 @@ pub const JsValkey = struct {
         return bun.jsc.JSValue.jsBoolean(self._client.isConnected());
     }
 
+    pub fn getBufferedAmount(self: *const Self, _: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
+        return bun.jsc.JSValue.jsNumber(self._client.bufferedBytesCount());
+    }
+
     pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.jsc.JSValue {
         _ = self;
         _ = go;

@@ -6176,6 +6176,101 @@ describeValkey(
 
         expect(typeof redis.connected).toBe("boolean");
       });
+
+      describe("bufferedAmount", () => {
+        test("should be a number", async () => {
+          const redis = await ctx.connectedClient();
+          expect(typeof redis.bufferedAmount).toBe("number");
+        });
+
+        test("should start at 0 for a new connection", async () => {
+          const redis = await ctx.connectedClient();
+          // After connection, buffers should be empty
+          expect(redis.bufferedAmount).toBe(0);
+        });
+
+        test("should remain 0 after simple commands complete", async () => {
+          const redis = await ctx.connectedClient();
+
+          // Execute some commands and wait for them to complete
+          await redis.set("buffered-test-key", "value");
+          await redis.get("buffered-test-key");
+          await redis.del("buffered-test-key");
+
+          // After all commands complete, buffers should be empty
+          expect(redis.bufferedAmount).toBe(0);
+        });
+
+        test("should be 0 for disconnected client", () => {
+          const redis = new RedisClient2("redis://localhost:6379");
+          // Disconnected client should have 0 buffered amount
+          expect(redis.bufferedAmount).toBe(0);
+        });
+
+        test("should track data during pipelined operations", async () => {
+          const redis = await ctx.connectedClient();
+
+          // Queue multiple commands without awaiting to create buffered data
+          const promises: Promise<any>[] = [];
+          for (let i = 0; i < 10; i++) {
+            promises.push(redis.set(`pipeline-key-${i}`, `value-${i}`));
+          }
+
+          // At this point, some data might be buffered (though it could also be 0 if sent immediately)
+          const bufferedDuringPipeline = redis.bufferedAmount;
+          expect(typeof bufferedDuringPipeline).toBe("number");
+          expect(bufferedDuringPipeline).toBeGreaterThanOrEqual(0);
+
+          // Wait for all to complete
+          await Promise.all(promises);
+
+          // After completion, should be back to 0
+          expect(redis.bufferedAmount).toBe(0);
+
+          // Cleanup
+          for (let i = 0; i < 10; i++) {
+            await redis.del(`pipeline-key-${i}`);
+          }
+        });
+
+        test("should handle large payloads", async () => {
+          const redis = await ctx.connectedClient();
+
+          // Create a large payload
+          const largeValue = "x".repeat(1024 * 100); // 100KB
+          const key = "large-payload-key";
+
+          // Send large payload
+          const setPromise = redis.set(key, largeValue);
+
+          // bufferedAmount might be > 0 while sending (though could also be 0 if fast)
+          const bufferedDuringLargeWrite = redis.bufferedAmount;
+          expect(typeof bufferedDuringLargeWrite).toBe("number");
+          expect(bufferedDuringLargeWrite).toBeGreaterThanOrEqual(0);
+
+          await setPromise;
+
+          // After send completes, should eventually drain
+          expect(redis.bufferedAmount).toBe(0);
+
+          // Cleanup
+          await redis.del(key);
+        });
+
+        test("should be non-negative", async () => {
+          const redis = await ctx.connectedClient();
+
+          // Execute various operations
+          await redis.set("test-key", "value");
+          expect(redis.bufferedAmount).toBeGreaterThanOrEqual(0);
+
+          await redis.get("test-key");
+          expect(redis.bufferedAmount).toBeGreaterThanOrEqual(0);
+
+          await redis.del("test-key");
+          expect(redis.bufferedAmount).toBeGreaterThanOrEqual(0);
+        });
+      });
     });
 
     describe("RESP3 Data Types", () => {

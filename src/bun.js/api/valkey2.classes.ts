@@ -18,7 +18,7 @@ export default [
       blpop: { fn: "blpop", length: 2 },
       brpop: { fn: "brpop", length: 2 },
       brpoplpush: { fn: "brpoplpush", length: 3 },
-      //bufferedAmount: { getter: "getBufferedAmount" },
+      bufferedAmount: { getter: "getBufferedAmount" },
       bzmpop: { fn: "bzmpop", length: 3 },
       bzpopmax: { fn: "bzpopmax", length: 2 },
       bzpopmin: { fn: "bzpopmin", length: 2 },

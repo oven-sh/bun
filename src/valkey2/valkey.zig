@@ -511,6 +511,14 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             };
         }
 
+        /// Get the number of bytes currently buffered in both egress and ingress buffers.
+        pub fn bufferedBytesCount(self: *const Self) usize {
+            return switch (self._state) {
+                .linked => |*linked| linked._egress_buffer.len() + linked._ingress_buffer.len(),
+                else => 0,
+            };
+        }
+
         fn runBeforeStateTransitionCallback(
             self: *const Self,
             from: *const State,

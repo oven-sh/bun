@@ -79,6 +79,12 @@ pkgs.mkShell {
     export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
 
+    ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+      export LD="${pkgs.lld_19}/bin/lld"
+      export LDFLAGS="-fuse-ld=lld"
+      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+    ''}
+
     echo "====================================="
     echo "Bun Development Environment (Nix)"
     echo "====================================="

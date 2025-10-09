@@ -7,7 +7,9 @@ If you are using Windows, please refer to [this guide](https://bun.com/docs/proj
 A Nix flake is provided as an alternative to manual dependency installation:
 
 ```bash
-nix-shell
+nix develop
+# or explicitly use the pure shell
+# nix develop .#pure
 export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
 bun bd
 ```

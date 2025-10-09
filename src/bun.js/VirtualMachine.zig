@@ -695,15 +695,13 @@ pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
 
 pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
     @branchHint(.cold);
+    Global.mimalloc_cleanup(false);
 
     if (sync) {
-        const heap_size = this.global.vm().runGC(true);
-        bun.Global.mimalloc_cleanup(sync);
-        return heap_size;
+        return this.global.vm().runGC(true);
     }
 
     this.global.vm().collectAsync();
-    bun.Global.mimalloc_cleanup(false);
     return this.global.vm().heapSize();
 }
 

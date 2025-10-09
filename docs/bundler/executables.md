@@ -264,6 +264,14 @@ Bun automatically handles serving the frontend assets with proper MIME types and
 
 For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
 
+## Code splitting
+
+Standalone executables now support code splitting via the `--splitting` flag. This enables dynamic imports to be split into separate chunks within the executable, reducing initial load time for applications with lazy-loaded modules.
+
+```sh
+$ bun build --compile --splitting ./app.ts --outfile myapp
+```
+
 ## Worker
 
 To use workers in a standalone executable, add the worker's entrypoint to the CLI arguments:
@@ -591,7 +599,6 @@ Codesign support requires Bun v1.2.4 or newer.
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
 
 - `--outdir` — use `outfile` instead.
-- `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
 - `--no-bundle` - we always bundle everything into the executable.

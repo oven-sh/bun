@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, randomPort } from "harness";
+import { bunEnv, bunExe, randomPort, exampleSite } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -451,8 +451,14 @@ describe("node:http", () => {
       });
     });
 
-    it("should make a https:// GET request when passed string as first arg", done => {
-      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    it("should make a https:// GET request when passed string as first arg", _done => {
+      const server = exampleSite();
+      function done(err?: Error) {
+        server.stop();
+        _done(err);
+      }
+
+      const req = https.request(server.url, { ca: server.ca, headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {

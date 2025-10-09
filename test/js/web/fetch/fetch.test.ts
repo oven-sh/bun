@@ -12,6 +12,8 @@ import {
   tls,
   tmpdirSync,
   withoutAggressiveGC,
+  exampleSite,
+  exampleHtml as fixture,
 } from "harness";
 
 import { once } from "events";
@@ -22,7 +24,6 @@ import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
 const tmp_dir = tmpdirSync();
-const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
@@ -36,12 +37,16 @@ function startServer({ fetch, ...options }: ServeOptions) {
   return server;
 }
 
+let httpServer = exampleSite("http");
+let httpsServer = exampleSite("https");
 afterEach(() => {
   server?.stop?.(true);
 });
 
 afterAll(() => {
   rmSync(tmp_dir, { force: true, recursive: true });
+  httpServer.stop();
+  httpsServer.stop();
 });
 
 const payload = new Uint8Array(1024 * 1024 * 2);
@@ -523,13 +528,13 @@ describe("Headers", () => {
 
 describe("fetch", () => {
   const urls = [
-    "https://example.com",
-    "http://example.com",
-    new URL("https://example.com"),
-    new Request({ url: "https://example.com" }),
-    { toString: () => "https://example.com" } as string,
+    { url: httpsServer.url.href, tls: { ca: httpsServer.ca } },
+    { url: httpServer.url.href, tls: undefined },
+    { url: httpsServer.url, tls: { ca: httpsServer.ca } },
+    { url: new Request({ url: httpsServer.url.href }), tls: { ca: httpsServer.ca } },
+    { url: { toString: () => httpServer.url.href } as string, tls: undefined },
   ];
-  for (let url of urls) {
+  for (let { url, tls } of urls) {
     gc();
     let name: string;
     if (url instanceof URL) {
@@ -543,7 +548,7 @@ describe("fetch", () => {
     }
     it.concurrent(name, async () => {
       gc();
-      const response = await fetch(url, { verbose: true });
+      const response = await fetch(url, { verbose: true, tls });
       gc();
       const text = await response.text();
       gc();
@@ -713,11 +718,11 @@ describe("fetch", () => {
 });
 
 it.concurrent("simultaneous HTTPS fetch", async () => {
-  const urls = ["https://example.com", "https://www.example.com"];
+  const urls = [httpsServer.url.href, httpsServer.url.href];
   for (let batch = 0; batch < 4; batch++) {
     const promises = new Array(20);
     for (let i = 0; i < 20; i++) {
-      promises[i] = fetch(urls[i % 2]);
+      promises[i] = fetch(urls[i % 2], { tls: { ca: httpsServer.ca } });
     }
     const result = await Promise.all(promises);
     expect(result.length).toBe(20);

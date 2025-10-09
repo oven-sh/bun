@@ -3148,8 +3148,8 @@ fn printErrorInstance(
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
-                        // Calculate indent for caret: line number padding + "-" (1 char) + column
-                        const indent = max_line_number_pad + 1 + @as(u64, @intCast(top.position.column.zeroBased()));
+                        // Calculate indent for caret: line number padding + "- " (2 chars) + column
+                        const indent = max_line_number_pad + 2 + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(

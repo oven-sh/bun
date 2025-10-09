@@ -8,7 +8,7 @@ exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `
 7- 
 8-       test("failing test", () => {
 9-         expect(1).toBe(2);
-                    ^
+                     ^
 error: expect(received).toBe(expected)
 
 Expected: 2
@@ -94,7 +94,7 @@ exports[`CLAUDECODE=1 formats error source lines with dash separator: error-ai-a
 6-           const x = 1;
 7-           const y = 2;
 8-           throw new Error("Test error message");
-                                                ^
+                                                 ^
 error: Test error message
     at foo (file:NN:NN)
     at <anonymous> (file:NN:NN)
@@ -136,7 +136,7 @@ bun test <version> (<revision>)
 3- 
 4-       test("inspect error format", () => {
 5-         const err = new Error("Inspected error");
-                          ^
+                           ^
 error: Inspected error
     at <anonymous> (file:NN:NN)"
 `;

@@ -146,9 +146,9 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
 
     var resolved: string = "";
-    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
+    const tmpname = try FileSystem.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
     {
-        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
+        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, tmpname, .{}) catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -213,7 +213,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     logger.Loc.Empty,
                     bun.default_allocator,
                     "{s} decompressing \"{s}\" to \"{}\"",
-                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
+                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, tmpname, .{}) },
                 ) catch unreachable;
                 return error.InstallFailed;
             };
@@ -315,9 +315,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         const path_to_use = path2;
 
         while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), bun.span(tmpname), .{
+            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
                 .can_rename_or_delete = true,
-                .create = false,
                 .iterable = false,
                 .read_only = true,
             }).unwrap() catch |err| {
@@ -348,7 +347,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                 // and then delete that temp dir
                                 // The goal is to make it more difficult for an application to reach this folder
                                 var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = std.mem.sliceTo(tmpname, 0).len;
+                                const tmpname_len = tmpname.len;
 
                                 tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
                                 const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
@@ -396,7 +395,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
         // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
         //
-        const src = bun.sliceTo(tmpname, 0);
 
         if (create_subdir) {
             if (bun.Dirname.dirname(u8, folder_name)) |folder| {
@@ -406,7 +404,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         if (bun.sys.renameatConcurrently(
             .fromStdDir(tmpdir),
-            src,
+            tmpname,
             .fromStdDir(cache_dir),
             folder_name,
             .{ .move_fallback = true },

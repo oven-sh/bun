@@ -47,7 +47,7 @@ pub const FileSystem = struct {
     }
 
     var tmpname_id_number = std.atomic.Value(u32).init(0);
-    pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+    pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
         return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{

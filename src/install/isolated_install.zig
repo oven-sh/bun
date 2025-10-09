@@ -559,71 +559,6 @@ pub fn installIsolatedPackages(
         };
     };
 
-    const cwd = FD.cwd();
-
-    const root_node_modules_dir, const is_new_root_node_modules, const bun_modules_dir, const is_new_bun_modules = root_dirs: {
-        const node_modules_path = bun.OSPathLiteral("node_modules");
-        const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
-        const existing_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                new_root_node_modules_dir,
-                true,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        const existing_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                existing_root_node_modules_dir,
-                false,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        break :root_dirs .{
-            existing_root_node_modules_dir,
-            false,
-            existing_bun_modules_dir,
-            false,
-        };
-    };
-    _ = root_node_modules_dir;
-    _ = is_new_root_node_modules;
-    _ = bun_modules_dir;
-    // _ = is_new_bun_modules;
-
     {
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
@@ -695,6 +630,161 @@ pub fn installIsolatedPackages(
                 .next = null,
             };
         }
+
+        const is_new_bun_modules = is_new_bun_modules: {
+            const node_modules_path = bun.OSPathLiteral("node_modules");
+            const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
+
+            sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch {
+                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch {
+                    break :is_new_bun_modules false;
+                };
+
+                // 'node_modules' exists and 'node_modules/.bun' doesn't
+
+                if (comptime Environment.isWindows) {
+                    // Windows:
+                    // 1. create 'node_modules/.old_modules-{hex}'
+                    // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
+                    // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
+
+                    var rename_path: bun.AutoRelPath = .init();
+                    defer rename_path.deinit();
+
+                    {
+                        var mkdir_path: bun.RelPath(.{ .sep = .auto, .unit = .u16 }) = .from("node_modules");
+                        defer mkdir_path.deinit();
+
+                        mkdir_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
+                        rename_path.append(mkdir_path.slice());
+
+                        // 1
+                        sys.mkdirat(FD.cwd(), mkdir_path.sliceZ(), 0o755).unwrap() catch {
+                            break :is_new_bun_modules true;
+                        };
+                    }
+
+                    const node_modules = bun.openDirForIteration(FD.cwd(), "node_modules").unwrap() catch {
+                        break :is_new_bun_modules true;
+                    };
+
+                    var entry_path: bun.AutoRelPath = .from("node_modules");
+                    defer entry_path.deinit();
+
+                    // 2
+                    var node_modules_iter = bun.DirIterator.iterate(node_modules, .u8);
+                    while (node_modules_iter.next().unwrap() catch break :is_new_bun_modules true) |entry| {
+                        if (bun.strings.startsWithChar(entry.name.slice(), '.')) {
+                            continue;
+                        }
+
+                        var entry_path_save = entry_path.save();
+                        defer entry_path_save.restore();
+
+                        entry_path.append(entry.name.slice());
+
+                        var rename_path_save = rename_path.save();
+                        defer rename_path_save.restore();
+
+                        rename_path.append(entry.name.slice());
+
+                        sys.renameat(FD.cwd(), entry_path.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                    }
+
+                    // 3
+                    for (lockfile.workspace_paths.values()) |workspace_path| {
+                        var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(string_buf));
+                        defer workspace_node_modules.deinit();
+
+                        const basename = workspace_node_modules.basename();
+
+                        workspace_node_modules.append("node_modules");
+
+                        var rename_path_save = rename_path.save();
+                        defer rename_path_save.restore();
+
+                        rename_path.appendFmt(".old_{s}_modules", .{basename});
+
+                        sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                    }
+                } else {
+
+                    // Posix:
+                    // 1. rename existing 'node_modules' to temp location
+                    // 2. create new 'node_modules' directory
+                    // 3. rename temp into 'node_modules/.old_modules-{hex}'
+                    // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
+                    // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
+                    var temp_node_modules_buf: bun.PathBuffer = undefined;
+                    const temp_node_modules = bun.fs.FileSystem.tmpname("tmp_modules", &temp_node_modules_buf, bun.fastRandom()) catch unreachable;
+
+                    // 1
+                    sys.renameat(FD.cwd(), "node_modules", FD.cwd(), temp_node_modules).unwrap() catch {
+                        break :is_new_bun_modules true;
+                    };
+
+                    // 2
+                    sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
+                        Output.err(err, "failed to create './node_modules'", .{});
+                        Global.exit(1);
+                    };
+
+                    sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                        Output.err(err, "failed to create './node_modules/.bun'", .{});
+                        Global.exit(1);
+                    };
+
+                    var rename_path: bun.AutoRelPath = .from("node_modules");
+                    defer rename_path.deinit();
+
+                    rename_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
+
+                    // 3
+                    sys.renameat(FD.cwd(), temp_node_modules, FD.cwd(), rename_path.sliceZ()).unwrap() catch {
+                        break :is_new_bun_modules true;
+                    };
+
+                    rename_path.append(".cache");
+
+                    var cache_path: bun.AutoRelPath = .from("node_modules");
+                    defer cache_path.deinit();
+
+                    cache_path.append(".cache");
+
+                    // 4
+                    sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {};
+
+                    // remove .cache so we can append destination for each workspace
+                    rename_path.undo(1);
+
+                    // 5
+                    for (lockfile.workspace_paths.values()) |workspace_path| {
+                        var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(string_buf));
+                        defer workspace_node_modules.deinit();
+
+                        const basename = workspace_node_modules.basename();
+
+                        workspace_node_modules.append("node_modules");
+
+                        var rename_path_save = rename_path.save();
+                        defer rename_path_save.restore();
+
+                        rename_path.appendFmt(".old_{s}_modules", .{basename});
+
+                        sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                    }
+                }
+
+                break :is_new_bun_modules true;
+            };
+
+            sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create './node_modules/.bun'", .{});
+                Global.exit(1);
+            };
+
+            break :is_new_bun_modules true;
+        };
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
@@ -841,6 +931,17 @@ pub fn installIsolatedPackages(
                     };
 
                     if (!missing_from_cache) {
+                        if (patch_info == .patch) {
+                            var patch_log: bun.logger.Log = .init(manager.allocator);
+                            installer.applyPackagePatch(entry_id, patch_info.patch, &patch_log);
+                            if (patch_log.hasErrors()) {
+                                // monotonic is okay because we haven't started the task yet (it isn't running
+                                // on another thread)
+                                entry_steps[entry_id.get()].store(.done, .monotonic);
+                                installer.onTaskFail(entry_id, .{ .patching = patch_log });
+                                continue;
+                            }
+                        }
                         installer.startTask(entry_id);
                         continue;
                     }

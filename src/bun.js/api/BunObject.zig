@@ -2312,6 +2312,8 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
 }
 
 const Braces = @import("../../shell/braces.zig");
+const ExtractJobModule = @import("./ExtractJob.zig");
+const TarballJobModule = @import("./TarballJob.zig");
 const Which = @import("../../which.zig");
 const options = @import("../../options.zig");
 const std = @import("std");
@@ -2352,5 +2354,3 @@ const host_fn = bun.jsc.host_fn;
 
 const JSBundler = bun.jsc.API.JSBundler;
 const Transpiler = bun.jsc.API.JSTranspiler;
-const TarballJobModule = @import("./TarballJob.zig");
-const ExtractJobModule = @import("./ExtractJob.zig");

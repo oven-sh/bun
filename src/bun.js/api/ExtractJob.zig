@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;
-const Async = bun.Async;
-
 pub const ExtractJob = struct {
     archive_data: []const u8,
     destination: ?[]const u8,
@@ -203,3 +195,13 @@ pub const ExtractJob = struct {
         bun.default_allocator.destroy(this);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

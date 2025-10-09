@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Async = bun.Async;
-
 const MAX_MEMORY_SIZE = 100 * 1024 * 1024;
 
 pub const Compression = union(enum) {
@@ -205,3 +200,9 @@ pub const TarballJob = struct {
         return job;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const jsc = bun.jsc;

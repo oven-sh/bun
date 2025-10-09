@@ -2,6 +2,7 @@
 
 pkgs.mkShell {
   buildInputs = with pkgs; [
+    # Core build tools (matching bootstrap.sh)
     cmake
     ninja
     clang_19
@@ -19,14 +20,33 @@ pkgs.mkShell {
     libtool
     ruby
     perl
+
+    # Libraries
     openssl
     zlib
     libxml2
+
+    # Development tools
     git
     curl
     wget
     unzip
     xz
+
+    # Linux-specific: gdb and Chromium deps for testing
+  ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+    gdb
+    # Chromium dependencies for Puppeteer tests
+    xorg.libX11
+    xorg.libXcomposite
+    xorg.libXdamage
+    xorg.libXrandr
+    gtk3
+    nss
+    alsa-lib
+    cups
+    libgbm
+    liberation_ttf
   ];
 
   shellHook = ''

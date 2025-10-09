@@ -84,8 +84,10 @@
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
           glibc
-          gdb # for debugging core dumps
-          # X11 and graphics libraries for Chromium/testing
+          gdb # for debugging core dumps (from bootstrap.sh line 1535)
+
+          # Chromium dependencies for Puppeteer testing (from bootstrap.sh lines 1397-1483)
+          # X11 and graphics libraries
           xorg.libX11
           xorg.libxcb
           xorg.libXcomposite
@@ -114,6 +116,9 @@
           alsa-lib
           at-spi2-atk
           at-spi2-core
+          libgbm # for hardware acceleration
+          liberation_ttf # fonts-liberation
+          atk
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
           darwin.apple_sdk.frameworks.CoreFoundation

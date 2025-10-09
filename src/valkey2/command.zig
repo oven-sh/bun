@@ -165,9 +165,7 @@ pub const CommandDescriptor = enum {
     }
 
     pub fn toString(self: CommandDescriptor) []const u8 {
-        return switch (self) {
-            else => |enum_value| @tagName(enum_value),
-        };
+        return @tagName(self);
     }
 
     /// Whether this command can be pipelined or not.

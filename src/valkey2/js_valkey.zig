@@ -125,7 +125,14 @@ pub const JsValkey = struct {
 
                 // Call onconnect callback if defined by the user
                 if (JsValkey.js.onconnectGetCached(js_this)) |on_connect| {
-                    pp._global_obj.queueMicrotask(on_connect, &[_]bun.jsc.JSValue{js_this});
+                    if (on_connect.isCallable()) {
+                        pp._global_obj.bunVM().eventLoop().runCallback(
+                            on_connect,
+                            pp._global_obj,
+                            js_this,
+                            &.{},
+                        );
+                    }
                 }
 
                 // Means we just connected to Valkey. Let's resolve the connection promise.
@@ -427,9 +434,7 @@ pub const JsValkey = struct {
             },
         };
 
-        self._client.request(&req) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send command", err);
-        };
+        try self._client.request(&req);
 
         return req.context.user_request.promise();
     }
@@ -528,7 +533,7 @@ pub const JsValkey = struct {
         if (second_arg.isObject() and !second_arg.isArray()) {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             const obj = second_arg.getObject() orelse {
-                return go.throwInvalidArgumentType(command.toString(), "fields", "object");
+                return go.throwInvalidArgumentType(@tagName(command), "fields", "object");
             };
 
             var object_iter = try bun.jsc.JSPropertyIterator(.{
@@ -602,7 +607,7 @@ pub const JsValkey = struct {
             Command.initById(command, .{ .slices = args.items }),
             .{},
         ) catch |err| {
-            const msg = "Failed to send " ++ command.toString() ++ " command";
+            const msg = "Failed to send " ++ @tagName(command) ++ " command";
             return protocol.valkeyErrorToJS(go, msg, err);
         };
 
@@ -996,7 +1001,7 @@ const MetFactory = struct {
                 }, .{}) catch |err| {
                     return protocol.valkeyErrorToJS(
                         go,
-                        "Failed to send " ++ command_descriptor.toString(),
+                        "Failed to send " ++ @tagName(command_descriptor),
                         err,
                     );
                 };
@@ -1030,7 +1035,7 @@ const MetFactory = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(
                         go,
-                        "Failed to send " ++ command.toString(),
+                        "Failed to send " ++ @tagName(command),
                         err,
                     );
                 };
@@ -1065,7 +1070,7 @@ const MetFactory = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(
                         go,
-                        "Failed to send " ++ command.toString(),
+                        "Failed to send " ++ @tagName(command),
                         err,
                     );
                 };
@@ -1102,7 +1107,11 @@ const MetFactory = struct {
                     Command.initById(command, .{ .args = &.{ key, value } }),
                     .{},
                 ) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ @tagName(command),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }
@@ -1147,7 +1156,11 @@ const MetFactory = struct {
                     Command.initById(command, .{ .args = args.items }),
                     .{},
                 ) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ @tagName(command),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }
@@ -1205,7 +1218,11 @@ const MetFactory = struct {
                     ),
                     .{},
                 ) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ @tagName(command),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }
@@ -1247,7 +1264,11 @@ const MetFactory = struct {
                     ),
                     .{},
                 ) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ @tagName(command),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }
@@ -1296,7 +1317,11 @@ const MetFactory = struct {
                     Command.initById(command, .{ .args = args.items }),
                     .{},
                 ) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ @tagName(command),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }

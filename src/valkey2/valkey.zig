@@ -584,10 +584,38 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                         else => {},
                     }
                 },
+                .linked => |*l_state| {
+                    switch (l_state.state) {
+                        .authenticating => {
+                            switch (to_state.*) {
+                                .linked => |*to_linked| {
+                                    switch (to_linked.state) {
+                                        .normal, .subscriber => {
+                                            // Switching out of the authenticating state into
+                                            // another linked state means that authentication
+                                            // succeeded and we have a fully functional connection
+                                            // with Redis.
+                                            try self.onStateAuthenticatingToNormalOrSubscriber();
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+                        else => {},
+                    }
+                },
                 else => {},
             }
 
             self.runAfterStateTransitionCallback(from_state, to_state);
+        }
+
+        fn onStateAuthenticatingToNormalOrSubscriber(self: *Self) !void {
+            // After authenticating, we need to make sure we enable the automatic flusher which
+            // will ship messages out of the outbound queue and send them down the socket's pipe.
+            self.registerAutoFlusher();
         }
 
         fn onStateDisconnectedToOpening(self: *Self) !void {
@@ -718,7 +746,21 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                         "{*} Received an unexpected request in {s} state.",
                         .{ self, @tagName(self._state) },
                     );
-                    @panic("Not implemented");
+
+                    // Okay, we're not currently in the linked state. What we can do is enqueue the
+                    // request and attempt to start the connection.
+                    try self.enqueueRequest(req);
+                    self.startConnecting() catch |err| {
+                        switch (err) {
+                            Error.InvalidState => {
+                                self._state.warnIllegalState("request-start-connecting");
+                                // No-op, we're already connecting or connected.
+                            },
+                            Error.FailedToOpenSocket => {
+                                return error.ConnectionClosed;
+                            },
+                        }
+                    };
                 },
             }
         }

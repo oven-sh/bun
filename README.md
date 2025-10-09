@@ -408,34 +408,17 @@ bun upgrade --canary
 
 ## Development
 
-### Using Nix (Experimental)
+### Using Nix
 
-We provide a Nix flake that declares all dependencies needed to build Bun. This is an alternative to `scripts/bootstrap.sh`:
+A Nix flake is provided as an alternative to `scripts/bootstrap.sh`:
 
 ```bash
-# Install Nix with flakes enabled
-sh <(curl -L https://nixos.org/nix/install) --daemon
-echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
-
-# Enter development environment
-nix develop
-
-# Build Bun debug binary
+nix-shell
+export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
 bun bd
 ```
 
-**⚠️ Status:** The flake is syntactically correct and provides all dependencies, but has not been fully tested for building Bun. May have glibc compatibility issues on non-NixOS systems. See [NIX_LIMITATIONS.md](NIX_LIMITATIONS.md) for details.
-
-**Potential advantages:**
-- Fully isolated (no sudo required)
-- 100% reproducible dependency versions
-- Declared dependencies matching bootstrap.sh
-
-See [NIX_QUICKSTART.md](NIX_QUICKSTART.md) for more details, or [NIX_SETUP.md](NIX_SETUP.md) for comprehensive documentation.
-
-### Traditional Setup
-
-Use `scripts/bootstrap.sh` to install dependencies:
+### Using bootstrap.sh
 
 ```bash
 ./scripts/bootstrap.sh

@@ -46,6 +46,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/OrderedHashTableHelper.h"
@@ -6208,7 +6209,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
-    auto microTaskFunction = globalObject->performMicrotaskFunction();
+    JSC::JSFunction* microTaskFunction = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(microTaskFunction, "Invalid microtask function");
     auto& vm = globalObject->vm();
@@ -6230,12 +6231,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    globalObject->queueMicrotask(
-        microTaskFunction,
-        WTFMove(microtaskArgs[0]),
-        WTFMove(microtaskArgs[1]),
-        WTFMove(microtaskArgs[2]),
-        WTFMove(microtaskArgs[3]));
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, microTaskFunction, WTFMove(microtaskArgs[0]), WTFMove(microtaskArgs[1]), WTFMove(microtaskArgs[2]), WTFMove(microtaskArgs[3]) };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)

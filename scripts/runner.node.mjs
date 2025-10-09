@@ -1267,9 +1267,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
           let pdbPath = null;
           try {
             const artifacts = await getBuildArtifacts();
-            const profileArtifact = artifacts?.find(
-              a => a.path.includes("bun-profile") && a.path.endsWith(".zip"),
-            );
+            const profileArtifact = artifacts?.find(a => a.path.includes("bun-profile") && a.path.endsWith(".zip"));
 
             if (profileArtifact) {
               const profileDir = join(tmpdir(), `bun-profile-symbols-${Date.now()}`);

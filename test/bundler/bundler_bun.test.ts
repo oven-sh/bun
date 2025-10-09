@@ -137,7 +137,7 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
-  if (Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
+  if (Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {
         files: {

@@ -196,9 +196,10 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8, remove: *bool) Yield {
             _ = this.bltn().writeNoIO(.stdout, chunk);
             return .done;
         },
-        else => @panic("Invalid state"),
+        // Race condition: chunks can arrive after state transitions (especially on Windows)
+        // Just ignore them - the reader is being cleaned up
+        .done, .waiting_write_err, .idle => return .done,
     }
-    return .done;
 }
 
 pub fn onIOReaderDone(this: *Cat, err: ?jsc.SystemError) Yield {

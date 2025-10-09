@@ -36,7 +36,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟢 Fully implemented. 92% of Node.js's test suite passes.
+🟢 Fully implemented. 92% of Node.js's test suite passes. On Linux, `fs.stat` uses the `statx` syscall to provide file creation time (birthtime) support, falling back to traditional `stat` on kernels older than 4.11.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -218,6 +218,10 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 🟢 Fully implemented.
 
+### [`AsyncDisposableStack`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AsyncDisposableStack)
+
+🟢 Fully implemented. Used with `await using` syntax for explicit async resource management.
+
 ### [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
 
 🟢 Fully implemented.
@@ -269,6 +273,10 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
 
 🔴 Not implemented.
+
+### [`DisposableStack`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DisposableStack)
+
+🟢 Fully implemented. Used with `using` syntax for explicit resource management, automatically calling disposal methods when leaving scope.
 
 ### [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
 

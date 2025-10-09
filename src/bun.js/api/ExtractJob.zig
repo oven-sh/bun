@@ -238,6 +238,7 @@ pub const ExtractJob = struct {
             }
 
             const key = try allocator.dupe(u8, normalized);
+            errdefer allocator.free(key);
             try this.files.put(key, buf);
         }
     }

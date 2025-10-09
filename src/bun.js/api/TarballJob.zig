@@ -133,7 +133,10 @@ pub const TarballJob = struct {
         }
 
         if (this.destination) |destination| {
-            const file = std.fs.cwd().openFile(destination, .{}) catch return error.CannotOpenFile;
+            const file = (if (std.fs.path.isAbsolute(destination))
+                std.fs.openFileAbsolute(destination, .{})
+            else
+                std.fs.cwd().openFile(destination, .{})) catch return error.CannotOpenFile;
             defer file.close();
             this.bytes_written = (file.stat() catch return error.CannotStatFile).size;
         } else {

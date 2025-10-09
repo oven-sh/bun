@@ -1,23 +1,26 @@
 import { SQL, type CopyBinaryType } from "bun";
-import { describe, test, expect, afterAll } from "bun:test";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../docker/index.ts";
 
 if (isDockerEnabled()) {
-  describe("PostgreSQL COPY protocol", async () => {
-    const info = await dockerCompose.ensure("postgres_plain");
-    const conn = new SQL({
-      hostname: info.host,
-      port: info.ports[5432],
-      database: "bun_sql_test",
-      username: "bun_sql_test",
-      tls: false,
-      max: 1,
+  describe("PostgreSQL COPY protocol", () => {
+    let info: Awaited<ReturnType<typeof dockerCompose.ensure>>;
+    let conn: InstanceType<typeof SQL>;
+
+    beforeAll(async () => {
+      info = await dockerCompose.ensure("postgres_plain");
+      conn = new SQL({
+        hostname: info.host,
+        port: info.ports[5432],
+        database: "bun_sql_test",
+        username: "bun_sql_test",
+        tls: false,
+        max: 1,
+      });
     });
 
-    afterAll(() => {
-      conn.close();
-    });
+    afterAll(() => conn.close());
 
     // Phase 1: COPY TO STDOUT (Data Export)
 

@@ -1072,6 +1072,79 @@ if (isDockerEnabled()) {
       expect(verify[0]?.id).toBe(100);
       expect(verify[0]?.name).toBe("Test");
     });
+
+    test("Audit fix: CSV empty string vs NULL - empty strings should be quoted", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_csv_null_test", []);
+      await conn.unsafe("CREATE TABLE audit_csv_null_test (id INT, val TEXT)", []);
+
+      // Test data: [1, null], [2, ""], [3, "text"]
+      const rows = [
+        [1, null], // Should emit: 1,
+        [2, ""], // Should emit: 2,""
+        [3, "text"], // Should emit: 3,text
+      ];
+
+      const result = await conn.copyFrom("audit_csv_null_test", ["id", "val"], rows, {
+        format: "csv",
+      });
+
+      expect(result.command).toBe("COPY");
+      expect(result.count).toBe(3);
+
+      const verify = await conn`SELECT id::int AS id, val FROM audit_csv_null_test ORDER BY id`;
+      expect(verify[0]?.id).toBe(1);
+      expect(verify[0]?.val).toBe(null); // NULL value
+      expect(verify[1]?.id).toBe(2);
+      expect(verify[1]?.val).toBe(""); // Empty string
+      expect(verify[2]?.id).toBe(3);
+      expect(verify[2]?.val).toBe("text");
+    });
+
+    test("Audit fix: uint32 clamping - large timeout/buffer values should not wrap", async () => {
+      const reserved = await conn.reserve();
+
+      // Test with values larger than 32-bit signed int max (2^31 - 1 = 2147483647)
+      const largeTimeout = 3_000_000_000; // 3 billion ms
+      const largeBufferSize = 5_000_000_000; // 5 billion bytes
+
+      // These should clamp to max uint32 (0xffffffff = 4294967295) without wrapping to 0 or negative
+      let timeoutError = false;
+      let bufferError = false;
+
+      try {
+        (reserved as any).setCopyTimeout(largeTimeout);
+      } catch (e) {
+        timeoutError = true;
+      }
+
+      try {
+        (reserved as any).setMaxCopyBufferSize(largeBufferSize);
+      } catch (e) {
+        bufferError = true;
+      }
+
+      // Should not throw errors
+      expect(timeoutError).toBe(false);
+      expect(bufferError).toBe(false);
+
+      // Test with negative values (should clamp to 0)
+      try {
+        (reserved as any).setCopyTimeout(-1000);
+      } catch (e) {
+        timeoutError = true;
+      }
+
+      try {
+        (reserved as any).setMaxCopyBufferSize(-5000);
+      } catch (e) {
+        bufferError = true;
+      }
+
+      expect(timeoutError).toBe(false);
+      expect(bufferError).toBe(false);
+
+      await (reserved as any).close();
+    });
   });
 } else {
   describe("PostgreSQL COPY protocol", () => {

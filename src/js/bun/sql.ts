@@ -347,6 +347,12 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
+    const clampUint32 = (value: number) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      return Math.min(0xffffffff, Math.trunc(n));
+    };
+
     const onClose = onTransactionDisconnected.bind(state);
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
@@ -451,26 +457,26 @@ const SQL: typeof Bun.SQL = function SQL(
     /** @type {(ms: number) => void} */
     reserved_sql.setCopyTimeout = (ms: number) => {
       if (typeof (pool as any).setCopyTimeoutFor === "function") {
-        (pool as any).setCopyTimeoutFor(pooledConnection, (ms | 0) >>> 0);
+        (pool as any).setCopyTimeoutFor(pooledConnection, clampUint32(ms));
       } else {
         const underlying = pool.getConnectionForQuery
           ? pool.getConnectionForQuery(pooledConnection)
           : pooledConnection?.connection;
         if (underlying && (PostgresAdapter as any).setCopyTimeout) {
-          (PostgresAdapter as any).setCopyTimeout(underlying, (ms | 0) >>> 0);
+          (PostgresAdapter as any).setCopyTimeout(underlying, clampUint32(ms));
         }
       }
     };
     /** @type {(bytes: number) => void} */
     reserved_sql.setMaxCopyBufferSize = (bytes: number) => {
       if (typeof (pool as any).setMaxCopyBufferSizeFor === "function") {
-        (pool as any).setMaxCopyBufferSizeFor(pooledConnection, (bytes | 0) >>> 0);
+        (pool as any).setMaxCopyBufferSizeFor(pooledConnection, clampUint32(bytes));
       } else {
         const underlying = pool.getConnectionForQuery
           ? pool.getConnectionForQuery(pooledConnection)
           : pooledConnection?.connection;
         if (underlying && (PostgresAdapter as any).setMaxCopyBufferSize) {
-          (PostgresAdapter as any).setMaxCopyBufferSize(underlying, (bytes | 0) >>> 0);
+          (PostgresAdapter as any).setMaxCopyBufferSize(underlying, clampUint32(bytes));
         }
       }
     };
@@ -1136,8 +1142,15 @@ const SQL: typeof Bun.SQL = function SQL(
     const serializeRow = (row: any[]): string => {
       if (fmt === "csv") {
         const parts = row.map(v => {
+          // Check for actual null/undefined before serializing
+          if (v === null || v === undefined) {
+            return ""; // Emit unquoted empty field for NULL
+          }
           const s = serializeValue(v);
-          if (s === nullToken) return "";
+          // Empty string should be quoted to distinguish from NULL
+          if (s === "") {
+            return csvQuote("");
+          }
           return needsCsvQuoting(s) ? csvQuote(s) : s;
         });
         return parts.join(delimiter) + "\n";

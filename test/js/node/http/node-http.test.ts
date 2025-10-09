@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, randomPort, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";

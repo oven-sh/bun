@@ -1,9 +1,11 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  exampleSite,
+  exampleHtml as fixture,
   gc,
   isBroken,
   isFlaky,
@@ -12,8 +14,6 @@ import {
   tls,
   tmpdirSync,
   withoutAggressiveGC,
-  exampleSite,
-  exampleHtml as fixture,
 } from "harness";
 
 import { once } from "events";

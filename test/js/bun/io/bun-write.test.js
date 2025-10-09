@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, gcTick, isWindows, withoutAggressiveGC, exampleSite, exampleHtml } from "harness";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
 const tmpbase = tmpdir() + path.sep;

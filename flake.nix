@@ -119,6 +119,9 @@
           libgbm # for hardware acceleration
           liberation_ttf # fonts-liberation
           atk
+          libdrm
+          xorg.libxshmfence
+          gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
           darwin.apple_sdk.frameworks.CoreFoundation
@@ -164,13 +167,7 @@
           '';
         };
 
-      in
-      {
-        # FHS shell - default for better compatibility on non-NixOS
-        devShells.default = fhsEnv.env;
-
-        # Traditional nix shell (for NixOS users or debugging)
-        devShells.pure = pkgs.mkShell {
+        pureShell = pkgs.mkShell {
           inherit buildInputs;
 
           shellHook = ''
@@ -179,11 +176,11 @@
             export CXX="${clang}/bin/clang++"
             export AR="${llvm}/bin/llvm-ar"
             export RANLIB="${llvm}/bin/llvm-ranlib"
-            export LD="${lld}/bin/lld"
-            export LDFLAGS="-fuse-ld=lld"
 
-            # Ensure proper library paths
+            # LD/LDFLAGS are Linux-only (macOS uses system linker)
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              export LD="${lld}/bin/lld"
+              export LDFLAGS="-fuse-ld=lld"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
             ''}
 
@@ -220,6 +217,11 @@
           HOMEBREW_NO_ANALYTICS = "1";
           HOMEBREW_NO_AUTO_UPDATE = "1";
         };
+      in
+      {
+        # Use FHS environment on Linux, pure shell on other platforms
+        devShells.default = if pkgs.stdenv.isLinux then fhsEnv.env else pureShell;
+        devShells.pure = pureShell;
 
         # Add a formatter
         formatter = pkgs.nixpkgs-fmt;

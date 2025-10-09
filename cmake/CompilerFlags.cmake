@@ -1,6 +1,8 @@
 # clang: https://clang.llvm.org/docs/CommandGuide/clang.html
 # clang-cl: https://clang.llvm.org/docs/UsersManual.html#id11
 
+include(CheckCCompilerFlag)
+
 # --- Macros ---
 
 macro(setb variable)
@@ -16,6 +18,9 @@ set(targets WIN32 APPLE UNIX LINUX)
 foreach(target ${targets})
   setb(${target})
 endforeach()
+
+# Check if compiler supports zstd debug compression
+check_c_compiler_flag("-gz=zstd" COMPILER_SUPPORTS_DEBUG_ZSTD)
 
 # --- CPU target ---
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
@@ -59,10 +64,10 @@ if(DEBUG)
     -O0 ${UNIX}
   )
   # Nix glibc sets _FORTIFY_SOURCE which requires optimization, but we're building with -O0
-  # Downgrade the warning to not be an error
+  # Disable it explicitly in Debug to avoid warnings
   if(UNIX)
     register_compiler_flags(
-      DESCRIPTION "Allow _FORTIFY_SOURCE warnings in debug builds"
+      DESCRIPTION "Disable Fortify in -O0 debug"
       -D_FORTIFY_SOURCE=0
       "-Wno-error=#warnings"
     )
@@ -95,17 +100,16 @@ elseif(APPLE)
 endif()
 
 if(UNIX)
-  # Check if we're in a Nix environment (which may not have zstd support in LLVM)
-  if(DEFINED ENV{NIX_CC} OR DEFINED ENV{NIX_STORE})
+  if(COMPILER_SUPPORTS_DEBUG_ZSTD)
     register_compiler_flags(
-      DESCRIPTION "Enable debug symbols (without zstd compression for Nix)"
-      -g3 ${DEBUG}
+      DESCRIPTION "Enable debug symbols (zstd-compressed when supported)"
+      -g3 -gz=zstd ${DEBUG}
       -g1 ${RELEASE}
     )
   else()
     register_compiler_flags(
-      DESCRIPTION "Enable debug symbols"
-      -g3 -gz=zstd ${DEBUG}
+      DESCRIPTION "Enable debug symbols (no zstd)"
+      -g3 ${DEBUG}
       -g1 ${RELEASE}
     )
   endif()
@@ -233,8 +237,8 @@ if(ENABLE_ASSERTIONS)
   )
 
   register_compiler_definitions(
-    DESCRIPTION "Enable fortified sources"
-    _FORTIFY_SOURCE=3
+    DESCRIPTION "Enable fortified sources (Release only)"
+    _FORTIFY_SOURCE=3 ${RELEASE}
   )
 
   if(LINUX)

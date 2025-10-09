@@ -38,15 +38,39 @@ pkgs.mkShell {
     gdb
     # Chromium dependencies for Puppeteer tests
     xorg.libX11
+    xorg.libxcb
     xorg.libXcomposite
+    xorg.libXcursor
     xorg.libXdamage
+    xorg.libXext
+    xorg.libXfixes
+    xorg.libXi
     xorg.libXrandr
-    gtk3
+    xorg.libXrender
+    xorg.libXScrnSaver
+    xorg.libXtst
+    libxkbcommon
+    mesa
+    nspr
     nss
-    alsa-lib
     cups
+    dbus
+    expat
+    fontconfig
+    freetype
+    glib
+    gtk3
+    pango
+    cairo
+    alsa-lib
+    at-spi2-atk
+    at-spi2-core
     libgbm
     liberation_ttf
+    atk
+    libdrm
+    xorg.libxshmfence
+    gdk-pixbuf
   ];
 
   shellHook = ''

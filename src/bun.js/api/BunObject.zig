@@ -17,6 +17,7 @@ pub const BunObject = struct {
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
+    pub const extract = toJSCallback(Bun.extractTarball);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
@@ -37,6 +38,7 @@ pub const BunObject = struct {
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
+    pub const tarball = toJSCallback(Bun.createTarball);
     pub const udpSocket = toJSCallback(host_fn.wrapStaticMethod(api.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(jsc.WebCore.Blob.writeFile);
@@ -153,6 +155,7 @@ pub const BunObject = struct {
         @export(&BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
         @export(&BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(&BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
+        @export(&BunObject.extract, .{ .name = callbackName("extract") });
         @export(&BunObject.file, .{ .name = callbackName("file") });
         @export(&BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(&BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
@@ -173,6 +176,7 @@ pub const BunObject = struct {
         @export(&BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(&BunObject.tarball, .{ .name = callbackName("tarball") });
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
@@ -2012,6 +2016,233 @@ pub const JSZstd = struct {
         return job.promise.value();
     }
 };
+pub const Compression = TarballJobModule.Compression;
+pub const TarballJob = TarballJobModule.TarballJob;
+pub const ExtractJob = ExtractJobModule.ExtractJob;
+
+pub fn createTarball(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const arguments = callframe.arguments();
+    if (arguments.len < 1) {
+        return globalThis.throwInvalidArguments("Expected options object", .{});
+    }
+
+    const opts = arguments[0];
+    if (!opts.isObject()) {
+        return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+    }
+
+    // Parse files
+    const files_value = try opts.get(globalThis, "files") orelse {
+        return globalThis.throwInvalidArguments("Missing required field: files", .{});
+    };
+
+    var file_list = try parseFileList(globalThis, files_value);
+    errdefer file_list.deinit();
+
+    if (file_list.entries.len == 0) {
+        return globalThis.throwInvalidArguments("files object cannot be empty", .{});
+    }
+
+    // Parse optional destination
+    const destination = if (try opts.getOptional(globalThis, "destination", ZigString.Slice)) |slice| blk: {
+        defer slice.deinit();
+        break :blk try bun.default_allocator.dupe(u8, slice.slice());
+    } else null;
+    errdefer if (destination) |d| bun.default_allocator.free(d);
+
+    // Parse optional compression
+    var compression: Compression = .{ .none = {} };
+
+    if (try opts.get(globalThis, "compress")) |comp| {
+        if (comp.isString()) {
+            const str = try comp.toSlice(globalThis, bun.default_allocator);
+            defer str.deinit();
+            if (bun.strings.eqlComptime(str.slice(), "gzip")) {
+                compression = .{ .gzip = 6 }; // default level
+            } else {
+                return globalThis.throwInvalidArguments("compress must be 'gzip' or object", .{});
+            }
+        } else if (comp.isObject()) {
+            const type_val = try comp.get(globalThis, "type") orelse {
+                return globalThis.throwInvalidArguments("compress.type is required", .{});
+            };
+            const type_str = try type_val.toSlice(globalThis, bun.default_allocator);
+            defer type_str.deinit();
+            if (!bun.strings.eqlComptime(type_str.slice(), "gzip")) {
+                return globalThis.throwInvalidArguments("Only 'gzip' compression supported", .{});
+            }
+
+            var level: u8 = 6;
+            if (try comp.get(globalThis, "level")) |level_val| {
+                const num = try level_val.coerce(i32, globalThis);
+                if (num < 0 or num > 9) {
+                    return globalThis.throwInvalidArguments("compression level must be 0-9", .{});
+                }
+                level = @intCast(num);
+            }
+            compression = .{ .gzip = level };
+        }
+    }
+
+    const vm = globalThis.bunVM();
+    var job = TarballJob.create(vm, globalThis, file_list, destination, compression);
+    return job.promise.value();
+}
+
+fn parseFileList(globalThis: *JSGlobalObject, files_obj: JSValue) !TarballJobModule.FileList {
+    if (!files_obj.isObject()) {
+        return globalThis.throwInvalidArguments("files must be an object", .{});
+    }
+
+    const allocator = bun.default_allocator;
+    var entries = std.ArrayList(TarballJobModule.FileEntry).init(allocator);
+    errdefer {
+        for (entries.items) |*entry| entry.deinit(allocator);
+        entries.deinit();
+    }
+
+    var iter = try jsc.JSPropertyIterator(.{
+        .skip_empty_name = true,
+        .include_value = true,
+    }).init(globalThis, try files_obj.toObject(globalThis));
+    defer iter.deinit();
+
+    while (try iter.next()) |prop_name| {
+        const value = iter.value;
+        if (value.isUndefined()) continue;
+
+        var entry = TarballJobModule.FileEntry{
+            .archive_path = try prop_name.toOwnedSlice(allocator),
+            .data = try jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(
+                globalThis,
+                allocator,
+                value,
+                .js_undefined,
+                true,
+            ) orelse {
+                return globalThis.throwInvalidArguments("File values must be string, Blob, or Buffer", .{});
+            },
+        };
+        errdefer entry.deinit(allocator);
+
+        entries.append(entry) catch |err| {
+            entry.deinit(allocator);
+            return err;
+        };
+    }
+
+    return .{
+        .entries = try entries.toOwnedSlice(),
+        .allocator = allocator,
+    };
+}
+
+pub fn extractTarball(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const arguments = callframe.arguments();
+    if (arguments.len < 1) {
+        return globalThis.throwInvalidArguments("Expected archive data", .{});
+    }
+
+    // Parse archive data
+    const archive_value = arguments[0];
+    const archive_data = blk: {
+        if (archive_value.isString()) {
+            // File path - limited to 100MB to prevent OOM
+            const path_slice = try archive_value.toSlice(globalThis, bun.default_allocator);
+            defer path_slice.deinit();
+            const max_size = 100 * 1024 * 1024; // 100MB max
+            break :blk std.fs.cwd().readFileAlloc(
+                bun.default_allocator,
+                path_slice.slice(),
+                max_size,
+            ) catch |err| {
+                if (err == error.FileTooBig) {
+                    return globalThis.throwValue(globalThis.createErrorInstance("Archive file exceeds 100MB limit. Use Blob or Buffer for larger files.", .{}));
+                }
+                return globalThis.throwValue(globalThis.createErrorInstance("Failed to read file: {s}", .{@errorName(err)}));
+            };
+        } else {
+            // Blob, Buffer, or ArrayBufferView
+            const blob_or_buf = try jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(
+                globalThis,
+                bun.default_allocator,
+                archive_value,
+                .js_undefined,
+                true,
+            ) orelse {
+                return globalThis.throwInvalidArguments("Expected string, Blob, Buffer, or ArrayBufferView", .{});
+            };
+            defer blob_or_buf.deinit();
+            break :blk try bun.default_allocator.dupe(u8, blob_or_buf.slice());
+        }
+    };
+    errdefer bun.default_allocator.free(archive_data);
+
+    // Parse options if provided
+    var destination: ?[]const u8 = null;
+    var glob_patterns: ?[][]const u8 = null;
+    var skip_components: u32 = 0;
+    errdefer if (destination) |d| bun.default_allocator.free(d);
+    errdefer if (glob_patterns) |patterns| {
+        for (patterns) |p| bun.default_allocator.free(p);
+        bun.default_allocator.free(patterns);
+    };
+
+    if (arguments.len > 1 and arguments[1].isObject()) {
+        const opts = arguments[1];
+
+        if (try opts.getOptional(globalThis, "destination", ZigString.Slice)) |slice| {
+            defer slice.deinit();
+            destination = try bun.default_allocator.dupe(u8, slice.slice());
+        }
+
+        if (try opts.get(globalThis, "glob")) |glob_val| {
+            if (glob_val.isString()) {
+                const pattern_slice = try glob_val.toSlice(globalThis, bun.default_allocator);
+                defer pattern_slice.deinit();
+
+                const patterns = try bun.default_allocator.alloc([]const u8, 1);
+                errdefer bun.default_allocator.free(patterns);
+
+                patterns[0] = try bun.default_allocator.dupe(u8, pattern_slice.slice());
+                glob_patterns = patterns;
+            } else if (glob_val.jsType().isArray()) {
+                var patterns = std.ArrayList([]const u8).init(bun.default_allocator);
+                errdefer {
+                    for (patterns.items) |p| bun.default_allocator.free(p);
+                    patterns.deinit();
+                }
+
+                var iter = try glob_val.arrayIterator(globalThis);
+                while (try iter.next()) |item| {
+                    if (item.isString()) {
+                        const pattern_slice = try item.toSlice(globalThis, bun.default_allocator);
+                        defer pattern_slice.deinit();
+                        const dup = try bun.default_allocator.dupe(u8, pattern_slice.slice());
+                        errdefer bun.default_allocator.free(dup);
+                        try patterns.append(dup);
+                    }
+                }
+
+                if (patterns.items.len > 0) {
+                    glob_patterns = try patterns.toOwnedSlice();
+                }
+            }
+        }
+
+        if (try opts.get(globalThis, "skipPathComponents")) |skip_val| {
+            const skip_u32 = skip_val.toU32();
+            if (skip_u32 > 128) {
+                return globalThis.throwInvalidArguments("skipPathComponents must be between 0 and 128", .{});
+            }
+            skip_components = @intCast(skip_u32);
+        }
+    }
+
+    const vm = globalThis.bunVM();
+    const job = ExtractJob.create(vm, globalThis, archive_data, destination, glob_patterns, skip_components);
+    return job.promise.value();
+}
 
 // const InternalTestingAPIs = struct {
 //     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -2121,3 +2352,5 @@ const host_fn = bun.jsc.host_fn;
 
 const JSBundler = bun.jsc.API.JSBundler;
 const Transpiler = bun.jsc.API.JSTranspiler;
+const TarballJobModule = @import("./TarballJob.zig");
+const ExtractJobModule = @import("./ExtractJob.zig");

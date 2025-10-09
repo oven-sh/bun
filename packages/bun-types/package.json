@@ -24,7 +24,9 @@
     "@types/react": "^19"
   },
   "devDependencies": {
-    "@types/react": "^19"
+    "@types/react": "^19",
+    "typescript": "5.9.2",
+    "undici-types": "^7.16.0"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",

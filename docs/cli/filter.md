@@ -85,22 +85,20 @@ Filters respect your [workspace configuration](https://bun.com/docs/install/work
 bun run --filter foo myscript
 ```
 
-### Dependency Order
+### Dependency Order and `--parallel`
 
-Bun will respect package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both packages have a `build` script. When you run `bun --filter '*' build`, you will notice that `foo` will only start running once `bar` is done.
-
-### Running scripts in parallel with `--parallel`
-
-By default, when running scripts with `--filter`, Bun respects the dependency order between packages to ensure that dependencies are built before their dependents. However, if you don't need to wait for dependencies and want to run all scripts at the same time, you can use the `--parallel` flag:
+By default, Bun respects package dependency order when running scripts. If package `foo` depends on package `bar`, and both have a `build` script, `foo` will only start after `bar` completes:
 
 ```bash
-bun --filter '*' --parallel dev
+bun --filter '*' build  # bar runs first, then foo
 ```
 
-This will run the `dev` script in all matched packages immediately without waiting for dependencies to complete. This is useful when:
+To skip dependency ordering and run all scripts immediately, use the `--parallel` flag:
 
-- Scripts don't depend on each other's output (e.g., running tests, linters, or development servers)
-- You want to maximize parallelism for faster execution
-- Package dependency order doesn't matter for the task at hand
+```bash
+bun --filter '*' --parallel dev  # all packages start at once
+```
 
-**Note:** Even with `--parallel`, pre and post scripts (e.g., `predev`, `postdev`) within the same package will still run in order.
+This is useful for tasks like running tests, linters, or dev servers where dependency order doesn't matter.
+
+**Note:** Pre and post scripts (e.g., `predev`, `postdev`) within the same package still run in order.

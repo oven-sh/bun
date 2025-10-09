@@ -818,7 +818,7 @@ pub const JestPrettyFormat = struct {
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
-                            var utf16Slice = key.utf16SliceAligned();
+                            const utf16Slice = key.utf16SliceAligned();
 
                             this.addForNewLine(utf16Slice.len + 2);
 
@@ -826,16 +826,8 @@ pub const JestPrettyFormat = struct {
                                 writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                             }
 
-                            writer.writeAll("'");
-
-                            while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
-                                writer.write16Bit(utf16Slice[0..j]);
-                                writer.writeAll("\"");
-                                utf16Slice = utf16Slice[j + 1 ..];
-                            }
-
+                            writer.writeAll("\"");
                             writer.write16Bit(utf16Slice);
-
                             writer.print(
                                 comptime Output.prettyFmt("\"<r><d>:<r> ", enable_ansi_colors),
                                 .{},

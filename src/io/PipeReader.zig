@@ -740,10 +740,8 @@ pub const WindowsBufferedReader = struct {
         has_inflight_read: bool = false,
         use_pread: bool = false,
 
-        /// When true, defer calling done() until the canceled operation completes.
-        /// This prevents use-after-free when close() is called during an in-flight
-        /// file operation that is being canceled. The done() callback is called
-        /// from the onFileRead callback instead of immediately from close().
+        /// When true, wait for the file operation callback before calling done().
+        /// Used to ensure proper cleanup ordering when closing during cancellation.
         defer_done_callback: bool = false,
         _: u6 = 0,
     };
@@ -990,18 +988,8 @@ pub const WindowsBufferedReader = struct {
         }
     }
 
-    /// Callback fired when a file read operation completes (or is canceled).
-    ///
-    /// CRITICAL ORDERING:
-    /// 1. Call file.completeRead() FIRST - cleans up fs_t and updates state
-    /// 2. Check if detached (parent_ptr == null) - if so, file is closing itself
-    /// 3. Handle cancellation - may trigger deferred done() callback
-    /// 4. Process normal read data
-    ///
-    /// The deferred done callback ensures the buffer stays alive during cancellation:
-    /// - If defer_done_callback is set, close() was called while canceling
-    /// - We call closeImpl(true) here, which calls done() and allows deinit()
-    /// - This ensures libuv's write to buffer completes before buffer is freed
+    /// Callback fired when a file read operation completes or is canceled.
+    /// Handles cleanup, cancellation, and normal read processing.
     fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
         const file = Source.File.fromFS(fs);
         const result = fs.result;
@@ -1181,16 +1169,8 @@ pub const WindowsBufferedReader = struct {
     }
 
     /// Close the reader and call the done callback.
-    ///
-    /// If a file operation is being canceled (.canceling state), this defers calling
-    /// the done callback until the cancel completes. This prevents use-after-free where:
-    /// 1. Operation is in-flight, libuv has pointer to our buffer
-    /// 2. We cancel and call done() immediately
-    /// 3. User destroys object and frees buffer
-    /// 4. Canceled operation callback fires and writes to freed buffer
-    ///
-    /// By deferring done(), we ensure the object stays alive until the operation
-    /// truly completes and it's safe to free the buffer.
+    /// If a file operation is being canceled, defers the done callback until
+    /// the operation completes to ensure proper cleanup ordering.
     pub fn close(this: *WindowsBufferedReader) void {
         _ = this.stopReading();
 

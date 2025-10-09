@@ -2940,6 +2940,10 @@ fn printErrorInstance(
     for (line_numbers) |line| max_line = @max(max_line, line);
     const max_line_number_pad = std.fmt.count("{d}", .{max_line + 1});
 
+    // Use dash separator for AI agents (CLAUDECODE=1 or AGENT=1) to make error output
+    // more familiar and easier to parse, similar to diff/patch format.
+    // Normal: "479 |    return 42;"
+    // AI:     "479-    return 42;"
     const is_ai_agent = Output.isAIAgent();
 
     var source_lines = exception.stack.sourceLineIterator();
@@ -2956,7 +2960,9 @@ fn printErrorInstance(
         const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
         const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
 
+        // Print source lines before the error line
         if (clamped.len != trimmed.len) {
+            // Line was truncated
             if (is_ai_agent) {
                 try writer.print(
                     comptime Output.prettyFmt(
@@ -2981,6 +2987,7 @@ fn printErrorInstance(
                 );
             }
         } else {
+            // Full line fits
             if (is_ai_agent) {
                 try writer.print(
                     comptime Output.prettyFmt(
@@ -3039,6 +3046,7 @@ fn printErrorInstance(
             }
         }
 
+        // Print the error line itself (no valid position, so we use "-" as line number)
         if (top_frame == null or top_frame.?.position.isInvalid()) {
             defer did_print_name = true;
             defer source.text.deinit();
@@ -3092,6 +3100,7 @@ fn printErrorInstance(
 
             try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
         } else if (top_frame) |top| {
+            // Print the error line with a caret (^) pointing to the error position
             defer did_print_name = true;
             const display_line = source.line + 1;
             const int_size = std.fmt.count("{d}", .{display_line});
@@ -3139,6 +3148,7 @@ fn printErrorInstance(
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        // Calculate indent for caret: line number padding + "-" (1 char) + column
                         const indent = max_line_number_pad + 1 + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
@@ -3159,6 +3169,7 @@ fn printErrorInstance(
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        // Calculate indent for caret: line number padding + " | " (3 chars) + column
                         const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);

@@ -11,7 +11,6 @@ const JSXFieldSet = FlagSet(options.JSX.Pragma);
 
 pub const TSConfigJSON = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     abs_path: string,
 
@@ -81,10 +80,6 @@ pub const TSConfigJSON = struct {
 
         if (this.jsx_flags.contains(.development)) {
             out.development = this.jsx.development;
-        }
-
-        if (this.jsx_flags.contains(.side_effects)) {
-            out.side_effects = this.jsx.side_effects;
         }
 
         return out;
@@ -228,13 +223,6 @@ pub const TSConfigJSON = struct {
                     result.jsx.package_name = str;
                     result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
-                }
-            }
-            // Parse "jsxSideEffects"
-            if (compiler_opts.expr.asProperty("jsxSideEffects")) |jsx_prop| {
-                if (jsx_prop.expr.asBool()) |val| {
-                    result.jsx.side_effects = val;
-                    result.jsx_flags.insert(.side_effects);
                 }
             }
 
@@ -491,6 +479,11 @@ pub const TSConfigJSON = struct {
         const r = source.rangeOfString(loc);
         log.addRangeWarningFmt(source, r, allocator, "Non-relative path \"{s}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)", .{text}) catch {};
         return false;
+    }
+
+    pub fn deinit(this: *TSConfigJSON) void {
+        this.paths.deinit();
+        bun.destroy(this);
     }
 };
 

@@ -193,23 +193,32 @@ private:
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
 
-
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+            
+            if(httpResponseData && httpResponseData->isConnectRequest) {
+                if (httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                }
+                if(httpResponseData->inStream) {
+                    httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
+                    httpResponseData->inStream = nullptr;
+                }                
+            }
 
 
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }
 
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            }
             /* Signal broken HTTP request only if we have a pending request */
             if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
-            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
-            }
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -244,6 +253,7 @@ private:
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
             httpResponseData->isIdle = false;
+            
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -254,7 +264,9 @@ private:
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+
+                
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -330,7 +342,12 @@ private:
                 /* Continue parsing */
                 return s;
 
-            }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
+            }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
+
+
+                if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                }
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
 
@@ -449,7 +466,7 @@ private:
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
-
+            
             /* Attempt to drain the socket buffer before triggering onWritable callback */
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
@@ -470,6 +487,12 @@ private:
                 */
             }
 
+            auto *httpContextData = getSocketContextDataS(s);
+
+
+            if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+                httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            }
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
@@ -514,6 +537,7 @@ private:
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             asyncSocket->uncorkWithoutSending();
+            
             /* We do not care for half closed sockets */
             return asyncSocket->close();
         });

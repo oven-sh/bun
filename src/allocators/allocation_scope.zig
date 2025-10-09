@@ -186,10 +186,10 @@ const State = struct {
         self.history.unlock();
     }
 
-    fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self) void {
         defer self.* = undefined;
         var history = self.history.intoUnprotected();
-        defer history.deinit();
+        defer history.deinit(self.parent);
 
         const count = history.allocations.count();
         if (count == 0) return;
@@ -505,6 +505,12 @@ pub fn AllocationScopeIn(comptime Allocator: type) type {
 
         pub fn setPointerExtra(self: Self, ptr: *anyopaque, extra: Extra) void {
             return self.borrow().setPointerExtra(ptr, extra);
+        }
+
+        pub fn leakSlice(self: Self, memory: anytype) void {
+            if (comptime !Self.enabled) return;
+            _ = @typeInfo(@TypeOf(memory)).pointer;
+            self.trackExternalFree(memory, null) catch @panic("tried to free memory that was not allocated by the allocation scope");
         }
     };
 }

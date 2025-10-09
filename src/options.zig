@@ -641,6 +641,14 @@ pub const Loader = enum(u8) {
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
         }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
+        }
     };
 
     pub fn isCSS(this: Loader) bool {
@@ -1220,7 +1228,6 @@ pub const JSX = struct {
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
-        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1897,6 +1904,10 @@ pub const BundleOptions = struct {
             this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
+    }
+
+    pub fn deinit(this: *const BundleOptions) void {
+        this.define.deinit();
     }
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {

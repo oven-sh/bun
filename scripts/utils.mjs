@@ -2808,6 +2808,8 @@ export function endGroup() {
   } else {
     console.groupEnd();
   }
+  // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
+  console.log();
 }
 
 export function printEnvironment() {
@@ -2862,6 +2864,12 @@ export function printEnvironment() {
         const shell = which(["sh", "bash"]);
         if (shell) {
           spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Docker", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
         }
       });
     }

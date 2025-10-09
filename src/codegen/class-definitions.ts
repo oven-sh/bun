@@ -113,6 +113,10 @@ export class ClassDefinition {
    */
   call?: boolean;
   /**
+   * The instances of this class are intended to be inside the this of a bound function.
+   */
+  forBind?: boolean;
+  /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
    *
@@ -282,7 +286,7 @@ export function define(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),
@@ -290,7 +294,7 @@ export function define(
       Object.entries(proto)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),

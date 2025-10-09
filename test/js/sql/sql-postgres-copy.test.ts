@@ -20,7 +20,9 @@ if (isDockerEnabled()) {
       });
     });
 
-    afterAll(() => conn.close());
+    afterAll(() => {
+      conn.close();
+    });
 
     // Phase 1: COPY TO STDOUT (Data Export)
 
@@ -607,26 +609,29 @@ if (isDockerEnabled()) {
 
     test("copyTo timeout triggers when too small", async () => {
       await conn.unsafe("DROP TABLE IF EXISTS copy_timeout", []);
-      await conn.unsafe("CREATE TABLE copy_timeout (id INT, name TEXT)", []);
-      await conn.unsafe("INSERT INTO copy_timeout (id, name) VALUES (1, 'A'), (2, 'B'), (3, 'C')", []);
+      await conn.unsafe("CREATE TABLE copy_timeout (id INT, data TEXT)", []);
+      // Insert enough data to make copying take longer than the timeout
+      await conn.unsafe("INSERT INTO copy_timeout SELECT i, repeat('x', 1000) FROM generate_series(1, 10000) i", []);
 
-      let threw = false;
+      let didTimeout = false;
+      let errorMessage = "";
       try {
         for await (const _ of conn.copyTo({
           table: "copy_timeout",
-          columns: ["id", "name"],
-          format: "csv",
-          timeout: 1,
+          columns: ["id", "data"],
+          format: "text",
+          timeout: 50, // Very small timeout (50ms) to force timeout during large data copy
         })) {
-          // break immediately; ideally timeout fires before this in slow envs
-          break;
+          // Should timeout before getting all chunks
         }
       } catch (e) {
-        threw = true;
-        expect(String((e as any)?.message ?? e)).toContain("timeout");
+        didTimeout = true;
+        errorMessage = String((e as any)?.message ?? e).toLowerCase();
       }
-      // We allow environments where it might be too fast; only assert boolean type
-      expect(typeof threw).toBe("boolean");
+
+      // The timeout should actually fire
+      expect(didTimeout).toBe(true);
+      expect(errorMessage).toMatch(/timeout/);
     });
     // pgx-inspired tests
 
@@ -1147,6 +1152,36 @@ if (isDockerEnabled()) {
       expect(bufferError).toBe(false);
 
       await (reserved as any).close();
+    });
+
+    test("Audit fix: escapeIdentifier for schema-qualified names in copyTo", async () => {
+      // Create a schema and table with schema-qualified name
+      await conn.unsafe("DROP SCHEMA IF EXISTS audit_schema CASCADE", []);
+      await conn.unsafe("CREATE SCHEMA audit_schema", []);
+      await conn.unsafe("CREATE TABLE audit_schema.qualified_table (id INT, data TEXT)", []);
+      await conn.unsafe("INSERT INTO audit_schema.qualified_table VALUES (1, 'test')", []);
+
+      let chunks = 0;
+      let succeeded = false;
+      try {
+        for await (const chunk of conn.copyTo({
+          table: "audit_schema.qualified_table",
+          columns: ["id", "data"],
+          format: "text",
+        })) {
+          chunks++;
+          expect(chunk).toBeDefined();
+        }
+        succeeded = true;
+      } catch (e) {
+        // Should not throw
+      }
+
+      expect(succeeded).toBe(true);
+      expect(chunks).toBeGreaterThan(0);
+
+      // Cleanup
+      await conn.unsafe("DROP SCHEMA audit_schema CASCADE", []);
     });
   });
 } else {

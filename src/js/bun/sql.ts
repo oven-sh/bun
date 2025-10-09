@@ -1302,7 +1302,7 @@ const SQL: typeof Bun.SQL = function SQL(
             fracPart = fracPart.slice(exp);
           }
         } else if (exp < 0) {
-          const zeros = "0".repeat(-exp - intPart.length);
+          const zeros = "0".repeat(Math.max(0, -exp - intPart.length));
           const all = zeros ? zeros + intPart : intPart;
           const idx = all.length + exp; // exp negative
           fracPart = all.slice(idx) + fracPart;
@@ -2132,8 +2132,8 @@ const SQL: typeof Bun.SQL = function SQL(
         };
         const timeout =
           options && typeof (options as any).timeout === "number" && (options as any).timeout >= 0
-            ? (options as any).timeout | 0
-            : (__fromDefaults__.timeout ?? 0) | 0;
+            ? Math.max(0, Math.trunc((options as any).timeout))
+            : Math.max(0, Math.trunc(__fromDefaults__.timeout ?? 0));
         if (typeof (reserved as any).setCopyTimeout === "function") {
           try {
             (reserved as any).setCopyTimeout(timeout);
@@ -2181,11 +2181,12 @@ const SQL: typeof Bun.SQL = function SQL(
         return queryOrOptions;
       }
       const table = queryOrOptions.table;
-      // Escape table identifier with same logic as copyFrom to handle schema-qualified names
-      const tableName = '"' + String(table).replaceAll('"', '""').replaceAll(".", '"."') + '"';
-      const cols = (queryOrOptions.columns ?? [])
-        .map(c => '"' + String(c).replaceAll('"', '""').replaceAll(".", '"."') + '"')
-        .join(", ");
+      // Use adapter's escapeIdentifier to handle schema-qualified names correctly
+      const escapeIdentifier = pool.escapeIdentifier
+        ? pool.escapeIdentifier.bind(pool)
+        : (str: string) => '"' + String(str).replaceAll('"', '""').replaceAll(".", '"."') + '"';
+      const tableName = escapeIdentifier(String(table));
+      const cols = (queryOrOptions.columns ?? []).map(c => escapeIdentifier(String(c))).join(", ");
       const fmt =
         queryOrOptions.format === "csv"
           ? " (FORMAT CSV)"
@@ -2258,6 +2259,12 @@ const SQL: typeof Bun.SQL = function SQL(
               if (toMax > 0 && bytesReceived > toMax) {
                 rejectErr = new Error("copyTo: maxBytes exceeded");
                 done = true;
+                // Immediately close connection to halt incoming data
+                try {
+                  if (typeof (reserved as any).close === "function") {
+                    (reserved as any).close();
+                  }
+                } catch {}
               }
             } catch {}
           });

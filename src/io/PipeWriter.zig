@@ -822,10 +822,10 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        // always cancel the current one
-                        file.fs.cancel();
+                        // Use state machine to safely cancel if operation in progress
+                        file.stop();
                         if (this.owns_fd) {
-                            // always use close_fs here because we can have a operation in progress
+                            // Use close_fs because fs might still be in use
                             file.close_fs.data = file;
                             _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                         }
@@ -1013,14 +1013,27 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = Source.File.fromFS(fs);
             const result = fs.result;
-            if (result.int() == uv.UV_ECANCELED) {
-                fs.deinit();
+            const was_canceled = result.int() == uv.UV_ECANCELED;
+            const parent_ptr = fs.data;
+
+            // ALWAYS complete first
+            file.complete(was_canceled);
+
+            // If detached, file should be closing itself now
+            if (parent_ptr == null) {
+                bun.assert(file.state == .closing);
                 return;
             }
-            const this = bun.cast(*WindowsWriter, fs.data);
 
-            fs.deinit();
+            const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            if (was_canceled) {
+                // Canceled write - just return
+                return;
+            }
+
             if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
@@ -1043,12 +1056,18 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     @panic("This code path shouldn't be reached - sync_file in PipeWriter.zig");
                 },
                 .file => |file| {
+                    if (!file.canStart()) {
+                        // Operation already in progress, can't write
+                        return;
+                    }
+
                     this.pending_payload_size = buffer.len;
-                    file.fs.deinit();
                     file.fs.setData(this);
+                    file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        file.complete(false);
                         this.close();
                         onError(this.parent, err);
                     }
@@ -1322,14 +1341,27 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = Source.File.fromFS(fs);
             const result = fs.result;
-            if (result.int() == uv.UV_ECANCELED) {
-                fs.deinit();
+            const was_canceled = result.int() == uv.UV_ECANCELED;
+            const parent_ptr = fs.data;
+
+            // ALWAYS complete first
+            file.complete(was_canceled);
+
+            // If detached, file should be closing itself now
+            if (parent_ptr == null) {
+                bun.assert(file.state == .closing);
                 return;
             }
-            const this = bun.cast(*WindowsWriter, fs.data);
 
-            fs.deinit();
+            const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            if (was_canceled) {
+                // Canceled write - just return
+                return;
+            }
+
             if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
@@ -1372,11 +1404,18 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     @panic("sync_file pipe write should not be reachable");
                 },
                 .file => |file| {
-                    file.fs.deinit();
+                    if (!file.canStart()) {
+                        // Operation already in progress
+                        this.last_write_result = .{ .pending = 0 };
+                        return;
+                    }
+
                     file.fs.setData(this);
+                    file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();

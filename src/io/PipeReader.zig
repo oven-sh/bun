@@ -1002,11 +1002,11 @@ pub const WindowsBufferedReader = struct {
         const parent_ptr = fs.data;
 
         // ALWAYS complete the read first (cleans up fs_t, updates state)
-        file.completeRead(was_canceled);
+        file.complete(was_canceled);
 
         // If detached, file should be closing itself now
         if (parent_ptr == null) {
-            bun.assert(file.state == .closing); // completeRead should have started close
+            bun.assert(file.state == .closing); // complete should have started close
             return;
         }
 
@@ -1051,15 +1051,15 @@ pub const WindowsBufferedReader = struct {
                                 const file_ptr = source.file;
 
                                 // Can only start if file is in deinitialized state
-                                if (file_ptr.canStartRead()) {
+                                if (file_ptr.canStart()) {
                                     source.setData(this);
-                                    file_ptr.prepareForRead();
+                                    file_ptr.prepare();
                                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                     file_ptr.iov = uv.uv_buf_t.init(buf);
                                     this.flags.has_inflight_read = true;
 
                                     if (uv.uv_fs_read(uv.Loop.get(), &file_ptr.fs, file_ptr.file, @ptrCast(&file_ptr.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                                        file_ptr.completeRead(false);
+                                        file_ptr.complete(false);
                                         this.flags.has_inflight_read = false;
                                         this.flags.is_paused = true;
                                         // we should inform the error if we are unable to keep reading
@@ -1096,20 +1096,20 @@ pub const WindowsBufferedReader = struct {
         switch (source) {
             .file => |file| {
                 // If already reading, just set data and unpause
-                if (!file.canStartRead()) {
+                if (!file.canStart()) {
                     source.setData(this);
                     return .success;
                 }
 
-                // Start new read - set data before prepareForRead
+                // Start new read - set data before prepare
                 source.setData(this);
-                file.prepareForRead();
+                file.prepare();
                 const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                 file.iov = uv.uv_buf_t.init(buf);
                 this.flags.has_inflight_read = true;
 
                 if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                    file.completeRead(false);
+                    file.complete(false);
                     this.flags.has_inflight_read = false;
                     return .{ .err = err };
                 }
@@ -1131,7 +1131,7 @@ pub const WindowsBufferedReader = struct {
         const source = this.source orelse return .success;
         switch (source) {
             .file => |file| {
-                file.stopReading();
+                file.stop();
             },
             else => {
                 source.toStream().readStop();

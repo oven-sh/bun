@@ -257,6 +257,8 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
 
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
             this.buffer.clearAndFree();
+            this.pending.result.deinit(bun.default_allocator);
+            this.pending.result = .{ .done = {} };
             this.done = true;
 
             return .{
@@ -276,6 +278,10 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
     }
 
     if (this.has_received_last_chunk) {
+        this.buffer.clearAndFree();
+        this.pending.result.deinit(bun.default_allocator);
+        this.pending.result = .{ .done = {} };
+        this.done = true;
         return .{
             .done = {},
         };
@@ -291,15 +297,14 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
 
 pub fn onCancel(this: *@This()) void {
     jsc.markBinding(@src());
-    const view = this.value();
-    if (this.buffer.capacity > 0) this.buffer.clearAndFree();
+    this.buffer.clearAndFree();
     this.done = true;
     this.pending_value.deinit();
 
-    if (view != .zero) {
-        this.pending_buffer = &.{};
-        this.pending.result.deinit(bun.default_allocator);
-        this.pending.result = .{ .done = {} };
+    this.pending_buffer = &.{};
+    this.pending.result.deinit(bun.default_allocator);
+    this.pending.result = .{ .done = {} };
+    if (this.value() != .zero) {
         this.pending.run();
     }
 
@@ -317,15 +322,14 @@ pub fn memoryCost(this: *const @This()) usize {
 
 pub fn deinit(this: *@This()) void {
     jsc.markBinding(@src());
-    if (this.buffer.capacity > 0) this.buffer.clearAndFree();
+    this.buffer.clearAndFree();
 
     this.pending_value.deinit();
+    this.pending_buffer = &.{};
+    this.pending.result.deinit(bun.default_allocator);
+    this.pending.result = .{ .done = {} };
     if (!this.done) {
         this.done = true;
-
-        this.pending_buffer = &.{};
-        this.pending.result.deinit(bun.default_allocator);
-        this.pending.result = .{ .done = {} };
         if (this.pending.state == .pending and this.pending.future == .promise) {
             // We must never run JavaScript inside of a GC finalizer.
             this.pending.runOnNextTick();
@@ -358,10 +362,12 @@ pub fn toAnyBlob(this: *@This()) ?Blob.Any {
         this.pending.result.deinit(bun.default_allocator);
         this.pending.result = .{ .done = {} };
         this.parent().is_closed = true;
-        return .{ .InternalBlob = .{
-            .bytes = buffer,
-            .was_string = false,
-        } };
+        return .{
+            .InternalBlob = .{
+                .bytes = buffer,
+                .was_string = false,
+            },
+        };
     }
 
     return null;

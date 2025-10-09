@@ -574,10 +574,7 @@ pub const Result = union(Tag) {
         }
 
         switch (this.*) {
-            .owned => |list| {
-                return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
-            },
-            .owned_and_done => |list| {
+            .owned, .owned_and_done => |list| {
                 return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .temporary => |temp| {

@@ -432,10 +432,13 @@ pub const FetchTasklet = struct {
                     readable.ptr.Bytes.onData(
                         .{
                             .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
+
+                            // Investigate why owned_and_done is using more memory than temporary_and_done
                             // .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         this.memory_reporter.allocator(),
                     );
+                    scheduled_response_buffer.deinit(this.memory_reporter.allocator());
                 }
                 return;
             }

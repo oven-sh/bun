@@ -82,7 +82,7 @@ pkgs.mkShell {
     ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
       export LD="${pkgs.lld_19}/bin/lld"
       export LDFLAGS="-fuse-ld=lld"
-      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     ''}
 
     echo "====================================="

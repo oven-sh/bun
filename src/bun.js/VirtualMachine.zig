@@ -3466,8 +3466,25 @@ pub fn resolveSourceMapping(
     column: Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
-    return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
+    if (bun.Environment.isDebug) {
+        Output.prettyErrorln("[sourcemap] resolveSourceMapping: path={s}, line={d}, col={d}, flag={}", .{
+            path,
+            line.zeroBased(),
+            column.zeroBased(),
+            bun.sourcemap.JSSourceMap.@"--enable-source-maps",
+        });
+    }
+
+    const result = this.source_mappings.resolveMapping(path, line, column, source_handling);
+    if (bun.Environment.isDebug) {
+        Output.prettyErrorln("[sourcemap] source_mappings.resolveMapping returned: {}", .{result != null});
+    }
+
+    return result orelse {
         if (this.standalone_module_graph) |graph| {
+            if (bun.Environment.isDebug) {
+                Output.prettyErrorln("[sourcemap] Trying standalone module graph...", .{});
+            }
             const file = graph.find(path) orelse return null;
             const map = file.sourcemap.load() orelse return null;
 
@@ -3486,9 +3503,20 @@ pub fn resolveSourceMapping(
             };
         }
 
+        if (bun.Environment.isDebug) {
+            Output.prettyErrorln("[sourcemap] No standalone module graph, checking flag...", .{});
+        }
+
         // When --enable-source-maps is enabled, try to load external source maps
         if (bun.sourcemap.JSSourceMap.@"--enable-source-maps") {
+            if (bun.Environment.isDebug) {
+                Output.prettyErrorln("[sourcemap] Flag is enabled! Calling tryLoadExternalSourceMap...", .{});
+            }
             return this.tryLoadExternalSourceMap(path, line, column, source_handling);
+        }
+
+        if (bun.Environment.isDebug) {
+            Output.prettyErrorln("[sourcemap] Flag is NOT enabled, returning null", .{});
         }
 
         return null;
@@ -3502,6 +3530,10 @@ fn tryLoadExternalSourceMap(
     column: Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
+    if (bun.Environment.isDebug) {
+        Output.prettyErrorln("[sourcemap] tryLoadExternalSourceMap: path={s}, line={d}, col={d}", .{ path, line.zeroBased(), column.zeroBased() });
+    }
+
     const hint: SourceMap.ParseUrlResultHint = switch (source_handling) {
         .no_source_contents => .mappings_only,
         .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
@@ -3516,7 +3548,10 @@ fn tryLoadExternalSourceMap(
     // First, try to read the source file and look for an inline source map
     const source_contents = switch (bun.sys.File.readFrom(std.fs.cwd(), path, allocator)) {
         .result => |contents| contents,
-        .err => {
+        .err => |e| {
+            if (bun.Environment.isDebug) {
+                Output.prettyErrorln("[sourcemap] Failed to read source file: {}", .{e});
+            }
             // If we can't read the file, try external .map file
             return tryLoadExternalMapFile(this, path, line, column, hint, allocator);
         },
@@ -3532,19 +3567,38 @@ fn tryLoadExternalSourceMap(
                 (source_slice.len - url_start);
             const source_map_url = bun.strings.trim(source_slice[url_start..][0..url_end], " \r\t");
 
+            if (bun.Environment.isDebug) {
+                Output.prettyErrorln("[sourcemap] Found sourceMappingURL: {s}", .{source_map_url});
+            }
+
             // Try to parse as inline data: URL or external file
             const parse = SourceMap.parseUrl(
                 bun.default_allocator,
                 allocator,
                 source_map_url,
                 hint,
-            ) catch {
+            ) catch |err| {
+                if (bun.Environment.isDebug) {
+                    Output.prettyErrorln("[sourcemap] Failed to parse URL: {}", .{err});
+                }
                 // If inline fails, try external .map file
                 return tryLoadExternalMapFile(this, path, line, column, hint, allocator);
             };
 
             if (parse.map) |map| {
-                const mapping = parse.mapping orelse map.mappings.find(line, column) orelse return null;
+                if (bun.Environment.isDebug) {
+                    Output.prettyErrorln("[sourcemap] Successfully parsed source map, looking for mapping...", .{});
+                }
+                const mapping = parse.mapping orelse map.mappings.find(line, column) orelse {
+                    if (bun.Environment.isDebug) {
+                        Output.prettyErrorln("[sourcemap] No mapping found for line={d}, col={d}", .{ line.zeroBased(), column.zeroBased() });
+                    }
+                    return null;
+                };
+
+                if (bun.Environment.isDebug) {
+                    Output.prettyErrorln("[sourcemap] Found mapping! original line={d}, col={d}", .{ mapping.original.lines, mapping.original.columns });
+                }
 
                 // Cache the parsed source map for future lookups
                 map.ref();

@@ -180,6 +180,10 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
                 if (!this.shouldRescheduleTimer(repeat, idle_timeout)) {
                     break :is_timer_done true;
                 }
+                // Recompute time_before_call using virtual time if in fake timers mode
+                const base_time = vm.timer.vi_current_time orelse timespec.now();
+                time_before_call = base_time.addMs(this.interval);
+
                 switch (this.eventLoopTimer().state) {
                     .FIRED => {
                         // If we didn't clear the setInterval, reschedule it starting from
@@ -382,7 +386,9 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
     if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-    const now = timespec.msFromNow(this.interval);
+    // Use virtual time if we're in fake timers mode
+    const base_time = vm.timer.vi_current_time orelse timespec.now();
+    const now = base_time.addMs(this.interval);
     const was_active = this.eventLoopTimer().state == .ACTIVE;
     if (was_active) {
         vm.timer.remove(this.eventLoopTimer());

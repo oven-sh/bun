@@ -3,28 +3,82 @@ import { vi, test, beforeAll, afterAll, expect } from "vitest";
 beforeAll(() => vi.useFakeTimers());
 afterAll(() => vi.useRealTimers());
 
-test("runAllTimers runs in order of time", () => {
-  const order: number[] = [];
+test.each(Array.from({ length: 2 }).map((_, i) => i))("runAllTimers runs in order of time", i => {
+  const order: string[] = [];
+  const orderNum: number[] = [];
 
-  setTimeout(() => {
-    order.push(1000);
+  let base = 0;
+  const time = (d: number, l: string, cb: () => void) => {
+    const start = base;
     setTimeout(() => {
-      order.push(1000 + 500);
-    }, 500);
+      orderNum.push(start + d);
+      order.push(`${start + d}${l ? ` (${l})` : ""}`);
+      if (base != 0) throw new Error("base is not 0");
+      base = start + d;
+      cb();
+      base = 0;
+    }, d);
+  };
+
+  time(1000, "", () => {
+    time(500, "", () => {});
+    time(1500, "", () => {});
+  });
+  time(500, "", () => {
+    time(600, "", () => {});
+    time(0, "500 + 0", () => {});
+  });
+  time(2000, "", () => {});
+  time(0, "zero 1", () => {
+    time(0, "zero 1.1", () => {});
+    time(0, "zero 1.2", () => {});
+  });
+  time(0, "zero 2", () => {
+    time(0, "zero 2.1", () => {});
+    time(0, "zero 2.2", () => {});
+  });
+  let intervalCount = 0;
+  const interval = setInterval(() => {
+    if (intervalCount > 3) clearInterval(interval);
+    intervalCount += 1;
+    orderNum.push(intervalCount * 499);
+    order.push(`${intervalCount * 499} (interval)`);
     setTimeout(() => {
-      order.push(1000 + 1500);
-    }, 1500);
-  }, 1000);
-  setTimeout(() => {
-    order.push(500);
-  }, 500);
-  setTimeout(() => {
-    order.push(2000);
-  }, 2000);
+      orderNum.push(intervalCount * 499 + 25);
+      order.push(`${intervalCount * 499 + 25} (interval + 25)`);
+    }, 25);
+  }, 499);
 
   vi.runAllTimers();
 
-  expect(order).toEqual(order.toSorted((a, b) => a - b));
+  expect(orderNum).toEqual(orderNum.toSorted((a, b) => a - b));
+  expect(order).toMatchInlineSnapshot(`
+    [
+      "0 (zero 1)",
+      "0 (zero 2)",
+      "0 (zero 1.1)",
+      "0 (zero 1.2)",
+      "0 (zero 2.1)",
+      "0 (zero 2.2)",
+      "499 (interval)",
+      "500",
+      "500 (500 + 0)",
+      "524 (interval + 25)",
+      "998 (interval)",
+      "1000",
+      "1023 (interval + 25)",
+      "1100",
+      "1497 (interval)",
+      "1500",
+      "1522 (interval + 25)",
+      "1996 (interval)",
+      "2000",
+      "2021 (interval + 25)",
+      "2495 (interval)",
+      "2500",
+      "2520 (interval + 25)",
+    ]
+  `);
 });
 
 test("runAllTimers supports interval", () => {
@@ -50,4 +104,5 @@ test("fake timers clear after useRealTimers", () => {
   vi.useFakeTimers();
   vi.runAllTimers();
   expect(ticks).toBe(0);
+  // TODO: check for memory leak of the callbacks
 });

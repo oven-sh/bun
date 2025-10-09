@@ -172,6 +172,12 @@ bun run --filter 'ba*' <script>
 
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
+To run scripts in parallel without waiting for dependency order, add the `--parallel` flag:
+
+```bash
+bun run --filter '*' --parallel test
+```
+
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
 ### `--workspaces`

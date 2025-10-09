@@ -2136,14 +2136,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 }
 
                 // Track progress (with overflow protection)
-                this.copy_bytes_transferred = @min(
-                    this.copy_bytes_transferred +| data_slice.len,
-                    std.math.maxInt(u64),
-                );
-                this.copy_chunks_processed = @min(
-                    this.copy_chunks_processed + 1,
-                    std.math.maxInt(u64),
-                );
+                this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                this.copy_chunks_processed = this.copy_chunks_processed +| @as(u64, 1);
 
                 // Emit streaming chunk callback if registered (flush pending first if any)
                 if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0 and this.copy_binary_header_validated and !this.copy_callback_in_progress) {

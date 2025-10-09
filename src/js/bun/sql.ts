@@ -1760,7 +1760,7 @@ const SQL: typeof Bun.SQL = function SQL(
             }
           } else if (typeof item === "string") {
             // raw string chunk
-            addToBatch(sanitizeString(item));
+            await addToBatch(sanitizeString(item));
           } else if (item && (item as any).byteLength !== undefined) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
             await flushBatch();
@@ -1893,7 +1893,7 @@ const SQL: typeof Bun.SQL = function SQL(
               await addToBatch(serializeRow(item));
             }
           } else if (typeof item === "string") {
-            addToBatch(sanitizeString(item));
+            await addToBatch(sanitizeString(item));
           } else if (item && (item as any).byteLength !== undefined) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
             await flushBatch();
@@ -1979,7 +1979,7 @@ const SQL: typeof Bun.SQL = function SQL(
             await addToBatch(serializeRow(item));
           }
         }
-        flushBatch();
+        await flushBatch();
         sendBinaryTrailer();
         (reserved as any).copyDone();
         return;

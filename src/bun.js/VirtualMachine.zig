@@ -2940,6 +2940,8 @@ fn printErrorInstance(
     for (line_numbers) |line| max_line = @max(max_line, line);
     const max_line_number_pad = std.fmt.count("{d}", .{max_line + 1});
 
+    const is_ai_agent = Output.isAIAgent();
+
     var source_lines = exception.stack.sourceLineIterator();
     var last_pad: u64 = 0;
     while (source_lines.untilLast()) |source| {
@@ -2955,22 +2957,47 @@ fn printErrorInstance(
         const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
 
         if (clamped.len != trimmed.len) {
-            const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
-            try writer.print(
-                comptime Output.prettyFmt(
-                    "<r><b>{d} |<r> {}" ++ fmt,
-                    allow_ansi_color,
-                ),
-                .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
-            );
+            if (is_ai_agent) {
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d}-<r> {}",
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                );
+                if (comptime allow_ansi_color) {
+                    try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n", true));
+                } else {
+                    try writer.writeAll("\n");
+                }
+            } else {
+                const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}" ++ fmt,
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                );
+            }
         } else {
-            try writer.print(
-                comptime Output.prettyFmt(
-                    "<r><b>{d} |<r> {}\n",
-                    allow_ansi_color,
-                ),
-                .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
-            );
+            if (is_ai_agent) {
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d}-<r> {}\n",
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                );
+            } else {
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><b>{d} |<r> {}\n",
+                        allow_ansi_color,
+                    ),
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                );
+            }
         }
     }
 
@@ -3020,22 +3047,47 @@ fn printErrorInstance(
             const text = trimmed[0..@min(trimmed.len, max_line_length)];
 
             if (text.len != trimmed.len) {
-                const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><b>- |<r> {}" ++ fmt,
-                        allow_ansi_color,
-                    ),
-                    .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
-                );
+                if (is_ai_agent) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>- -<r> {}",
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
+                    );
+                    if (comptime allow_ansi_color) {
+                        try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n", true));
+                    } else {
+                        try writer.writeAll("\n");
+                    }
+                } else {
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>- |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
+                    );
+                }
             } else {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><d>- |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
-                );
+                if (is_ai_agent) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>- -<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><d>- |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
+                    );
+                }
             }
 
             try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
@@ -3053,33 +3105,70 @@ fn printErrorInstance(
             const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
 
             if (clamped.len != trimmed.len) {
-                const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}" ++ fmt,
-                        allow_ansi_color,
-                    ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
-                );
-            } else {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}\n",
-                        allow_ansi_color,
-                    ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
-                );
-
-                if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
-                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
-
-                    try writer.writeByteNTimes(' ', indent);
-                    try writer.print(comptime Output.prettyFmt(
-                        "<red><b>^<r>\n",
-                        allow_ansi_color,
-                    ), .{});
+                if (is_ai_agent) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d}-<r> {}",
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                    );
+                    if (comptime allow_ansi_color) {
+                        try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n\n", true));
+                    } else {
+                        try writer.writeAll("\n\n");
+                    }
                 } else {
-                    try writer.writeAll("\n");
+                    const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}" ++ fmt,
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                    );
+                }
+            } else {
+                if (is_ai_agent) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d}-<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                    );
+
+                    if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + 1 + @as(u64, @intCast(top.position.column.zeroBased()));
+
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.print(comptime Output.prettyFmt(
+                            "<red><b>^<r>\n",
+                            allow_ansi_color,
+                        ), .{});
+                    } else {
+                        try writer.writeAll("\n");
+                    }
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r><b>{d} |<r> {}\n",
+                            allow_ansi_color,
+                        ),
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
+                    );
+
+                    if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
+
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.print(comptime Output.prettyFmt(
+                            "<red><b>^<r>\n",
+                            allow_ansi_color,
+                        ), .{});
+                    } else {
+                        try writer.writeAll("\n");
+                    }
                 }
             }
 

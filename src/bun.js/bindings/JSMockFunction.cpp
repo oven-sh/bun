@@ -1434,9 +1434,19 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalO
     return JSValue::encode(callframe->thisValue());
 }
 
+extern "C" void Bun__Timer__clearViTimers(void*);
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     globalObject->overridenDateNow = -1;
+
+    // Clear all pending fake timers
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* vm = bunGlobal->bunVM();
+    if (vm) {
+        Bun__Timer__clearViTimers(vm);
+    }
+
     return JSValue::encode(callframe->thisValue());
 }
 

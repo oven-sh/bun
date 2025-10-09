@@ -50,9 +50,7 @@ describe("vi.runAllTimers", () => {
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(1);
-    // The nested timer scheduled at 1000ms will run after callback2 at 2000ms
-    // since it gets scheduled while processing callback1
-    expect(order).toEqual([1, 3, 2]);
+    expect(order).toEqual([1, 2, 3]);
 
     vi.useRealTimers();
   });

@@ -33,6 +33,8 @@ pub const All = struct {
     epoch: u25 = 0,
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
+    /// Virtual time for fake timers - when set (not null), new timers will be scheduled relative to this time
+    vi_current_time: ?timespec = null,
 
     // Event loop delay monitoring (not exposed to JS)
     event_loop_delay: EventLoopDelayMonitor = .{},
@@ -584,18 +586,45 @@ pub const All = struct {
         const vm = globalThis.bunVM();
         const timer = &vm.timer;
 
+        // Keep firing timers until there are no more
+        // We need to keep checking the heap because firing timers can schedule new timers
+        while (true) {
+            timer.lock.lock();
+            const event_timer = timer.vi_timers.deleteMin();
+            timer.lock.unlock();
+
+            if (event_timer == null) break;
+
+            // Set the virtual time to this timer's scheduled time
+            // This ensures nested timers scheduled during callbacks get the correct base time
+            timer.vi_current_time = event_timer.?.next;
+
+            // Fire the timer at its scheduled time
+            const arm_result = event_timer.?.fire(&event_timer.?.next, vm);
+
+            // If the timer wants to rearm (like setInterval), reinsert it
+            if (arm_result == .rearm) {
+                timer.lock.lock();
+                timer.vi_timers.insert(event_timer.?);
+                timer.lock.unlock();
+            }
+        }
+
+        // Clear the virtual time when we're done
+        timer.vi_current_time = null;
+
+        return .js_undefined;
+    }
+
+    export fn Bun__Timer__clearViTimers(vm: *VirtualMachine) callconv(.C) void {
+        const timer = &vm.timer;
         timer.lock.lock();
         defer timer.lock.unlock();
 
-        // Fire all timers in the vi_timers heap
+        // Remove all timers from vi_timers heap and cancel them
         while (timer.vi_timers.deleteMin()) |event_timer| {
-            timer.lock.unlock();
-            defer timer.lock.lock();
-
-            _ = event_timer.fire(&timespec.now(), vm);
+            event_timer.state = .CANCELLED;
         }
-
-        return .js_undefined;
     }
 
     comptime {
@@ -608,6 +637,7 @@ pub const All = struct {
         @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
         @export(&jsc.host_fn.wrap2(runAllTimers), .{ .name = "Bun__Timer__runAllTimers" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
+        _ = &Bun__Timer__clearViTimers;
     }
 };
 

@@ -747,7 +747,15 @@ pub const Expect = struct {
             if (bun.detectCI()) |_| {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.", .{});
+                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
+                    defer formatter.deinit();
+                    if (result == null) {
+                        // Creating a new inline snapshot
+                        return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
+                    } else {
+                        // Updating an existing inline snapshot
+                        return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {any}", .{value.toFmt(&formatter)});
+                    }
                 }
             }
             var buntest_strong = this.bunTest() orelse {
@@ -833,12 +841,24 @@ pub const Expect = struct {
             defer buntest_strong.deinit();
             const buntest = buntest_strong.get();
             const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
+            const runner = Jest.runner.?;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
-                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)}),
+                error.SnapshotCreationNotAllowedInCI => blk: {
+                    const snapshot_name = runner.snapshots.last_error_snapshot_name;
+                    defer if (snapshot_name) |name| {
+                        runner.snapshots.allocator.free(name);
+                        runner.snapshots.last_error_snapshot_name = null;
+                    };
+                    if (snapshot_name) |name| {
+                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nSnapshot name: \"{s}\"\nReceived: {any}", .{ name, value.toFmt(&formatter) });
+                    } else {
+                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
+                    }
+                },
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
                 error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),

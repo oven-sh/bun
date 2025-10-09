@@ -16,6 +16,7 @@ pub const Snapshots = struct {
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
     inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    last_error_snapshot_name: ?[]const u8 = null,
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -87,6 +88,8 @@ pub const Snapshots = struct {
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
         if (bun.detectCI()) |_| {
             if (!this.update_snapshots) {
+                // Store the snapshot name for error reporting
+                this.last_error_snapshot_name = try this.allocator.dupe(u8, name_with_counter);
                 return error.SnapshotCreationNotAllowedInCI;
             }
         }

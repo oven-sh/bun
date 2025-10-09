@@ -1,0 +1,52 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      a-dep:
+        specifier: 1.0.1
+        version: 1.0.1
+      no-deps:
+        specifier: ~1.0.0
+        version: 1.0.1
+    optionalDependencies:
+      b-dep-a:
+        specifier: 1.0.0
+        version: 1.0.0
+    devDependencies:
+      a-dep-b:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep-b@1.0.0:
+    resolution: {integrity: sha512-PW1l4ruYaxcIw4rMkOVzb9zcR2srZhTPv2H2aH7QFc7vVxkD7EEMGHg1GPT8ycLFb8vriydUXEPwOy1FcbodaQ==}
+
+  a-dep@1.0.1:
+    resolution: {integrity: sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg==}
+
+  b-dep-a@1.0.0:
+    resolution: {integrity: sha512-1owp4Wy5QE893BGgjDQGZm9Oayk38MA++fXmPTQA1WY/NFQv7CcCVpK2Ht/4mU4KejDeHOxaAj7qbzv1dSQA2w==}
+
+  no-deps@1.0.1:
+    resolution: {integrity: sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==}
+
+snapshots:
+
+  a-dep-b@1.0.0:
+    dependencies:
+      b-dep-a: 1.0.0
+
+  a-dep@1.0.1: {}
+
+  b-dep-a@1.0.0:
+    dependencies:
+      a-dep-b: 1.0.0
+
+  no-deps@1.0.1: {}

@@ -14,6 +14,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
+#include "mimalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -39,8 +40,6 @@
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringToIntegerConversion.h"
-
-extern "C" void mi_free(void* ptr);
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -93,10 +92,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsEmptyString(vm));
     }
     if (simdutf::validate_ascii(ptr, length)) {
-        return JSValue::encode(jsString(vm, WTF::String(std::span<const LChar>(reinterpret_cast<const LChar*>(ptr), length))));
+        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
     EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -169,7 +168,11 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
     }
 
-    return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    if (bunString.tag == BunStringTag::ZigString) {
+        return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    }
+
+    UNREACHABLE();
 }
 
 BunString toString(const char* bytes, size_t length)
@@ -366,7 +369,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(siz
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
@@ -388,7 +391,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -399,7 +402,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
@@ -414,7 +417,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const 
     ASSERT(length > 0);
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
     size_t outLength = simdutf::latin1_length_from_utf16(length);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
     if (!impl) [[unlikely]] {
         return { BunStringTag::Dead };
@@ -449,7 +452,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* by
 
 extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t length, bool isLatin1)
 {
-    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const LChar*>(bytes), length }) :
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }) :
 
                                                  WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const char16_t*>(bytes), length });
 
@@ -458,7 +461,7 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
 
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
 {
-    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(bytes), length }, ctx, callback) :
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(bytes), length }, ctx, callback) :
 
                                                  WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(bytes), length }, ctx, callback);
 
@@ -790,7 +793,7 @@ WTF::String BunString::transferToWTFString()
 }
 
 extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
-    const LChar* bytes,
+    const Latin1Character* bytes,
     size_t length)
 {
     ASSERT(length > 0);
@@ -828,6 +831,48 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
 {
     str->hash();
+}
+
+extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
+    JSC::EncodedJSValue encodedTarget,
+    JSC::JSGlobalObject* global,
+    const BunString* key,
+    JSC::EncodedJSValue encodedValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(global->vm());
+    JSC::JSValue targetValue = JSC::JSValue::decode(encodedTarget);
+    JSC::JSObject* target = targetValue.getObject();
+    if (!target) {
+        scope.throwException(global, createTypeError(global, "Target must be an object"_s));
+        return {};
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
+    auto& vm = global->vm();
+    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    Identifier id = Identifier::fromString(vm, str);
+    auto existingValue = target->getIfPropertyExists(global, id);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!existingValue.isEmpty()) {
+        // If existing value is already an array, push to it
+        if (existingValue.isObject() && existingValue.getObject()->inherits<JSC::JSArray>()) {
+            JSC::JSArray* array = jsCast<JSC::JSArray*>(existingValue.getObject());
+            array->push(global, newValue);
+        } else {
+            // Create new array with both values
+            JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, 2);
+            array->putDirectIndex(global, 0, existingValue);
+            array->putDirectIndex(global, 1, newValue);
+            target->putDirect(vm, id, array, 0);
+        }
+    } else {
+        // No existing value, just put the new value directly
+        target->putDirect(vm, id, newValue, 0);
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 extern "C" void JSC__JSValue__putBunString(

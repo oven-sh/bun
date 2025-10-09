@@ -3,6 +3,7 @@ In Bun, YAML is a first-class citizen alongside JSON and TOML.
 Bun provides built-in support for YAML files through both runtime APIs and bundler integration. You can
 
 - Parse YAML strings with `Bun.YAML.parse`
+- Stringify JavaScript objects to YAML with `Bun.YAML.stringify`
 - import & require YAML files as modules at runtime (including hot reloading & watch mode support)
 - import & require YAML files in frontend apps via bun's bundler
 
@@ -104,7 +105,7 @@ const data = Bun.YAML.parse(yaml);
 
 #### Error Handling
 
-`Bun.YAML.parse()` throws a `SyntaxError` if the YAML is invalid:
+`Bun.YAML.parse()` throws an error if the YAML is invalid:
 
 ```ts
 try {
@@ -112,6 +113,175 @@ try {
 } catch (error) {
   console.error("Failed to parse YAML:", error.message);
 }
+```
+
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript value into a YAML string. The API signature matches `JSON.stringify`:
+
+```ts
+YAML.stringify(value, replacer?, space?)
+```
+
+- `value`: The value to convert to YAML
+- `replacer`: Currently only `null` or `undefined` (function replacers not yet supported)
+- `space`: Number of spaces for indentation (e.g., `2`) or a string to use for indentation. **Without this parameter, outputs flow-style (single-line) YAML**
+
+#### Basic Usage
+
+```ts
+import { YAML } from "bun";
+
+const data = {
+  name: "John Doe",
+  age: 30,
+  hobbies: ["reading", "coding"],
+};
+
+// Without space - outputs flow-style (single-line) YAML
+console.log(YAML.stringify(data));
+// {name: John Doe,age: 30,hobbies: [reading,coding]}
+
+// With space=2 - outputs block-style (multi-line) YAML
+console.log(YAML.stringify(data, null, 2));
+// name: John Doe
+// age: 30
+// hobbies:
+//   - reading
+//   - coding
+```
+
+#### Output Styles
+
+```ts
+const arr = [1, 2, 3];
+
+// Flow style (single-line) - default
+console.log(YAML.stringify(arr));
+// [1,2,3]
+
+// Block style (multi-line) - with indentation
+console.log(YAML.stringify(arr, null, 2));
+// - 1
+// - 2
+// - 3
+```
+
+#### String Quoting
+
+`YAML.stringify()` automatically quotes strings when necessary:
+
+- Strings that would be parsed as YAML keywords (`true`, `false`, `null`, `yes`, `no`, etc.)
+- Strings that would be parsed as numbers
+- Strings containing special characters or escape sequences
+
+```ts
+const examples = {
+  keyword: "true", // Will be quoted: "true"
+  number: "123", // Will be quoted: "123"
+  text: "hello world", // Won't be quoted: hello world
+  empty: "", // Will be quoted: ""
+};
+
+console.log(YAML.stringify(examples, null, 2));
+// keyword: "true"
+// number: "123"
+// text: hello world
+// empty: ""
+```
+
+#### Cycles and References
+
+`YAML.stringify()` automatically detects and handles circular references using YAML anchors and aliases:
+
+```ts
+const obj = { name: "root" };
+obj.self = obj; // Circular reference
+
+const yamlString = YAML.stringify(obj, null, 2);
+console.log(yamlString);
+// &root
+// name: root
+// self:
+//   *root
+
+// Objects with shared references
+const shared = { id: 1 };
+const data = {
+  first: shared,
+  second: shared,
+};
+
+console.log(YAML.stringify(data, null, 2));
+// first:
+//   &first
+//   id: 1
+// second:
+//   *first
+```
+
+#### Special Values
+
+```ts
+// Special numeric values
+console.log(YAML.stringify(Infinity)); // .inf
+console.log(YAML.stringify(-Infinity)); // -.inf
+console.log(YAML.stringify(NaN)); // .nan
+console.log(YAML.stringify(0)); // 0
+console.log(YAML.stringify(-0)); // -0
+
+// null and undefined
+console.log(YAML.stringify(null)); // null
+console.log(YAML.stringify(undefined)); // undefined (returns undefined, not a string)
+
+// Booleans
+console.log(YAML.stringify(true)); // true
+console.log(YAML.stringify(false)); // false
+```
+
+#### Complex Objects
+
+```ts
+const config = {
+  server: {
+    port: 3000,
+    host: "localhost",
+    ssl: {
+      enabled: true,
+      cert: "/path/to/cert.pem",
+      key: "/path/to/key.pem",
+    },
+  },
+  database: {
+    connections: [
+      { name: "primary", host: "db1.example.com" },
+      { name: "replica", host: "db2.example.com" },
+    ],
+  },
+  features: {
+    auth: true,
+    "rate-limit": 100, // Keys with special characters are preserved
+  },
+};
+
+const yamlString = YAML.stringify(config, null, 2);
+console.log(yamlString);
+// server:
+//   port: 3000
+//   host: localhost
+//   ssl:
+//     enabled: true
+//     cert: /path/to/cert.pem
+//     key: /path/to/key.pem
+// database:
+//   connections:
+//     - name: primary
+//       host: db1.example.com
+//     - name: replica
+//       host: db2.example.com
+// features:
+//   auth: true
+//   rate-limit: 100
 ```
 
 ## Module Import

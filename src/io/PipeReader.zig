@@ -198,7 +198,7 @@ const PosixBufferedReader = struct {
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
-            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), false).unwrap() catch |err| {
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), .unknown_size).unwrap() catch |err| {
                 bun.Output.debugWarn("error reading from memfd\n{}", .{err});
                 return this.buffer();
             };
@@ -824,13 +824,19 @@ pub const WindowsBufferedReader = struct {
 
     fn _onReadChunk(this: *WindowsBufferedReader, buf: []u8, hasMore: ReadState) bool {
         if (this.maxbuf) |m| m.onReadBytes(buf.len);
-        this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
 
-        const onReadChunkFn = this.vtable.onReadChunk orelse return true;
-        return onReadChunkFn(this.parent, buf, hasMore);
+        const onReadChunkFn = this.vtable.onReadChunk orelse {
+            this.flags.has_inflight_read = false;
+            return true;
+        };
+        const result = onReadChunkFn(this.parent, buf, hasMore);
+        // Clear has_inflight_read after the callback completes to prevent
+        // libuv from starting a new read while we're still processing data
+        this.flags.has_inflight_read = false;
+        return result;
     }
 
     fn finish(this: *WindowsBufferedReader) void {
@@ -928,7 +934,10 @@ pub const WindowsBufferedReader = struct {
         switch (nread_int) {
             0 => {
                 // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                return this.onRead(.{ .result = 0 }, "", .drained);
+                // With libuv 1.51.0+, calling onRead(.drained) here causes a race condition
+                // where subsequent reads return truncated data (see logs showing 6024 instead
+                // of 74468 bytes). Just ignore 0-byte reads and let libuv continue.
+                return;
             },
             uv.UV_EOF => {
                 _ = this.stopReading();
@@ -1072,14 +1081,14 @@ pub const WindowsBufferedReader = struct {
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
-                    if (tty == &Source.stdin_tty) {
-                        Source.stdin_tty = undefined;
-                        Source.stdin_tty_init = false;
+                    if (Source.StdinTTY.isStdinTTY(tty)) {
+                        // Node only ever closes stdin on process exit.
+                    } else {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
                     }
 
-                    tty.data = tty;
                     this.flags.is_paused = true;
-                    tty.close(onTTYClose);
                 },
             }
             this.source = null;

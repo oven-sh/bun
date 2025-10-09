@@ -7,14 +7,13 @@
 
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-
-type Awaitable<T> = T | Promise<T>;
+import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -60,6 +59,8 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_LOUD: "0",
+  AGENT: "false",
 };
 
 const ciEnv = { ...bunEnv };
@@ -182,7 +183,7 @@ export type DirectoryTree = {
     | string
     | Buffer
     | DirectoryTree
-    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -259,7 +260,7 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
@@ -276,10 +277,10 @@ class DisposableString extends String {
 export function tempDir(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
-): DisposableString {
+): string & DisposableString & AsyncDisposable {
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
-  return new DisposableString(base);
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
@@ -356,7 +357,7 @@ export function bunRunAsScript(
 }
 
 export function randomLoneSurrogate() {
-  const n = randomRange(0, 2);
+  const n = numeric.random.between(0, 2, { domain: "integral" });
   if (n === 0) return randomLoneHighSurrogate();
   return randomLoneLowSurrogate();
 }
@@ -369,16 +370,12 @@ export function randomInvalidSurrogatePair() {
 
 // Generates a random lone high surrogate (from the range D800-DBFF)
 export function randomLoneHighSurrogate() {
-  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+  return String.fromCharCode(numeric.random.between(0xd800, 0xdbff, { domain: "integral" }));
 }
 
 // Generates a random lone high surrogate (from the range DC00-DFFF)
 export function randomLoneLowSurrogate() {
-  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
-}
-
-function randomRange(low: number, high: number): number {
-  return low + Math.floor(Math.random() * (high - low));
+  return String.fromCharCode(numeric.random.between(0xdc00, 0xdfff, { domain: "integral" }));
 }
 
 export function runWithError(cb: () => unknown): Error | undefined {
@@ -796,9 +793,18 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    // junctions on windows will have an absolute path
-    const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
-    return { pass, message };
+    if (isAbsolute(actual)) {
+      // junctions on windows will have an absolute path
+      return {
+        pass: actual.includes(expectedLinkPath.split("..").at(-1)!),
+        message,
+      };
+    }
+
+    return {
+      pass: actual === expectedLinkPath,
+      message,
+    };
   }
 
   const pass = actual === expectedLinkPath;
@@ -859,6 +865,14 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
+    return false;
+  }
+
+  // TODO: investigate why Docker tests are not working on Linux arm64
+  if (isLinux && process.arch === "arm64") {
     return false;
   }
 
@@ -866,6 +880,9 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }
@@ -904,78 +921,98 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
-  fn: (port: number) => void,
+  fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
-  describe(label, () => {
-    const docker = dockerExe();
-    if (!docker) {
-      test.skip(`docker is not installed, skipped: ${image}`, () => {});
+  // Skip if Docker is not available
+  if (!isDockerEnabled()) {
+    describe.todo(label);
+    return;
+  }
+
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
+    // Check if this is one of our docker-compose services
+    const services: Record<string, number> = {
+      "postgres_plain": 5432,
+      "postgres_tls": 5432,
+      "postgres_auth": 5432,
+      "mysql_plain": 3306,
+      "mysql_native_password": 3306,
+      "mysql_tls": 3306,
+      "mysql:8": 3306, // Map mysql:8 to mysql_plain
+      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
+      "redis_plain": 6379,
+      "redis_unified": 6379,
+      "minio": 9000,
+      "autobahn": 9002,
+    };
+
+    const servicePort = services[image];
+    if (servicePort) {
+      // Map mysql:8 and mysql:9 based on environment variables
+      let actualService = image;
+      if (image === "mysql:8" || image === "mysql:9") {
+        if (env.MYSQL_ROOT_PASSWORD === "bun") {
+          actualService = "mysql_native_password"; // Has password "bun"
+        } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
+          actualService = "mysql_plain"; // No password
+        } else {
+          actualService = "mysql_plain"; // Default to no password
+        }
+      }
+
+      // Create a container descriptor with stable references and a ready promise
+      let readyResolver: () => void;
+      let readyRejecter: (error: any) => void;
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        readyResolver = resolve;
+        readyRejecter = reject;
+      });
+
+      // Internal state that will be updated when container is ready
+      let _host = "127.0.0.1";
+      let _port = 0;
+
+      // Container descriptor with live getters and ready promise
+      const containerDescriptor = {
+        get host() {
+          return _host;
+        },
+        get port() {
+          return _port;
+        },
+        ready: readyPromise,
+      };
+
+      // Start the service before any tests
+      beforeAll(async () => {
+        try {
+          const dockerHelper = await import("./docker/index.ts");
+          const info = await dockerHelper.ensure(actualService as any);
+          _host = info.host;
+          _port = info.ports[servicePort];
+          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+          readyResolver!();
+        } catch (error) {
+          readyRejecter!(error);
+          throw error;
+        }
+      });
+
+      fn(containerDescriptor);
       return;
     }
-    const { arch, platform } = process;
-    if (archs && !archs?.includes(arch)) {
-      test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
-      return false;
-    }
-    let containerId: string;
-    {
-      const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      containerId = stdout.toString("utf-8").trim();
-    }
-    let port: number;
-    {
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "port", containerId],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      const [firstPort] = stdout
-        .toString("utf-8")
-        .trim()
-        .split("\n")
-        .map(line => parseInt(line.split(":").pop()!));
-      port = firstPort;
-    }
-    beforeAll(async () => {
-      await waitForPort(port);
-    });
-    afterAll(() => {
-      Bun.spawnSync({
-        cmd: [docker, "rm", "-f", containerId],
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-    });
-    fn(port);
+    // No fallback - if the image isn't in docker-compose, it should fail
+    throw new Error(
+      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+    );
   });
 }
 
@@ -1693,14 +1730,16 @@ export class VerdaccioRegistry {
         `;
   }
 
-  async createTestDir(bunfigOpts: BunfigOpts = {}) {
+  async createTestDir(
+    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = { bunfigOpts: {}, files: {} },
+  ) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tmpdirSync();
+    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
     const packageJson = join(packageDir, "package.json");
-    await this.writeBunfig(packageDir, bunfigOpts);
+    await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir, packageJson };
+    return { packageDir: String(packageDir), packageJson };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
@@ -1806,4 +1845,53 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
       .replaceAll(Bun.revision, "<revision>")
       .trim()
   );
+}
+
+export function nodeModulesPackages(nodeModulesPath: string): string {
+  const packages: string[] = [];
+
+  function scanDirectory(dir: string, relativePath: string = "") {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (entry.name === ".bun-cache") {
+            // Skip .bun-cache directories
+            continue;
+          }
+
+          const newRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+          // Check if this directory contains a package.json
+          const packageJsonPath = join(fullPath, "package.json");
+          if (fs.existsSync(packageJsonPath)) {
+            try {
+              const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+              const name = packageJson.name || "unknown";
+              const version = packageJson.version || "unknown";
+              packages.push(`${newRelativePath}/${name}@${version}`);
+            } catch {
+              // If package.json is invalid, still include the path
+              packages.push(`${newRelativePath}/[invalid-package.json]`);
+            }
+          }
+
+          // Recursively scan subdirectories (including nested node_modules)
+          scanDirectory(fullPath, newRelativePath);
+        }
+      }
+    } catch (err) {
+      // Ignore errors for directories we can't read
+    }
+  }
+
+  scanDirectory(nodeModulesPath);
+
+  // Sort the packages alphabetically
+  packages.sort();
+
+  return packages.join("\n");
 }

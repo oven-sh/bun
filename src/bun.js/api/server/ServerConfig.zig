@@ -931,7 +931,7 @@ pub fn fromJS(
                         if (args.ssl_config == null) {
                             args.ssl_config = ssl_config;
                         } else {
-                            if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                            if ((ssl_config.server_name orelse "")[0] == 0) {
                                 defer ssl_config.deinit();
                                 return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
                             }

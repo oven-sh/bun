@@ -145,6 +145,15 @@ pub const Store = struct {
                 const pkg_res = pkg_resolutions[pkg_id];
 
                 switch (pkg_res.tag) {
+                    .root => {
+                        if (pkg_name.isEmpty()) {
+                            try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                        } else {
+                            try writer.print("{}@root", .{
+                                pkg_name.fmtStorePath(string_buf),
+                            });
+                        }
+                    },
                     .folder => {
                         try writer.print("{}@file+{}", .{
                             pkg_name.fmtStorePath(string_buf),

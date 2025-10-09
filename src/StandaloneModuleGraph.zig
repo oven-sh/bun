@@ -199,7 +199,6 @@ pub const StandaloneModuleGraph = struct {
                 store.ref();
 
                 const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
-                b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
@@ -432,6 +431,27 @@ pub const StandaloneModuleGraph = struct {
                 }
             };
 
+            if (comptime bun.Environment.is_canary or bun.Environment.isDebug) {
+                if (bun.getenvZ("BUN_FEATURE_FLAG_DUMP_CODE")) |dump_code_dir| {
+                    const buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
+                    const dest_z = bun.path.joinAbsStringBufZ(dump_code_dir, buf, &.{dest_path}, .auto);
+
+                    // Scoped block to handle dump failures without skipping module emission
+                    dump: {
+                        const file = bun.sys.File.makeOpen(dest_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                        defer file.close();
+                        file.writeAll(output_file.value.buffer.bytes).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                    }
+                }
+            }
+
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,
@@ -520,10 +540,10 @@ pub const StandaloneModuleGraph = struct {
 
     pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
-        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
+        var zname: [:0]const u8 = bun.fs.FileSystem.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             return bun.invalid_fd;
-        });
+        };
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
@@ -724,7 +744,8 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer pe_file.deinit();
-                pe_file.addBunSection(bytes) catch |err| {
+                // Always strip authenticode when adding .bun section for --compile
+                pe_file.addBunSection(bytes, .strip_always) catch |err| {
                     Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;

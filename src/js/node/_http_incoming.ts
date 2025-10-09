@@ -393,12 +393,12 @@ const IncomingMessagePrototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    this.take;
+    void this.take;
     const req = this[kHandle] || this[webRequestOrResponse];
 
     if (req) {
       setRequestTimeout(req, Math.ceil(msecs / 1000));
-      typeof callback === "function" && this.once("timeout", callback);
+      if (typeof callback === "function") this.once("timeout", callback);
     }
     return this;
   },

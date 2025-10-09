@@ -153,6 +153,10 @@ fn messageWithTypeAndLevel_(
     var writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
 
+    if (bun.jsc.Jest.Jest.runner) |runner| {
+        runner.bun_test_root.onBeforePrint();
+    }
+
     var print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default
     const cli_context = CLI.get();
@@ -2278,6 +2282,13 @@ pub const Formatter = struct {
                 }
             },
             .Error => {
+                // Temporarily remove from the visited map to allow printErrorlikeObject to process it
+                // The circular reference check is already done in printAs, so we know it's safe
+                const was_in_map = if (this.map_node != null) this.map.remove(value) else false;
+                defer if (was_in_map) {
+                    _ = this.map.put(value, {}) catch {};
+                };
+
                 VirtualMachine.get().printErrorlikeObject(
                     value,
                     null,

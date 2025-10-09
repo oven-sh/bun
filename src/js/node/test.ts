@@ -302,10 +302,10 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
   checkNotInsideTest(ctx, "test");
-  const originalContext = ctx;
-  const context = new TestContext(true, name, Bun.main, originalContext);
+  const context = new TestContext(true, name, Bun.main, ctx);
 
   const runTest = (done: (error?: unknown) => void) => {
+    const originalContext = ctx;
     ctx = context;
     const endTest = (error?: unknown) => {
       try {
@@ -336,10 +336,10 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = parseTestOptions(arg0, arg1, arg2);
 
   checkNotInsideTest(ctx, "describe");
-  const originalContext = ctx;
-  const context = new TestContext(false, name, Bun.main, originalContext);
+  const context = new TestContext(false, name, Bun.main, ctx);
 
   const runDescribe = () => {
+    const originalContext = ctx;
     ctx = context;
     const endDescribe = () => {
       ctx = originalContext;

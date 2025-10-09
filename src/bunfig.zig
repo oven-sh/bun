@@ -268,9 +268,13 @@ pub const Bunfig = struct {
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporters.junit = true;
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
+                        }
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                            try this.expect(dots_expr, .e_boolean);
+                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }
                     }
 
@@ -347,6 +351,74 @@ pub const Bunfig = struct {
                     if (test_.get("coverageSkipTestFiles")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
+                    }
+
+                    var randomize_from_config: ?bool = null;
+
+                    if (test_.get("randomize")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        randomize_from_config = expr.data.e_boolean.value;
+                        this.ctx.test_options.randomize = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("seed")) |expr| {
+                        try this.expect(expr, .e_number);
+                        const seed_value = expr.data.e_number.toU32();
+
+                        // Validate that randomize is true when seed is specified
+                        // Either randomize must be set to true in this config, or already enabled
+                        const has_randomize_true = (randomize_from_config orelse this.ctx.test_options.randomize);
+                        if (!has_randomize_true) {
+                            try this.addError(expr.loc, "\"seed\" can only be used when \"randomize\" is true");
+                        }
+
+                        this.ctx.test_options.seed = seed_value;
+                    }
+
+                    if (test_.get("rerunEach")) |expr| {
+                        try this.expect(expr, .e_number);
+                        this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
+                    if (test_.get("concurrentTestGlob")) |expr| {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                // Reject empty strings
+                                if (str.len() == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
+                                    return;
+                                }
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
+                                    return;
+                                }
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
+                                        return;
+                                    }
+                                    // Reject empty strings in array
+                                    if (item.data.e_string.len() == 0) {
+                                        try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
+                                return;
+                            },
+                        }
                     }
 
                     if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
@@ -642,6 +714,40 @@ pub const Bunfig = struct {
                             }
                         } else {
                             try this.addError(security_obj.loc, "Invalid security config, expected an object");
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAge")) |min_age| {
+                        switch (min_age.data) {
+                            .e_number => |days| {
+                                if (days.value < 0) {
+                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
+                                    return;
+                                }
+                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
+                            },
+                            else => {
+                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAgeExcludes")) |exclusions| {
+                        switch (exclusions.data) {
+                            .e_array => |arr| brk: {
+                                const raw_exclusions = arr.items.slice();
+                                if (raw_exclusions.len == 0) break :brk;
+
+                                const exclusions_list = try this.allocator.alloc(string, raw_exclusions.len);
+                                for (raw_exclusions, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    exclusions_list[i] = try p.data.e_string.string(allocator);
+                                }
+                                install.minimum_release_age_excludes = exclusions_list;
+                            },
+                            else => {
+                                try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
+                            },
                         }
                     }
                 }

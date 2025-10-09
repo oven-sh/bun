@@ -3513,12 +3513,8 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        globalObject->queueMicrotask(
-            microtaskFunction,
-            rejectPromiseFunction,
-            globalObject->m_asyncContextData.get()->getInternalField(0),
-            promise,
-            value);
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        globalObject->vm().queueMicrotask(WTFMove(task));
         RETURN_IF_EXCEPTION(scope, );
     }
 }

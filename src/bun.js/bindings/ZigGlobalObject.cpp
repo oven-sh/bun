@@ -1573,8 +1573,8 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
-        JSC::JSValue {}, JSC::JSValue {});
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, function, callback, asyncContext };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -4059,7 +4059,7 @@ void GlobalObject::handleRejectedPromises()
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
     while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
-        if (promise->isHandled(virtual_machine))
+        if (promise->isHandled())
             continue;
 
         Bun__handleRejectedPromise(this, promise);
@@ -4166,7 +4166,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 #endif
 
     // Do not use JSCell* here because the GC will try to visit it.
-    globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,

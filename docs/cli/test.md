@@ -102,6 +102,21 @@ XML report to the given path at the very end of the test run.
 
 JUnit XML is a popular format for reporting test results in CI/CD pipelines.
 
+## Breaking changes in v1.3
+
+### CI environment restrictions
+
+When running in CI environments (GitHub Actions, GitLab CI, etc.), Bun now enforces stricter test practices:
+
+- **Creating snapshots is disallowed** - Tests using `.toMatchSnapshot()` or `.toMatchInlineSnapshot()` will fail if the snapshot doesn't already exist. Use `--update-snapshots` locally to generate snapshots before committing.
+- **`.only()` is disallowed** - Tests marked with `.only()` will fail. This prevents accidentally committing focused tests that skip the rest of your test suite.
+
+CI environments are detected via environment variables like `CI=true`, `GITHUB_ACTIONS=true`, `GITLAB_CI=true`, etc.
+
+### ErrorBuilder.reject() behavior
+
+`ErrorBuilder.reject()` now triggers unhandled rejection handlers, making error handling more consistent with JavaScript promise semantics. Previously, rejections from `ErrorBuilder.reject()` would not call these handlers, potentially hiding errors in production code.
+
 ## Timeouts
 
 Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, it will be marked as failed. The default value is `5000`.

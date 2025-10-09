@@ -382,6 +382,12 @@ interface Server {
     data: string | ArrayBufferView | ArrayBuffer,
     compress?: boolean,
   ): number;
+  publishText(topic: string, data: string, compress?: boolean): number;
+  publishBinary(
+    topic: string,
+    data: ArrayBufferView | ArrayBuffer,
+    compress?: boolean,
+  ): number;
   upgrade(
     req: Request,
     options?: {
@@ -396,12 +402,21 @@ interface ServerWebSocket {
   readonly readyState: number;
   readonly remoteAddress: string;
   send(message: string | ArrayBuffer | Uint8Array, compress?: boolean): number;
+  sendText(message: string, compress?: boolean): number;
+  sendBinary(message: ArrayBuffer | Uint8Array, compress?: boolean): number;
   close(code?: number, reason?: string): void;
   subscribe(topic: string): void;
   unsubscribe(topic: string): void;
   publish(topic: string, message: string | ArrayBuffer | Uint8Array): void;
+  publishText(topic: string, message: string, compress?: boolean): number;
+  publishBinary(
+    topic: string,
+    message: ArrayBuffer | Uint8Array,
+    compress?: boolean,
+  ): number;
   isSubscribed(topic: string): boolean;
   cork(cb: (ws: ServerWebSocket) => void): void;
+  getBufferedAmount(): number;
 }
 ```
 

@@ -9,7 +9,7 @@ Bun provides built-in support for YAML files through both runtime APIs and bundl
 
 ## Conformance
 
-Bun's YAML parser currently passes over 90% of the official YAML test suite. While we're actively working on reaching 100% conformance, the current implementation covers the vast majority of real-world use cases. The parser is written in Zig for optimal performance and is continuously being improved.
+Bun's YAML parser currently passes 90% of the official yaml-test-suite (362/400 tests). Known limitations include missing support for the `|-` and `|+` block scalar chomping operators and cyclic references in `Bun.YAML.parse()`. The parser is written in Zig for optimal performance and is continuously being improved.
 
 ## Runtime API
 

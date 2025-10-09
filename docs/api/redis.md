@@ -103,6 +103,93 @@ await redis.expire("session:123", 3600); // expires in 1 hour
 
 // Get time to live (in seconds)
 const ttl = await redis.ttl("session:123");
+
+// Set if not exists
+await redis.setnx("lock", "token");
+
+// Set with expiration (seconds)
+await redis.setex("temp", 60, "value");
+
+// Set with expiration (milliseconds)
+await redis.psetex("temp", 5000, "value");
+
+// Get and set in one operation
+const oldValue = await redis.getset("key", "new-value");
+
+// Get and delete
+const value = await redis.getdel("key");
+
+// Get and set expiration
+const currentValue = await redis.getex("key", "EX", 60);
+
+// Get multiple keys
+const values = await redis.mget(["key1", "key2", "key3"]);
+
+// Set multiple keys
+await redis.mset(["key1", "value1", "key2", "value2"]);
+
+// Set multiple keys if none exist
+const success = await redis.msetnx(["key1", "value1", "key2", "value2"]);
+
+// Append to a string
+await redis.append("log", "new entry\n");
+
+// Get string length
+const length = await redis.strlen("key");
+
+// Set expiration at specific timestamp (seconds)
+await redis.expireat("key", Math.floor(Date.now() / 1000) + 3600);
+
+// Set expiration (milliseconds)
+await redis.pexpire("key", 60000);
+
+// Set expiration at specific timestamp (milliseconds)
+await redis.pexpireat("key", Date.now() + 60000);
+
+// Get expiration timestamp (seconds)
+const expiresAt = await redis.expiretime("key");
+
+// Get expiration timestamp (milliseconds)
+const expiresAtMs = await redis.pexpiretime("key");
+
+// Get time to live (milliseconds)
+const ttlMs = await redis.pttl("key");
+
+// Remove expiration
+await redis.persist("key");
+
+// Get bit value at offset
+const bit = await redis.getbit("key", 7);
+
+// Set bit value at offset
+await redis.setbit("key", 7, 1);
+
+// Count set bits
+const count = await redis.bitcount("key");
+
+// Get substring
+const substring = await redis.getrange("key", 0, 10);
+
+// Set substring
+await redis.setrange("key", 5, "replacement");
+
+// Copy key
+await redis.copy("source", "destination");
+
+// Rename key
+await redis.rename("old-key", "new-key");
+
+// Rename if new key doesn't exist
+const renamed = await redis.renamenx("old-key", "new-key");
+
+// Delete key asynchronously
+await redis.unlink("key");
+
+// Update last access time
+await redis.touch("key1", "key2");
+
+// Serialize value
+const serialized = await redis.dump("key");
 ```
 
 ### Numeric Operations
@@ -116,6 +203,15 @@ await redis.incr("counter");
 
 // Decrement by 1
 await redis.decr("counter");
+
+// Increment by a specific value
+await redis.incrby("counter", 5);
+
+// Decrement by a specific value
+await redis.decrby("counter", 3);
+
+// Increment by a float value
+await redis.incrbyfloat("counter", 2.5);
 ```
 
 ### Hash Operations
@@ -144,6 +240,40 @@ await redis.hincrby("user:123", "visits", 1);
 
 // Increment a float field in a hash
 await redis.hincrbyfloat("user:123", "score", 1.5);
+
+// Set a single field
+await redis.hset("user:123", "name", "Bob");
+
+// Set field if it doesn't exist
+const created = await redis.hsetnx("user:123", "id", "123");
+
+// Delete fields
+await redis.hdel("user:123", "email", "phone");
+
+// Check if field exists
+const hasEmail = await redis.hexists("user:123", "email");
+
+// Get all fields and values
+const allData = await redis.hgetall("user:123");
+
+// Get all field names
+const fields = await redis.hkeys("user:123");
+
+// Get all values
+const values = await redis.hvals("user:123");
+
+// Get number of fields
+const fieldCount = await redis.hlen("user:123");
+
+// Get string length of field value
+const nameLength = await redis.hstrlen("user:123", "name");
+
+// Get random field(s)
+const randomField = await redis.hrandfield("user:123");
+const randomFields = await redis.hrandfield("user:123", 2);
+
+// Scan hash fields
+const [cursor, fields] = await redis.hscan("user:123", 0);
 ```
 
 ### Set Operations
@@ -166,6 +296,236 @@ const randomTag = await redis.srandmember("tags");
 
 // Pop (remove and return) a random member
 const poppedTag = await redis.spop("tags");
+
+// Get set size
+const size = await redis.scard("tags");
+
+// Move member between sets
+await redis.smove("source-set", "dest-set", "member");
+
+// Check multiple members
+const results = await redis.smismember("tags", ["javascript", "python", "rust"]);
+
+// Difference between sets
+const diff = await redis.sdiff("set1", "set2");
+
+// Store difference in new set
+await redis.sdiffstore("result", "set1", "set2");
+
+// Intersection of sets
+const intersection = await redis.sinter("set1", "set2");
+
+// Count intersection
+const intersectionCount = await redis.sintercard("set1", "set2");
+
+// Store intersection in new set
+await redis.sinterstore("result", "set1", "set2");
+
+// Union of sets
+const union = await redis.sunion("set1", "set2");
+
+// Store union in new set
+await redis.sunionstore("result", "set1", "set2");
+
+// Scan set members
+const [cursor, members] = await redis.sscan("tags", 0);
+```
+
+### Sorted Set Operations
+
+```ts
+// Add members with scores
+await redis.zadd("leaderboard", 100, "player1");
+await redis.zadd("leaderboard", 200, "player2", 150, "player3");
+
+// Remove members
+await redis.zrem("leaderboard", "player1");
+
+// Get number of members
+const count = await redis.zcard("leaderboard");
+
+// Count members in score range
+const rangeCount = await redis.zcount("leaderboard", 100, 200);
+
+// Get member score
+const score = await redis.zscore("leaderboard", "player1");
+
+// Get multiple scores
+const scores = await redis.zmscore("leaderboard", ["player1", "player2"]);
+
+// Get member rank (0-based, lowest to highest)
+const rank = await redis.zrank("leaderboard", "player1");
+
+// Get member rank (0-based, highest to lowest)
+const revRank = await redis.zrevrank("leaderboard", "player1");
+
+// Increment member score
+await redis.zincrby("leaderboard", 10, "player1");
+
+// Get range by index
+const topPlayers = await redis.zrange("leaderboard", 0, 9);
+
+// Get range by index (reverse order)
+const topPlayersDesc = await redis.zrevrange("leaderboard", 0, 9);
+
+// Get range by score
+const players = await redis.zrangebyscore("leaderboard", 100, 200);
+
+// Get range by score (reverse)
+const playersDesc = await redis.zrevrangebyscore("leaderboard", 200, 100);
+
+// Get range by lexicographic order
+const names = await redis.zrangebylex("names", "[a", "[z");
+
+// Get range by lex (reverse)
+const namesRev = await redis.zrevrangebylex("names", "[z", "[a");
+
+// Count members in lex range
+const lexCount = await redis.zlexcount("names", "[a", "[z");
+
+// Store range result
+await redis.zrangestore("result", "leaderboard", 0, 9);
+
+// Remove members by lex range
+await redis.zremrangebylex("names", "[a", "[c");
+
+// Remove members by rank
+await redis.zremrangebyrank("leaderboard", 0, 9);
+
+// Remove members by score
+await redis.zremrangebyscore("leaderboard", 0, 100);
+
+// Pop member with lowest score
+const lowest = await redis.zpopmin("leaderboard");
+
+// Pop member with highest score
+const highest = await redis.zpopmax("leaderboard");
+
+// Blocking pop lowest
+const [key, member, score] = await redis.bzpopmin("leaderboard", 5);
+
+// Blocking pop highest
+const [key, member, score] = await redis.bzpopmax("leaderboard", 5);
+
+// Pop from multiple sorted sets
+const popped = await redis.zmpop("leaderboard1", "leaderboard2");
+
+// Blocking pop from multiple sorted sets
+const blockedPop = await redis.bzmpop(5, "leaderboard1", "leaderboard2");
+
+// Difference between sorted sets
+const diff = await redis.zdiff("set1", "set2");
+
+// Store difference
+await redis.zdiffstore("result", "set1", "set2");
+
+// Intersection of sorted sets
+const intersection = await redis.zinter("set1", "set2");
+
+// Count intersection
+const interCount = await redis.zintercard("set1", "set2");
+
+// Store intersection
+await redis.zinterstore("result", "set1", "set2");
+
+// Union of sorted sets
+const union = await redis.zunion("set1", "set2");
+
+// Store union
+await redis.zunionstore("result", "set1", "set2");
+
+// Get random member(s)
+const random = await redis.zrandmember("leaderboard");
+const randomWithScores = await redis.zrandmember("leaderboard", 3, true);
+
+// Scan sorted set
+const [cursor, members] = await redis.zscan("leaderboard", 0);
+```
+
+### List Operations
+
+```ts
+// Push to left (head)
+await redis.lpush("queue", "item1");
+
+// Push to right (tail)
+await redis.rpush("queue", "item2");
+
+// Pop from left
+const leftItem = await redis.lpop("queue");
+
+// Pop from right
+const rightItem = await redis.rpop("queue");
+
+// Push to left if list exists
+await redis.lpushx("queue", "item");
+
+// Push to right if list exists
+await redis.rpushx("queue", "item");
+
+// Get list length
+const length = await redis.llen("queue");
+
+// Get range of elements
+const items = await redis.lrange("queue", 0, -1);
+
+// Get element by index
+const item = await redis.lindex("queue", 0);
+
+// Set element by index
+await redis.lset("queue", 0, "new-value");
+
+// Insert before/after element
+await redis.linsert("queue", "BEFORE", "pivot", "new-item");
+
+// Remove elements
+await redis.lrem("queue", 2, "value"); // remove first 2 occurrences
+
+// Trim list to range
+await redis.ltrim("queue", 0, 99);
+
+// Find position of element
+const position = await redis.lpos("queue", "item");
+
+// Move element between lists
+await redis.lmove("source", "dest", "LEFT", "RIGHT");
+
+// Pop from multiple lists
+const popped = await redis.lmpop("list1", "list2", "LEFT");
+
+// Pop from right, push to left (atomic)
+await redis.rpoplpush("source", "dest");
+
+// Blocking pop from left
+const [key, value] = await redis.blpop("queue", 5);
+
+// Blocking pop from right
+const [key, value] = await redis.brpop("queue", 5);
+
+// Blocking move
+await redis.blmove("source", "dest", "LEFT", "RIGHT", 5);
+
+// Blocking pop from multiple lists
+const result = await redis.blmpop(5, "list1", "list2", "LEFT");
+
+// Blocking rpoplpush
+await redis.brpoplpush("source", "dest", 5);
+```
+
+### Key Management
+
+```ts
+// Find keys matching pattern
+const keys = await redis.keys("user:*");
+
+// Scan keys with cursor
+const [cursor, foundKeys] = await redis.scan(0, "MATCH", "user:*", "COUNT", 100);
+
+// Get key type
+const keyType = await redis.type("mykey");
+
+// Get random key
+const randomKey = await redis.randomkey();
 ```
 
 ## Pub/Sub

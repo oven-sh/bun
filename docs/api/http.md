@@ -62,6 +62,7 @@ Routes in `Bun.serve()` receive a `BunRequest` (which extends [`Request`](https:
 interface BunRequest<T extends string> extends Request {
   params: Record<T, string>;
   readonly cookies: CookieMap;
+  readonly query: Record<string, any>;
 }
 ```
 

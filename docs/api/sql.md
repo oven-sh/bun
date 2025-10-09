@@ -362,24 +362,32 @@ await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
 await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
 ```
 
-### Dynamic values and `where in`
+### Dynamic values and `WHERE IN`
 
-Value lists can also be created dynamically, making where in queries simple too. Optionally you can pass a array of objects and inform what key to use to create the list.
+Value lists can be created dynamically for `IN` clauses. You can pass an array of values directly, or extract a specific column from an array of objects:
 
 ```ts
+// Direct array of values
 await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
 
+// Extract column from array of objects
 const users = [
   { id: 1, name: "Alice" },
   { id: 2, name: "Bob" },
   { id: 3, name: "Charlie" },
 ];
 await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
+// Expands to: WHERE id IN (1, 2, 3)
+
+// Single object also works (extracts the value)
+const singleUser = { id: 1, name: "Alice" };
+await sql`SELECT * FROM users WHERE id IN ${sql(singleUser, "id")}`;
+// Expands to: WHERE id IN (1)
 ```
 
 ### `sql.array` helper
 
-The `sql.array` helper creates PostgreSQL array literals from JavaScript arrays:
+The `sql.array` helper creates PostgreSQL array literals from JavaScript arrays. It supports a wide range of PostgreSQL types with explicit type specification:
 
 ```ts
 // Create array literals for PostgreSQL
@@ -389,9 +397,50 @@ await sql`INSERT INTO tags (items) VALUES (${sql.array(["red", "blue", "green"])
 // Works with numeric arrays too
 await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
 // Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
+
+// With explicit type specification (recommended for clarity)
+await sql`INSERT INTO scores VALUES (${sql.array([1, 2, 3], "INT")})`;
 ```
 
-**Note**: `sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.
+#### Supported Array Types
+
+The `sql.array` helper supports the following PostgreSQL types as the second parameter:
+
+**Numeric Types:**
+- `INT`, `SMALLINT`, `BIGINT` - Integer types
+- `REAL`, `DOUBLE PRECISION` - Floating-point types
+- `NUMERIC` - Arbitrary precision numbers
+
+**String Types:**
+- `TEXT`, `VARCHAR`, `CHAR` - Text types
+
+**Date/Time Types:**
+- `DATE` - Date values
+- `TIME` - Time of day (string format: `"HH:MM:SS"`)
+- `TIMESTAMP`, `TIMESTAMPTZ` - Timestamp values
+- `INTERVAL` - Time intervals
+
+**Network Types:**
+- `INET` - IP addresses (IPv4 and IPv6)
+- `CIDR` - Network addresses
+- `MACADDR` - MAC addresses
+
+**Other Types:**
+- `UUID` - Universally unique identifiers
+- `BOOLEAN` - Boolean values
+- `BIT`, `VARBIT` - Bit strings
+- `MONEY` - Currency amounts
+- `POINT`, `BOX`, `CIRCLE` - Geometric types
+
+```ts
+// Examples with different types
+await sql`SELECT ${sql.array([1, 2, 3], "INT")} as numbers`;
+await sql`SELECT ${sql.array(["12:30:45", "18:45:30"], "TIME")} as times`;
+await sql`SELECT ${sql.array([new Date(), new Date()], "TIMESTAMP")} as timestamps`;
+await sql`SELECT ${sql.array(["192.168.1.1", "10.0.0.1"], "INET")} as ips`;
+```
+
+**Note**: `sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be fully supported yet.
 
 ## `sql``.simple()`
 
@@ -413,11 +462,37 @@ Note that simple queries cannot use parameters (`${value}`). If you need paramet
 
 ### Queries in files
 
-You can use the `sql.file` method to read a query from a file and execute it, if the file includes $1, $2, etc you can pass parameters to the query. If no parameters are used it can execute multiple commands per file.
+You can use the `sql.file` method to read a query from a file and execute it. This is useful for organizing complex queries or database migrations in separate files.
 
 ```ts
+// Execute a query file without parameters
+const result = await sql.file("query.sql");
+
+// Pass parameters to the query (PostgreSQL: $1, $2, etc.; SQLite: ?, ?, etc.)
 const result = await sql.file("query.sql", [1, 2, 3]);
+
+// Multiple statements are allowed when no parameters are used
+const result = await sql.file("schema.sql");
 ```
+
+**Example files:**
+
+```sql
+-- query.sql (with parameters)
+SELECT * FROM users WHERE id = $1 AND age > $2
+```
+
+```sql
+-- schema.sql (multiple statements, no parameters)
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+INSERT INTO users (id, name) VALUES (1, 'Alice');
+INSERT INTO users (id, name) VALUES (2, 'Bob');
+```
+
+The file path can be absolute or relative to the current working directory.
 
 ### Unsafe Queries
 
@@ -1242,7 +1317,7 @@ MySQL types are automatically converted to JavaScript types:
 | FLOAT, DOUBLE                           | number                   |                                                                                                      |
 | DATE                                    | Date                     | JavaScript Date object                                                                               |
 | DATETIME, TIMESTAMP                     | Date                     | With timezone handling                                                                               |
-| TIME                                    | number                   | Total of microseconds                                                                                |
+| TIME                                    | string                   | Format: `"HH:MM:SS"` (e.g., `"12:30:45"`, `"838:59:59"`, `"-838:59:59"`)                            |
 | YEAR                                    | number                   |                                                                                                      |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                      |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                      |

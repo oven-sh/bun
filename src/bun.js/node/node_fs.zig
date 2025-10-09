@@ -2478,24 +2478,25 @@ pub const Arguments = struct {
 
                             // Handle offset
                             if (try current.getTruthy(ctx, "offset")) |offset_val| {
-                                args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, offset_val, "offset", 0, 9007199254740991));
+                                const offset = @as(u64, @intCast(try jsc.Node.validators.validateInteger(ctx, offset_val, "offset", 0, 9007199254740991)));
                                 const max_offset = @min(buf_len, std.math.maxInt(i64));
-                                if (args.offset > max_offset) {
+                                if (offset > max_offset) {
                                     return ctx.throwRangeError(
-                                        @as(f64, @floatFromInt(args.offset)),
-                                        .{ .field_name = "offset", .max = @intCast(max_offset) },
+                                        @as(f64, @floatFromInt(offset)),
+                                        .{ .field_name = "offset", .max = @as(i64, @intCast(max_offset)) },
                                     );
                                 }
+                                args.offset = offset;
                             }
 
                             // Handle length
                             if (try current.getTruthy(ctx, "length")) |length_val| {
-                                const length = length_val.to(i64);
+                                const length = try jsc.Node.validators.validateInteger(ctx, length_val, "length", null, null);
                                 const max_len = @min(buf_len - args.offset, std.math.maxInt(i32));
                                 if (length > max_len or length < 0) {
                                     return ctx.throwRangeError(
                                         @as(f64, @floatFromInt(length)),
-                                        .{ .field_name = "length", .min = 0, .max = @intCast(max_len) },
+                                        .{ .field_name = "length", .min = @as(i64, 0), .max = @as(i64, @intCast(max_len)) },
                                     );
                                 }
                                 args.length = @intCast(length);

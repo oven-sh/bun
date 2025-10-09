@@ -26,6 +26,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  kAbortController,
 } = require("internal/http");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -332,7 +333,10 @@ const IncomingMessagePrototype = {
         socket.destroy(err);
       }
     }
-    this.req?.destroy();
+    const req = this.req;
+    if (req) {
+      req[kAbortController]?.abort?.();
+    }
 
     if ($isCallable(cb)) {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);

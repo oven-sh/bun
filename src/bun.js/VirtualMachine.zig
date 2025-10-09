@@ -3486,7 +3486,126 @@ pub fn resolveSourceMapping(
             };
         }
 
+        // When --enable-source-maps is enabled, try to load external source maps
+        if (bun.sourcemap.JSSourceMap.@"--enable-source-maps") {
+            return this.tryLoadExternalSourceMap(path, line, column, source_handling);
+        }
+
         return null;
+    };
+}
+
+fn tryLoadExternalSourceMap(
+    this: *VirtualMachine,
+    path: []const u8,
+    line: Ordinal,
+    column: Ordinal,
+    source_handling: SourceMap.SourceContentHandling,
+) ?SourceMap.Mapping.Lookup {
+    const hint: SourceMap.ParseUrlResultHint = switch (source_handling) {
+        .no_source_contents => .mappings_only,
+        .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
+    };
+
+    // Use a stack fallback allocator for temporary allocations
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var arena = bun.ArenaAllocator.init(sfb.get());
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // First, try to read the source file and look for an inline source map
+    const source_contents = switch (bun.sys.File.readFrom(std.fs.cwd(), path, allocator)) {
+        .result => |contents| contents,
+        .err => {
+            // If we can't read the file, try external .map file
+            return tryLoadExternalMapFile(this, path, line, column, hint, allocator);
+        },
+    };
+
+    // Look for sourceMappingURL comment
+    const source_slice = source_contents;
+    if (bun.strings.lastIndexOfChar(source_slice, '\n')) |last_newline_idx| {
+        const last_lines = source_slice[last_newline_idx..];
+        if (bun.strings.indexOf(last_lines, "//# sourceMappingURL=")) |url_start_idx| {
+            const url_start = last_newline_idx + url_start_idx + "//# sourceMappingURL=".len;
+            const url_end = bun.strings.indexOfChar(source_slice[url_start..], '\n') orelse
+                (source_slice.len - url_start);
+            const source_map_url = bun.strings.trim(source_slice[url_start..][0..url_end], " \r\t");
+
+            // Try to parse as inline data: URL or external file
+            const parse = SourceMap.parseUrl(
+                bun.default_allocator,
+                allocator,
+                source_map_url,
+                hint,
+            ) catch {
+                // If inline fails, try external .map file
+                return tryLoadExternalMapFile(this, path, line, column, hint, allocator);
+            };
+
+            if (parse.map) |map| {
+                const mapping = parse.mapping orelse map.mappings.find(line, column) orelse return null;
+
+                // Cache the parsed source map for future lookups
+                map.ref();
+                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch {};
+
+                return .{
+                    .mapping = mapping,
+                    .source_map = map,
+                    .prefetched_source_code = parse.source_contents,
+                };
+            }
+        }
+    }
+
+    // Fall back to external .map file
+    return tryLoadExternalMapFile(this, path, line, column, hint, allocator);
+}
+
+fn tryLoadExternalMapFile(
+    this: *VirtualMachine,
+    path: []const u8,
+    line: Ordinal,
+    column: Ordinal,
+    hint: SourceMap.ParseUrlResultHint,
+    allocator: std.mem.Allocator,
+) ?SourceMap.Mapping.Lookup {
+    // Try to read and parse external source map from disk
+    var buf: bun.PathBuffer = undefined;
+    @memcpy(buf[0..path.len], path);
+    @memcpy(buf[path.len..][0..4], ".map");
+    const map_path = buf[0 .. path.len + 4];
+
+    const map_data = switch (bun.sys.File.readFrom(std.fs.cwd(), map_path, allocator)) {
+        .result => |data| data,
+        .err => {
+            // No source map file found - this is not an error, just means no source map exists
+            return null;
+        },
+    };
+
+    const parse = SourceMap.parseJSON(
+        bun.default_allocator,
+        allocator,
+        map_data,
+        hint,
+    ) catch {
+        // Invalid source map - ignore it
+        return null;
+    };
+
+    const map = parse.map orelse return null;
+    const mapping = parse.mapping orelse map.mappings.find(line, column) orelse return null;
+
+    // Cache the parsed source map for future lookups
+    map.ref();
+    this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch {};
+
+    return .{
+        .mapping = mapping,
+        .source_map = map,
+        .prefetched_source_code = parse.source_contents,
     };
 }
 

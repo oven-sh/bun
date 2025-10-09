@@ -113,6 +113,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--enable-source-maps              Enable Source Map V3 support for stack traces") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -712,6 +713,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+        if (args.flag("--enable-source-maps")) {
+            bun.sourcemap.JSSourceMap.@"--enable-source-maps" = true;
+        }
 
         if (args.option("--console-depth")) |depth_str| {
             const depth = std.fmt.parseInt(u16, depth_str, 10) catch {

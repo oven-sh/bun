@@ -3167,6 +3167,8 @@ const Arena = bun.allocators.MimallocArena;
 const api = bun.schema.api;
 
 const jsc = bun.jsc;
+const SourceMap = bun.sourcemap;
+const SavedSourceMap = @import("./SavedSourceMap.zig");
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;

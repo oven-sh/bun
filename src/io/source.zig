@@ -53,10 +53,6 @@ pub const Source = union(enum) {
         /// When true, file will close itself when the current operation completes.
         close_after_operation: bool = false,
 
-        /// Separate fs_t for close operations when needed by legacy code.
-        /// Modern code should use the state machine and not need this.
-        close_fs: uv.fs_t = std.mem.zeroes(uv.fs_t),
-
         /// Get the File struct from an fs_t pointer using field offset.
         pub fn fromFS(fs: *uv.fs_t) *File {
             return @fieldParentPtr("fs", fs);

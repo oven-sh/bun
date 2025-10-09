@@ -801,12 +801,6 @@ fn BaseWindowsPipeWriter(
             this.updateRef(event_loop, false);
         }
 
-        fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
-            const file = bun.cast(*Source.File, handle.data);
-            handle.deinit();
-            bun.default_allocator.destroy(file);
-        }
-
         fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
             const this = bun.cast(*uv.Pipe, handle.data);
             bun.default_allocator.destroy(this);
@@ -822,12 +816,13 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        // Use state machine to safely cancel if operation in progress
-                        file.stop();
+                        // Use state machine to handle close after operation completes
                         if (this.owns_fd) {
-                            // Use close_fs because fs might still be in use
-                            file.close_fs.data = file;
-                            _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                            file.detach();
+                        } else {
+                            // Don't own fd, just stop operations and detach parent
+                            file.stop();
+                            file.fs.data = null;
                         }
                     },
                     .pipe => |pipe| {
@@ -1021,9 +1016,8 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             // ALWAYS complete first
             file.complete(was_canceled);
 
-            // If detached, file should be closing itself now
+            // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
             if (parent_ptr == null) {
-                bun.assert(file.state == .closing);
                 return;
             }
 
@@ -1348,9 +1342,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             // ALWAYS complete first
             file.complete(was_canceled);
 
-            // If detached, file should be closing itself now
+            // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
             if (parent_ptr == null) {
-                bun.assert(file.state == .closing);
                 return;
             }
 

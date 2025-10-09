@@ -18,15 +18,15 @@
   ],
   "homepage": "https://bun.com",
   "dependencies": {
-    "@types/node": "*",
-    "undici-types": "^7.16.0"
+    "@types/node": "*"
   },
   "peerDependencies": {
     "@types/react": "^19"
   },
   "devDependencies": {
     "@types/react": "^19",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "undici-types": "^7.16.0"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",

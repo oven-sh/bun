@@ -48,23 +48,115 @@ pub const ExtractJob = struct {
 
     fn extractArchive(this: *ExtractJob) !void {
         if (this.destination) |dest| {
-            const is_absolute = std.fs.path.isAbsolute(dest);
-            var dir = if (is_absolute)
-                try std.fs.openDirAbsolute(dest, .{})
-            else
-                try std.fs.cwd().openDir(dest, .{});
-            defer dir.close();
+            if (this.glob_patterns == null and this.skip_components == 0) {
+                const is_absolute = std.fs.path.isAbsolute(dest);
+                var dir = if (is_absolute)
+                    try std.fs.openDirAbsolute(dest, .{})
+                else
+                    try std.fs.cwd().openDir(dest, .{});
+                defer dir.close();
 
-            this.file_count = try bun.libarchive.Archiver.extractToDir(
-                this.archive_data,
-                dir,
-                null,
-                void,
-                {},
-                .{ .depth_to_skip = this.skip_components },
-            );
+                this.file_count = try bun.libarchive.Archiver.extractToDir(
+                    this.archive_data,
+                    dir,
+                    null,
+                    void,
+                    {},
+                    .{ .depth_to_skip = 0 },
+                );
+            } else {
+                try this.extractToDisk(dest);
+            }
         } else {
             try this.extractToMemory();
+        }
+    }
+
+    fn extractToDisk(this: *ExtractJob, dest: []const u8) !void {
+        const lib = bun.libarchive.lib;
+        var reader: bun.libarchive.BufferReadStream = undefined;
+        reader.init(this.archive_data);
+        defer reader.deinit();
+
+        switch (reader.openRead()) {
+            .ok => {},
+            else => return error.CannotOpenArchive,
+        }
+
+        const archive = reader.archive;
+        var entry: *lib.Archive.Entry = undefined;
+        var normalized_buf: bun.PathBuffer = undefined;
+
+        loop: while (true) {
+            switch (archive.readNextHeader(&entry)) {
+                .ok => {},
+                .eof => break,
+                .retry => continue,
+                else => return error.ReadError,
+            }
+
+            const pathname = entry.pathname();
+            const kind = bun.sys.kindFromMode(entry.filetype());
+
+            const path_to_use = if (this.skip_components > 0) blk: {
+                var tokenizer = std.mem.tokenizeScalar(u8, pathname, '/');
+                for (0..this.skip_components) |_| {
+                    if (tokenizer.next() == null) continue :loop;
+                }
+                break :blk tokenizer.rest();
+            } else bun.asByteSlice(pathname);
+
+            const normalized = bun.path.normalizeBuf(path_to_use, &normalized_buf, .auto);
+            if (normalized.len == 0 or (normalized.len == 1 and normalized[0] == '.')) continue;
+            if (std.fs.path.isAbsolute(normalized)) continue;
+
+            {
+                var it = std.mem.splitScalar(u8, normalized, '/');
+                while (it.next()) |segment| {
+                    if (std.mem.eql(u8, segment, "..")) continue :loop;
+                }
+            }
+
+            if (this.glob_patterns) |patterns| {
+                var matched = false;
+                for (patterns) |pattern| {
+                    if (bun.glob.match(pattern, normalized).matches()) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) continue;
+            }
+
+            switch (kind) {
+                .directory => {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const dest_path = bun.path.joinAbsStringBufZ(dest, &path_buf, &.{normalized}, .auto);
+                    bun.makePath(std.fs.cwd(), bun.asByteSlice(dest_path)) catch {};
+                    this.file_count += 1;
+                },
+                .file => {
+                    const size = entry.size();
+                    if (size < 0) continue;
+
+                    var path_buf: bun.PathBuffer = undefined;
+                    const dest_path = bun.path.joinAbsStringBufZ(dest, &path_buf, &.{normalized}, .auto);
+                    const dirname = bun.path.dirname(dest_path, .auto);
+                    if (dirname.len > 0) bun.makePath(std.fs.cwd(), dirname) catch {};
+
+                    const fd = bun.sys.open(dest_path, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644).unwrap() catch continue;
+                    defer fd.close();
+
+                    if (size > 0) {
+                        switch (archive.readDataIntoFd(fd.cast())) {
+                            .ok => {},
+                            else => continue,
+                        }
+                    }
+                    this.file_count += 1;
+                },
+                else => {},
+            }
         }
     }
 

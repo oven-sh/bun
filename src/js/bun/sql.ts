@@ -90,7 +90,7 @@ interface CopyToOptions {
   timeout?: number;
 }
 
-type SQLTemplateFn = (strings: string, ...values: unknown[]) => Query<unknown, unknown>;
+type SQLTemplateFn = (strings: TemplateStringsArray | string, ...values: unknown[]) => Query<unknown, unknown>;
 type TransactionCallback = (sql: SQLTemplateFn) => Promise<unknown>;
 
 enum ReservedConnectionState {
@@ -2094,7 +2094,7 @@ const SQL: typeof Bun.SQL = function SQL(
           }
         }
       }
-      let sqlText = `COPY ${tableName} (${cols}) FROM STDIN`;
+      let sqlText = cols ? `COPY ${tableName} (${cols}) FROM STDIN` : `COPY ${tableName} FROM STDIN`;
       if (fmt === "csv") {
         const delim = options?.delimiter;
         const nullStr = options?.null;
@@ -2218,7 +2218,9 @@ const SQL: typeof Bun.SQL = function SQL(
               if (chunk instanceof ArrayBuffer) {
                 bytesReceived += chunk.byteLength;
               } else if (typeof chunk === "string") {
-                bytesReceived += chunk.length;
+                bytesReceived += (Buffer as any).byteLength
+                  ? (Buffer as any).byteLength(chunk, "utf8")
+                  : new TextEncoder().encode(chunk).byteLength;
               } else if (chunk?.byteLength != null) {
                 bytesReceived += chunk.byteLength;
               }
@@ -2236,10 +2238,10 @@ const SQL: typeof Bun.SQL = function SQL(
               const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0 };
               const toMax =
                 typeof queryOrOptions === "string"
-                  ? __toDefaults__.maxBytes | 0
+                  ? Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0))
                   : typeof (queryOrOptions as any)?.maxBytes === "number" && (queryOrOptions as any).maxBytes > 0
                     ? Number((queryOrOptions as any).maxBytes)
-                    : __toDefaults__.maxBytes | 0;
+                    : Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0));
               if (toMax > 0 && bytesReceived > toMax) {
                 rejectErr = new Error("copyTo: maxBytes exceeded");
                 done = true;

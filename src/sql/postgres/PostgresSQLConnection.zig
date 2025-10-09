@@ -1308,6 +1308,14 @@ fn finishCopy(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_
             return;
         }
 
+        // Binary COPY header validation guard: ensure header was validated before returning data
+        if (this.copy_format == 1 and !this.copy_binary_header_validated) {
+            debug("finishCopy: binary COPY completed without validated header", .{});
+            this.cleanupCopyState();
+            this.fail("Binary COPY operation completed without valid header signature", error.InvalidBinaryData);
+            return error.InvalidBinaryData;
+        }
+
         // Non-streaming: pass COPY TO accumulated data to JavaScript (even if empty), with safety guard
         if (this.copy_data_buffer.items.len > this.max_copy_buffer_size) {
             const err_msg = std.fmt.allocPrint(

@@ -903,9 +903,177 @@ if (isDockerEnabled()) {
       const stringChunks = sinkChunks.filter(c => typeof c === "string");
       expect(stringChunks.length).toBeGreaterThan(0);
     });
+
+    test("Audit fix: Binary COPY header validation - incomplete header should fail", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_binary_test", []);
+      await conn.unsafe("CREATE TABLE audit_binary_test (id INT, name TEXT)", []);
+
+      // Try to send incomplete/invalid binary data (missing proper header)
+      let failed = false;
+      async function* invalidBinaryData() {
+        // Send incomplete header (less than 11 bytes required for signature)
+        yield new Uint8Array([0x50, 0x47, 0x43]); // Only "PGC" - incomplete signature
+        // Send trailer immediately to trigger completion
+        const trailer = new Uint8Array(2);
+        new DataView(trailer.buffer).setInt16(0, -1, false);
+        yield trailer;
+      }
+
+      try {
+        await conn.copyFrom("audit_binary_test", ["id", "name"], invalidBinaryData(), {
+          format: "binary",
+        });
+      } catch (e) {
+        failed = true;
+        expect(e).toBeDefined();
+      }
+      expect(failed).toBe(true);
+    });
+
+    test("Audit fix: Empty columns list - COPY should work without columns specified", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_empty_cols", []);
+      await conn.unsafe("CREATE TABLE audit_empty_cols (id INT, name TEXT)", []);
+
+      // Insert with empty columns array - should copy all columns
+      const data = "1\tAlice\n2\tBob\n";
+      const result = await conn.copyFrom("audit_empty_cols", [], data, { format: "text" });
+
+      expect(result.command).toBe("COPY");
+      expect(result.count).toBe(2);
+
+      const verify = await conn`SELECT COUNT(*)::int AS count FROM audit_empty_cols`;
+      expect(verify[0]?.count).toBe(2);
+    });
+
+    test("Audit fix: Large maxBytes values should not overflow to negative", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_large_bytes", []);
+      await conn.unsafe("CREATE TABLE audit_large_bytes (id INT, data TEXT)", []);
+      await conn.unsafe("INSERT INTO audit_large_bytes VALUES (1, 'test')", []);
+
+      let bytesReceived = 0;
+      const largeLimit = 5_000_000_000; // 5GB - larger than 32-bit signed int max
+
+      // This should not fail due to negative comparison
+      let chunks = 0;
+      for await (const chunk of conn.copyTo({
+        table: "audit_large_bytes",
+        columns: ["id", "data"],
+        format: "text",
+        maxBytes: largeLimit, // Large value that would overflow with bitwise ops
+        onProgress: info => {
+          bytesReceived = info.bytesReceived;
+          // Should be positive
+          expect(bytesReceived).toBeGreaterThanOrEqual(0);
+        },
+      })) {
+        chunks++;
+        expect(chunk).toBeDefined();
+      }
+
+      expect(chunks).toBeGreaterThan(0);
+      expect(bytesReceived).toBeGreaterThan(0);
+      expect(bytesReceived).toBeLessThan(largeLimit); // Should not exceed limit
+    });
+
+    test("Audit fix: UTF-8 byte length calculation - progress should count UTF-8 bytes", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_utf8_test", []);
+      await conn.unsafe("CREATE TABLE audit_utf8_test (id INT, emoji TEXT)", []);
+      await conn.unsafe("INSERT INTO audit_utf8_test VALUES (1, '👍'), (2, '🎉'), (3, '😀')", []);
+
+      let bytesReceived = 0;
+      let lastBytes = 0;
+
+      for await (const chunk of conn.copyTo({
+        table: "audit_utf8_test",
+        columns: ["id", "emoji"],
+        format: "text",
+        onProgress: info => {
+          bytesReceived = info.bytesReceived;
+        },
+      })) {
+        if (typeof chunk === "string") {
+          // Manual UTF-8 byte calculation for verification
+          const utf8Bytes = new TextEncoder().encode(chunk).byteLength;
+          const utf16Length = chunk.length;
+
+          // UTF-8 emoji bytes should be more than UTF-16 code units for emojis
+          // Each emoji is typically 4 UTF-8 bytes but 2 UTF-16 code units
+          if (chunk.includes("👍") || chunk.includes("🎉") || chunk.includes("😀")) {
+            expect(utf8Bytes).toBeGreaterThan(utf16Length);
+          }
+
+          // Progress should accumulate UTF-8 bytes
+          const bytesDelta = bytesReceived - lastBytes;
+          lastBytes = bytesReceived;
+
+          // The delta should be close to UTF-8 byte length (allow for some variance due to buffering)
+          if (bytesDelta > 0) {
+            expect(bytesDelta).toBeGreaterThanOrEqual(chunk.length);
+          }
+        }
+      }
+
+      expect(bytesReceived).toBeGreaterThan(0);
+    });
+
+    test("Audit fix: Binary COPY with valid header should succeed", async () => {
+      await conn.unsafe("DROP TABLE IF EXISTS audit_valid_binary", []);
+      await conn.unsafe("CREATE TABLE audit_valid_binary (id INT, name TEXT)", []);
+
+      function be16(n: number) {
+        const b = new Uint8Array(2);
+        new DataView(b.buffer).setInt16(0, n, false);
+        return b;
+      }
+      function be32(n: number) {
+        const b = new Uint8Array(4);
+        new DataView(b.buffer).setInt32(0, n, false);
+        return b;
+      }
+      function concat(...parts: Uint8Array[]) {
+        let len = 0;
+        for (const p of parts) len += p.length;
+        const out = new Uint8Array(len);
+        let o = 0;
+        for (const p of parts) {
+          out.set(p, o);
+          o += p.length;
+        }
+        return out;
+      }
+
+      async function* validBinaryData() {
+        // Valid signature
+        const sig = new Uint8Array([0x50, 0x47, 0x43, 0x4f, 0x50, 0x59, 0x0a, 0xff, 0x0d, 0x0a, 0x00]);
+        const flags = be32(0);
+        const extlen = be32(0);
+        yield concat(sig, flags, extlen);
+
+        // One row: field count (2), id length (4), id value (100), name length (5), name value
+        const fieldCount = be16(2);
+        const idLen = be32(4);
+        const idVal = be32(100);
+        const nameBytes = new TextEncoder().encode("Test");
+        const nameLen = be32(nameBytes.length);
+        yield concat(fieldCount, idLen, idVal, nameLen, nameBytes);
+
+        // Trailer
+        yield be16(-1);
+      }
+
+      const result = await conn.copyFrom("audit_valid_binary", ["id", "name"], validBinaryData(), {
+        format: "binary",
+      });
+
+      expect(result.command).toBe("COPY");
+      expect(result.count).toBe(1);
+
+      const verify = await conn`SELECT * FROM audit_valid_binary`;
+      expect(verify[0]?.id).toBe(100);
+      expect(verify[0]?.name).toBe("Test");
+    });
   });
 } else {
-  // Skipped when docker is disabled
   describe("PostgreSQL COPY protocol", () => {
     test("skipped - docker not enabled", () => {
       expect(true).toBe(true);

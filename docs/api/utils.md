@@ -292,6 +292,12 @@ class Foo {
   a = 1;
 }
 Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+
+// objects with same prototype but different types
+Bun.deepEquals(new Date(), {}, true); // false
+
+// TypedArrays vs objects with numeric properties
+Bun.deepEquals(new Uint8Array([1, 2]), { 0: 1, 1: 2 }, true); // false
 ```
 
 ## `Bun.escapeHTML()`

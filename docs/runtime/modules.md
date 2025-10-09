@@ -174,6 +174,12 @@ import { stuff } from "foo";
 
 The full specification of this algorithm are officially documented in the [Node.js documentation](https://nodejs.org/api/modules.html); we won't rehash it here. Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
 
+Bun also supports the `NODE_PATH` environment variable for additional module search paths:
+
+```sh
+$ export NODE_PATH="/path/to/modules"
+```
+
 Once it finds the `foo` package, Bun reads the `package.json` to determine how the package should be imported. To determine the package's entrypoint, Bun first reads the `exports` field and checks for the following conditions.
 
 ```jsonc#package.json

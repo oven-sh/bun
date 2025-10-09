@@ -2946,6 +2946,10 @@ fn printErrorInstance(
     // AI:     "479-    return 42;"
     const is_ai_agent = Output.isAIAgent();
 
+    // Width from line number to code start, depending on separator:
+    // AI: "- " (2 chars), Normal: " | " (3 chars)
+    const sep_len: u64 = if (is_ai_agent) 2 else 3;
+
     var source_lines = exception.stack.sourceLineIterator();
     var last_pad: u64 = 0;
     while (source_lines.untilLast()) |source| {
@@ -3148,8 +3152,8 @@ fn printErrorInstance(
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
-                        // Calculate indent for caret: line number padding + "- " (2 chars) + column
-                        const indent = max_line_number_pad + 2 + @as(u64, @intCast(top.position.column.zeroBased()));
+                        // Calculate indent for caret: line number padding + separator width + column
+                        const indent = max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(
@@ -3169,8 +3173,8 @@ fn printErrorInstance(
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
-                        // Calculate indent for caret: line number padding + " | " (3 chars) + column
-                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
+                        // Calculate indent for caret: line number padding + separator width + column
+                        const indent = max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(

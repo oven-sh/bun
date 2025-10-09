@@ -38,8 +38,18 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 ```
 
 {% callout %}
-**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.com/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
+**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.com/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax).
 {% /callout %}
+
+To exclude specific packages, prefix patterns with `!`:
+
+```json
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": ["packages/*", "!packages/ignore"]
+}
+```
 
 Each workspace has it's own `package.json`. When referencing other packages in the monorepo, semver or workspace protocols (e.g. `workspace:*`) can be used as the version field in your `package.json`.
 

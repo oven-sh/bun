@@ -2978,7 +2978,7 @@ fn printErrorInstance(
                 if (comptime allow_ansi_color) {
                     try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n", true));
                 } else {
-                    try writer.writeAll("\n");
+                    try writer.writeAll(" ... truncated\n");
                 }
             } else {
                 const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
@@ -3062,7 +3062,7 @@ fn printErrorInstance(
                 if (is_ai_agent) {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r><b>- -<r> {}",
+                            "<r><b>-<r> {}",
                             allow_ansi_color,
                         ),
                         .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
@@ -3070,7 +3070,7 @@ fn printErrorInstance(
                     if (comptime allow_ansi_color) {
                         try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n", true));
                     } else {
-                        try writer.writeAll("\n");
+                        try writer.writeAll(" ... truncated\n");
                     }
                 } else {
                     const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
@@ -3086,7 +3086,7 @@ fn printErrorInstance(
                 if (is_ai_agent) {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r><d>- -<r> {}\n",
+                            "<r><d>-<r> {}\n",
                             allow_ansi_color,
                         ),
                         .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
@@ -3102,7 +3102,7 @@ fn printErrorInstance(
                 }
             }
 
-            try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+            try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, exception.runtime_type, Writer, writer, allow_ansi_color, formatter.error_display_level);
         } else if (top_frame) |top| {
             // Print the error line with a caret (^) pointing to the error position
             defer did_print_name = true;
@@ -3129,7 +3129,7 @@ fn printErrorInstance(
                     if (comptime allow_ansi_color) {
                         try writer.writeAll(Output.prettyFmt("<d> ... truncated<r>\n\n", true));
                     } else {
-                        try writer.writeAll("\n\n");
+                        try writer.writeAll(" ... truncated\n\n");
                     }
                 } else {
                     const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
@@ -3153,7 +3153,7 @@ fn printErrorInstance(
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
                         // Calculate indent for caret: line number padding + separator width + column
-                        const indent = max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased()));
+                        const indent: usize = @intCast(max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased())));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(
@@ -3174,7 +3174,7 @@ fn printErrorInstance(
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
                         // Calculate indent for caret: line number padding + separator width + column
-                        const indent = max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased()));
+                        const indent: usize = @intCast(max_line_number_pad + sep_len + @as(u64, @intCast(top.position.column.zeroBased())));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(
@@ -3187,12 +3187,12 @@ fn printErrorInstance(
                 }
             }
 
-            try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+            try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, exception.runtime_type, Writer, writer, allow_ansi_color, formatter.error_display_level);
         }
     }
 
     if (!did_print_name) {
-        try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+        try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, exception.runtime_type, Writer, writer, allow_ansi_color, formatter.error_display_level);
     }
 
     // This is usually unsafe to do, but we are protecting them each time first
@@ -3383,11 +3383,35 @@ fn printErrorNameAndMessage(
     message: String,
     is_browser_error: bool,
     optional_code: ?[]const u8,
+    runtime_type: jsc.JSRuntimeType,
     comptime Writer: type,
     writer: Writer,
     comptime allow_ansi_color: bool,
     error_display_level: ConsoleObject.FormatOptions.ErrorDisplayLevel,
 ) !void {
+    // In AI mode, print runtime type information before the error message
+    if (Output.isAIAgent() and runtime_type != .Nothing) {
+        const type_name = switch (runtime_type) {
+            .Function => "Function",
+            .Undefined => "Undefined",
+            .Null => "Null",
+            .Boolean => "Boolean",
+            .AnyInt => "Integer",
+            .Number => "Number",
+            .String => "String",
+            .Object => "Object",
+            .Symbol => "Symbol",
+            .BigInt => "BigInt",
+            else => null,
+        };
+        if (type_name) |tn| {
+            if (comptime allow_ansi_color) {
+                try writer.print(comptime Output.prettyFmt("  <d>value type: <r><cyan>{s}<r>\n", true), .{tn});
+            } else {
+                try writer.print("  value type: {s}\n", .{tn});
+            }
+        }
+    }
     if (is_browser_error) {
         try writer.writeAll(Output.prettyFmt("<red>frontend<r> ", true));
     }

@@ -170,15 +170,6 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    crashHandlerImpl(reason, error_return_trace, begin_addr);
-    unreachable;
-}
-
-fn crashHandlerImpl(
-    reason: CrashReason,
-    error_return_trace: ?*std.builtin.StackTrace,
-    begin_addr: ?usize,
-) void {
     @branchHint(.cold);
 
     if (bun.Environment.isDebug)
@@ -425,11 +416,6 @@ fn crashHandlerImpl(
             waitForOtherThreadToFinishPanicking();
 
             report(trace_str_buf.slice());
-
-            // Write minidump on Windows before terminating
-            if (bun.Environment.isWindows) {
-                writeMiniDumpWindows() catch {};
-            }
 
             // At this point, the crash handler has performed it's job. Reset the segfault handler
             // so that a crash will actually crash. We need this because we want the process to
@@ -888,65 +874,6 @@ pub fn resetSegfaultHandler() void {
     };
     // To avoid a double-panic, do nothing if an error happens here.
     updatePosixSegfaultHandler(&act) catch {};
-}
-
-extern "dbghelp" fn MiniDumpWriteDump(
-    hProcess: windows.HANDLE,
-    ProcessId: windows.DWORD,
-    hFile: windows.HANDLE,
-    DumpType: windows.DWORD,
-    ExceptionParam: ?*anyopaque,
-    UserStreamParam: ?*anyopaque,
-    CallbackParam: ?*anyopaque,
-) callconv(windows.WINAPI) windows.BOOL;
-
-fn writeMiniDumpWindows() !void {
-    // Get environment variable on Windows using wide strings
-    var dump_dir_w_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
-    const dump_dir_w_len = windows.kernel32.GetEnvironmentVariableW(
-        std.unicode.utf8ToUtf16LeStringLiteral("BUN_MINIDUMP_DIR"),
-        &dump_dir_w_buf,
-        dump_dir_w_buf.len,
-    );
-    if (dump_dir_w_len == 0) return;
-    dump_dir_w_buf[dump_dir_w_len] = 0;
-
-    // Convert wide string to UTF-8 for formatting
-    var dump_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const dump_dir_len = std.unicode.utf16LeToUtf8(&dump_dir_buf, dump_dir_w_buf[0..dump_dir_w_len]) catch return;
-    const dump_dir = dump_dir_buf[0..dump_dir_len];
-
-    // Get process ID
-    const pid = windows.GetCurrentProcessId();
-    var filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const filename = try std.fmt.bufPrintZ(&filename_buf, "{s}\\bun-profile.exe.{d}.dmp", .{ dump_dir, pid });
-
-    var filename_w_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
-    const filename_w_len = try std.unicode.utf8ToUtf16Le(&filename_w_buf, filename);
-    filename_w_buf[filename_w_len] = 0;
-
-    const file = windows.kernel32.CreateFileW(
-        &filename_w_buf,
-        windows.GENERIC_WRITE,
-        0,
-        null,
-        windows.CREATE_ALWAYS,
-        windows.FILE_ATTRIBUTE_NORMAL,
-        null,
-    );
-    if (file == windows.INVALID_HANDLE_VALUE) return;
-    defer _ = bun.windows.CloseHandle(file);
-
-    const MiniDumpWithFullMemory: windows.DWORD = 0x00000002;
-    _ = MiniDumpWriteDump(
-        windows.kernel32.GetCurrentProcess(),
-        pid,
-        file,
-        MiniDumpWithFullMemory,
-        null,
-        null,
-        null,
-    );
 }
 
 pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
@@ -1569,20 +1496,14 @@ fn report(url: []const u8) void {
     }
 }
 
-extern "kernel32" fn RaiseFailFastException(
-    pExceptionRecord: ?*anyopaque,
-    pContextRecord: ?*anyopaque,
-    dwFlags: windows.DWORD,
-) callconv(windows.WINAPI) noreturn;
-
 /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
 /// This causes a segfault on posix systems to try to get a core dump.
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            // On Windows, use RaiseFailFastException to generate a crash dump via WER
-            // This triggers Windows Error Reporting and creates a minidump
-            RaiseFailFastException(null, null, 0);
+            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it includes a
+            // breakpoint which makes crashes easier to debug.
+            std.posix.abort();
         },
         else => {
             // Install default handler so that the tkill below will terminate.

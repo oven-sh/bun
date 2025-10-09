@@ -1677,4 +1677,26 @@ describe("HTTP Server Security Tests - Advanced", () => {
     await doInvalidRequests(address);
     await Promise.all(clientErrors);
   });
+
+  test("flushHeaders should send the headers immediately", async () => {
+    let headers_sent_at: number = 0;
+    await using server = http.createServer(async (req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      headers_sent_at = Date.now();
+      res.flushHeaders();
+
+      setTimeout(() => {
+        res.write("Hello", () => {
+          res.end(" World");
+        });
+      }, 500);
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}`);
+    expect(Date.now() - headers_sent_at).toBeLessThan(100);
+    const text = await response.text();
+    expect(text).toBe("Hello World");
+  });
 });

@@ -108,10 +108,11 @@ pub const TarballJob = struct {
                 const blocks = (entry.data.slice().len + 511) / 512;
                 estimated_size += blocks * 512;
             }
-            estimated_size = @max((estimated_size + 1024) * 2, 16384);
-            if (estimated_size > MAX_MEMORY_SIZE) return error.ArchiveTooLarge;
+            const required_size = estimated_size;
+            if (required_size > MAX_MEMORY_SIZE) return error.ArchiveTooLarge;
 
-            this.output_buffer = try allocator.alloc(u8, estimated_size);
+            const buffer_size = @max((required_size + 1024) * 2, 16384);
+            this.output_buffer = try allocator.alloc(u8, buffer_size);
             switch (archive.writeOpenMemory(this.output_buffer.ptr, this.output_buffer.len, &this.bytes_written)) {
                 .ok => {},
                 else => {

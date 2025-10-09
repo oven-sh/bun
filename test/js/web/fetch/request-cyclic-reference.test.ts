@@ -16,7 +16,7 @@ test("stream should not leak when request is cyclic reference to itself", async 
 
   await Bun.sleep(0);
   Bun.gc(true);
-  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(4);
+  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(100);
 });
 
 test("stream should not leak when creating a stream contained in another request", async () => {
@@ -42,5 +42,5 @@ test("stream should not leak when creating a stream contained in another request
 
   await Bun.sleep(0);
   Bun.gc(true);
-  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(4);
+  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(100);
 });

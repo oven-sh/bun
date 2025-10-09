@@ -630,10 +630,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \

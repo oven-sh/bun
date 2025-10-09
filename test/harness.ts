@@ -794,9 +794,18 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    // junctions on windows will have an absolute path
-    const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
-    return { pass, message };
+    if (isAbsolute(actual)) {
+      // junctions on windows will have an absolute path
+      return {
+        pass: actual.includes(expectedLinkPath.split("..").at(-1)!),
+        message,
+      };
+    }
+
+    return {
+      pass: actual === expectedLinkPath,
+      message,
+    };
   }
 
   const pass = actual === expectedLinkPath;

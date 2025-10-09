@@ -454,7 +454,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         const tempdir = manager.getTemporaryDirectory();
         var path_buf: bun.PathBuffer = undefined;
-        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
+        const node_gyp_tempdir_name = try Fs.FileSystem.tmpname("node-gyp", &path_buf, 12345);
 
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);

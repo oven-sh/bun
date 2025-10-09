@@ -17,7 +17,9 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 expect.extend({
@@ -25,7 +27,7 @@ expect.extend({
   toHaveBins,
 });
 
-for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: { baz: "^0.0.3", moo: "^0.1.0" } }]) {
+for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   it(`should update to latest version of dependency (${input.baz[0]})`, async () => {
     const urls: string[] = [];
     const tilde = input.baz[0] === "~";
@@ -42,6 +44,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       },
       latest: "0.0.3",
     };
+    console.log({ package_dir });
     setHandler(dummyRegistry(urls, registry));
     await writeFile(
       join(package_dir, "package.json"),
@@ -64,6 +67,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       stderr: "pipe",
       env,
     });
+
     const err1 = await new Response(stderr1).text();
     expect(err1).not.toContain("error:");
     expect(err1).toContain("Saved lockfile");

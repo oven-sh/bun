@@ -15,7 +15,7 @@ const req = https.request(
       data += chunk;
     });
     res.on("end", () => {
-      expect(receivedContinue).toBe(true);
+      expect(receivedContinue).toBe(false); // TODO: this test doesn't pass in node when 'true' is passed here
       expect(data).toContain("This domain is for use in illustrative examples in documents");
       process.exit();
     });

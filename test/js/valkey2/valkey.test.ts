@@ -42,7 +42,6 @@ describe("disconnected client", () => {
       expect(client).toBeInstanceOf(RedisClient2);
     });
   });
-
 });
 
 describeValkey(

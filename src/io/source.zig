@@ -9,20 +9,134 @@ pub const Source = union(enum) {
     const Pipe = uv.Pipe;
     const Tty = uv.uv_tty_t;
 
+    /// File source for async file I/O operations using libuv.
+    ///
+    /// This struct manages a single `uv_fs_t` request safely through a state machine
+    /// to prevent use-after-free and double-free bugs that occur when:
+    /// 1. Calling uv_cancel() on a deinitialized uv_fs_t (immediate crash)
+    /// 2. Calling uv_fs_req_cleanup() while uv_cancel() is processing (race condition)
+    /// 3. Reusing uv_fs_t while an operation is still in-flight
+    ///
+    /// State transitions:
+    ///   .deinitialized → .reading    (prepareForRead)
+    ///   .reading → .canceling        (stopReading when cancel succeeds)
+    ///   .reading → .deinitialized    (completeRead)
+    ///   .canceling → .deinitialized  (completeRead with UV_ECANCELED)
+    ///   .deinitialized → .closing    (startClose)
     pub const File = struct {
+        /// Primary fs_t for read operations. Only one operation can use this at a time.
         fs: uv.fs_t,
-        // we need a new fs_t to close the file
-        // the current one is used for write/reading/canceling
-        // we dont wanna to free any data that is being used in uv loop
-        close_fs: uv.fs_t,
-        iov: uv.uv_buf_t,
-        file: uv.uv_file,
-        can_be_canceled: bool = true,
 
+        /// Separate fs_t for closing the file, since `fs` may be in use.
+        close_fs: uv.fs_t,
+
+        /// Buffer descriptor for the current read operation.
+        iov: uv.uv_buf_t,
+
+        /// The file descriptor being read from.
+        file: uv.uv_file,
+
+        /// Current state of the fs_t request.
+        /// CRITICAL: Never call uv_cancel() unless state is .reading.
+        /// CRITICAL: Never reuse fs unless state is .deinitialized.
+        state: enum(u8) {
+            deinitialized,  // fs.deinit() called, safe to reuse
+            reading,        // read in flight, callback will fire
+            canceling,      // uv_cancel() succeeded, waiting for UV_ECANCELED
+            closing,        // close in flight
+        } = .deinitialized,
+
+        /// When true, file will close itself after operation completes.
+        /// Set by detach() when parent is destroyed but operation is still in-flight.
+        close_after_operation: bool = false,
+
+        /// Recover File struct pointer from uv_fs_t pointer using field offset.
+        /// This avoids needing to use fs.data for the File pointer.
+        pub fn fromFS(fs: *uv.fs_t) *File {
+            return @fieldParentPtr("fs", fs);
+        }
+
+        /// Check if it's safe to start a new read operation.
+        /// Returns true only if:
+        ///   - state is .deinitialized (no operation in progress)
+        ///   - fs.data is not null (parent is attached)
+        pub fn canStartRead(this: *const File) bool {
+            return this.state == .deinitialized and this.fs.data != null;
+        }
+
+        /// Prepare for a new read operation.
+        /// MUST only be called when canStartRead() returns true.
+        /// Transitions state: .deinitialized → .reading
+        pub fn prepareForRead(this: *File) void {
+            bun.assert(this.state == .deinitialized);
+            bun.assert(this.fs.data != null);
+            this.state = .reading;
+            this.close_after_operation = false;
+        }
+
+        /// Attempt to cancel the in-flight read operation.
+        /// Only attempts cancel if state is .reading.
+        /// If uv_cancel() succeeds, transitions: .reading → .canceling
+        /// If uv_cancel() fails, stays in .reading (will complete normally).
         pub fn stopReading(this: *File) void {
-            if (!this.can_be_canceled) return;
-            this.can_be_canceled = false;
-            this.fs.cancel();
+            if (this.state != .reading) return;
+
+            const cancel_result = uv.uv_cancel(@ptrCast(&this.fs));
+            if (cancel_result == 0) {
+                // Cancel succeeded - callback WILL fire with UV_ECANCELED
+                this.state = .canceling;
+            }
+            // If failed, state stays .reading, will complete normally
+        }
+
+        /// Detach from parent - marks file for auto-cleanup.
+        /// Called when WindowsBufferedReader is destroyed but operation is still in-flight.
+        /// The file will close itself after the operation completes.
+        /// If already idle, closes immediately.
+        pub fn detach(this: *File) void {
+            this.fs.data = null;
+            this.close_after_operation = true;
+            this.stopReading();
+
+            // If already idle, close immediately since completeRead won't be called
+            if (this.state == .deinitialized) {
+                this.close_after_operation = false;
+                this.startClose();
+            }
+        }
+
+        /// Mark read operation complete and clean up.
+        /// MUST be called first thing in onFileRead callback before accessing any data.
+        /// Calls fs.deinit() and transitions state to .deinitialized.
+        /// If file was detached, automatically closes the file.
+        pub fn completeRead(this: *File, was_canceled: bool) void {
+            bun.assert(this.state == .reading or this.state == .canceling);
+            if (was_canceled) {
+                bun.assert(this.state == .canceling);
+            }
+
+            this.fs.deinit();
+            this.state = .deinitialized;
+
+            // Close if detached
+            if (this.close_after_operation) {
+                this.close_after_operation = false;
+                this.startClose();
+            }
+        }
+
+        fn startClose(this: *File) void {
+            bun.assert(this.state == .deinitialized);
+            this.state = .closing;
+            this.close_fs.data = this;
+            _ = uv.uv_fs_close(uv.Loop.get(), &this.close_fs, this.file, onCloseComplete);
+        }
+
+        fn onCloseComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = @as(*File, @ptrCast(@alignCast(fs.data)));
+            bun.assert(file.state == .closing);
+            fs.deinit();
+            bun.default_allocator.destroy(file);
         }
     };
 

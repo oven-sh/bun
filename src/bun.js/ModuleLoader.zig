@@ -1215,11 +1215,22 @@ pub fn transpileSourceCode(
                     var sfb = std.heap.stackFallback(8192, bun.default_allocator);
                     const temp_alloc = sfb.get();
 
+                    // If the URL is not a data: URL, resolve it relative to the source file
+                    const resolved_url = if (!bun.strings.startsWith(source_map_url, "data:"))
+                        bun.path.joinAbs(std.fs.path.dirname(source.path.text) orelse "/", .auto, source_map_url)
+                    else
+                        source_map_url;
+
+                    if (bun.Environment.isDebug) {
+                        Output.prettyln("[ModuleLoader] Resolved URL: {s}", .{resolved_url});
+                        Output.flush();
+                    }
+
                     // Try to parse the sourcemap URL (handles both inline and external)
                     const parse = SourceMap.parseUrl(
                         bun.default_allocator,
                         temp_alloc,
-                        source_map_url,
+                        resolved_url,
                         .mappings_only,
                     ) catch null;
 
@@ -2581,10 +2592,16 @@ pub const RuntimeTranspilerStore = struct {
                     var sfb = std.heap.stackFallback(8192, bun.default_allocator);
                     const temp_alloc = sfb.get();
 
+                    // If the URL is not a data: URL, resolve it relative to the source file
+                    const resolved_url = if (!bun.strings.startsWith(source_map_url, "data:"))
+                        bun.path.joinAbs(std.fs.path.dirname(parse_result.source.path.text) orelse "/", .auto, source_map_url)
+                    else
+                        source_map_url;
+
                     const parse = SourceMap.parseUrl(
                         bun.default_allocator,
                         temp_alloc,
-                        source_map_url,
+                        resolved_url,
                         .mappings_only,
                     ) catch null;
 

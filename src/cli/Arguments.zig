@@ -582,6 +582,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     // runtime commands
     if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
+        if (bun.Environment.isDebug) {
+            Output.prettyln("[arguments] Entered runtime commands block, cmd={s}", .{@tagName(cmd)});
+            Output.flush();
+        }
         {
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
@@ -714,8 +718,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
 
-        if (args.flag("--enable-source-maps")) {
+        const enable_source_maps_flag = args.flag("--enable-source-maps");
+        if (bun.Environment.isDebug) {
+            Output.prettyln("[arguments] Checking --enable-source-maps flag: {}", .{enable_source_maps_flag});
+            Output.flush();
+        }
+        if (enable_source_maps_flag) {
             bun.sourcemap.JSSourceMap.@"--enable-source-maps" = true;
+            if (bun.Environment.isDebug) {
+                Output.prettyln("[arguments] --enable-source-maps flag set to true", .{});
+                Output.flush();
+            }
         }
 
         if (args.option("--console-depth")) |depth_str| {

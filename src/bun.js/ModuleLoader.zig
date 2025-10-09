@@ -1192,33 +1192,55 @@ pub fn transpileSourceCode(
             } else if (bun.sourcemap.JSSourceMap.@"--enable-source-maps") {
                 // When --enable-source-maps is enabled and there's no cache entry (i.e., file wasn't transpiled),
                 // check if the source has a user-provided sourceMappingURL and register it
+                if (bun.Environment.isDebug) {
+                    Output.prettyln("[ModuleLoader] --enable-source-maps is ON, checking for user sourcemap in: {s}", .{source.path.text});
+                    Output.flush();
+                }
                 const source_contents = source.contents;
-                if (bun.strings.lastIndexOfChar(source_contents, '\n')) |last_newline| {
-                    const last_lines = source_contents[last_newline..];
-                    if (bun.strings.indexOf(last_lines, "//# sourceMappingURL=")) |url_idx| {
-                        const url_start = last_newline + url_idx + "//# sourceMappingURL=".len;
-                        const url_end = bun.strings.indexOfChar(source_contents[url_start..], '\n') orelse
-                            (source_contents.len - url_start);
-                        const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
+                // Look for sourceMappingURL in the last ~500 characters of the file
+                const search_start = if (source_contents.len > 500) source_contents.len - 500 else 0;
+                const search_region = source_contents[search_start..];
+                if (bun.strings.lastIndexOf(search_region, "//# sourceMappingURL=")) |url_idx| {
+                    const url_start = search_start + url_idx + "//# sourceMappingURL=".len;
+                    const url_end = bun.strings.indexOfAny(source_contents[url_start..], "\r\n") orelse
+                        (source_contents.len - url_start);
+                    const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
 
-                        // Use a stack fallback allocator for temporary parsing
-                        var sfb = std.heap.stackFallback(8192, bun.default_allocator);
-                        const temp_alloc = sfb.get();
+                    if (bun.Environment.isDebug) {
+                        Output.prettyln("[ModuleLoader] Found sourceMappingURL: {s}", .{source_map_url});
+                        Output.flush();
+                    }
 
-                        // Try to parse the sourcemap URL (handles both inline and external)
-                        const parse = SourceMap.parseUrl(
-                            bun.default_allocator,
-                            temp_alloc,
-                            source_map_url,
-                            .mappings_only,
-                        ) catch null;
+                    // Use a stack fallback allocator for temporary parsing
+                    var sfb = std.heap.stackFallback(8192, bun.default_allocator);
+                    const temp_alloc = sfb.get();
 
-                        if (parse) |p| {
-                            if (p.map) |map| {
-                                // Register the parsed source map
-                                map.ref();
-                                jsc_vm.source_mappings.putValue(source.path.text, SavedSourceMap.Value.init(map)) catch {};
+                    // Try to parse the sourcemap URL (handles both inline and external)
+                    const parse = SourceMap.parseUrl(
+                        bun.default_allocator,
+                        temp_alloc,
+                        source_map_url,
+                        .mappings_only,
+                    ) catch null;
+
+                    if (parse) |p| {
+                        if (bun.Environment.isDebug) {
+                            Output.prettyln("[ModuleLoader] Parse result has map: {}", .{p.map != null});
+                            Output.flush();
+                        }
+                        if (p.map) |map| {
+                            // Register the parsed source map
+                            if (bun.Environment.isDebug) {
+                                Output.prettyln("[ModuleLoader] Registering sourcemap for: {s}", .{source.path.text});
+                                Output.flush();
                             }
+                            map.ref();
+                            jsc_vm.source_mappings.putValue(source.path.text, SavedSourceMap.Value.init(map)) catch {};
+                        }
+                    } else {
+                        if (bun.Environment.isDebug) {
+                            Output.prettyln("[ModuleLoader] Parse returned null!", .{});
+                            Output.flush();
                         }
                     }
                 }
@@ -2547,29 +2569,29 @@ pub const RuntimeTranspilerStore = struct {
                 // When --enable-source-maps is enabled and there's no cache entry,
                 // check if the source has a user-provided sourceMappingURL and register it
                 const source_contents = parse_result.source.contents;
-                if (bun.strings.lastIndexOfChar(source_contents, '\n')) |last_newline| {
-                    const last_lines = source_contents[last_newline..];
-                    if (bun.strings.indexOf(last_lines, "//# sourceMappingURL=")) |url_idx| {
-                        const url_start = last_newline + url_idx + "//# sourceMappingURL=".len;
-                        const url_end = bun.strings.indexOfChar(source_contents[url_start..], '\n') orelse
-                            (source_contents.len - url_start);
-                        const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
+                // Look for sourceMappingURL in the last ~500 characters of the file
+                const search_start = if (source_contents.len > 500) source_contents.len - 500 else 0;
+                const search_region = source_contents[search_start..];
+                if (bun.strings.lastIndexOf(search_region, "//# sourceMappingURL=")) |url_idx| {
+                    const url_start = search_start + url_idx + "//# sourceMappingURL=".len;
+                    const url_end = bun.strings.indexOfAny(source_contents[url_start..], "\r\n") orelse
+                        (source_contents.len - url_start);
+                    const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
 
-                        var sfb = std.heap.stackFallback(8192, bun.default_allocator);
-                        const temp_alloc = sfb.get();
+                    var sfb = std.heap.stackFallback(8192, bun.default_allocator);
+                    const temp_alloc = sfb.get();
 
-                        const parse = SourceMap.parseUrl(
-                            bun.default_allocator,
-                            temp_alloc,
-                            source_map_url,
-                            .mappings_only,
-                        ) catch null;
+                    const parse = SourceMap.parseUrl(
+                        bun.default_allocator,
+                        temp_alloc,
+                        source_map_url,
+                        .mappings_only,
+                    ) catch null;
 
-                        if (parse) |p| {
-                            if (p.map) |map| {
-                                map.ref();
-                                vm.source_mappings.putValue(parse_result.source.path.text, SavedSourceMap.Value.init(map)) catch {};
-                            }
+                    if (parse) |p| {
+                        if (p.map) |map| {
+                            map.ref();
+                            vm.source_mappings.putValue(parse_result.source.path.text, SavedSourceMap.Value.init(map)) catch {};
                         }
                     }
                 }

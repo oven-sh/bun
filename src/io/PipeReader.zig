@@ -1169,19 +1169,19 @@ pub const WindowsBufferedReader = struct {
     }
 
     /// Close the reader and call the done callback.
-    /// If a file operation is being canceled, defers the done callback until
+    /// If a file operation is in progress, defers the done callback until
     /// the operation completes to ensure proper cleanup ordering.
     pub fn close(this: *WindowsBufferedReader) void {
         _ = this.stopReading();
 
-        // Check if we have a pending file operation that was canceled
+        // Check if we have a pending file operation
         if (this.source) |source| {
             if (source == .file or source == .sync_file) {
                 const file = source.file;
-                // If canceling (operation will fire callback), defer done
-                if (file.state == .canceling) {
+                // Defer done if operation is in progress (whether cancel succeeded or failed)
+                if (file.state == .canceling or file.state == .operating) {
                     this.flags.defer_done_callback = true;
-                    return; // Don't call closeImpl yet - wait for cancel callback
+                    return; // Don't call closeImpl yet - wait for operation callback
                 }
             }
         }

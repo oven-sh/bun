@@ -499,6 +499,8 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
+        /* Uncork the socket to allow the client to send the data immediately */
+        this->uncork();
     }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {

@@ -401,6 +401,7 @@ pub const S3Credentials = struct {
         content_disposition: ?[]const u8 = null,
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
+        content_length: ?u64 = null,
     };
     /// This is not used for signing but for console.log output, is just nice to have
     pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
@@ -787,7 +788,11 @@ pub const S3Credentials = struct {
                     const allocator = stack_fallback.get();
                     var query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
+                    // Add parameters in alphabetical order: Content-Length, Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
+
+                    if (signOptions.content_length) |content_length| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "Content-Length={}", .{content_length}));
+                    }
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -838,7 +843,11 @@ pub const S3Credentials = struct {
                 const url_allocator = url_stack_fallback.get();
                 var url_query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
+                // Add parameters in alphabetical order: Content-Length, Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
+
+                if (signOptions.content_length) |content_length| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-Length={}", .{content_length}));
+                }
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));

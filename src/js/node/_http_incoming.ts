@@ -307,7 +307,6 @@ const IncomingMessagePrototype = {
     if (isAbortError(err)) {
       err = undefined;
     }
-
     var nodeHTTPResponse = this[kHandle];
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
@@ -333,6 +332,7 @@ const IncomingMessagePrototype = {
         socket.destroy(err);
       }
     }
+    this.req?.destroy();
 
     if ($isCallable(cb)) {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);

@@ -593,15 +593,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
         if (result && result.isObject()) {
             while (JSC::JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
-                switch (promise->status(vm)) {
+                switch (promise->status()) {
                 case JSC::JSPromise::Status::Rejected: {
-                    result = promise->result(vm);
+                    result = promise->result();
                     scope.throwException(globalObject, result);
                     return {};
                     break;
                 }
                 case JSC::JSPromise::Status::Fulfilled: {
-                    result = promise->result(vm);
+                    result = promise->result();
                     break;
                 }
                 // TODO: blocking wait for promise
@@ -740,13 +740,13 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-        switch (promise->status(vm)) {
+        switch (promise->status()) {
         case JSPromise::Status::Rejected:
         case JSPromise::Status::Pending: {
             return JSValue::encode(promise);
         }
         case JSPromise::Status::Fulfilled: {
-            result = promise->result(vm);
+            result = promise->result();
             break;
         }
         }
@@ -826,18 +826,18 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         }
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Pending: {
                 JSC::throwTypeError(globalObject, scope, "onResolve() doesn't support pending promises yet"_s);
                 return {};
             }
             case JSPromise::Status::Rejected: {
                 promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-                result = promise->result(vm);
+                result = promise->result();
                 return JSValue::encode(result);
             }
             case JSPromise::Status::Fulfilled: {
-                result = promise->result(vm);
+                result = promise->result();
                 break;
             }
             }
@@ -913,13 +913,13 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected:
             case JSPromise::Status::Pending: {
                 return promise;
             }
             case JSPromise::Status::Fulfilled: {
-                result = promise->result(vm);
+                result = promise->result();
                 break;
             }
             }

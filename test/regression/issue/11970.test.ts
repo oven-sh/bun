@@ -1,9 +1,9 @@
 // Regression test for issue #11970
 // bun remove -g should remove binaries on Windows
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { existsSync } from "fs";
 
 test("bun remove -g should remove binaries", async () => {
   if (!isWindows) {

@@ -44,10 +44,10 @@ pub const Source = union(enum) {
 
         /// Current state of the fs_t request.
         state: enum(u8) {
-            deinitialized,  // fs.deinit() called, ready for next operation
-            operating,      // read or write operation in progress
-            canceling,      // cancel requested, waiting for callback
-            closing,        // close operation in progress
+            deinitialized, // fs.deinit() called, ready for next operation
+            operating, // read or write operation in progress
+            canceling, // cancel requested, waiting for callback
+            closing, // close operation in progress
         } = .deinitialized,
 
         /// When true, file will close itself when the current operation completes.

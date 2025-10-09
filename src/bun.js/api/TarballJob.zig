@@ -79,7 +79,7 @@ pub const TarballJob = struct {
         };
     }
 
-    fn createArchive(this: *TarballJob) !void {
+    fn createArchive(this: *TarballJob) anyerror!void {
         const allocator = bun.default_allocator;
         const lib = bun.libarchive.lib;
         const archive = lib.Archive.writeNew();

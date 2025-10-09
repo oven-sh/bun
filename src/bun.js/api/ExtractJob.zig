@@ -1,3 +1,5 @@
+const MAX_MEMORY_SIZE = 100 * 1024 * 1024;
+
 pub const ExtractJob = struct {
     archive_data: []const u8,
     destination: ?[]const u8,
@@ -14,7 +16,7 @@ pub const ExtractJob = struct {
 
     pub fn create(
         vm: *jsc.VirtualMachine,
-        globalThis: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         archive_data: []const u8,
         destination: ?[]const u8,
         glob_patterns: ?[][]const u8,
@@ -28,10 +30,10 @@ pub const ExtractJob = struct {
             .skip_components = skip_components,
             .vm = vm,
             .files = std.StringArrayHashMap([]u8).init(bun.default_allocator),
-            .any_task = jsc.AnyTask.New(@This(), &runFromJS).init(undefined),
+            .any_task = undefined,
         };
 
-        job.promise = jsc.JSPromise.Strong.init(globalThis);
+        job.promise = jsc.JSPromise.Strong.init(globalObject);
         job.any_task = jsc.AnyTask.New(@This(), &runFromJS).init(job);
         job.poll.ref(vm);
         jsc.WorkPool.schedule(&job.task);
@@ -46,7 +48,7 @@ pub const ExtractJob = struct {
         };
     }
 
-    fn extractArchive(this: *ExtractJob) !void {
+    fn extractArchive(this: *ExtractJob) anyerror!void {
         if (this.destination) |dest| {
             if (this.glob_patterns == null and this.skip_components == 0) {
                 const is_absolute = std.fs.path.isAbsolute(dest);
@@ -72,7 +74,7 @@ pub const ExtractJob = struct {
         }
     }
 
-    fn extractToDisk(this: *ExtractJob, dest: []const u8) !void {
+    fn extractToDisk(this: *ExtractJob, dest: []const u8) anyerror!void {
         const lib = bun.libarchive.lib;
         var reader: bun.libarchive.BufferReadStream = undefined;
         reader.init(this.archive_data);
@@ -133,7 +135,6 @@ pub const ExtractJob = struct {
                     var path_buf: bun.PathBuffer = undefined;
                     const dest_path = bun.path.joinAbsStringBufZ(dest, &path_buf, &.{normalized}, .auto);
                     bun.makePath(std.fs.cwd(), bun.asByteSlice(dest_path)) catch {};
-                    this.file_count += 1;
                 },
                 .file => {
                     const size = entry.size();
@@ -160,7 +161,7 @@ pub const ExtractJob = struct {
         }
     }
 
-    fn extractToMemory(this: *ExtractJob) !void {
+    fn extractToMemory(this: *ExtractJob) anyerror!void {
         const lib = bun.libarchive.lib;
         const allocator = bun.default_allocator;
 
@@ -176,6 +177,7 @@ pub const ExtractJob = struct {
         const archive = reader.archive;
         var entry: *lib.Archive.Entry = undefined;
         var normalized_buf: bun.PathBuffer = undefined;
+        var bytes_total: usize = 0;
 
         loop: while (true) {
             switch (archive.readNextHeader(&entry)) {
@@ -222,7 +224,11 @@ pub const ExtractJob = struct {
             const size = entry.size();
             if (size < 0) continue;
 
-            const buf = try allocator.alloc(u8, @intCast(size));
+            const alloc_size: usize = @intCast(size);
+            bytes_total += alloc_size;
+            if (bytes_total > MAX_MEMORY_SIZE) return error.ArchiveTooLarge;
+
+            var buf = try allocator.alloc(u8, alloc_size);
             errdefer allocator.free(buf);
 
             if (size > 0) {
@@ -234,6 +240,9 @@ pub const ExtractJob = struct {
                         break;
                     }
                     total += @intCast(read);
+                }
+                if (total < buf.len) {
+                    buf = allocator.realloc(buf, total) catch buf;
                 }
             }
 

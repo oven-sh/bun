@@ -2467,8 +2467,53 @@ pub const Arguments = struct {
                         }
                     },
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
+                    // or fs.write(fd, buffer, options, callback) where options is { offset, length, position }
                     .buffer => {
                         if (current.isUndefinedOrNull() or current.isFunction()) break :parse;
+
+                        // Check if this is an options object
+                        if (current.isObject() and !current.isCallable() and !current.isNumber() and !current.isBigInt()) {
+                            // Named parameters object: { offset?, length?, position? }
+                            const buf_len = args.buffer.buffer.slice().len;
+
+                            // Handle offset
+                            if (try current.getTruthy(ctx, "offset")) |offset_val| {
+                                args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, offset_val, "offset", 0, 9007199254740991));
+                                const max_offset = @min(buf_len, std.math.maxInt(i64));
+                                if (args.offset > max_offset) {
+                                    return ctx.throwRangeError(
+                                        @as(f64, @floatFromInt(args.offset)),
+                                        .{ .field_name = "offset", .max = @intCast(max_offset) },
+                                    );
+                                }
+                            }
+
+                            // Handle length
+                            if (try current.getTruthy(ctx, "length")) |length_val| {
+                                const length = length_val.to(i64);
+                                const max_len = @min(buf_len - args.offset, std.math.maxInt(i32));
+                                if (length > max_len or length < 0) {
+                                    return ctx.throwRangeError(
+                                        @as(f64, @floatFromInt(length)),
+                                        .{ .field_name = "length", .min = 0, .max = @intCast(max_len) },
+                                    );
+                                }
+                                args.length = @intCast(length);
+                            }
+
+                            // Handle position
+                            if (try current.getTruthy(ctx, "position")) |position_val| {
+                                if (position_val.isNumber() or position_val.isBigInt()) {
+                                    const position = position_val.to(i52);
+                                    if (position >= 0) args.position = position;
+                                }
+                            }
+
+                            arguments.eat();
+                            break :parse;
+                        }
+
+                        // Original positional parameter handling
                         args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
                         arguments.eat();
                         current = arguments.next() orelse break :parse;

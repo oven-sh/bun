@@ -1189,6 +1189,39 @@ pub fn transpileSourceCode(
                         break :brk ResolvedSource.Tag.javascript;
                     },
                 };
+            } else if (bun.sourcemap.JSSourceMap.@"--enable-source-maps") {
+                // When --enable-source-maps is enabled and there's no cache entry (i.e., file wasn't transpiled),
+                // check if the source has a user-provided sourceMappingURL and register it
+                const source_contents = source.contents;
+                if (bun.strings.lastIndexOfChar(source_contents, '\n')) |last_newline| {
+                    const last_lines = source_contents[last_newline..];
+                    if (bun.strings.indexOf(last_lines, "//# sourceMappingURL=")) |url_idx| {
+                        const url_start = last_newline + url_idx + "//# sourceMappingURL=".len;
+                        const url_end = bun.strings.indexOfChar(source_contents[url_start..], '\n') orelse
+                            (source_contents.len - url_start);
+                        const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
+
+                        // Use a stack fallback allocator for temporary parsing
+                        var sfb = std.heap.stackFallback(8192, bun.default_allocator);
+                        const temp_alloc = sfb.get();
+
+                        // Try to parse the sourcemap URL (handles both inline and external)
+                        const parse = SourceMap.parseUrl(
+                            bun.default_allocator,
+                            temp_alloc,
+                            source_map_url,
+                            .mappings_only,
+                        ) catch null;
+
+                        if (parse) |p| {
+                            if (p.map) |map| {
+                                // Register the parsed source map
+                                map.ref();
+                                jsc_vm.source_mappings.putValue(source.path.text, SavedSourceMap.Value.init(map)) catch {};
+                            }
+                        }
+                    }
+                }
             }
 
             const start_count = jsc_vm.transpiler.linker.import_counter;
@@ -2510,6 +2543,36 @@ pub const RuntimeTranspilerStore = struct {
                 };
 
                 return;
+            } else if (bun.sourcemap.JSSourceMap.@"--enable-source-maps") {
+                // When --enable-source-maps is enabled and there's no cache entry,
+                // check if the source has a user-provided sourceMappingURL and register it
+                const source_contents = parse_result.source.contents;
+                if (bun.strings.lastIndexOfChar(source_contents, '\n')) |last_newline| {
+                    const last_lines = source_contents[last_newline..];
+                    if (bun.strings.indexOf(last_lines, "//# sourceMappingURL=")) |url_idx| {
+                        const url_start = last_newline + url_idx + "//# sourceMappingURL=".len;
+                        const url_end = bun.strings.indexOfChar(source_contents[url_start..], '\n') orelse
+                            (source_contents.len - url_start);
+                        const source_map_url = bun.strings.trim(source_contents[url_start..][0..url_end], " \r\t");
+
+                        var sfb = std.heap.stackFallback(8192, bun.default_allocator);
+                        const temp_alloc = sfb.get();
+
+                        const parse = SourceMap.parseUrl(
+                            bun.default_allocator,
+                            temp_alloc,
+                            source_map_url,
+                            .mappings_only,
+                        ) catch null;
+
+                        if (parse) |p| {
+                            if (p.map) |map| {
+                                map.ref();
+                                vm.source_mappings.putValue(parse_result.source.path.text, SavedSourceMap.Value.init(map)) catch {};
+                            }
+                        }
+                    }
+                }
             }
 
             if (parse_result.already_bundled != .none) {

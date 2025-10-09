@@ -578,47 +578,50 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             // &state.handles[i];
         }
     }
-    // compute dependencies (TODO: maybe we should do this only in a workspace?)
-    for (state.handles) |*handle| {
-        var iter = handle.config.deps.map.iterator();
-        while (iter.next()) |entry| {
-            var sfa = std.heap.stackFallback(256, ctx.allocator);
-            const alloc = sfa.get();
-            const buf = try alloc.alloc(u8, entry.key_ptr.len());
-            defer alloc.free(buf);
-            const name = entry.key_ptr.slice(buf);
-            // is it a workspace dependency?
-            if (map.get(name)) |pkgs| {
-                for (pkgs.items) |dep| {
-                    try dep.dependents.append(handle);
-                    handle.remaining_dependencies += 1;
+    // Skip dependency resolution if --parallel flag is set
+    if (!ctx.parallel) {
+        // compute dependencies (TODO: maybe we should do this only in a workspace?)
+        for (state.handles) |*handle| {
+            var iter = handle.config.deps.map.iterator();
+            while (iter.next()) |entry| {
+                var sfa = std.heap.stackFallback(256, ctx.allocator);
+                const alloc = sfa.get();
+                const buf = try alloc.alloc(u8, entry.key_ptr.len());
+                defer alloc.free(buf);
+                const name = entry.key_ptr.slice(buf);
+                // is it a workspace dependency?
+                if (map.get(name)) |pkgs| {
+                    for (pkgs.items) |dep| {
+                        try dep.dependents.append(handle);
+                        handle.remaining_dependencies += 1;
+                    }
                 }
             }
         }
-    }
 
-    // check if there is a dependency cycle
-    var has_cycle = false;
-    for (state.handles) |*handle| {
-        if (hasCycle(handle)) {
-            has_cycle = true;
-            break;
-        }
-    }
-    // if there is, we ignore dependency order completely
-    if (has_cycle) {
+        // check if there is a dependency cycle
+        var has_cycle = false;
         for (state.handles) |*handle| {
-            handle.dependents.clearRetainingCapacity();
-            handle.remaining_dependencies = 0;
+            if (hasCycle(handle)) {
+                has_cycle = true;
+                break;
+            }
         }
-    }
+        // if there is, we ignore dependency order completely
+        if (has_cycle) {
+            for (state.handles) |*handle| {
+                handle.dependents.clearRetainingCapacity();
+                handle.remaining_dependencies = 0;
+            }
+        }
 
-    // set up dependencies between pre/post scripts
-    // this is done after the cycle check because we don't want these to be removed if there is a cycle
-    for (0..state.handles.len - 1) |i| {
-        if (bun.strings.eql(state.handles[i].config.package_name, state.handles[i + 1].config.package_name)) {
-            try state.handles[i].dependents.append(&state.handles[i + 1]);
-            state.handles[i + 1].remaining_dependencies += 1;
+        // set up dependencies between pre/post scripts
+        // this is done after the cycle check because we don't want these to be removed if there is a cycle
+        for (0..state.handles.len - 1) |i| {
+            if (bun.strings.eql(state.handles[i].config.package_name, state.handles[i + 1].config.package_name)) {
+                try state.handles[i].dependents.append(&state.handles[i + 1]);
+                state.handles[i + 1].remaining_dependencies += 1;
+            }
         }
     }
 

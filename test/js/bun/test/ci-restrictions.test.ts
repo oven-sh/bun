@@ -55,7 +55,7 @@ test.only("should fail in CI", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: .only is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
       );
     });
 
@@ -84,7 +84,7 @@ describe.only("CI test", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: .only is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
       );
     });
   });
@@ -246,7 +246,7 @@ test("new inline snapshot", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Inline snapshot updates are not allowed in CI environments");
+      expect(stderr).toContain("Updating inline snapshots is disabled in CI environments");
     });
 
     test("toMatchInlineSnapshot should work for new inline snapshots when CI=false", async () => {

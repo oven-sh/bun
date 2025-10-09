@@ -1201,7 +1201,7 @@ pub const WindowsBufferedReader = struct {
                 // If canceling (operation will fire callback), defer done
                 if (file.state == .canceling) {
                     this.flags.defer_done_callback = true;
-                    return;  // Don't call closeImpl yet - wait for cancel callback
+                    return; // Don't call closeImpl yet - wait for cancel callback
                 }
             }
         }

@@ -1030,7 +1030,8 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
             if (was_canceled) {
-                // Canceled write - just return
+                // Canceled write - clear pending state
+                this.pending_payload_size = 0;
                 return;
             }
 
@@ -1056,10 +1057,8 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     @panic("This code path shouldn't be reached - sync_file in PipeWriter.zig");
                 },
                 .file => |file| {
-                    if (!file.canStart()) {
-                        // Operation already in progress, can't write
-                        return;
-                    }
+                    // BufferedWriter ensures pending_payload_size blocks concurrent writes
+                    bun.assert(file.canStart());
 
                     this.pending_payload_size = buffer.len;
                     file.fs.setData(this);
@@ -1358,7 +1357,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
             if (was_canceled) {
-                // Canceled write - just return
+                // Canceled write - reset buffers
+                this.current_payload.reset();
                 return;
             }
 
@@ -1404,11 +1404,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     @panic("sync_file pipe write should not be reachable");
                 },
                 .file => |file| {
-                    if (!file.canStart()) {
-                        // Operation already in progress
-                        this.last_write_result = .{ .pending = 0 };
-                        return;
-                    }
+                    // StreamingWriter ensures current_payload blocks concurrent writes
+                    bun.assert(file.canStart());
 
                     file.fs.setData(this);
                     file.prepare();

@@ -131,41 +131,46 @@
 
         # FHS environment for better compatibility on non-NixOS systems
         # This creates a chroot-like environment that looks like a standard Linux system
-        fhsEnv = pkgs.buildFHSEnv {
-          name = "bun-dev-env";
-          targetPkgs = pkgs: buildInputs;
-          runScript = "bash";
-          profile = ''
-            # Set up compiler environment
-            export CC="${clang}/bin/clang"
-            export CXX="${clang}/bin/clang++"
-            export AR="${llvm}/bin/llvm-ar"
-            export RANLIB="${llvm}/bin/llvm-ranlib"
-            export LD="${lld}/bin/lld"
-            export LDFLAGS="-fuse-ld=lld"
+        # Only available on Linux (buildFHSEnv asserts stdenv.isLinux)
+        fhsEnv =
+          if pkgs.stdenv.isLinux then
+            pkgs.buildFHSEnv {
+              name = "bun-dev-env";
+              targetPkgs = pkgs: buildInputs;
+              runScript = "bash";
+              profile = ''
+                # Set up compiler environment
+                export CC="${clang}/bin/clang"
+                export CXX="${clang}/bin/clang++"
+                export AR="${llvm}/bin/llvm-ar"
+                export RANLIB="${llvm}/bin/llvm-ranlib"
+                export LD="${lld}/bin/lld"
+                export LDFLAGS="-fuse-ld=lld"
 
-            # CMake settings
-            export CMAKE_BUILD_TYPE="Debug"
-            export ENABLE_CCACHE="1"
+                # CMake settings
+                export CMAKE_BUILD_TYPE="Debug"
+                export ENABLE_CCACHE="1"
 
-            # Disable analytics
-            export HOMEBREW_NO_ANALYTICS="1"
-            export HOMEBREW_NO_AUTO_UPDATE="1"
+                # Disable analytics
+                export HOMEBREW_NO_ANALYTICS="1"
+                export HOMEBREW_NO_AUTO_UPDATE="1"
 
-            echo "====================================="
-            echo "Bun Development Environment (FHS)"
-            echo "====================================="
-            echo "Node.js: $(node --version 2>/dev/null || echo 'not found')"
-            echo "Bun: $(bun --version 2>/dev/null || echo 'not found')"
-            echo "Clang: $(clang --version 2>/dev/null | head -n1 || echo 'not found')"
-            echo "CMake: $(cmake --version 2>/dev/null | head -n1 || echo 'not found')"
-            echo ""
-            echo "Quick start:"
-            echo "  bun bd                    # Build debug binary"
-            echo "  bun bd test <test-file>   # Run tests"
-            echo "====================================="
-          '';
-        };
+                echo "====================================="
+                echo "Bun Development Environment (FHS)"
+                echo "====================================="
+                echo "Node.js: $(node --version 2>/dev/null || echo 'not found')"
+                echo "Bun: $(bun --version 2>/dev/null || echo 'not found')"
+                echo "Clang: $(clang --version 2>/dev/null | head -n1 || echo 'not found')"
+                echo "CMake: $(cmake --version 2>/dev/null | head -n1 || echo 'not found')"
+                echo ""
+                echo "Quick start:"
+                echo "  bun bd                    # Build debug binary"
+                echo "  bun bd test <test-file>   # Run tests"
+                echo "====================================="
+              '';
+            }
+          else
+            null;
 
         pureShell = pkgs.mkShell {
           inherit buildInputs;

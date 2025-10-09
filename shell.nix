@@ -1,3 +1,6 @@
+# Simple shell.nix for users without flakes enabled
+# For reproducible builds with locked dependencies, use: nix develop
+# This uses unpinned <nixpkgs> for simplicity; flake.nix provides version pinning via flake.lock
 { pkgs ? import <nixpkgs> {} }:
 
 pkgs.mkShell {

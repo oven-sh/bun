@@ -17,6 +17,13 @@ pub const Source = union(enum) {
         close_fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,
+        can_be_canceled: bool = true,
+
+        pub fn stopReading(this: *File) void {
+            if (!this.can_be_canceled) return;
+            this.can_be_canceled = false;
+            this.fs.cancel();
+        }
     };
 
     pub fn isClosed(this: Source) bool {

@@ -46,7 +46,7 @@ You can also pass glob patterns to filter by workspace names:
 
 ### Catalog Dependencies
 
-`bun outdated` supports checking catalog dependencies defined in `package.json`:
+`bun outdated` supports checking catalog dependencies defined in `package.json`. As of commit 624911180f, catalog information is shown by default without requiring the `--filter` or `-r` flags.
 
 ```sh
 $ bun outdated -r

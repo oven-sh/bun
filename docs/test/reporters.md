@@ -34,6 +34,14 @@ test/package-json-lint.test.ts:
 Ran 4 tests across 1 files. [0.66ms]
 ```
 
+### Dots Reporter
+
+For minimalist test output, use the dots reporter with `--reporter=dots` or `--dots`. It displays `.` for each passing test and `F` for each failure, making it ideal for CI environments or when running large test suites.
+
+```sh
+$ bun test --dots
+```
+
 ### JUnit XML Reporter
 
 For CI/CD environments, Bun supports generating JUnit XML reports. JUnit XML is a widely-adopted format for test results that can be parsed by many CI/CD systems, including GitLab, Jenkins, and others.

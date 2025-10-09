@@ -23,7 +23,7 @@ afterEach(() => {
 // tests...
 ```
 
-Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. The _scope_ is determined by where the hook is defined.
+Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. The _scope_ is determined by where the hook is defined. Note that `afterAll` can also be called inside individual tests for test-specific cleanup.
 
 To scope the hooks to a particular `describe` block:
 
@@ -66,6 +66,8 @@ afterAll(() => {
   // global teardown
 });
 ```
+
+When using `--preload`, `beforeAll` runs before the first test file and `afterAll` runs after the last test file, ensuring proper global setup and teardown across your entire test suite.
 
 Then use `--preload` to run the setup script before any test files.
 

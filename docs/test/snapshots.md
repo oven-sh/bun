@@ -47,7 +47,7 @@ When you run the test, Bun automatically updates the test file itself with the g
 3. Bun automatically updates your test file with the snapshot
 4. On subsequent runs, the value will be compared against the inline snapshot
 
-Inline snapshots are particularly useful for small, simple values where it's helpful to see the expected output right in the test file.
+Inline snapshots are particularly useful for small, simple values where it's helpful to see the expected output right in the test file. Multiple inline snapshots on the same line are allowed if they have identical values.
 
 ## Error snapshots
 

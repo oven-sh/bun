@@ -58,11 +58,11 @@ pub fn NewResponse(ssl_flag: i32) type {
             c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
         }
 
-        pub fn uncork(_: *Response) void {
-            // c.uws_res_uncork(
-            //     ssl_flag,
-            //     res.downcast(),
-            // );
+        pub fn uncork(res: *Response) void {
+            c.uws_res_uncork(
+                ssl_flag,
+                res.downcast(),
+            );
         }
         pub fn pause(res: *Response) void {
             c.uws_res_pause(ssl_flag, res.downcast());
@@ -475,6 +475,12 @@ pub const AnyResponse = union(enum) {
     pub fn @"resume"(this: AnyResponse) void {
         switch (this) {
             inline else => |resp| resp.@"resume"(),
+        }
+    }
+
+    pub fn uncork(this: AnyResponse) void {
+        switch (this) {
+            inline else => |resp| resp.uncork(),
         }
     }
 

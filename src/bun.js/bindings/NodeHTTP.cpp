@@ -584,9 +584,13 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
-    if (response->getLoopData()->canCork() && response->getBufferedAmount() == 0) {
-        response->getLoopData()->setCorkedSocket(response, isSSL);
+
+    // Always cork before writing headers to ensure they're buffered together
+    // Use corkUnchecked() to force corking without checking canCork()
+    if (response->getBufferedAmount() == 0) {
+        response->corkUnchecked();
     }
+
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
     if (headersObject) {

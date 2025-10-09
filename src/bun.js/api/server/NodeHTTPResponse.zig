@@ -1069,8 +1069,16 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
 }
 
 pub fn flushHeaders(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null)
-        this.raw_response.?.flushHeaders();
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        const raw_response = this.raw_response.?;
+
+        // Write the final CRLF to complete the headers section
+        raw_response.flushHeaders();
+
+        // Uncork the socket to flush headers to the network
+        // The socket was corked by writeHead() in NodeHTTP.cpp
+        raw_response.uncork();
+    }
 
     return .js_undefined;
 }

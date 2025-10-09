@@ -1685,15 +1685,18 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   void uws_res_uncork(int ssl, uws_res_r res)
   {
+    // HttpResponse doesn't have an uncork() method - it only has cork(callback).
+    // To properly uncork, we need to access the underlying AsyncSocket's uncork().
+    // We cast to AsyncSocket (which is the parent class of HttpResponse) to call uncork().
     if (ssl)
     {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->uncork();
+      uWS::AsyncSocket<true> *socket = (uWS::AsyncSocket<true> *)res;
+      socket->uncork();
     }
     else
     {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->uncork();
+      uWS::AsyncSocket<false> *socket = (uWS::AsyncSocket<false> *)res;
+      socket->uncork();
     }
   }
 

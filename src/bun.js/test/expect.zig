@@ -749,13 +749,8 @@ pub const Expect = struct {
                     const signature = comptime getSignature(fn_name, "", false);
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                     defer formatter.deinit();
-                    if (result == null) {
-                        // Creating a new inline snapshot
-                        return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
-                    } else {
-                        // Updating an existing inline snapshot
-                        return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {any}", .{value.toFmt(&formatter)});
-                    }
+                    // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
                 }
             }
             var buntest_strong = this.bunTest() orelse {

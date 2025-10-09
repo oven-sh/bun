@@ -406,6 +406,41 @@ bun upgrade --canary
   - [Copy a file to another location](https://bun.com/guides/write-file/file-cp)
   - [Write a ReadableStream to a file](https://bun.com/guides/write-file/stream)
 
+## Development
+
+### Using Nix (Experimental)
+
+We provide a Nix flake that declares all dependencies needed to build Bun. This is an alternative to `scripts/bootstrap.sh`:
+
+```bash
+# Install Nix with flakes enabled
+sh <(curl -L https://nixos.org/nix/install) --daemon
+echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+
+# Enter development environment
+nix develop
+
+# Build Bun debug binary
+bun bd
+```
+
+**⚠️ Status:** The flake is syntactically correct and provides all dependencies, but has not been fully tested for building Bun. May have glibc compatibility issues on non-NixOS systems. See [NIX_LIMITATIONS.md](NIX_LIMITATIONS.md) for details.
+
+**Potential advantages:**
+- Fully isolated (no sudo required)
+- 100% reproducible dependency versions
+- Declared dependencies matching bootstrap.sh
+
+See [NIX_QUICKSTART.md](NIX_QUICKSTART.md) for more details, or [NIX_SETUP.md](NIX_SETUP.md) for comprehensive documentation.
+
+### Traditional Setup
+
+Use `scripts/bootstrap.sh` to install dependencies:
+
+```bash
+./scripts/bootstrap.sh
+```
+
 ## Contributing
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.

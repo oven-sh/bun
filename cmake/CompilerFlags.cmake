@@ -58,6 +58,15 @@ if(DEBUG)
     /Od ${WIN32}
     -O0 ${UNIX}
   )
+  # Nix glibc sets _FORTIFY_SOURCE which requires optimization, but we're building with -O0
+  # Downgrade the warning to not be an error
+  if(UNIX)
+    register_compiler_flags(
+      DESCRIPTION "Allow _FORTIFY_SOURCE warnings in debug builds"
+      -D_FORTIFY_SOURCE=0
+      "-Wno-error=#warnings"
+    )
+  endif()
 elseif(ENABLE_SMOL)
   register_compiler_flags(
     DESCRIPTION "Optimize for size"
@@ -86,11 +95,20 @@ elseif(APPLE)
 endif()
 
 if(UNIX)
-  register_compiler_flags(
-    DESCRIPTION "Enable debug symbols"
-    -g3 -gz=zstd ${DEBUG}
-    -g1 ${RELEASE}
-  )
+  # Check if we're in a Nix environment (which may not have zstd support in LLVM)
+  if(DEFINED ENV{NIX_CC} OR DEFINED ENV{NIX_STORE})
+    register_compiler_flags(
+      DESCRIPTION "Enable debug symbols (without zstd compression for Nix)"
+      -g3 ${DEBUG}
+      -g1 ${RELEASE}
+    )
+  else()
+    register_compiler_flags(
+      DESCRIPTION "Enable debug symbols"
+      -g3 -gz=zstd ${DEBUG}
+      -g1 ${RELEASE}
+    )
+  endif()
 
   register_compiler_flags(
     DESCRIPTION "Optimize debug symbols for LLDB"

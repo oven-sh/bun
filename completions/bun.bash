@@ -56,6 +56,10 @@ _long_short_completion() {
 
 # loads the scripts block in package.json
 _read_scripts_in_package_json() {
+    # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
+    trap "$(shopt -p patsub_replacement)" RETURN
+    shopt -s patsub_replacement
+
     local package_json;
     local line=0;
     local working_dir="${PWD}";

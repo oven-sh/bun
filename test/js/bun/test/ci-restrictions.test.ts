@@ -147,7 +147,7 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
-      expect(stderr).toContain("Received: this is new");
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
@@ -174,7 +174,7 @@ test("new snapshot", () => {
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
-      expect(stderr).toContain("Received: this is new");
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchSnapshot should work for new snapshots when CI=false", async () => {
@@ -251,7 +251,7 @@ test("new inline snapshot", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Inline snapshot creation is not allowed in CI environments");
-      expect(stderr).toContain("Received: this is new");
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchInlineSnapshot should work for new inline snapshots when CI=false", async () => {

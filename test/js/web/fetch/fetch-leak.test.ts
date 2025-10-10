@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isCI, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT, gc, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";

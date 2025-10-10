@@ -380,7 +380,6 @@ pub const WriteFileWindows = struct {
         bytes_blob.store.?.ref();
         write_file.io_request.loop = event_loop.virtual_machine.event_loop_handle.?;
         write_file.io_request.data = write_file;
-        errdefer write_file.deinit();
 
         switch (file_blob.store.?.data.file.pathlike) {
             .path => {

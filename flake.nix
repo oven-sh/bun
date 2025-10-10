@@ -35,96 +35,96 @@
         nodejs = pkgs.nodejs_24;
 
         # Build tools and dependencies
-        buildInputs = with pkgs; [
+        buildInputs = [
           # Core build tools
-          cmake # 3.30+
-          ninja
-          pkg-config
-          gnumake
-          ccache
+          pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
+          pkgs.ninja
+          pkgs.pkg-config
+          pkgs.gnumake
+          pkgs.ccache
 
-          # Compilers and toolchain
-          clang # LLVM 19
-          llvm # LLVM 19
-          lld # LLVM 19
-          gcc
-          rustc
-          cargo
-          go
+          # Compilers and toolchain - version pinned to LLVM 19
+          clang
+          llvm
+          lld
+          pkgs.gcc
+          pkgs.rustc
+          pkgs.cargo
+          pkgs.go
 
           # Bun itself (for running build scripts via `bun bd`)
-          bun
+          pkgs.bun
 
-          # Node.js 24
+          # Node.js - version pinned to 24
           nodejs
 
           # Python for build scripts
-          python3
+          pkgs.python3
 
           # Other build dependencies from bootstrap.sh
-          libtool
-          ruby
-          perl
+          pkgs.libtool
+          pkgs.ruby
+          pkgs.perl
 
           # Libraries
-          openssl
-          zlib
-          libxml2
-          libiconv
+          pkgs.openssl
+          pkgs.zlib
+          pkgs.libxml2
+          pkgs.libiconv
 
           # Development tools
-          git
-          curl
-          wget
-          unzip
-          xz
-          htop
-          gnupg
+          pkgs.git
+          pkgs.curl
+          pkgs.wget
+          pkgs.unzip
+          pkgs.xz
+          pkgs.htop
+          pkgs.gnupg
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-          glibc
-          gdb # for debugging core dumps (from bootstrap.sh line 1535)
+          pkgs.glibc
+          pkgs.gdb # for debugging core dumps (from bootstrap.sh line 1535)
 
           # Chromium dependencies for Puppeteer testing (from bootstrap.sh lines 1397-1483)
           # X11 and graphics libraries
-          xorg.libX11
-          xorg.libxcb
-          xorg.libXcomposite
-          xorg.libXcursor
-          xorg.libXdamage
-          xorg.libXext
-          xorg.libXfixes
-          xorg.libXi
-          xorg.libXrandr
-          xorg.libXrender
-          xorg.libXScrnSaver
-          xorg.libXtst
-          libxkbcommon
-          mesa
-          nspr
-          nss
-          cups
-          dbus
-          expat
-          fontconfig
-          freetype
-          glib
-          gtk3
-          pango
-          cairo
-          alsa-lib
-          at-spi2-atk
-          at-spi2-core
-          libgbm # for hardware acceleration
-          liberation_ttf # fonts-liberation
-          atk
-          libdrm
-          xorg.libxshmfence
-          gdk-pixbuf
+          pkgs.xorg.libX11
+          pkgs.xorg.libxcb
+          pkgs.xorg.libXcomposite
+          pkgs.xorg.libXcursor
+          pkgs.xorg.libXdamage
+          pkgs.xorg.libXext
+          pkgs.xorg.libXfixes
+          pkgs.xorg.libXi
+          pkgs.xorg.libXrandr
+          pkgs.xorg.libXrender
+          pkgs.xorg.libXScrnSaver
+          pkgs.xorg.libXtst
+          pkgs.libxkbcommon
+          pkgs.mesa
+          pkgs.nspr
+          pkgs.nss
+          pkgs.cups
+          pkgs.dbus
+          pkgs.expat
+          pkgs.fontconfig
+          pkgs.freetype
+          pkgs.glib
+          pkgs.gtk3
+          pkgs.pango
+          pkgs.cairo
+          pkgs.alsa-lib
+          pkgs.at-spi2-atk
+          pkgs.at-spi2-core
+          pkgs.libgbm # for hardware acceleration
+          pkgs.liberation_ttf # fonts-liberation
+          pkgs.atk
+          pkgs.libdrm
+          pkgs.xorg.libxshmfence
+          pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
-          apple-sdk
+          pkgs.apple-sdk
         ];
 
         # FHS environment for better compatibility on non-NixOS systems
@@ -177,6 +177,12 @@
           stdenv = pkgs.clangStdenv;
 
           shellHook = ''
+            # Set up compiler environment (LLVM 19)
+            export CC="${clang}/bin/clang"
+            export CXX="${clang}/bin/clang++"
+            export AR="${llvm}/bin/llvm-ar"
+            export RANLIB="${llvm}/bin/llvm-ranlib"
+
             # LD/LDFLAGS are Linux-only (macOS uses system linker)
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD="${lld}/bin/lld"

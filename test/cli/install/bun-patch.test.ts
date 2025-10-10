@@ -19,7 +19,7 @@ describe("bun patch <pkg>", async () => {
      */
     describe("inside workspace with hoisting", async () => {
       const args = [
-        ["node_modules/@types/ws", "node_modules/@types/ws"],
+        ["packages/eslint-config/node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
         ["@types/ws@8.5.4", "node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {

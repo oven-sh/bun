@@ -13,19 +13,19 @@ test("CLAUDECODE=1 shows quiet test output (only failures)", async () => {
   const dir = tempDirWithFiles("claudecode-test-quiet", {
     "test2.test.js": `
       import { test, expect } from "bun:test";
-      
+
       test("passing test", () => {
         expect(1).toBe(1);
       });
-      
+
       test("failing test", () => {
         expect(1).toBe(2);
       });
-      
+
       test.skip("skipped test", () => {
         expect(1).toBe(1);
       });
-      
+
       test.todo("todo test");
     `,
   });
@@ -50,19 +50,19 @@ test("CLAUDECODE=1 vs CLAUDECODE=0 comparison", async () => {
   const dir = tempDirWithFiles("claudecode-test-compare", {
     "test3.test.js": `
       import { test, expect } from "bun:test";
-      
+
       test("passing test", () => {
         expect(1).toBe(1);
       });
-      
+
       test("another passing test", () => {
         expect(2).toBe(2);
       });
-      
+
       test.skip("skipped test", () => {
         expect(1).toBe(1);
       });
-      
+
       test.todo("todo test");
     `,
   });

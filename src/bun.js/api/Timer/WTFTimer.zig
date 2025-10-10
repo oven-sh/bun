@@ -70,9 +70,13 @@ pub fn cancel(this: *WTFTimer) void {
 pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
     this.event_loop_timer.state = .FIRED;
     this.imminent.store(null, .seq_cst);
+    // Read `repeat` and `next` before calling runWithoutRemoving(), because the callback
+    // might destroy `this` (e.g., when Atomics.waitAsync creates a one-shot DispatchTimer).
+    const should_repeat = this.repeat;
+    const next_time = this.event_loop_timer.next;
     this.runWithoutRemoving();
-    return if (this.repeat)
-        .{ .rearm = this.event_loop_timer.next }
+    return if (should_repeat)
+        .{ .rearm = next_time }
     else
         .disarm;
 }

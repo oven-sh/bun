@@ -419,7 +419,7 @@ pub fn BabyList(comptime Type: type) type {
                 defer this.update(list_);
 
                 // Maximum UTF-16 length is 3 times the UTF-8 length + 2
-                const total_length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
+                const length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
                     // This length is an estimate. `str` isn't validated and might contain invalid
                     // sequences. If it does simdutf will assume they require 2 characters instead
                     // of 3.
@@ -427,7 +427,7 @@ pub fn BabyList(comptime Type: type) type {
                 else
                     str.len;
 
-                try list_.ensureTotalCapacity(total_length_estimate);
+                try list_.ensureUnusedCapacity(length_estimate);
 
                 try strings.convertUTF16ToUTF8Append(&list_, str);
             }

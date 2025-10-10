@@ -83,7 +83,6 @@
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-          pkgs.glibc
           pkgs.gdb # for debugging core dumps (from bootstrap.sh line 1535)
 
           # Chromium dependencies for Puppeteer testing (from bootstrap.sh lines 1397-1483)
@@ -144,8 +143,8 @@
                 export CXX="${clang}/bin/clang++"
                 export AR="${llvm}/bin/llvm-ar"
                 export RANLIB="${llvm}/bin/llvm-ranlib"
-                export LD="${lld}/bin/lld"
-                export LDFLAGS="-fuse-ld=lld"
+                export LD="${lld}/bin/ld.lld"
+                export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
 
                 # CMake settings
                 export CMAKE_BUILD_TYPE="Debug"
@@ -181,11 +180,13 @@
             export CXX="${clang}/bin/clang++"
             export AR="${llvm}/bin/llvm-ar"
             export RANLIB="${llvm}/bin/llvm-ranlib"
+            export CMAKE_C_COMPILER="$CC"
+            export CMAKE_CXX_COMPILER="$CXX"
 
             # LD/LDFLAGS are Linux-only (macOS uses system linker)
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              export LD="${lld}/bin/lld"
-              export LDFLAGS="-fuse-ld=lld"
+              export LD="${lld}/bin/ld.lld"
+              export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
             ''}
 

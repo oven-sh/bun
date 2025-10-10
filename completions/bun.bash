@@ -65,7 +65,7 @@ _file_arguments() {
         fi
         # if pathname expansion above produces no matching files, then
         # `compgen` output single newline character `\n`, resulting in
-        # singleton `COMPREPLY` with empty string, let us mitigate this.
+        # singleton `candidates` with empty string, let us mitigate this.
         [[ -z ${candidates[0]} ]] && candidates=()
     fi
 

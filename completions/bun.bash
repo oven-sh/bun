@@ -4,9 +4,8 @@ _is_exist_and_gnu() {
     local cmd="${1}";
     local version_string;
     version_string="$(
-        command -v "$cmd" >/dev/null && \
-        "$cmd" --version 2>&1 \
-        | head -1
+        command -v "$cmd" >/dev/null 2>&1   && \
+        "$cmd" --version 2>/dev/null | head -1
     )";
     [[ "$version_string" == *GNU* ]] && return 0 || return 1;
 }

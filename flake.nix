@@ -128,72 +128,24 @@
           pkgs.darwin.apple_sdk.frameworks.Security
         ];
 
-        # FHS environment for better compatibility on non-NixOS systems
-        # This creates a chroot-like environment that looks like a standard Linux system
-        # Only available on Linux (buildFHSEnv asserts stdenv.isLinux)
-        fhsEnv =
-          if pkgs.stdenv.isLinux then
-            pkgs.buildFHSEnv {
-              name = "bun-dev-env";
-              targetPkgs = pkgs: buildInputs;
-              runScript = "bash";
-              profile = ''
-                # Set up compiler environment
-                export CC="${clang}/bin/clang"
-                export CXX="${clang}/bin/clang++"
-                export AR="${llvm}/bin/llvm-ar"
-                export RANLIB="${llvm}/bin/llvm-ranlib"
-                export LD="${lld}/bin/ld.lld"
-                export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-
-                # CMake settings
-                export CMAKE_BUILD_TYPE="Debug"
-                export ENABLE_CCACHE="1"
-
-                # Disable analytics
-                export HOMEBREW_NO_ANALYTICS="1"
-                export HOMEBREW_NO_AUTO_UPDATE="1"
-
-                echo "====================================="
-                echo "Bun Development Environment (FHS)"
-                echo "====================================="
-                echo "Node.js: $(node --version 2>/dev/null || echo 'not found')"
-                echo "Bun: $(bun --version 2>/dev/null || echo 'not found')"
-                echo "Clang: $(clang --version 2>/dev/null | head -n1 || echo 'not found')"
-                echo "CMake: $(cmake --version 2>/dev/null | head -n1 || echo 'not found')"
-                echo ""
-                echo "Quick start:"
-                echo "  bun bd                    # Build debug binary"
-                echo "  bun bd test <test-file>   # Run tests"
-                echo "====================================="
-              '';
-            }
-          else
-            null;
-
-        pureShell = pkgs.mkShell {
+      in
+      {
+        devShells.default = pkgs.mkShell {
           inherit buildInputs;
 
           shellHook = ''
             # Set up compiler environment (LLVM 19)
-            export CC="${clang}/bin/clang"
-            export CXX="${clang}/bin/clang++"
+            export CC="${pkgs.lib.getExe clang}"
+            export CXX="${pkgs.lib.getExe' clang "clang++"}"
             export AR="${llvm}/bin/llvm-ar"
             export RANLIB="${llvm}/bin/llvm-ranlib"
             export CMAKE_C_COMPILER="$CC"
             export CMAKE_CXX_COMPILER="$CXX"
-
-            # LD/LDFLAGS are Linux-only (macOS uses system linker)
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              export LD="${lld}/bin/ld.lld"
-              export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
-            ''}
-
-            # Set up Rust if not already configured
-            if [ ! -d "$HOME/.cargo" ]; then
-              echo "Note: Rust toolchain will be managed by rustc/cargo from Nix"
-            fi
+          '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            export LD="${pkgs.lib.getExe' lld "ld.lld"}"
+            export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+          '' + ''
 
             # Print welcome message
             echo "====================================="
@@ -214,19 +166,7 @@
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";
           ENABLE_CCACHE = "1";
-
-          # Disable analytics for build tools
-          HOMEBREW_NO_ANALYTICS = "1";
-          HOMEBREW_NO_AUTO_UPDATE = "1";
         };
-      in
-      {
-        # Use FHS environment on Linux, pure shell on other platforms
-        devShells.default = if pkgs.stdenv.isLinux then fhsEnv.env else pureShell;
-        devShells.pure = pureShell;
-
-        # Add a formatter
-        formatter = pkgs.nixfmt-rfc-style;
       }
     );
 }

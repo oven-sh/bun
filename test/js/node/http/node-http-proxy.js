@@ -4,7 +4,7 @@ import { createServer, request } from "node:http";
 
 export async function run() {
   const { promise, resolve, reject } = Promise.withResolvers();
-  using server = exampleSite("http");
+  await using server = exampleSite("http");
   const proxyServer = createServer(function (req, res) {
     // Use URL object instead of deprecated url.parse
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
@@ -55,7 +55,7 @@ export async function run() {
         try {
           assert.strictEqual(res.statusCode, 200);
           assert(data.length > 0);
-          assert(data.includes("This domain is for use in documentation examples without needing permission."));
+          assert(data.includes("This domain is for use in illustrative examples in documents"));
           resolve();
         } catch (err) {
           reject(err);

@@ -266,7 +266,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.file -> Response", async () => {
-    using server = exampleSite("https");
+    await using server = exampleSite("https");
     // ensure the file doesn't already exist
     try {
       fs.unlinkSync(tmpbase + "fetch.js.out");

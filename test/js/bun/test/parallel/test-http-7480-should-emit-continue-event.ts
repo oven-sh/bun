@@ -3,7 +3,7 @@ import https from "node:https";
 const { expect } = createTest(import.meta.path);
 
 // TODO: today we use a workaround to continue event, we need to fix it in the future.
-using server = exampleSite();
+const server = exampleSite();
 let receivedContinue = false;
 const req = https.request(
   server.url,
@@ -15,7 +15,7 @@ const req = https.request(
       data += chunk;
     });
     res.on("end", () => {
-      expect(receivedContinue).toBe(false); // TODO: this test doesn't pass in node when 'true' is passed here
+      expect(receivedContinue).toBe(true);
       expect(data).toContain("This domain is for use in illustrative examples in documents");
       process.exit();
     });

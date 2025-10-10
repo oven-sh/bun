@@ -1837,7 +1837,7 @@ export const exampleHtml = Buffer.from(
  *
  * @example Using disposal pattern
  * ```ts
- * using site = exampleSite();
+ * await using site = exampleSite();
  * await fetch(site.url, { tls: { ca: site.ca } });
  * // server automatically stopped when scope exits
  * ```
@@ -1860,12 +1860,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      server.stop();
+      return server.stop();
     },
-    [Symbol.dispose]() {
-      try {
-        server.stop();
-      } catch {}
+    async [Symbol.asyncDispose]() {
+      await server.stop();
     },
   };
 }

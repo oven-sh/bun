@@ -862,7 +862,7 @@ describe("node:http", () => {
 
   describe("https.request with custom tls options", () => {
     it("supports custom tls args", async () => {
-      using httpsServer = exampleSite();
+      await using httpsServer = exampleSite();
 
       const { promise, resolve, reject } = Promise.withResolvers();
       const options: https.RequestOptions = {

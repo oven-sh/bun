@@ -33,6 +33,8 @@ bytes_written: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
+auto_flusher: AutoFlusher = .{},
+
 pub const Flags = packed struct(u16) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
@@ -43,7 +45,6 @@ pub const Flags = packed struct(u16) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
-    uncork_scheduled: bool = false,
     _: u7 = 0,
 
     /// Did the user end the request?
@@ -1077,16 +1078,34 @@ fn uncorkSocket(this: *NodeHTTPResponse) void {
         this.raw_response.?.uncork();
     }
 }
+pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
+    defer this.deref();
+    this.flags.uncork_scheduled = false;
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        this.raw_response.?.uncork();
+    }
+    return false;
+}
 
-pub fn flushHeaders(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+fn registerAutoFlush(this: *NodeHTTPResponse) void {
+    if (this.auto_flusher.registered) return;
+    this.ref();
+    AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, this.globalThis.bunVM());
+}
+
+fn unregisterAutoFlush(this: *NodeHTTPResponse) void {
+    if (!this.auto_flusher.registered) return;
+    AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, this.globalThis.bunVM());
+    this.deref();
+}
+
+pub fn flushHeaders(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
         const raw_response = this.raw_response.?;
         // Don’t flush immediately; queue a microtask to uncork the socket.
         raw_response.flushHeaders(false);
-        if (raw_response.isCorked() and !this.flags.uncork_scheduled) {
-            this.flags.uncork_scheduled = true;
-            this.ref();
-            globalObject.queueMicrotaskCallback(this, uncorkSocket);
+        if (raw_response.isCorked()) {
+            this.registerAutoFlush();
         }
     }
 
@@ -1220,3 +1239,4 @@ const ZigString = jsc.ZigString;
 
 const AnyServer = jsc.API.AnyServer;
 const ServerWebSocket = jsc.API.ServerWebSocket;
+const AutoFlusher = jsc.WebCore.AutoFlusher;

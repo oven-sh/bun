@@ -113,8 +113,8 @@ const SloppyGlobalGitConfig = struct {
 pub const Repository = extern struct {
     owner: String = .{},
     repo: String = .{},
-    committish: GitSHA = .{},
-    resolved: GitSHA = .{},
+    committish: String = .{},
+    resolved: String = .{},
     package_name: String = .{},
 
     pub var shared_env: struct {
@@ -127,19 +127,19 @@ pub const Repository = extern struct {
                 // A value can still be entered, but we need to find a workaround
                 // so the user can see what is being prompted. By default the settings
                 // below will cause no prompt and throw instead.
-                var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
+                var cloned = bun.handleOom(other.map.cloneWithAllocator(allocator));
 
                 if (cloned.get("GIT_ASKPASS") == null) {
                     const config = SloppyGlobalGitConfig.get();
                     if (!config.has_askpass) {
-                        cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
+                        bun.handleOom(cloned.put("GIT_ASKPASS", "echo"));
                     }
                 }
 
                 if (cloned.get("GIT_SSH_COMMAND") == null) {
                     const config = SloppyGlobalGitConfig.get();
                     if (!config.has_ssh_command) {
-                        cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
+                        bun.handleOom(cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new"));
                     }
                 }
 
@@ -229,7 +229,7 @@ pub const Repository = extern struct {
 
         if (name.len == 0) {
             const version_literal = dep.version.literal.slice(buf);
-            const name_buf = allocator.alloc(u8, bun.sha.EVP.SHA1.digest) catch bun.outOfMemory();
+            const name_buf = bun.handleOom(allocator.alloc(u8, bun.sha.EVP.SHA1.digest));
             var sha1 = bun.sha.SHA1.init();
             defer sha1.deinit();
             sha1.update(version_literal);
@@ -237,7 +237,7 @@ pub const Repository = extern struct {
             return name_buf[0..bun.sha.SHA1.digest];
         }
 
-        return allocator.dupe(u8, name) catch bun.outOfMemory();
+        return bun.handleOom(allocator.dupe(u8, name));
     }
 
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
@@ -261,7 +261,7 @@ pub const Repository = extern struct {
         return .{
             .owner = builder.append(String, this.owner.slice(buf)),
             .repo = builder.append(String, this.repo.slice(buf)),
-            .committish = builder.append(GitSHA, this.committish.slice(buf)),
+            .committish = builder.append(String, this.committish.slice(buf)),
             .resolved = builder.append(String, this.resolved.slice(buf)),
             .package_name = builder.append(String, this.package_name.slice(buf)),
         };
@@ -301,7 +301,7 @@ pub const Repository = extern struct {
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
                 // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
-                try writer.writeAll("ssh:++");
+                try writer.writeAll("ssh++");
             }
 
             try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
@@ -701,5 +701,4 @@ const strings = bun.strings;
 const File = bun.sys.File;
 
 const Semver = bun.Semver;
-const GitSHA = String;
 const String = Semver.String;

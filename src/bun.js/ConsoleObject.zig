@@ -153,6 +153,10 @@ fn messageWithTypeAndLevel_(
     var writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
 
+    if (bun.jsc.Jest.Jest.runner) |runner| {
+        runner.bun_test_root.onBeforePrint();
+    }
+
     var print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default
     const cli_context = CLI.get();
@@ -1716,7 +1720,7 @@ pub const Formatter = struct {
             }
 
             pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                bun.fmt.formatUTF16Type(input, self.ctx) catch {
                     self.failed = true;
                 };
             }
@@ -2050,6 +2054,12 @@ pub const Formatter = struct {
             return error.JSError;
         }
 
+        // If we call
+        //   `return try this.printAs`
+        //
+        // Then we can get a spurious `[Circular]` due to the value already being present in the map.
+        var remove_before_recurse = false;
+
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
         defer {
             if (writer.failed) {
@@ -2075,12 +2085,16 @@ pub const Formatter = struct {
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
+            } else {
+                remove_before_recurse = true;
             }
         }
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(value);
+                if (remove_before_recurse) {
+                    _ = this.map.remove(value);
+                }
             }
         }
 
@@ -2152,7 +2166,7 @@ pub const Formatter = struct {
                     writer.writeAll(slice);
                 } else if (!str.isEmpty()) {
                     // slow path
-                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
+                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.latin1()) catch &[_]u8{};
                     if (buf.len > 0) {
                         defer bun.default_allocator.free(buf);
                         writer.writeAll(buf);
@@ -2268,6 +2282,13 @@ pub const Formatter = struct {
                 }
             },
             .Error => {
+                // Temporarily remove from the visited map to allow printErrorlikeObject to process it
+                // The circular reference check is already done in printAs, so we know it's safe
+                const was_in_map = if (this.map_node != null) this.map.remove(value) else false;
+                defer if (was_in_map) {
+                    _ = this.map.put(value, {}) catch {};
+                };
+
                 VirtualMachine.get().printErrorlikeObject(
                     value,
                     null,
@@ -2617,12 +2638,25 @@ pub const Formatter = struct {
                 } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
+                    if (remove_before_recurse) {
+                        remove_before_recurse = false;
+                        _ = this.map.remove(value);
+                    }
+
                     if (value.isCallable()) {
+                        remove_before_recurse = true;
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
+                    remove_before_recurse = true;
                     return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
                 }
+                if (remove_before_recurse) {
+                    remove_before_recurse = false;
+                    _ = this.map.remove(value);
+                }
+
+                remove_before_recurse = true;
                 return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
@@ -2887,6 +2921,12 @@ pub const Formatter = struct {
                 const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
+                        if (remove_before_recurse) {
+                            _ = this.map.remove(value);
+                        }
+
+                        // We must potentially remove it again.
+                        remove_before_recurse = true;
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },
                 };

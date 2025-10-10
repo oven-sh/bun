@@ -801,12 +801,6 @@ fn BaseWindowsPipeWriter(
             this.updateRef(event_loop, false);
         }
 
-        fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
-            const file = bun.cast(*Source.File, handle.data);
-            handle.deinit();
-            bun.default_allocator.destroy(file);
-        }
-
         fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
             const this = bun.cast(*uv.Pipe, handle.data);
             bun.default_allocator.destroy(this);
@@ -822,12 +816,13 @@ fn BaseWindowsPipeWriter(
             if (this.source) |source| {
                 switch (source) {
                     .sync_file, .file => |file| {
-                        // always cancel the current one
-                        file.fs.cancel();
+                        // Use state machine to handle close after operation completes
                         if (this.owns_fd) {
-                            // always use close_fs here because we can have a operation in progress
-                            file.close_fs.data = file;
-                            _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                            file.detach();
+                        } else {
+                            // Don't own fd, just stop operations and detach parent
+                            file.stop();
+                            file.fs.data = null;
                         }
                     },
                     .pipe => |pipe| {
@@ -1013,14 +1008,27 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = Source.File.fromFS(fs);
             const result = fs.result;
-            if (result.int() == uv.UV_ECANCELED) {
-                fs.deinit();
+            const was_canceled = result.int() == uv.UV_ECANCELED;
+            const parent_ptr = fs.data;
+
+            // ALWAYS complete first
+            file.complete(was_canceled);
+
+            // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
+            if (parent_ptr == null) {
                 return;
             }
-            const this = bun.cast(*WindowsWriter, fs.data);
 
-            fs.deinit();
+            const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            if (was_canceled) {
+                // Canceled write - clear pending state
+                this.pending_payload_size = 0;
+                return;
+            }
+
             if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
@@ -1043,12 +1051,16 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     @panic("This code path shouldn't be reached - sync_file in PipeWriter.zig");
                 },
                 .file => |file| {
+                    // BufferedWriter ensures pending_payload_size blocks concurrent writes
+                    bun.assert(file.canStart());
+
                     this.pending_payload_size = buffer.len;
-                    file.fs.deinit();
                     file.fs.setData(this);
+                    file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        file.complete(false);
                         this.close();
                         onError(this.parent, err);
                     }
@@ -1127,16 +1139,11 @@ pub const StreamBuffer = struct {
     }
 
     pub fn writeAssumeCapacity(this: *StreamBuffer, buffer: []const u8) void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
-        byte_list.appendSliceAssumeCapacity(buffer);
+        this.list.appendSliceAssumeCapacity(buffer);
     }
 
     pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) OOM!void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
-
-        _ = try byte_list.ensureUnusedCapacity(this.list.allocator, capacity);
+        return this.list.ensureUnusedCapacity(capacity);
     }
 
     pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) OOM!void {
@@ -1144,8 +1151,8 @@ pub const StreamBuffer = struct {
     }
 
     pub fn writeTypeAsBytesAssumeCapacity(this: *StreamBuffer, comptime T: type, data: T) void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
@@ -1156,16 +1163,16 @@ pub const StreamBuffer = struct {
             }
 
             {
-                var byte_list = bun.ByteList.fromList(this.list);
-                defer this.list = byte_list.listManaged(this.list.allocator);
+                var byte_list = bun.ByteList.moveFromList(&this.list);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator);
                 _ = try byte_list.writeLatin1(this.list.allocator, buffer);
             }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
             {
-                var byte_list = bun.ByteList.fromList(this.list);
-                defer this.list = byte_list.listManaged(this.list.allocator);
+                var byte_list = bun.ByteList.moveFromList(&this.list);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
                 _ = try byte_list.writeUTF16(this.list.allocator, buffer);
             }
@@ -1185,15 +1192,15 @@ pub const StreamBuffer = struct {
             }
         }
 
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
         _ = try byte_list.writeLatin1(this.list.allocator, buffer);
     }
 
     pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) OOM!void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
         _ = try byte_list.writeUTF16(this.list.allocator, buffer);
     }
@@ -1327,14 +1334,27 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = Source.File.fromFS(fs);
             const result = fs.result;
-            if (result.int() == uv.UV_ECANCELED) {
-                fs.deinit();
+            const was_canceled = result.int() == uv.UV_ECANCELED;
+            const parent_ptr = fs.data;
+
+            // ALWAYS complete first
+            file.complete(was_canceled);
+
+            // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
+            if (parent_ptr == null) {
                 return;
             }
-            const this = bun.cast(*WindowsWriter, fs.data);
 
-            fs.deinit();
+            const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            if (was_canceled) {
+                // Canceled write - reset buffers
+                this.current_payload.reset();
+                return;
+            }
+
             if (result.toError(.write)) |err| {
                 this.close();
                 onError(this.parent, err);
@@ -1377,11 +1397,15 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     @panic("sync_file pipe write should not be reachable");
                 },
                 .file => |file| {
-                    file.fs.deinit();
+                    // StreamingWriter ensures current_payload blocks concurrent writes
+                    bun.assert(file.canStart());
+
                     file.fs.setData(this);
+                    file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();

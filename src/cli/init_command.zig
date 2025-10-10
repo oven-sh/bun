@@ -1153,7 +1153,7 @@ const Template = enum {
             .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
             .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
             .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/components/ui/textarea.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/textarea.tsx") },
             .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
             .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },

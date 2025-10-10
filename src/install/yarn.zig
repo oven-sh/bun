@@ -1671,6 +1671,8 @@ pub fn migrateYarnLockfile(
 
     try this.resolve(log);
 
+    try this.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, true);
+
     if (Environment.allow_assert) {
         try this.verifyData();
     }
@@ -1679,7 +1681,7 @@ pub fn migrateYarnLockfile(
 
     const result = LoadResult{ .ok = .{
         .lockfile = this,
-        .was_migrated = true,
+        .migrated = .yarn,
         .loaded_from_binary_lockfile = false,
         .serializer_result = .{},
         .format = .binary,

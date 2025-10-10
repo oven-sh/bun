@@ -27,7 +27,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return this.tag;
         }
@@ -601,7 +601,7 @@ pub const UpgradeCommand = struct {
                         .stdin = .inherit,
 
                         .windows = if (Environment.isWindows) .{
-                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
                         },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
@@ -820,7 +820,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
+                bun.handleOom(env_loader.map.put("IS_BUN_AUTO_UPDATE", "true"));
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
                 _ = std.process.Child.run(.{

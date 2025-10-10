@@ -1619,18 +1619,30 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .buffer) {
-        subprocess.stdin.buffer.start().assert();
+        if (subprocess.stdin.buffer.start().asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
     }
 
     if (subprocess.stdout == .pipe) {
-        subprocess.stdout.pipe.start(subprocess, loop).assert();
+        if (subprocess.stdout.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
             subprocess.stdout.pipe.readAll();
         }
     }
 
     if (subprocess.stderr == .pipe) {
-        subprocess.stderr.pipe.start(subprocess, loop).assert();
+        if (subprocess.stderr.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
 
         if ((is_sync or !lazy) and subprocess.stderr == .pipe) {
             subprocess.stderr.pipe.readAll();
@@ -1745,7 +1757,7 @@ pub fn spawnMaybeSync(
 
 fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bun.JSError {
     const err = jsc.SystemError{
-        .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
+        .message = bun.handleOom(bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command})),
         .code = bun.String.static("ENOENT"),
         .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.cloneUTF8(command),

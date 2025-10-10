@@ -74,12 +74,24 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+// Minimum release age in ms (security feature)
+// Only install packages published at least N ms ago
+minimum_release_age_ms: ?f64 = null,
+// Packages to exclude from minimum release age checking
+minimum_release_age_excludes: ?[]const []const u8 = null,
+
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
     provenance: bool = false,
+    tolerate_republish: bool = false,
 };
 
 pub const Access = enum {
@@ -367,6 +379,14 @@ pub fn load(
             }
         }
 
+        if (config.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
+        }
+
+        if (config.minimum_release_age_excludes) |exclusions| {
+            this.minimum_release_age_excludes = exclusions;
+        }
+
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
     }
 
@@ -542,6 +562,10 @@ pub fn load(
             this.save_text_lockfile = save_text_lockfile;
         }
 
+        if (cli.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
+        }
+
         this.lockfile_only = cli.lockfile_only;
 
         if (cli.lockfile_only) {
@@ -579,6 +603,10 @@ pub fn load(
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
         }
+
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;
@@ -637,6 +665,7 @@ pub fn load(
         if (cli.publish_config.auth_type) |auth_type| {
             this.publish_config.auth_type = auth_type;
         }
+        this.publish_config.tolerate_republish = cli.tolerate_republish;
 
         if (cli.ca.len > 0) {
             this.ca = cli.ca;

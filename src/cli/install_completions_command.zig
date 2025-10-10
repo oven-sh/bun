@@ -25,7 +25,7 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.bun/bin
             outer: {
-                if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                if (bun.EnvVar.home.get()) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.posix.symlink(exe, target) catch break :outer;
                     return;
@@ -34,7 +34,7 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.local/bin
             outer: {
-                if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                if (bun.EnvVar.home.get()) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.posix.symlink(exe, target) catch break :outer;
                     return;
@@ -229,7 +229,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                    if (bun.EnvVar.home.get()) |home_dir| {
                         outer: {
                             var paths = [_]string{ home_dir, "./.config/fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
@@ -287,7 +287,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                    if (bun.EnvVar.home.get()) |home_dir| {
                         {
                             outer: {
                                 var paths = [_]string{ home_dir, "./.oh-my-zsh/completions" };
@@ -339,7 +339,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                    if (bun.EnvVar.home.get()) |home_dir| {
                         {
                             outer: {
                                 var paths = [_]string{ home_dir, "./.oh-my-bash/custom/completions" };
@@ -449,7 +449,7 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     second: {
-                        if (bun.getenvZ(bun.DotEnv.home_env)) |zdot_dir| {
+                        if (bun.EnvVar.home.get()) |zdot_dir| {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
@@ -459,7 +459,7 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     third: {
-                        if (bun.getenvZ(bun.DotEnv.home_env)) |zdot_dir| {
+                        if (bun.EnvVar.home.get()) |zdot_dir| {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
                             zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;

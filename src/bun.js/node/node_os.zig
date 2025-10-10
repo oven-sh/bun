@@ -311,10 +311,11 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
+        // TODO(markovejnovic): This could use queryHomeDirPosix in os.zig.
 
         // The posix implementation of uv_os_homedir first checks the HOME
         // environment variable, then falls back to reading the passwd entry.
-        if (bun.getenvZ("HOME")) |home| {
+        if (bun.EnvVar.home.get()) |home| {
             if (home.len > 0)
                 return bun.String.init(home);
         }

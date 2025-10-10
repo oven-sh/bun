@@ -460,6 +460,12 @@ pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize
     return std.mem.indexOf(T, haystack, needle);
 }
 
+/// Bounds-checked access to a character in a string.
+pub fn charAtT(comptime T: type, haystack: []const T, idx: usize) ?T {
+    if (idx >= haystack.len) return null;
+    return haystack[idx];
+}
+
 pub fn split(self: string, delimiter: string) SplitIterator {
     return SplitIterator{
         .buffer = self,

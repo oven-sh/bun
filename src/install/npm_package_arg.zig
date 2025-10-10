@@ -218,6 +218,243 @@ pub const NpaSpec = struct {
         return object;
     }
 
+    fn fromUrl(
+        allocator: std.mem.Allocator,
+        name: ?[]const u8,
+        raw_spec: []const u8,
+        raw: []const u8,
+    ) !NpaSpec {
+        var raw_spec_mut = raw_spec;
+
+        // Handle git+ssh:// SCP-style URLs
+        // Regex: /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#(.*))?$/i
+        // Looking for: git+ssh://user@host:path (not git+ssh://host:port/path)
+        if (SpecStrUtils.gitScpExtractFragmentCommittish(raw_spec)) |scp_result| {
+            // Filter out port number patterns: :[0-9]+(/|$)
+            // If it doesn't contain a port number, it's SCP-style
+            if (!SpecStrUtils.containsPortNumber(scp_result.fragment)) {
+                const raw_owned = try allocator.dupe(u8, raw);
+                const fetch_spec = try allocator.dupe(u8, scp_result.fragment);
+                const save_spec = try allocator.dupe(u8, raw_spec);
+                const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+
+                // Parse the committish for special syntax like semver:, path:
+                var git_attrs = if (scp_result.committish) |c|
+                    try GitAttrs.fromCommittish(allocator, c)
+                else
+                    null;
+                errdefer if (git_attrs) |*a| a.deinit();
+
+                return .{
+                    .raw = raw_owned,
+                    .name = name,
+                    .raw_spec = raw_spec_owned,
+                    .fetch_spec = fetch_spec,
+                    .save_spec = save_spec,
+                    .type = .{
+                        .git = .{
+                            .hosted = null,
+                            .attrs = git_attrs,
+                        },
+                    },
+                    ._allocator = allocator,
+                };
+            }
+        }
+
+        if (bun.strings.hasPrefixCaseInsensitive(raw_spec, "git+file://")) {
+            // Although normalizeSeparatorsMut guards against windows, we want to avoid the
+            // allocation if we can help it.
+            if (bun.Environment.isWindows) {
+                const normalized = try allocator.dupe(u8, raw_spec);
+                bun.pathlib.normalizeSeparatorsMut(normalized, &.{.only_on_windows});
+                raw_spec_mut = normalized;
+                // TODO(markovejnovic): Do you free the raw_spec_mut later?
+            }
+        }
+
+        const parsed_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_mut)) orelse {
+            return error.InvalidURL;
+        };
+        defer parsed_url.deinit();
+
+        const protocol_str = parsed_url.protocol();
+        defer protocol_str.deref();
+        const protocol = protocol_str.toUTF8(allocator);
+        defer protocol.deinit();
+
+        // Switch on protocol
+        const protocol_slice = protocol.slice();
+
+        // HTTP/HTTPS protocols - remote type
+        // Note: URL.protocol() returns without the trailing colon
+        if (bun.strings.eqlComptime(protocol_slice, "http") or
+            bun.strings.eqlComptime(protocol_slice, "https"))
+        {
+            const raw_owned = try allocator.dupe(u8, raw);
+            const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+            return .{
+                .raw = raw_owned,
+                .name = name,
+                .raw_spec = raw_spec_owned,
+                .fetch_spec = raw_spec_owned,
+                .save_spec = raw_spec_owned,
+                .type = .remote,
+                ._allocator = allocator,
+            };
+        }
+
+        // Git protocols
+        // Note: URL.protocol() returns without the trailing colon
+        if (bun.strings.eqlComptime(protocol_slice, "git") or
+            bun.strings.eqlComptime(protocol_slice, "git+http") or
+            bun.strings.eqlComptime(protocol_slice, "git+https") or
+            bun.strings.eqlComptime(protocol_slice, "git+rsync") or
+            bun.strings.eqlComptime(protocol_slice, "git+ftp") or
+            bun.strings.eqlComptime(protocol_slice, "git+file") or
+            bun.strings.eqlComptime(protocol_slice, "git+ssh"))
+        {
+            var fetch_spec: []const u8 = undefined;
+
+            // Special handling for git+file:// with Windows drive letters
+            if (bun.strings.eqlComptime(protocol_slice, "git+file")) {
+                // Check for pattern: git+file://[a-z]:
+                if (raw_spec_mut.len > "git+file://".len + 2) {
+                    const after_protocol = raw_spec_mut["git+file://".len..];
+                    if (after_protocol.len >= 2 and after_protocol[1] == ':') {
+                        const c = after_protocol[0];
+                        if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')) {
+                            // Extract host and pathname
+                            const host_str = parsed_url.host();
+                            defer host_str.deref();
+                            const pathname_str = parsed_url.pathname();
+                            defer pathname_str.deref();
+
+                            const host_utf8 = host_str.toUTF8(allocator);
+                            defer host_utf8.deinit();
+                            const pathname_utf8 = pathname_str.toUTF8(allocator);
+                            defer pathname_utf8.deinit();
+
+                            // Convert host to lowercase (npa.js line 412)
+                            const host_lower = try allocator.alloc(u8, host_utf8.slice().len);
+                            defer allocator.free(host_lower);
+                            for (host_utf8.slice(), 0..) |ch, idx| {
+                                host_lower[idx] = std.ascii.toLower(ch);
+                            }
+
+                            fetch_spec = try std.fmt.allocPrint(allocator, "git+file://{s}:{s}", .{
+                                host_lower,
+                                pathname_utf8.slice(),
+                            });
+                        } else {
+                            // Regular URL toString without hash
+                            const href = parsed_url.href();
+                            defer href.deref();
+                            const href_utf8 = href.toUTF8(allocator);
+                            defer href_utf8.deinit();
+
+                            // Remove hash if present
+                            const href_slice = href_utf8.slice();
+                            const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
+                                href_slice[0..idx]
+                            else
+                                href_slice;
+
+                            fetch_spec = try allocator.dupe(u8, without_hash);
+                        }
+                    } else {
+                        const href = parsed_url.href();
+                        defer href.deref();
+                        const href_utf8 = href.toUTF8(allocator);
+                        defer href_utf8.deinit();
+
+                        const href_slice = href_utf8.slice();
+                        const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
+                            href_slice[0..idx]
+                        else
+                            href_slice;
+
+                        fetch_spec = try allocator.dupe(u8, without_hash);
+                    }
+                } else {
+                    const href = parsed_url.href();
+                    defer href.deref();
+                    const href_utf8 = href.toUTF8(allocator);
+                    defer href_utf8.deinit();
+
+                    const href_slice = href_utf8.slice();
+                    const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
+                        href_slice[0..idx]
+                    else
+                        href_slice;
+
+                    fetch_spec = try allocator.dupe(u8, without_hash);
+                }
+            } else {
+                // For other git protocols, use URL without hash
+                const href = parsed_url.href();
+                defer href.deref();
+                const href_utf8 = href.toUTF8(allocator);
+                defer href_utf8.deinit();
+
+                const href_slice = href_utf8.slice();
+                const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
+                    href_slice[0..idx]
+                else
+                    href_slice;
+
+                fetch_spec = try allocator.dupe(u8, without_hash);
+            }
+
+            // Strip git+ prefix from fetchSpec if present
+            const final_fetch_spec = if (bun.strings.hasPrefixComptime(fetch_spec, "git+")) blk: {
+                const without_prefix = try allocator.dupe(u8, fetch_spec[4..]);
+                allocator.free(fetch_spec);
+                break :blk without_prefix;
+            } else fetch_spec;
+
+            const raw_owned = try allocator.dupe(u8, raw);
+            const save_spec = try allocator.dupe(u8, raw_spec);
+            const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+
+            // Extract and parse committish from hash
+            const hash_str = parsed_url.hash();
+            defer hash_str.deref();
+            const hash_utf8 = hash_str.toUTF8(allocator);
+            defer hash_utf8.deinit();
+            const hash_slice = hash_utf8.slice();
+            const raw_committish = if (hash_slice.len > 1)
+                hash_slice[1..] // Skip the # character
+            else
+                null;
+
+            // Parse the committish for special syntax like semver:, path:
+            var git_attrs = if (raw_committish) |c|
+                try GitAttrs.fromCommittish(allocator, c)
+            else
+                null;
+            errdefer if (git_attrs) |*a| a.deinit();
+
+            return .{
+                .raw = raw_owned,
+                .name = name,
+                .raw_spec = raw_spec_owned,
+                .fetch_spec = final_fetch_spec,
+                .save_spec = save_spec,
+                .type = .{
+                    .git = .{
+                        .attrs = git_attrs,
+                        .hosted = null,
+                    },
+                },
+                ._allocator = allocator,
+            };
+        }
+
+        // Unsupported protocol
+        return error.InvalidURL;
+    }
+
     /// Parses a spec which is assumed to be a registry spec. Matches `fromRegistry` in npa.js.
     ///
     /// Borrows all arguments.
@@ -405,83 +642,54 @@ pub const NpaSpec = struct {
         where: []const u8,
         raw: []const u8,
     ) !Self {
-
-        // Clean the raw_spec using pathToFileURL transformations
         var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(allocator, raw_spec) catch {
             return error.InvalidPath;
         };
+        // TODO(markovejnovic): Is this allocation necessary?
         defer allocator.free(raw_spec_cleaned);
 
         // Create resolvedUrl: new URL(rawSpec, `${pathToFileURL(path.resolve(where))}/`)
         // First, resolve the "where" path
-        var where_buf: bun.PathBuffer = undefined;
-        var where_buf2: bun.PathBuffer = undefined;
-        const resolved_where = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, &.{where}, &where_buf, &where_buf2)
-        else
-            PathResolver.resolvePosixT(u8, &.{where}, &where_buf, &where_buf2);
+        var path_buffers: PathHelpers.PathBufferPair = .{};
+        const resolved_where_path = try PathHelpers.resolve(&.{where}, &path_buffers);
 
-        const resolved_where_path = switch (resolved_where) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        };
+        // Build where file URL with trailing slash
+        const where_url_len = PathToFileUrlUtils.pathToFileUrlLength(resolved_where_path);
+        const where_with_slash_buf = try allocator.alloc(u8, where_url_len + 1);
+        defer allocator.free(where_with_slash_buf);
 
-        // Build where file URL with trailing slash using StringBuilder
-        // Calculate the required capacity
-        var where_url_len = PathToFileUrlUtils.pathToFileUrlLength(resolved_where_path);
-        where_url_len += 1; // Add 1 for trailing slash
-
-        var where_url_builder = bun.StringBuilder{ .cap = where_url_len, .len = 0, .ptr = null };
-        try where_url_builder.allocate(allocator);
-        defer where_url_builder.deinit(allocator);
-
-        // Manually build the pathToFileURL result with trailing slash in one go
-        if (!bun.strings.hasPrefixComptime(resolved_where_path, "file:")) {
-            _ = where_url_builder.append("file:");
-        }
-
-        // Encode the path
-        for (resolved_where_path) |c| {
-            if (PathToFileUrlUtils.encoded_path_cars[c]) |encoded| {
-                _ = where_url_builder.append(encoded);
-            } else {
-                _ = where_url_builder.append(&[_]u8{c});
-            }
-        }
-
-        // Add trailing slash
-        _ = where_url_builder.append("/");
-
-        const where_with_slash = where_url_builder.ptr.?[0..where_url_builder.len];
+        const where_url = PathToFileUrlUtils.pathToFileUrl(where_with_slash_buf, resolved_where_path);
+        where_with_slash_buf[where_url.len] = '/';
+        const where_with_slash = where_with_slash_buf[0 .. where_url.len + 1];
 
         // RFC 8089 backwards compatibility: turn file://path into file:/path
         // This handles file:// followed by a non-slash character
-        if (raw_spec_cleaned.len >= 7 and
-            bun.strings.hasPrefixComptime(raw_spec_cleaned, "file://") and
-            raw_spec_cleaned[7] != '/')
+        var raw_spec_cleanest = raw_spec_cleaned;
+        defer if (raw_spec_cleanest.ptr != raw_spec_cleaned.ptr) allocator.free(raw_spec_cleanest);
+        if (bun.strings.hasPrefixComptime(raw_spec_cleaned, "file://") and
+            bun.strings.charAtT(u8, raw_spec_cleaned, 7) != '/')
         {
             // file://path/to/foo -> file:/path/to/foo
-            var compat_builder = std.ArrayList(u8).init(allocator);
-            defer compat_builder.deinit();
-            try compat_builder.appendSlice("file:/");
-            try compat_builder.appendSlice(raw_spec_cleaned[7..]);
-            const old_cleaned = raw_spec_cleaned;
-            raw_spec_cleaned = try compat_builder.toOwnedSlice();
-            allocator.free(old_cleaned);
+            const new_len = raw_spec_cleaned.len - 1; // Remove one '/'
+            var compat_builder = bun.StringBuilder{ .cap = new_len, .len = 0, .ptr = null };
+            try compat_builder.allocate(allocator);
+            _ = compat_builder.append("file:/");
+            _ = compat_builder.append(raw_spec_cleaned[7..]);
+            raw_spec_cleanest = compat_builder.ptr.?[0..compat_builder.len];
         }
 
-        const resolved_href = bun.jsc.URL.join(bun.String.init(where_with_slash), bun.String.init(raw_spec_cleaned));
+        const resolved_href = bun.jsc.URL.join(
+            bun.String.init(where_with_slash),
+            bun.String.init(raw_spec_cleanest),
+        );
         defer resolved_href.deref();
-
-        if (comptime bun.Environment.allow_assert) {
-            const resolved_href_utf8 = resolved_href.toUTF8(allocator);
-            defer resolved_href_utf8.deinit();
-        }
 
         const resolved_url = bun.jsc.URL.fromString(resolved_href) orelse return error.InvalidURL;
         defer resolved_url.deinit();
 
-        const spec_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_cleaned)) orelse return error.InvalidURL;
+        const spec_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_cleanest)) orelse {
+            return error.InvalidURL;
+        };
         defer spec_url.deinit();
 
         // Decode spec_url.pathname
@@ -492,7 +700,11 @@ pub const NpaSpec = struct {
 
         var spec_path_list = std.ArrayList(u8).init(allocator);
         defer spec_path_list.deinit();
-        _ = PercentEncoding.decode(@TypeOf(spec_path_list.writer()), spec_path_list.writer(), spec_pathname.slice()) catch return error.InvalidPath;
+        _ = PercentEncoding.decode(
+            @TypeOf(spec_path_list.writer()),
+            spec_path_list.writer(),
+            spec_pathname.slice(),
+        ) catch return error.InvalidPath;
         var spec_path = try spec_path_list.toOwnedSlice();
         defer allocator.free(spec_path);
 
@@ -505,7 +717,11 @@ pub const NpaSpec = struct {
 
         var resolved_path_list = std.ArrayList(u8).init(allocator);
         defer resolved_path_list.deinit();
-        _ = PercentEncoding.decode(@TypeOf(resolved_path_list.writer()), resolved_path_list.writer(), resolved_pathname.slice()) catch return error.InvalidPath;
+        _ = PercentEncoding.decode(
+            @TypeOf(resolved_path_list.writer()),
+            resolved_path_list.writer(),
+            resolved_pathname.slice(),
+        ) catch return error.InvalidPath;
         var resolved_path = try resolved_path_list.toOwnedSlice();
         defer allocator.free(resolved_path);
 
@@ -516,43 +732,21 @@ pub const NpaSpec = struct {
         }
 
         // Handle special cases for saveSpec and fetchSpec
-        var save_spec: []u8 = undefined;
-        var fetch_spec: []u8 = undefined;
-
-        // Check for homedir pattern: /~/ or /~
-        if (spec_path.len >= 2 and spec_path[0] == '/' and spec_path[1] == '~' and
-            (spec_path.len == 2 or spec_path[2] == '/'))
-        {
-            // res.saveSpec = `file:${specPath.substr(1)}`
-            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{spec_path[1..]});
-
-            // res.fetchSpec = path.resolve(homedir(), specPath.substr(3))
-            // Get the home directory and resolve the path against it
-            const home = bun.getenvZ("HOME") orelse return error.InvalidPath;
-            const path_after_tilde = spec_path[3..]; // Skip "/~/"
-
-            fetch_spec = try PathHelpers.resolve(allocator, &.{ home, path_after_tilde });
-        } else if (!std.fs.path.isAbsolute(if (raw_spec_cleaned.len > 5) raw_spec_cleaned[5..] else "")) { // Check if path after "file:" is relative
-            // res.saveSpec = `file:${path.relative(where, resolvedPath)}`
-            const relative_path = try PathHelpers.relative(allocator, resolved_where_path, resolved_path);
-            defer allocator.free(relative_path);
-            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{relative_path});
-
-            // res.fetchSpec = path.resolve(where, resolvedPath)
-            fetch_spec = try PathHelpers.resolve(allocator, &.{ where, resolved_path });
-        } else {
-            // res.saveSpec = `file:${path.resolve(resolvedPath)}`
-            save_spec = try PathHelpers.resolveWithPrefix(allocator, "file:", &.{resolved_path});
-
-            // res.fetchSpec = path.resolve(where, resolvedPath)
-            fetch_spec = try PathHelpers.resolve(allocator, &.{ where, resolved_path });
-        }
+        const fetch_spec, const save_spec = Self.normalizePath(
+            allocator,
+            spec_path,
+            raw_spec_cleanest,
+            where,
+            resolved_path,
+        ) catch {
+            return error.InvalidPath;
+        };
+        errdefer allocator.free(save_spec);
+        errdefer allocator.free(fetch_spec);
 
         // Normalize slashes in saveSpec (replace backslashes with forward slashes on Windows)
         if (bun.Environment.isWindows) {
-            for (save_spec) |*c| {
-                if (c.* == '\\') c.* = '/';
-            }
+            pathlib.normalizeSeparatorsMut(save_spec, &.{.only_on_windows});
 
             // Fix double slashes: file://C:/foo -> file:/C:/foo
             if (bun.strings.hasPrefixComptime(save_spec, "file://")) {
@@ -576,6 +770,55 @@ pub const NpaSpec = struct {
             .type = Self.Type.fromInodePath(raw_spec),
             ._allocator = allocator,
         };
+    }
+
+    /// Performs tilde expansion, relative path resolution against `where`, and absolute path
+    /// resolution.
+    fn normalizePath(
+        allocator: std.mem.Allocator,
+        spec_path: []const u8,
+        raw_spec: []const u8,
+        where_path: []const u8,
+        resolved_path: []const u8,
+    ) !struct { []u8, []u8 } {
+        var save_spec: []u8 = undefined;
+        var fetch_spec: []u8 = undefined;
+
+        var path_buffers: PathHelpers.PathBufferPair = .{};
+
+        if (bun.strings.hasPrefixComptime(spec_path, "/~/") or
+            bun.strings.eqlComptime(spec_path, "/~"))
+        {
+            // res.saveSpec = `file:${specPath.substr(1)}`
+            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{spec_path[1..]});
+
+            // res.fetchSpec = path.resolve(homedir(), specPath.substr(3))
+            // Get the home directory and resolve the path against it
+            const home = bun.getenvZ("HOME") orelse return error.InvalidPath;
+            const path_after_tilde = if (spec_path.len > 3) spec_path[3..] else "";
+
+            const resolved = try PathHelpers.resolve(&.{ home, path_after_tilde }, &path_buffers);
+            fetch_spec = try allocator.dupe(u8, resolved);
+        } else if (!std.fs.path.isAbsolute(bun.strings.drop(raw_spec, 5))) {
+            // Check if path after "file:" is relative
+            // res.saveSpec = `file:${path.relative(where, resolvedPath)}`
+            var relative_buffers: PathHelpers.PathBufferTriplet = .{};
+            const relative_path = try PathHelpers.relative(where_path, resolved_path, &relative_buffers);
+            save_spec = try std.fmt.allocPrint(allocator, "file:{s}", .{relative_path});
+
+            // res.fetchSpec = path.resolve(where, resolvedPath)
+            const resolved = try PathHelpers.resolve(&.{ where_path, resolved_path }, &path_buffers);
+            fetch_spec = try allocator.dupe(u8, resolved);
+        } else {
+            // res.saveSpec = `file:${path.resolve(resolvedPath)}`
+            save_spec = try PathHelpers.resolveWithPrefix(allocator, "file:", &.{resolved_path}, &path_buffers);
+
+            // res.fetchSpec = path.resolve(where, resolvedPath)
+            const resolved = try PathHelpers.resolve(&.{ where_path, resolved_path }, &path_buffers);
+            fetch_spec = try allocator.dupe(u8, resolved);
+        }
+
+        return .{ fetch_spec, save_spec };
     }
 };
 
@@ -761,7 +1004,7 @@ fn resolve(
     }
 
     if (SpecStrUtils.isUrl(spec)) {
-        return fromURL(allocator, name, spec, raw);
+        return NpaSpec.fromUrl(allocator, name, spec, raw);
     }
 
     // These are now best-guesses.
@@ -775,7 +1018,7 @@ fn resolve(
 }
 
 const PathToFileUrlUtils = struct {
-    const encoded_path_cars = blk: {
+    const encoded_path_chars = blk: {
         var map: [256]?[]const u8 = undefined;
 
         for (&map) |*p| p.* = null;
@@ -799,12 +1042,16 @@ const PathToFileUrlUtils = struct {
     };
 
     /// Exactly matches npa's pathToFileUrl function.
-    pub fn pathToFileUrl(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    /// Writes the encoded path to the provided buffer and returns a slice of what was written.
+    ///
+    /// It is undefined behavior to provide a buffer that is too small.
+    pub fn pathToFileUrl(buffer: []u8, path: []const u8) []u8 {
         const path_it = path;
 
         const out_len = pathToFileUrlLength(path);
-        const result = try allocator.alloc(u8, out_len);
-        var buf_it = result;
+        if (buffer.len < out_len) unreachable;
+
+        var buf_it = buffer;
 
         if (!bun.strings.hasPrefixComptime(path, "file:")) {
             std.mem.copyForwards(u8, buf_it[0.."file:".len], "file:");
@@ -812,24 +1059,24 @@ const PathToFileUrlUtils = struct {
         }
 
         for (path_it) |c| {
-            if (encoded_path_cars[c]) |s| {
+            if (encoded_path_chars[c]) |s| {
                 std.mem.copyForwards(u8, buf_it[0..s.len], s);
                 buf_it = buf_it[s.len..];
-                break;
+                continue;
             }
 
             buf_it[0] = c;
             buf_it = buf_it[1..];
         }
 
-        return result;
+        return buffer[0..out_len];
     }
 
     /// Measures the length of the URL resulting from pathToFileUrl.
     pub fn pathToFileUrlLength(path: []const u8) usize {
         var size: u32 = 0;
         for (path) |c| {
-            if (encoded_path_cars[c]) |s| {
+            if (encoded_path_chars[c]) |s| {
                 size += @intCast(s.len);
             } else {
                 size += 1;
@@ -853,6 +1100,8 @@ const PathToFileUrlUtils = struct {
     /// Ultimately the goal of this function is to do what a lot of regexes do in npa.js, but
     /// without any of that -- that causes the function to quickly spiral into a mess + I've been
     /// in the office for 14h straight and my brain is mush. I apologize.
+    ///
+    /// TODO(markovejnovic): Clean up this utility.
     pub fn cleanPathToFileUrl(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         // Step 1: Measure the length after pathToFileURL and determine transformations
         var total_len = pathToFileUrlLength(path);
@@ -945,7 +1194,7 @@ const PathToFileUrlUtils = struct {
 
         // Step 5: Copy remaining characters with encoding
         for (path[path_idx..]) |c| {
-            if (encoded_path_cars[c]) |s| {
+            if (encoded_path_chars[c]) |s| {
                 std.mem.copyForwards(u8, buf_it[0..s.len], s);
                 buf_it = buf_it[s.len..];
             } else {
@@ -1105,290 +1354,84 @@ const SpecStrUtils = struct {
             else => false,
         };
     }
-};
 
-fn fromURL(
-    allocator: std.mem.Allocator,
-    name: ?[]const u8,
-    raw_spec: []const u8,
-    raw: []const u8,
-) !NpaSpec {
-    // TODO(markovejnovic): Most of this function was written by Claude. It would be really
-    // beneficial if we refactored this function out to be a little bit more mentally manageable.
+    /// Given a string git+ssh://<foo>#<committish>, extracts <foo> and <committish> parts.
+    /// Matches: /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#(.*))?$/i
+    pub fn gitScpExtractFragmentCommittish(raw_spec: []const u8) ?struct {
+        fragment: []const u8,
+        committish: ?[]const u8,
+    } {
+        if (!bun.strings.hasPrefixCaseInsensitive(raw_spec, "git+ssh://")) {
+            return null;
+        }
 
-    var raw_spec_mut = raw_spec;
-    var raw_spec_allocated: ?[]u8 = null;
-    defer if (raw_spec_allocated) |s| allocator.free(s);
-
-    // Handle git+ssh:// SCP-style URLs
-    // Regex: /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#(.*))?$/i
-    // Looking for: git+ssh://user@host:path (not git+ssh://host:port/path)
-    if (bun.strings.hasPrefixCaseInsensitive(raw_spec, "git+ssh://")) {
         const after_prefix = raw_spec["git+ssh://".len..];
+        if (after_prefix.len == 0) return null;
 
-        // Only look for : before the # (SCP detection should not find : in hash part)
-        // First, find where the hash starts
+        // Find the hash (if any) to split fragment and committish
         const hash_idx = bun.strings.indexOfChar(after_prefix, '#');
         const before_hash = if (hash_idx) |h| after_prefix[0..h] else after_prefix;
 
-        // Look for the pattern: [^:#]+:[^#]+ (user@host:path, not :1234)
-        const colon_idx = bun.strings.indexOfChar(before_hash, ':');
-        if (colon_idx) |idx| {
-            const before_colon = before_hash[0..idx];
+        // Match pattern: [^:#]+:[^#]+(?:\.git)?
+        // Must contain a colon (SCP syntax)
+        const colon_idx = bun.strings.indexOfChar(before_hash, ':') orelse return null;
 
-            // Check if the ENTIRE string (before hash) contains a port number pattern: :[0-9]+(/|$)
-            // This matches npa.js isPortNumber regex
-            var contains_port = false;
-            var i: usize = 0;
-            while (i < before_hash.len) : (i += 1) {
-                if (before_hash[i] == ':') {
-                    // Found a colon, check if followed by digits and then / or end
-                    var j = i + 1;
-                    var has_digits = false;
-                    while (j < before_hash.len and before_hash[j] >= '0' and before_hash[j] <= '9') : (j += 1) {
-                        has_digits = true;
-                    }
-                    if (has_digits and (j >= before_hash.len or before_hash[j] == '/')) {
-                        contains_port = true;
-                        break;
-                    }
-                }
-            }
+        // Before colon: [^:#]+ (at least one char, no : or #)
+        if (colon_idx == 0) return null;
+        const before_colon = before_hash[0..colon_idx];
 
-            // If it doesn't contain a port number, it's SCP-style
-            if (!contains_port and before_colon.len > 0) {
-                const raw_owned = try allocator.dupe(u8, raw);
-                const fetch_spec = try allocator.dupe(u8, before_hash);
-                const save_spec = try allocator.dupe(u8, raw_spec);
-                const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-
-                // Extract and parse committish from hash
-                const raw_committish = if (hash_idx) |h|
-                    if (h + 1 < after_prefix.len)
-                        after_prefix[h + 1 ..]
-                    else
-                        null
-                else
-                    null;
-
-                // Parse the committish for special syntax like semver:, path:
-                var git_attrs = if (raw_committish) |c|
-                    try GitAttrs.fromCommittish(allocator, c)
-                else
-                    null;
-                errdefer if (git_attrs) |*a| a.deinit();
-
-                return .{
-                    .raw = raw_owned,
-                    .name = name,
-                    .raw_spec = raw_spec_owned,
-                    .fetch_spec = fetch_spec,
-                    .save_spec = save_spec,
-                    .type = .{
-                        .git = .{
-                            .hosted = null,
-                            .attrs = git_attrs,
-                        },
-                    },
-                    ._allocator = allocator,
-                };
-            }
+        // Verify no : or # in before_colon
+        for (before_colon) |c| {
+            if (c == ':' or c == '#') return null;
         }
-    }
 
-    // Handle git+file:// Windows path normalization
-    if (bun.strings.hasPrefixCaseInsensitive(raw_spec, "git+file://")) {
-        // Replace backslashes with forward slashes for Windows
-        if (bun.Environment.isWindows or bun.strings.indexOfChar(raw_spec, '\\') != null) {
-            const normalized = try allocator.dupe(u8, raw_spec);
-            for (normalized) |*c| {
-                if (c.* == '\\') c.* = '/';
-            }
-            raw_spec_mut = normalized;
-            raw_spec_allocated = normalized;
+        // After colon: [^#]+ (at least one char, no #)
+        const after_colon = before_hash[colon_idx + 1 ..];
+        if (after_colon.len == 0) return null;
+
+        // Verify no # in after_colon (guaranteed by before_hash, but explicit check)
+        for (after_colon) |c| {
+            if (c == '#') return null;
         }
-    }
 
-    // Parse the URL
-    const parsed_url = bun.jsc.URL.fromString(bun.String.init(raw_spec_mut)) orelse return error.InvalidURL;
-    defer parsed_url.deinit();
+        // The fragment is the entire before_hash part
+        const fragment = before_hash;
 
-    const protocol_str = parsed_url.protocol();
-    defer protocol_str.deref();
-    const protocol = protocol_str.toUTF8(allocator);
-    defer protocol.deinit();
-
-    // Switch on protocol
-    const protocol_slice = protocol.slice();
-
-    // Git protocols
-    // Note: URL.protocol() returns without the trailing colon
-    if (bun.strings.eqlComptime(protocol_slice, "git") or
-        bun.strings.eqlComptime(protocol_slice, "git+http") or
-        bun.strings.eqlComptime(protocol_slice, "git+https") or
-        bun.strings.eqlComptime(protocol_slice, "git+rsync") or
-        bun.strings.eqlComptime(protocol_slice, "git+ftp") or
-        bun.strings.eqlComptime(protocol_slice, "git+file") or
-        bun.strings.eqlComptime(protocol_slice, "git+ssh"))
-    {
-        var fetch_spec: []const u8 = undefined;
-
-        // Special handling for git+file:// with Windows drive letters
-        if (bun.strings.eqlComptime(protocol_slice, "git+file")) {
-            // Check for pattern: git+file://[a-z]:
-            if (raw_spec_mut.len > "git+file://".len + 2) {
-                const after_protocol = raw_spec_mut["git+file://".len..];
-                if (after_protocol.len >= 2 and after_protocol[1] == ':') {
-                    const c = after_protocol[0];
-                    if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')) {
-                        // Extract host and pathname
-                        const host_str = parsed_url.host();
-                        defer host_str.deref();
-                        const pathname_str = parsed_url.pathname();
-                        defer pathname_str.deref();
-
-                        const host_utf8 = host_str.toUTF8(allocator);
-                        defer host_utf8.deinit();
-                        const pathname_utf8 = pathname_str.toUTF8(allocator);
-                        defer pathname_utf8.deinit();
-
-                        // Convert host to lowercase (npa.js line 412)
-                        const host_lower = try allocator.alloc(u8, host_utf8.slice().len);
-                        defer allocator.free(host_lower);
-                        for (host_utf8.slice(), 0..) |ch, idx| {
-                            host_lower[idx] = std.ascii.toLower(ch);
-                        }
-
-                        fetch_spec = try std.fmt.allocPrint(allocator, "git+file://{s}:{s}", .{
-                            host_lower,
-                            pathname_utf8.slice(),
-                        });
-                    } else {
-                        // Regular URL toString without hash
-                        const href = parsed_url.href();
-                        defer href.deref();
-                        const href_utf8 = href.toUTF8(allocator);
-                        defer href_utf8.deinit();
-
-                        // Remove hash if present
-                        const href_slice = href_utf8.slice();
-                        const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
-                            href_slice[0..idx]
-                        else
-                            href_slice;
-
-                        fetch_spec = try allocator.dupe(u8, without_hash);
-                    }
-                } else {
-                    const href = parsed_url.href();
-                    defer href.deref();
-                    const href_utf8 = href.toUTF8(allocator);
-                    defer href_utf8.deinit();
-
-                    const href_slice = href_utf8.slice();
-                    const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
-                        href_slice[0..idx]
-                    else
-                        href_slice;
-
-                    fetch_spec = try allocator.dupe(u8, without_hash);
-                }
-            } else {
-                const href = parsed_url.href();
-                defer href.deref();
-                const href_utf8 = href.toUTF8(allocator);
-                defer href_utf8.deinit();
-
-                const href_slice = href_utf8.slice();
-                const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
-                    href_slice[0..idx]
-                else
-                    href_slice;
-
-                fetch_spec = try allocator.dupe(u8, without_hash);
-            }
-        } else {
-            // For other git protocols, use URL without hash
-            const href = parsed_url.href();
-            defer href.deref();
-            const href_utf8 = href.toUTF8(allocator);
-            defer href_utf8.deinit();
-
-            const href_slice = href_utf8.slice();
-            const without_hash = if (bun.strings.indexOfChar(href_slice, '#')) |idx|
-                href_slice[0..idx]
+        // Extract committish if hash exists
+        const committish = if (hash_idx) |h|
+            if (h + 1 < after_prefix.len)
+                after_prefix[h + 1 ..]
             else
-                href_slice;
+                null
+        else
+            null;
 
-            fetch_spec = try allocator.dupe(u8, without_hash);
+        return .{
+            .fragment = fragment,
+            .committish = committish,
+        };
+    }
+
+    /// Checks if a string contains a port number pattern: :[0-9]+(/|$)
+    /// This matches npa.js isPortNumber regex
+    pub fn containsPortNumber(str: []const u8) bool {
+        var i: usize = 0;
+        while (i < str.len) : (i += 1) {
+            if (str[i] == ':') {
+                // Found a colon, check if followed by digits and then / or end
+                var j = i + 1;
+                var has_digits = false;
+                while (j < str.len and str[j] >= '0' and str[j] <= '9') : (j += 1) {
+                    has_digits = true;
+                }
+                if (has_digits and (j >= str.len or str[j] == '/')) {
+                    return true;
+                }
+            }
         }
-
-        // Strip git+ prefix from fetchSpec if present
-        const final_fetch_spec = if (bun.strings.hasPrefixComptime(fetch_spec, "git+")) blk: {
-            const without_prefix = try allocator.dupe(u8, fetch_spec[4..]);
-            allocator.free(fetch_spec);
-            break :blk without_prefix;
-        } else fetch_spec;
-
-        const raw_owned = try allocator.dupe(u8, raw);
-        const save_spec = try allocator.dupe(u8, raw_spec);
-        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-
-        // Extract and parse committish from hash
-        const hash_str = parsed_url.hash();
-        defer hash_str.deref();
-        const hash_utf8 = hash_str.toUTF8(allocator);
-        defer hash_utf8.deinit();
-        const hash_slice = hash_utf8.slice();
-        const raw_committish = if (hash_slice.len > 1)
-            hash_slice[1..] // Skip the # character
-        else
-            null;
-
-        // Parse the committish for special syntax like semver:, path:
-        var git_attrs = if (raw_committish) |c|
-            try GitAttrs.fromCommittish(allocator, c)
-        else
-            null;
-        errdefer if (git_attrs) |*a| a.deinit();
-
-        return .{
-            .raw = raw_owned,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .fetch_spec = final_fetch_spec,
-            .save_spec = save_spec,
-            .type = .{
-                .git = .{
-                    .attrs = git_attrs,
-                    .hosted = null,
-                },
-            },
-            ._allocator = allocator,
-        };
+        return false;
     }
-
-    // HTTP/HTTPS protocols - remote type
-    // Note: URL.protocol() returns without the trailing colon
-    if (bun.strings.eqlComptime(protocol_slice, "http") or
-        bun.strings.eqlComptime(protocol_slice, "https"))
-    {
-        const raw_owned = try allocator.dupe(u8, raw);
-        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-        return .{
-            .raw = raw_owned,
-            .name = name,
-            .raw_spec = raw_spec_owned,
-            .fetch_spec = raw_spec_owned,
-            .save_spec = raw_spec_owned,
-            .type = .remote,
-            ._allocator = allocator,
-        };
-    }
-
-    // Unsupported protocol
-    return error.InvalidURL;
-}
+};
 
 pub const TestingAPIs = struct {
     /// Shares semantics with npm-package-arg's default export.
@@ -1490,6 +1533,84 @@ pub const TestingAPIs = struct {
     }
 };
 
+/// Helper functions for path operations that reduce boilerplate.
+/// These return heap-allocated results since we typically need to own the paths anyway.
+///
+/// TODO(markovejnovic): This feels like it shouldn't be in npm-package-arg, but in a more generic
+/// location.
+const PathHelpers = struct {
+    const Self = @This();
+
+    const PathBufferPair = struct {
+        buf1: bun.PathBuffer = undefined,
+        buf2: bun.PathBuffer = undefined,
+    };
+
+    const PathBufferTriplet = struct {
+        pair: PathBufferPair = .{},
+        buf3: bun.PathBuffer = undefined,
+    };
+
+    /// JS path.resolve equivalent.
+    fn resolve(
+        segments: []const []const u8,
+        buffers: *PathBufferPair,
+    ) ![]const u8 {
+        const result = if (bun.Environment.isWindows)
+            PathResolver.resolveWindowsT(u8, segments, &buffers.buf1, &buffers.buf2)
+        else
+            PathResolver.resolvePosixT(u8, segments, &buffers.buf1, &buffers.buf2);
+
+        return switch (result) {
+            .result => |r| r,
+            .err => error.InvalidPath,
+        };
+    }
+
+    /// Resolves path segments, prepends a prefix, and returns an owned heap-allocated slice.
+    fn resolveWithPrefix(
+        allocator: std.mem.Allocator,
+        comptime prefix: []const u8,
+        segments: []const []const u8,
+        buffers: *PathBufferPair,
+    ) ![]u8 {
+        const resolved = try Self.resolve(segments, buffers);
+        return std.fmt.allocPrint(allocator, prefix ++ "{s}", .{resolved});
+    }
+
+    /// Computes relative path and returns a stack-backed slice.
+    /// The returned slice is valid as long as the buffers struct is in scope.
+    fn relative(
+        from: []const u8,
+        to: []const u8,
+        buffers: *PathBufferTriplet,
+    ) ![]const u8 {
+        const result = if (bun.Environment.isWindows)
+            PathResolver.relativeWindowsT(
+                u8,
+                from,
+                to,
+                &buffers.pair.buf1,
+                &buffers.pair.buf2,
+                &buffers.buf3,
+            )
+        else
+            PathResolver.relativePosixT(
+                u8,
+                from,
+                to,
+                &buffers.pair.buf1,
+                &buffers.pair.buf2,
+                &buffers.buf3,
+            );
+
+        return switch (result) {
+            .result => |r| r,
+            .err => error.InvalidPath,
+        };
+    }
+};
+
 const PathResolver = @import("../bun.js/node/path.zig");
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
@@ -1499,64 +1620,4 @@ const PercentEncoding = @import("../url.zig").PercentEncoding;
 const bun = @import("bun");
 const Semver = bun.Semver;
 const jsc = bun.jsc;
-
-/// Helper functions for path operations that reduce boilerplate.
-/// These return heap-allocated results since we typically need to own the paths anyway.
-///
-/// TODO(markovejnovic): This feels like it shouldn't be in npm-package-arg, but in a more generic
-/// location.
-const PathHelpers = struct {
-    /// Resolves path segments and returns an owned heap-allocated slice.
-    fn resolve(allocator: std.mem.Allocator, segments: []const []const u8) ![]u8 {
-        var buf1: bun.PathBuffer = undefined;
-        var buf2: bun.PathBuffer = undefined;
-        const result = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, segments, &buf1, &buf2)
-        else
-            PathResolver.resolvePosixT(u8, segments, &buf1, &buf2);
-
-        return allocator.dupe(u8, switch (result) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        });
-    }
-
-    /// Resolves path segments, prepends a prefix, and returns an owned heap-allocated slice.
-    fn resolveWithPrefix(
-        allocator: std.mem.Allocator,
-        comptime prefix: []const u8,
-        segments: []const []const u8,
-    ) ![]u8 {
-        var buf1: bun.PathBuffer = undefined;
-        var buf2: bun.PathBuffer = undefined;
-        const result = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, segments, &buf1, &buf2)
-        else
-            PathResolver.resolvePosixT(u8, segments, &buf1, &buf2);
-
-        return std.fmt.allocPrint(allocator, prefix ++ "{s}", .{switch (result) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        }});
-    }
-
-    /// Computes relative path and returns an owned heap-allocated slice.
-    fn relative(
-        allocator: std.mem.Allocator,
-        from: []const u8,
-        to: []const u8,
-    ) ![]u8 {
-        var buf1: bun.PathBuffer = undefined;
-        var buf2: bun.PathBuffer = undefined;
-        var buf3: bun.PathBuffer = undefined;
-        const result = if (bun.Environment.isWindows)
-            PathResolver.relativeWindowsT(u8, from, to, &buf1, &buf2, &buf3)
-        else
-            PathResolver.relativePosixT(u8, from, to, &buf1, &buf2, &buf3);
-
-        return allocator.dupe(u8, switch (result) {
-            .result => |r| r,
-            .err => return error.InvalidPath,
-        });
-    }
-};
+const pathlib = @import("../paths/Path.zig");

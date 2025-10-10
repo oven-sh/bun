@@ -788,7 +788,7 @@ pub fn init(
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.EnvVar.home.get()) |data_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "./.npmrc",

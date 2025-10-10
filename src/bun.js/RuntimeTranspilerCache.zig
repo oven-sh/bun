@@ -404,7 +404,7 @@ pub const RuntimeTranspilerCache = struct {
         if (comptime bun.Environment.isMac) {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
-            if (bun.getenvZ("HOME")) |home| {
+            if (bun.EnvVar.home.get()) |home| {
                 const parts = &[_][]const u8{
                     home,
                     "Library/",
@@ -416,7 +416,7 @@ pub const RuntimeTranspilerCache = struct {
             }
         }
 
-        if (bun.getenvZ(bun.DotEnv.home_env)) |dir| {
+        if (bun.EnvVar.home.get()) |dir| {
             const parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }

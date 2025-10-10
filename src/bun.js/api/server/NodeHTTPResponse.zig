@@ -255,6 +255,7 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
     const server = this.server;
     this.poll_ref.unref(jsc.VirtualMachine.get());
     this.deref();
+    this.unregisterAutoFlush();
     server.onRequestComplete();
 }
 

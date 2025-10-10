@@ -400,7 +400,7 @@ pub fn BabyList(comptime Type: type) type {
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
             const old = this.listManaged(allocator);
-            const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, []const u8, str);
+            const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, str);
             this.update(new);
             return this.len - initial;
         }
@@ -440,7 +440,6 @@ pub fn BabyList(comptime Type: type) type {
                     const slice_ = list_.items.ptr[orig_len..list_.capacity];
                     const result = strings.copyUTF16IntoUTF8WithBufferImpl(
                         slice_,
-                        []const u16,
                         remain,
                         trimmed,
                         out_len,

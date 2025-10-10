@@ -1235,7 +1235,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const AnyServer = jsc.API.AnyServer;
 const ServerWebSocket = jsc.API.ServerWebSocket;
-const AutoFlusher = jsc.WebCore.AutoFlusher;

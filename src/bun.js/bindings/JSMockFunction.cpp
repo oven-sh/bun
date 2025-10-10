@@ -27,6 +27,7 @@
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "JSNextTickQueue.h"
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
@@ -35,6 +36,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetMockedSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetRealSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsIsFakeTimers);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsRunAllTicks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
@@ -1545,6 +1547,41 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsIsFakeTimers, (JSC::JSGlobalObject * globalOb
 extern "C" bool Bun__Timer__isFakeTimersEnabled(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->overridenDateNow >= 0;
+}
+
+// Drains all pending process.nextTick callbacks
+// This will also run all microtasks scheduled by themselves
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsRunAllTicks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    auto& vm = bunGlobal->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Repeatedly drain the nextTick queue and microtasks until both are empty
+    // This matches Vitest's behavior where runAllTicks runs all microtasks scheduled by themselves
+    const int maxIterations = 10000; // Safety limit to prevent infinite loops
+    int iterations = 0;
+
+    while (iterations++ < maxIterations) {
+        bool hadWork = false;
+
+        // Drain nextTick queue if it has callbacks
+        if (auto nextTickQueue = bunGlobal->m_nextTickQueue.get()) {
+            Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
+            if (!queue->isEmpty()) {
+                queue->drain(vm, bunGlobal);
+                RETURN_IF_EXCEPTION(scope, {});
+                hadWork = true;
+            }
+        }
+
+        // If no work was done, we're done
+        if (!hadWork) {
+            break;
+        }
+    }
+
+    return JSValue::encode(callframe->thisValue());
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

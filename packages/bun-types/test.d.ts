@@ -102,6 +102,7 @@ declare module "bun:test" {
     function getRealSystemTime(): number;
     function isFakeTimers(): boolean;
     function runAllTimers(): void;
+    function runAllTicks(): void;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,
@@ -189,6 +190,7 @@ declare module "bun:test" {
     resetAllMocks: typeof jest.resetAllMocks;
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
+    runAllTicks: typeof jest.runAllTicks;
   };
 
   interface FunctionLike {

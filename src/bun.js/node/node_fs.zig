@@ -2474,11 +2474,11 @@ pub const Arguments = struct {
                         const buf_len = args.buffer.buffer.slice().len;
 
                         // Check if this is an options object
-                        if (current.isObject() and !current.isCallable() and !current.isNumber() and !current.isBigInt()) {
+                        if (current.isObject() and !current.isCallable()) {
                             // Named parameters object: { offset?, length?, position? }
                             // Handle offset
                             if (try current.getTruthy(ctx, "offset")) |offset_val| {
-                                args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, offset_val, "offset", 0, 9007199254740991));
+                                args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, offset_val, "offset", 0, jsc.MAX_SAFE_INTEGER));
                             }
 
                             // Handle length
@@ -2505,7 +2505,7 @@ pub const Arguments = struct {
                             arguments.eat();
                         } else {
                             // Positional parameters: offset, length, position
-                            args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
+                            args.offset = @intCast(try jsc.Node.validators.validateInteger(ctx, current, "offset", 0, jsc.MAX_SAFE_INTEGER));
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 

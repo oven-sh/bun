@@ -108,9 +108,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
     bool fromAncientRequest = false;
-    bool isIdle = true;
-    bool shouldCloseOnceIdle = false;
-
+    bool isConnectRequest = false;
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

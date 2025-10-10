@@ -2331,6 +2331,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".requireResolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -6039,11 +6042,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
-    var buffer = printer.writer.takeBuffer();
+    var buffer: MutableString = printer.writer.takeBuffer();
 
     return .{
         .result = .{
-            .code = buffer.toOwnedSlice(),
+            .code = buffer.takeSlice(),
             .source_map = source_map,
         },
     };

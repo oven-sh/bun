@@ -426,29 +426,29 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSModuleMock = std::forward<decltype(space)>(space); });
     }
 
-    void finishCreation(JSC::VM&, JSC::JSObject* callback);
+    void finishCreation(JSC::VM&);
 
 private:
-    JSModuleMock(JSC::VM&, JSC::Structure*);
+    JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback);
 };
 
 const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleMock) };
 
 JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
 {
-    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure);
-    ptr->finishCreation(vm, callback);
+    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
-void JSModuleMock::finishCreation(JSC::VM& vm, JSObject* callback)
+void JSModuleMock::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    callbackFunctionOrCachedResult.set(vm, this, callback);
 }
 
-JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure)
+JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
     : Base(vm, structure)
+    , callbackFunctionOrCachedResult(callback, JSC::WriteBarrierEarlyInit)
 {
 }
 
@@ -689,6 +689,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (removeFromCJS) {
         globalObject->requireMap()->remove(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
@@ -840,6 +841,11 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
                 break;
             }
             }
+        }
+
+        // Check again after promise resolution
+        if (result.isUndefinedOrNull()) {
+            continue;
         }
 
         if (!result.isObject()) {

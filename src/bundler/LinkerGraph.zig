@@ -78,7 +78,7 @@ pub fn generateRuntimeSymbolImportAndUse(
     entry_point_part_index: Index,
     name: []const u8,
     count: u32,
-) !void {
+) bun.OOM!void {
     if (count == 0) return;
     debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
@@ -96,7 +96,7 @@ pub fn addPartToFile(
     graph: *LinkerGraph,
     id: u32,
     part: Part,
-) !u32 {
+) bun.OOM!u32 {
     var parts: *Part.List = &graph.ast.items(.parts)[id];
     const part_id = @as(u32, @truncate(parts.len));
     try parts.append(graph.allocator, part);
@@ -157,7 +157,7 @@ pub fn generateSymbolImportAndUse(
     ref: Ref,
     use_count: u32,
     source_index_to_import_from: Index,
-) !void {
+) bun.OOM!void {
     if (use_count == 0) return;
 
     var parts_list = g.ast.items(.parts)[source_index].slice();
@@ -166,7 +166,7 @@ pub fn generateSymbolImportAndUse(
     // Mark this symbol as used by this part
 
     var uses = &part.symbol_uses;
-    var uses_entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+    var uses_entry = try uses.getOrPut(g.allocator, ref);
 
     if (!uses_entry.found_existing) {
         uses_entry.value_ptr.* = .{ .count_estimate = use_count };
@@ -471,6 +471,68 @@ pub const File = struct {
 
     pub const List = MultiArrayList(File);
 };
+
+pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
+    const State = struct {
+        visited: bun.collections.AutoBitSet,
+        import_records: []const ImportRecord.List,
+        flags: []JSMeta.Flags,
+
+        pub fn visitAll(self: *@This()) void {
+            for (0..self.import_records.len) |i| {
+                self.visit(i);
+            }
+        }
+
+        fn visit(self: *@This(), index: usize) void {
+            if (self.visited.isSet(index)) return;
+            self.visited.set(index);
+            if (self.flags[index].is_async_or_has_async_dependency) return;
+
+            for (self.import_records[index].sliceConst()) |*import_record| {
+                switch (import_record.kind) {
+                    .stmt => {},
+
+                    // Any use of `import()` that makes the parent async will necessarily use
+                    // top-level await, so this will have already been detected by `validateTLA`,
+                    // and `is_async_or_has_async_dependency` will already be true.
+                    //
+                    // We don't want to process these imports here because `import()` can appear in
+                    // non-top-level contexts (like inside an async function) or in contexts that
+                    // don't use `await`, which don't necessarily make the parent module async.
+                    .dynamic => continue,
+
+                    // `require()` cannot import async modules.
+                    .require, .require_resolve => continue,
+
+                    // Entry points; not imports from JS
+                    .entry_point_run, .entry_point_build => continue,
+                    // CSS imports
+                    .at, .at_conditional, .url, .composes => continue,
+                    // Other non-JS imports
+                    .html_manifest, .internal => continue,
+                }
+
+                const import_index: usize = import_record.source_index.get();
+                if (import_index >= self.import_records.len) continue;
+                self.visit(import_index);
+
+                if (self.flags[import_index].is_async_or_has_async_dependency) {
+                    self.flags[index].is_async_or_has_async_dependency = true;
+                    break;
+                }
+            }
+        }
+    };
+
+    var state: State = .{
+        .visited = try .initEmpty(bun.default_allocator, this.ast.len),
+        .import_records = this.ast.items(.import_records),
+        .flags = this.meta.items(.flags),
+    };
+    defer state.visited.deinit(bun.default_allocator);
+    state.visitAll();
+}
 
 const string = []const u8;
 

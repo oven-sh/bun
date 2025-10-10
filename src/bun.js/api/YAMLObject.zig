@@ -925,7 +925,14 @@ pub fn parse(
     const root = bun.interchange.yaml.YAML.parse(source, &log, arena.allocator()) catch |err| return switch (err) {
         error.OutOfMemory => |oom| oom,
         error.StackOverflow => global.throwStackOverflow(),
-        else => global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse YAML")),
+        else => {
+            if (log.msgs.items.len > 0) {
+                const first_msg = log.msgs.items[0];
+                const error_text = first_msg.data.text;
+                return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: {s}", .{error_text}));
+            }
+            return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: Unable to parse YAML string", .{}));
+        },
     };
 
     var ctx: ParserCtx = .{
@@ -1023,7 +1030,7 @@ const ParserCtx = struct {
                     const key_str = try key.toBunString(ctx.global);
                     defer key_str.deref();
 
-                    obj.putMayBeIndex(ctx.global, &key_str, value);
+                    try obj.putMayBeIndex(ctx.global, &key_str, value);
                 }
 
                 return obj;

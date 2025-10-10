@@ -11,6 +11,9 @@ pub const ZigStackFrame = extern struct {
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    /// -1 means not set.
+    jsc_stack_frame_index: i32 = -1,
+
     pub fn deinit(this: *ZigStackFrame) void {
         this.function_name.deref();
         this.source_url.deref();
@@ -64,9 +67,26 @@ pub const ZigStackFrame = extern struct {
                         source_slice = source_slice[this.root_path.len..];
                     }
                 }
+                try writer.writeAll(source_slice);
+            } else {
+                if (this.enable_color) {
+                    const not_root = if (comptime bun.Environment.isWindows) this.root_path.len > "C:\\".len else this.root_path.len > "/".len;
+                    if (not_root and strings.startsWith(source_slice, this.root_path)) {
+                        const root_path = strings.withoutTrailingSlash(this.root_path);
+                        const relative_path = strings.withoutLeadingPathSeparator(source_slice[this.root_path.len..]);
+                        try writer.writeAll(comptime Output.prettyFmt("<d>", true));
+                        try writer.writeAll(root_path);
+                        try writer.writeByte(std.fs.path.sep);
+                        try writer.writeAll(comptime Output.prettyFmt("<r><cyan>", true));
+                        try writer.writeAll(relative_path);
+                    } else {
+                        try writer.writeAll(source_slice);
+                    }
+                } else {
+                    try writer.writeAll(source_slice);
+                }
             }
 
-            try writer.writeAll(source_slice);
             if (source_slice.len > 0 and (this.position.line.isValid() or this.position.column.isValid())) {
                 if (this.enable_color) {
                     try writer.writeAll(comptime Output.prettyFmt("<r><d>:", true));
@@ -196,6 +216,7 @@ pub const ZigStackFrame = extern struct {
         .source_url = .empty,
         .position = .invalid,
         .is_async = false,
+        .jsc_stack_frame_index = -1,
     };
 
     pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {

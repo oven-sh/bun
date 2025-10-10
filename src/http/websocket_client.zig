@@ -260,7 +260,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
                         outstring = jsc.ZigString.from16Slice(utf16);
-                        outstring.mark();
+                        outstring.markGlobal();
                         jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {
@@ -743,9 +743,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 const content_to_compress: []const u8 = switch (bytes) {
                     .utf16 => |utf16| brk: {
                         // Convert UTF16 to UTF8 for compression
-                        const content_byte_len: usize = strings.elementLengthUTF16IntoUTF8([]const u16, utf16);
+                        const content_byte_len: usize = strings.elementLengthUTF16IntoUTF8(utf16);
                         temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
-                        const encode_result = strings.copyUTF16IntoUTF8(temp_buffer.?, []const u16, utf16);
+                        const encode_result = strings.copyUTF16IntoUTF8(temp_buffer.?, utf16);
                         break :brk temp_buffer.?[0..encode_result.written];
                     },
                     .latin1 => |latin1| brk: {
@@ -757,7 +757,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         }
 
                         temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
-                        const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, []const u8, latin1);
+                        const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, latin1);
                         break :brk temp_buffer.?[0..encode_result.written];
                     },
                     .bytes => |b| b,
@@ -1430,7 +1430,7 @@ const Copy = union(enum) {
     pub fn len(this: @This(), byte_len: *usize) usize {
         switch (this) {
             .utf16 => {
-                byte_len.* = strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16);
+                byte_len.* = strings.elementLengthUTF16IntoUTF8(this.utf16);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
@@ -1486,7 +1486,7 @@ const Copy = union(enum) {
         switch (this) {
             .utf16 => |utf16| {
                 header.len = WebsocketHeader.packLength(content_byte_len);
-                const encode_into_result = strings.copyUTF16IntoUTF8Impl(to_mask, []const u16, utf16, true);
+                const encode_into_result = strings.copyUTF16IntoUTF8Impl(to_mask, utf16, true);
                 bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
                 bun.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
@@ -1496,7 +1496,7 @@ const Copy = union(enum) {
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
             .latin1 => |latin1| {
-                const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, []const u8, latin1);
+                const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, latin1);
                 bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
 
                 // latin1 can contain non-ascii

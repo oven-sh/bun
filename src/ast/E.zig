@@ -754,7 +754,7 @@ pub const Object = struct {
     pub fn hasProperty(obj: *const Object, name: string) bool {
         for (obj.properties.slice()) |prop| {
             const key = prop.key orelse continue;
-            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data != .e_string) continue;
             if (key.data.e_string.eql(string, name)) return true;
         }
         return false;
@@ -764,7 +764,7 @@ pub const Object = struct {
         for (obj.properties.slice(), 0..) |prop, i| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
-            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data != .e_string) continue;
             const key_str = key.data.e_string;
             if (key_str.eql(string, name)) {
                 return Expr.Query{

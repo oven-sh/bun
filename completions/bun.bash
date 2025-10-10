@@ -1,5 +1,37 @@
 #! /usr/bin/env bash
 
+_escape_bash_specials() {
+    local word="${1}";
+    local escape_all="${2}";
+
+    local re_exp;
+    local re_sed;
+
+    if (( escape_all )); then
+        # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
+        re_exp='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]';
+        re_sed='[]~$"'\''`><()[{}=|*?;&#\]';
+    else
+        # escape all bash specials _except_ " (quote) and \ (backslash)
+        # since they are already escaped in package.json: ]~$'`><()[{}=|*?;&#
+        re_exp='[]~$'"\'"'\`><\()[{\}=|*?;&#]';
+        re_sed='[]~$'\''`><()[{}=|*?;&#]';
+    fi
+
+    local has_patsub=0;
+    if shopt -s patsub_replacement 2>/dev/null; then
+        # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
+        trap "$(shopt -p patsub_replacement)" RETURN;
+        has_patsub=1;
+    fi
+
+    if (( has_patsub )); then
+        echo "${word//${re_exp}/\\&}";
+    else
+        echo "$(sed "s/${re_sed}/\\\\&/g" <<<"${word}")";
+    fi
+}
+
 _is_exist_and_gnu() {
     local cmd="${1}";
     local version_string;
@@ -13,18 +45,16 @@ _is_exist_and_gnu() {
 _file_arguments() {
     local extensions="${1}";
     local cur_word="${2}";
-    # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
-    local re_escape_sed='[]~$"'\''`><()[{}=|*?;&#\]';
 
+    local -a candidates;
     if _is_exist_and_gnu find && _is_exist_and_gnu sed
     then
-        readarray -t -d '' COMPREPLY < <(
+        readarray -t -d '' candidates < <(
             find . -regextype posix-extended -maxdepth 1 \
                 -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
             sed -z "s/\n/\$'n'/g"
     )
     else
-        local -a candidates;
         # the following two `readarray` assumes that filenames has
         # no newline characters in it, otherwise they will be splitted
         # into separate completions.
@@ -39,9 +69,10 @@ _file_arguments() {
         [[ -z ${candidates[0]} ]] && candidates=()
     fi
 
+    COMPREPLY=() # preserve the behavior of the earlier versoin of the script, update `COMPREPLY` instead of append
     for cnd in "${candidates[@]}"; do
         [[ -f "${cnd}" && "${cnd}" =~ ${extensions} ]] && \
-            COMPREPLY+=( "${cnd##*/}" )
+            COMPREPLY+=( "$(_escape_bash_specials "${cnd##*/}" 1)" );
     done
 }
 
@@ -78,33 +109,18 @@ _read_scripts_in_package_json() {
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
     [[ "${package_json}" =~ '"scripts"'[[:space:]]*':'[[:space:]]*\{[[:space:]]*(.*)\} ]] && {
-        local has_patsub=0;
-        if shopt -s patsub_replacement 2>/dev/null; then
-            # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
-            trap "$(shopt -p patsub_replacement)" RETURN;
-            has_patsub=1;
-        fi
-
-        local package_json_compreply;
         local matched="${BASH_REMATCH[1]}";
         local scripts="${matched%\}*}";
-        local scripts_rem="${scripts}";
 
-        # escape all bash specials _except_ " (quote) and \ (backslash)
-        # since they are already escaped in package.json: ]~$'`><()[{}=|*?;&#
-        local re_escape_exp='[]~$'"\'"'\`><\()[{\}=|*?;&#]';
-        local re_escape_sed='[]~$'\''`><()[{}=|*?;&#]'
+        local scripts_rem="${scripts}";
+        local package_json_compreply;
 
         while [[ "${scripts_rem}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
             package_json_compreply+=( "${script_name}" );
             case "${script_name}" in
-                ( "${cur_word}"* )
-                    if (( has_patsub )); then
-                        COMPREPLY+=( "${script_name//${re_escape_exp}/\\&}" );
-                    else
-                        COMPREPLY+=( "$(sed "s/${re_escape_sed}/\\\\&/g" <<<"${script_name}")" )
-                    fi
+                "${cur_word}"* )
+                    COMPREPLY+=( "$(_escape_bash_specials "${script_name}" 0)" );
                 ;;
             esac
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";

@@ -37,7 +37,7 @@ _file_arguments() {
         # if pathname expansion above produces no matching files, then
         # `compgen` output single newline character `\n`, resulting in
         # singleton `COMPREPLY` with empty string, let us mitigate this.
-        [[ -z ${COMPREPLY[0]} ]] && COMPREPLY=()
+        [[ -z ${candidates[0]} ]] && candidates=()
     fi
 
     for cnd in "${candidates[@]}"; do

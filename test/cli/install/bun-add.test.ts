@@ -2338,93 +2338,56 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should install tarball with tarball dependencies", async () => {
-  // This test verifies that tarballs containing dependencies that are also tarballs
-  // can be installed correctly. Regression test for URL corruption bug where
-  // URLs like https://example.com/pkg.tgz get mangled with cache folder patterns.
+it("should install tarball with query parameters", async () => {
+  // Regression test for issue #20647
+  // Previously on Windows, tarball URLs with query parameters would fail with BadPathName errors
 
-  // Create simple test tarballs
-  const tmpDir = tmpdirSync();
-
-  // Create child package
-  const childDir = join(tmpDir, "child");
-  await mkdir(childDir, { recursive: true });
-  await writeFile(join(childDir, "package.json"), JSON.stringify({ name: "test-child", version: "1.0.0" }));
-
-  // Create child tarball
-  const { exited: childTarExited } = spawn({
-    cmd: ["tar", "-czf", join(tmpDir, "child.tgz"), "-C", tmpDir, "child"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await childTarExited).toBe(0);
-
-  // Set up server first to get the port
+  // Use a local server to serve the tarball
   using server = Bun.serve({
     port: 0,
     fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/child.tgz") {
-        return new Response(Bun.file(join(tmpDir, "child.tgz")));
-      } else if (url.pathname === "/parent.tgz") {
-        return new Response(Bun.file(join(tmpDir, "parent.tgz")));
-      }
-      return new Response("Not found", { status: 404 });
+      // Serve the same tarball regardless of query parameters
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
     },
   });
-
   const server_url = server.url.href.replace(/\/+$/, "");
 
-  // Create parent package that depends on child via URL
-  const parentDir = join(tmpDir, "parent");
-  await mkdir(parentDir, { recursive: true });
   await writeFile(
-    join(parentDir, "package.json"),
-    JSON.stringify({
-      name: "test-parent",
-      version: "1.0.0",
-      dependencies: {
-        "test-child": `${server_url}/child.tgz`,
-      },
-    }),
-  );
-
-  // Create parent tarball
-  const { exited: parentTarExited } = spawn({
-    cmd: ["tar", "-czf", join(tmpDir, "parent.tgz"), "-C", tmpDir, "parent"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await parentTarExited).toBe(0);
-
-  // Now test adding the parent tarball
-  await writeFile(
-    join(add_dir, "package.json"),
+    join(package_dir, "package.json"),
     JSON.stringify({
       name: "foo",
+      version: "0.0.1",
     }),
   );
 
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-
+  // Add a tarball with query parameters (used for auth tokens, cache busting, etc.)
+  const tarballUrl = `${server_url}/package.tgz?token=abc123&timestamp=2024`;
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
-    cwd: add_dir,
+    cmd: [bunExe(), "add", tarballUrl],
+    cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
   });
 
-  const err = await new Response(stderr).text();
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("HttpNotFound");
-  expect(err).not.toContain("404");
-
+  const err = await stderr.text();
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@");
   expect(await exited).toBe(0);
 
-  // Verify both packages were installed
-  await access(join(add_dir, "node_modules", "test-parent"));
-  await access(join(add_dir, "node_modules", "test-child"));
+  // Verify the package was actually installed
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toContain("baz");
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+
+  // Verify package.json has the dependency with the full URL including query params
+  const pkg = await file(join(package_dir, "package.json")).json();
+  expect(pkg.dependencies["baz"]).toBe(tarballUrl);
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe.each(["stdout", "stderr"])("process.%s.write with invalid UTF-16", stream => {
+describe.concurrent.each(["stdout", "stderr"])("process.%s.write with invalid UTF-16", stream => {
   test("single unpaired high surrogate (D800)", async () => {
     using dir = tempDir("stdio-utf16", {
       "test.js": `

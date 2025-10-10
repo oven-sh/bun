@@ -47,20 +47,21 @@ _file_arguments() {
 }
 
 _long_short_completion() {
-    local wordlist="${1}";
-    local short_options="${2}";
+    local long_opts="${1}";
+    local short_opts="${2}";
     local cur_word="${3}";
 
-    [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
+    if [[ -z "${cur_word}" ]]; then
         # shellcheck disable=SC2207 # the `wordlist` is constant and has no whitespace characters inside each word
-        COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}") );
-        return;
-    }
-    [[ "${cur_word}" =~ ^-[A-Za-z]+ ]] && {
+        COMPREPLY=( $(compgen -W "${long_opts} ${short_opts}") );
+    elif [[ "${cur_word}" == --* ]]; then
         # shellcheck disable=SC2207 # idem.
-        COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}") );
+        COMPREPLY=( $(compgen -W "${long_opts}" -- "${cur_word}") );
+    elif [[ "${cur_word}" == -* ]]; then
+        # shellcheck disable=SC2207 # idem.
+        COMPREPLY=( $(compgen -W "${long_opts} ${short_opts}" -- "${cur_word}") );
         return;
-    }
+    fi
 }
 
 # loads the scripts block in package.json
@@ -213,13 +214,13 @@ _bun_completions() {
         help|completions|--help|-h|-v|--version) return;;
         add|a)
             _long_short_completion \
-                "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${cur_word}";
             return;;
         remove|rm|i|install|link|unlink)
             _long_short_completion \
-                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${cur_word}";
             return;;
@@ -239,7 +240,8 @@ _bun_completions() {
             return;;
         pm)
             _long_short_completion \
-                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}" \
+                "${PM_OPTIONS[LONG_OPTIONS]}" \
+                "${PM_OPTIONS[SHORT_OPTIONS]}" \
                 "${cur_word}";
             # shellcheck disable=SC2207 # the literal space-separated string of subcommands is used, no subcommand containing the space character exists
             COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
@@ -247,7 +249,7 @@ _bun_completions() {
         *)
             declare -g replaced_script;
             _long_short_completion \
-                "${GLOBAL_OPTIONS[*]}" \
+                "${GLOBAL_OPTIONS[LONG_OPTIONS]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
                 "${cur_word}";
             _read_scripts_in_package_json "${cur_word}" "${prev}";

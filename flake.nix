@@ -141,10 +141,12 @@
             export RANLIB="${llvm}/bin/llvm-ranlib"
             export CMAKE_C_COMPILER="$CC"
             export CMAKE_CXX_COMPILER="$CXX"
+            export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
+            export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '' + ''
 
             # Print welcome message

@@ -77,8 +77,12 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    export CC=clang
-    export CXX=clang++
+    export CC="${pkgs.lib.getExe pkgs.clang_19}"
+    export CXX="${pkgs.lib.getExe' pkgs.clang_19 "clang++"}"
+    export AR="${pkgs.llvm_19}/bin/llvm-ar"
+    export RANLIB="${pkgs.llvm_19}/bin/llvm-ranlib"
+    export CMAKE_C_COMPILER="$CC"
+    export CMAKE_CXX_COMPILER="$CXX"
     export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''

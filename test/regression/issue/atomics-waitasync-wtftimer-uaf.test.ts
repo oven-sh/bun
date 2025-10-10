@@ -5,26 +5,29 @@
 import { expect, test } from "bun:test";
 
 test("Atomics.waitAsync with setTimeout does not crash (UAF bug)", async () => {
-  const buffer = new SharedArrayBuffer(16);
-  const view = new Int32Array(buffer);
+  // Run 2 times to trigger the UAF with ASAN
+  for (let i = 0; i < 2; i++) {
+    const buffer = new SharedArrayBuffer(16);
+    const view = new Int32Array(buffer);
 
-  Atomics.store(view, 0, 0);
+    Atomics.store(view, 0, 0);
 
-  const result = Atomics.waitAsync(view, 0, 0, 10);
-  expect(result.async).toBe(true);
-  expect(result.value).toBeInstanceOf(Promise);
+    const result = Atomics.waitAsync(view, 0, 0, 1); // 1ms timeout
+    expect(result.async).toBe(true);
+    expect(result.value).toBeInstanceOf(Promise);
 
-  // This setTimeout would trigger the UAF bug by creating another WTFTimer
-  const timeoutPromise = new Promise<string>(resolve => {
-    setTimeout(() => {
-      resolve("hi");
-    }, 100);
-  });
+    // This setTimeout would trigger the UAF bug by creating another WTFTimer
+    const timeoutPromise = new Promise<string>(resolve => {
+      setTimeout(() => {
+        resolve("hi");
+      }, 5); // 5ms timeout
+    });
 
-  const [waitResult, timeoutResult] = await Promise.all([result.value, timeoutPromise]);
+    const [waitResult, timeoutResult] = await Promise.all([result.value, timeoutPromise]);
 
-  expect(waitResult).toBe("timed-out");
-  expect(timeoutResult).toBe("hi");
+    expect(waitResult).toBe("timed-out");
+    expect(timeoutResult).toBe("hi");
+  }
 });
 
 test("Multiple Atomics.waitAsync calls do not crash", async () => {

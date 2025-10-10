@@ -62,6 +62,8 @@ pub fn writeOutputFilesToDisk(
         var display_size: usize = 0;
         const public_path = if (chunk.is_browser_chunk_from_server_build)
             bv2.transpilerForTarget(.browser).options.public_path
+        else if (c.resolver.opts.compile and c.resolver.opts.public_path.len == 0)
+            "/"
         else
             c.resolver.opts.public_path;
 
@@ -73,7 +75,7 @@ pub fn writeOutputFilesToDisk(
             chunk,
             chunks,
             &display_size,
-            c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+            c.resolver.opts.compile and (!chunk.is_browser_chunk_from_server_build or chunk.content == .html),
             chunk.content.sourcemap(c.options.source_maps) != .none,
         ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 

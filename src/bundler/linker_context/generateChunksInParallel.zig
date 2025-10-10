@@ -327,8 +327,14 @@ pub fn generateChunksInParallel(
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
+            // For compiled executables with HTML imports, use absolute paths for asset references.
+            // This ensures scripts/styles load correctly when HTML is served at different routes.
+            // Without this, relative paths like "./chunk.js" would resolve differently
+            // from /foo vs /foo/bar, causing asset loading failures at nested routes.
             const public_path = if (chunk.is_browser_chunk_from_server_build)
                 bundler.transpilerForTarget(.browser).options.public_path
+            else if (c.resolver.opts.compile and c.options.public_path.len == 0)
+                "/"
             else
                 c.options.public_path;
 
@@ -340,7 +346,7 @@ pub fn generateChunksInParallel(
                 chunk,
                 chunks,
                 &display_size,
-                c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+                c.resolver.opts.compile and (!chunk.is_browser_chunk_from_server_build or chunk.content == .html),
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");

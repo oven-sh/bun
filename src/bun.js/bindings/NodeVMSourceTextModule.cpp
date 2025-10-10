@@ -107,13 +107,9 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTFMove(identifier), contextValue,
-        WTFMove(sourceCode), moduleWrapper);
+        WTFMove(sourceCode), moduleWrapper, initializeImportMeta);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
-
-    if (!initializeImportMeta.isUndefined()) {
-        ptr->m_initializeImportMeta.set(vm, ptr, initializeImportMeta);
-    }
 
     if (cachedData.isEmpty()) {
         return ptr;
@@ -419,7 +415,7 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
 
 void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
 {
-    if (!m_initializeImportMeta) {
+    if (!m_initializeImportMeta || !m_initializeImportMeta.get().isCallable()) {
         return;
     }
 
@@ -431,8 +427,9 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
     scope.assertNoExceptionExceptTermination();
     RETURN_IF_EXCEPTION(scope, );
-    ASSERT(metaValue);
-    ASSERT(metaValue.isObject());
+    if (!metaValue || !metaValue.isObject()) {
+        return;
+    }
 
     CallData callData = JSC::getCallData(m_initializeImportMeta.get());
 

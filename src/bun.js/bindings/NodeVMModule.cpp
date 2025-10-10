@@ -152,7 +152,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper)
     : Base(vm, structure)
     , m_identifier(WTFMove(identifier))
-    , m_context(context.isObject() ? asObject(context) : nullptr, JSC::WriteBarrierEarlyInit)
+    , m_context(context && context.isObject() ? asObject(context) : nullptr, JSC::WriteBarrierEarlyInit)
     , m_moduleWrapper(vm, this, moduleWrapper)
 {
 }

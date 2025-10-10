@@ -4,7 +4,7 @@
 { pkgs ? import <nixpkgs> {} }:
 
 pkgs.mkShell {
-  buildInputs = with pkgs; [
+  packages = with pkgs; [
     # Core build tools (matching bootstrap.sh)
     cmake
     ninja
@@ -83,12 +83,14 @@ pkgs.mkShell {
     export RANLIB="${pkgs.llvm_19}/bin/llvm-ranlib"
     export CMAKE_C_COMPILER="$CC"
     export CMAKE_CXX_COMPILER="$CXX"
+    export CMAKE_AR="$AR"
+    export CMAKE_RANLIB="$RANLIB"
     export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
     export LD="${pkgs.lib.getExe' pkgs.lld_19 "ld.lld"}"
     export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-    export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   '' + ''
 
     echo "====================================="

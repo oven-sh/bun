@@ -1298,7 +1298,18 @@ pub const Resolver = struct {
                 for (custom_paths) |custom_path| {
                     const custom_utf8 = custom_path.toUTF8WithoutRef(bun.default_allocator);
                     defer custom_utf8.deinit();
-                    switch (r.checkPackagePath(custom_utf8.slice(), import_path, kind, global_cache)) {
+
+                    // Resolve relative paths to absolute paths relative to CWD, matching Node.js behavior
+                    const custom_dir = if (!std.fs.path.isAbsolute(custom_utf8.slice()))
+                        ResolvePath.joinAbsString(
+                            r.fs.top_level_dir,
+                            &.{custom_utf8.slice()},
+                            .auto,
+                        )
+                    else
+                        custom_utf8.slice();
+
+                    switch (r.checkPackagePath(custom_dir, import_path, kind, global_cache)) {
                         .success => |res| return .{ .success = res },
                         .pending => |p| return .{ .pending = p },
                         .failure => |p| return .{ .failure = p },

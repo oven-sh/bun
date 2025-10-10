@@ -429,14 +429,14 @@ public:
     void finishCreation(JSC::VM&, JSC::JSObject* callback);
 
 private:
-    JSModuleMock(JSC::VM&, JSC::Structure*);
+    JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback);
 };
 
 const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleMock) };
 
 JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
 {
-    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure);
+    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback);
     ptr->finishCreation(vm, callback);
     return ptr;
 }
@@ -444,11 +444,11 @@ JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::
 void JSModuleMock::finishCreation(JSC::VM& vm, JSObject* callback)
 {
     Base::finishCreation(vm);
-    callbackFunctionOrCachedResult.set(vm, this, callback);
 }
 
-JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure)
+JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
     : Base(vm, structure)
+    , callbackFunctionOrCachedResult(callback, JSC::WriteBarrierEarlyInit)
 {
 }
 

@@ -124,6 +124,11 @@ const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &
 InternalModuleRegistry::InternalModuleRegistry(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
+    // Initialize all internal fields to jsUndefined() using WriteBarrierEarlyInit
+    // to avoid triggering write barriers during construction
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        this->internalField(static_cast<Field>(i)).setWithoutWriteBarrier(jsUndefined());
+    }
 }
 
 template<typename Visitor>
@@ -147,10 +152,6 @@ void InternalModuleRegistry::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
-        this->internalField(static_cast<Field>(i)).set(vm, this, jsUndefined());
-    }
 }
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)

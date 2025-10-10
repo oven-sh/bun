@@ -1189,13 +1189,13 @@ pub const Transpiler = struct {
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
                 else if (kind == .csv)
-                    CSV.parse(source, transpiler.log, allocator, false, .{ .header = true, .delimiter = "," }) catch return null
+                    CSV.parse(source, transpiler.log, allocator, .{ .header = true, .delimiter = "," }) catch return null
                 else if (kind == .csv_no_header)
-                    CSV.parse(source, transpiler.log, allocator, false, .{ .header = false, .delimiter = "," }) catch return null
+                    CSV.parse(source, transpiler.log, allocator, .{ .header = false, .delimiter = "," }) catch return null
                 else if (kind == .tsv)
-                    CSV.parse(source, transpiler.log, allocator, false, .{ .header = true, .delimiter = "\t" }) catch return null
+                    CSV.parse(source, transpiler.log, allocator, .{ .header = true, .delimiter = "\t" }) catch return null
                 else if (kind == .tsv_no_header)
-                    CSV.parse(source, transpiler.log, allocator, false, .{ .header = false, .delimiter = "\t" }) catch return null
+                    CSV.parse(source, transpiler.log, allocator, .{ .header = false, .delimiter = "\t" }) catch return null
                 else
                     @compileError("unreachable");
 

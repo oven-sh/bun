@@ -1,42 +1,3 @@
-const std = @import("std");
-const logger = bun.logger;
-const importRecord = @import("../import_record.zig");
-const js_ast = bun.ast;
-const options = @import("../options.zig");
-const fs = @import("../fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-const JSC = bun.jsc;
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
-const StmtNodeIndex = js_ast.StmtNodeIndex;
-const ExprNodeIndex = js_ast.ExprNodeIndex;
-const ExprNodeList = js_ast.ExprNodeList;
-const StmtNodeList = js_ast.StmtNodeList;
-const BindingNodeList = js_ast.BindingNodeList;
-const assert = bun.assert;
-
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
-const G = js_ast.G;
-const E = js_ast.E;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
-
 pub const Error = error{
     UnexpectedEndOfFile,
     InvalidCharacter,
@@ -57,13 +18,72 @@ pub const CSVParserOptions = struct {
     skip_empty_lines: bool = false,
 };
 
-const CSVParseResult = struct {
-    data_array: Expr,
+const OptionsError = error{
+    EmptyDelimiter,
+    EmptyQuote,
+    EmptyCommentChar,
+    InvalidPreview,
+} || std.mem.Allocator.Error;
+
+const ParserOptions = struct {
+    header: bool,
+    delimiter: []const u8,
+    trim_whitespace: bool,
+    dynamic_typing: bool,
+    quote: []const u8,
+    comment_char: []const u8,
+    comments: bool,
+    preview: ?usize,
+    skip_empty_lines: bool,
+};
+
+pub const ParseDiagnostics = struct {
     rows: usize,
     columns: usize,
     comments: Expr,
     errors: Expr,
 };
+
+pub const ParseResult = struct {
+    root: Expr,
+    diagnostics: ParseDiagnostics,
+};
+
+fn normalizeOptions(opts: CSVParserOptions, source: *const logger.Source, log: *logger.Log) OptionsError!ParserOptions {
+    if (opts.delimiter.len == 0) {
+        try log.addError(source, locModuleScope, "CSV delimiter cannot be empty");
+        return error.EmptyDelimiter;
+    }
+
+    if (opts.quote.len == 0) {
+        try log.addError(source, locModuleScope, "CSV quote string cannot be empty");
+        return error.EmptyQuote;
+    }
+
+    if (opts.comments and opts.comment_char.len == 0) {
+        try log.addError(source, locModuleScope, "CSV comment character cannot be empty when comments are enabled");
+        return error.EmptyCommentChar;
+    }
+
+    if (opts.preview) |limit| {
+        if (limit == 0) {
+            try log.addError(source, locModuleScope, "CSV preview value must be greater than 0");
+            return error.InvalidPreview;
+        }
+    }
+
+    return ParserOptions{
+        .header = opts.header,
+        .delimiter = opts.delimiter,
+        .trim_whitespace = opts.trim_whitespace,
+        .dynamic_typing = opts.dynamic_typing,
+        .quote = opts.quote,
+        .comment_char = opts.comment_char,
+        .comments = opts.comments,
+        .preview = opts.preview,
+        .skip_empty_lines = opts.skip_empty_lines,
+    };
+}
 
 pub const CSV = struct {
     log: *logger.Log,
@@ -72,12 +92,12 @@ pub const CSV = struct {
     contents: []const u8,
     index: usize,
     line_number: usize,
-    options: CSVParserOptions,
+    options: ParserOptions,
     iterator: strings.CodepointIterator,
 
-    result: CSVParseResult,
+    result: ParseResult,
 
-    pub fn init(allocator: std.mem.Allocator, source: logger.Source, log: *logger.Log, opts: CSVParserOptions) CSV {
+    pub fn init(allocator: std.mem.Allocator, source: logger.Source, log: *logger.Log, opts: ParserOptions) CSV {
         return CSV{
             .allocator = allocator,
             .log = log,
@@ -87,12 +107,14 @@ pub const CSV = struct {
             .line_number = 1,
             .options = opts,
             .iterator = strings.CodepointIterator.init(source.contents),
-            .result = CSVParseResult{
-                .data_array = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
-                .rows = 0,
-                .columns = 0,
-                .errors = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
-                .comments = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+            .result = ParseResult{
+                .root = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+                .diagnostics = ParseDiagnostics{
+                    .rows = 0,
+                    .columns = 0,
+                    .errors = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+                    .comments = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+                },
             },
         };
     }
@@ -106,59 +128,55 @@ pub const CSV = struct {
         }
     }
 
-    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, _: bool, opts: CSVParserOptions) !Expr {
-        var p = CSV.init(allocator, source_.*, log, .{
-            .header = opts.header,
-            .delimiter = opts.delimiter,
-            .comments = opts.comments,
-            .comment_char = opts.comment_char,
-            .trim_whitespace = opts.trim_whitespace,
-            .dynamic_typing = opts.dynamic_typing,
-            .quote = opts.quote,
-            .skip_empty_lines = opts.skip_empty_lines,
-            .preview = opts.preview,
-        });
+    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, opts: CSVParserOptions) !Expr {
+        bun.analytics.Features.csv_parse += 1;
 
-        if (source_.contents.len != 0) {
-            try p.runParser();
-        }
-
-        var return_value = Expr.init(E.Object, E.Object{}, .{ .start = 0 });
+        const result = try CSV.parseWithDiagnostics(source_, log, allocator, opts);
 
         const loc = logger.Loc{ .start = 0 };
+        var object = Expr.init(E.Object, E.Object{}, loc);
 
-        // Set data property in the result object
-        try return_value.data.e_object.properties.append(p.allocator, .{
-            .key = p.e(E.String{ .data = "data" }, loc),
-            .value = p.result.data_array,
+        try object.data.e_object.properties.append(allocator, .{
+            .key = Expr.init(E.String, E.String{ .data = "data" }, loc),
+            .value = result.root,
         });
 
-        // Set metadata fields according to CSVParserMetadata interface
-        try return_value.data.e_object.properties.append(p.allocator, .{
-            .key = p.e(E.String{ .data = "rows" }, loc),
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.rows)) }, loc),
+        try object.data.e_object.properties.append(allocator, .{
+            .key = Expr.init(E.String, E.String{ .data = "rows" }, loc),
+            .value = Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(result.diagnostics.rows)) }, loc),
         });
 
-        try return_value.data.e_object.properties.append(p.allocator, .{
-            .key = p.e(E.String{ .data = "columns" }, loc),
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.columns)) }, loc),
+        try object.data.e_object.properties.append(allocator, .{
+            .key = Expr.init(E.String, E.String{ .data = "columns" }, loc),
+            .value = Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(result.diagnostics.columns)) }, loc),
         });
 
-        if (p.result.errors.data.e_array.items.len > 0) {
-            try return_value.data.e_object.properties.append(p.allocator, .{
-                .key = p.e(E.String{ .data = "errors" }, loc),
-                .value = p.result.errors,
+        if (result.diagnostics.errors.data.e_array.items.len > 0) {
+            try object.data.e_object.properties.append(allocator, .{
+                .key = Expr.init(E.String, E.String{ .data = "errors" }, loc),
+                .value = result.diagnostics.errors,
             });
         }
 
-        if (p.result.comments.data.e_array.items.len > 0) {
-            try return_value.data.e_object.properties.append(p.allocator, .{
-                .key = p.e(E.String{ .data = "comments" }, loc),
-                .value = p.result.comments,
+        if (result.diagnostics.comments.data.e_array.items.len > 0) {
+            try object.data.e_object.properties.append(allocator, .{
+                .key = Expr.init(E.String, E.String{ .data = "comments" }, loc),
+                .value = result.diagnostics.comments,
             });
         }
 
-        return return_value;
+        return object;
+    }
+
+    pub fn parseWithDiagnostics(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, opts: CSVParserOptions) !ParseResult {
+        const normalized = try normalizeOptions(opts, source_, log);
+        var parser = CSV.init(allocator, source_.*, log, normalized);
+
+        if (source_.contents.len != 0) {
+            try parser.runParser();
+        }
+
+        return parser.result;
     }
 
     fn peekCodepoint(p: *CSV) ?u21 {
@@ -778,7 +796,7 @@ pub const CSV = struct {
                 header_fields = try p.parseHeaderRecord();
 
                 // we don't have to check if it's bigger, because it's the first line we encounter
-                p.result.columns = header_fields.?.items.len;
+                p.result.diagnostics.columns = header_fields.?.items.len;
                 _ = p.consumeEndOfLine();
                 break; // Exit header-finding loop
             }
@@ -825,8 +843,8 @@ pub const CSV = struct {
             }
 
             // Update columns count if this record has more columns
-            if (record.items.len > p.result.columns) {
-                p.result.columns = record.items.len;
+            if (record.items.len > p.result.diagnostics.columns) {
+                p.result.diagnostics.columns = record.items.len;
             }
 
             try all_records.append(record);
@@ -865,7 +883,7 @@ pub const CSV = struct {
                         .value = value_expr,
                     });
                 }
-                try p.result.data_array.data.e_array.push(p.allocator, row_object);
+                try p.result.root.data.e_array.push(p.allocator, row_object);
             }
         } else {
             // Process as arrays
@@ -874,11 +892,11 @@ pub const CSV = struct {
                 for (record.items) |value_expr| {
                     try row_array.data.e_array.push(p.allocator, value_expr);
                 }
-                try p.result.data_array.data.e_array.push(p.allocator, row_array);
+                try p.result.root.data.e_array.push(p.allocator, row_array);
             }
         }
 
-        p.result.rows = all_records.items.len;
+        p.result.diagnostics.rows = all_records.items.len;
     }
 
     fn isCommentLine(p: *CSV) bool {
@@ -942,7 +960,7 @@ pub const CSV = struct {
             .value = p.e(E.String{ .data = strings.trim(comment_text, " \t\n\r") }, loc),
         });
 
-        try p.result.comments.data.e_array.push(p.allocator, comment_obj);
+        try p.result.diagnostics.comments.data.e_array.push(p.allocator, comment_obj);
     }
 
     fn addErrorToArray(p: *CSV, error_message: []const u8) !void {
@@ -960,7 +978,7 @@ pub const CSV = struct {
             .value = p.e(E.String{ .data = error_message }, loc),
         });
 
-        try p.result.errors.data.e_array.push(p.allocator, error_obj);
+        try p.result.diagnostics.errors.data.e_array.push(p.allocator, error_obj);
     }
 
     /// Parse a string value with dynamic typing enabled
@@ -1043,3 +1061,16 @@ fn isUnicodeWhitespace(cp: u21) bool {
     or cp == 0x205F // Medium Mathematical Space
     or cp == 0x3000; // Ideographic Space
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.jsc;
+
+const logger = bun.logger;
+const ast = bun.ast;
+const strings = bun.strings;
+
+const E = ast.E;
+const Expr = ast.Expr;
+const locModuleScope = logger.Loc.Empty;

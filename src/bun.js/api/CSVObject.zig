@@ -108,7 +108,7 @@ pub fn parse(
     var source = logger.Source.initPathString("input.csv", input_slice.slice());
 
     // Parse the CSV data
-    const parse_result = CSV.CSV.parse(&source, &log, allocator, false, parser_options) catch {
+    const parse_result = CSV.CSV.parse(&source, &log, allocator, parser_options) catch {
         return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse CSV") catch bun.outOfMemory());
     };
 

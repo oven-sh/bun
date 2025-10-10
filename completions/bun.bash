@@ -1,13 +1,23 @@
 #! /usr/bin/env bash
 
+_is_exist_and_gnu() {
+    local cmd="${1}";
+    local version_string;
+    version_string="$(
+        command -v "$cmd" >/dev/null && \
+        "$cmd" --version >/dev/null 2>&1 \
+        | head -1
+    )";
+    [[ "$version_string" == *GNU* ]] && return 0 || return 1;
+}
+
 _file_arguments() {
     local extensions="${1}";
     local cur_word="${2}";
     # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
     local re_escape_sed='[]~$"'\''`><()[{}=|*?;&#\]';
 
-    if [[ "$(which find && find --version | head -1)" == *GNU* ]] && \
-        [[ "$(sed --version | head -1)" == *GNU* ]]
+    if _is_exist_and_gnu find && _is_exist_and_gnu sed
     then
         # requires "findutils" package
         readarray -t -d '' COMPREPLY < <(

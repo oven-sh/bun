@@ -265,15 +265,15 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -2924,7 +2924,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
     "class-utils/define-property/is-descriptor/is-data-descriptor/kind-of": ["kind-of@3.2.2", "", { "dependencies": { "is-buffer": "^1.1.5" } }, "sha1-MeohpzS6ubuw8yRm2JOupR5KPGQ="],
 
-    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz#a1f7838f8314c516f05ecefcbc4ccfe04b4ed789", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
+    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
 
     "eslint/inquirer/chalk/supports-color/has-flag": ["has-flag@3.0.0", "", {}, "sha1-tdRU3CGZriJWmfNGfloH87lVuv0="],
 
@@ -3169,8 +3169,8 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },

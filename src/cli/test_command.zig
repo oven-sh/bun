@@ -1382,7 +1382,33 @@ pub const TestCommand = struct {
                 .is_main_thread = true,
             },
         );
-        vm.argv = ctx.passthrough;
+
+        // Build argv array including test-specific flags
+        // This ensures flags like --update-snapshots appear in process.argv
+        var argv = std.ArrayList([]const u8).init(ctx.allocator);
+        defer argv.deinit();
+
+        // Add test-specific flags to argv
+        if (ctx.test_options.update_snapshots) {
+            try argv.append("--update-snapshots");
+        }
+        if (ctx.test_options.run_todo) {
+            try argv.append("--todo");
+        }
+        if (ctx.test_options.only) {
+            try argv.append("--only");
+        }
+        if (ctx.test_options.concurrent) {
+            try argv.append("--concurrent");
+        }
+        if (ctx.test_options.randomize) {
+            try argv.append("--randomize");
+        }
+
+        // Add passthrough arguments (unparsed args)
+        try argv.appendSlice(ctx.passthrough);
+
+        vm.argv = try argv.toOwnedSlice();
         vm.preload = ctx.preloads;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;

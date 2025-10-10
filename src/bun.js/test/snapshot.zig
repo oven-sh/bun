@@ -91,6 +91,7 @@ pub const Snapshots = struct {
                 // Store the snapshot name for error reporting
                 if (this.last_error_snapshot_name) |old_name| {
                     this.allocator.free(old_name);
+                    this.last_error_snapshot_name = null;
                 }
                 this.last_error_snapshot_name = try this.allocator.dupe(u8, name_with_counter);
                 return error.SnapshotCreationNotAllowedInCI;

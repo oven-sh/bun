@@ -1680,22 +1680,23 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
   test("flushHeaders should send the headers immediately", async () => {
     let headers_sent_at: number = 0;
+
+    let server_res: http.ServerResponse | undefined;
     await using server = http.createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       headers_sent_at = Date.now();
+      server_res = res;
       res.flushHeaders();
-
-      setTimeout(() => {
-        res.write("Hello", () => {
-          res.end(" World");
-        });
-      }, 500);
     });
 
     await once(server.listen(0, "127.0.0.1"), "listening");
     const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}`);
     expect(Date.now() - headers_sent_at).toBeLessThan(100);
+    expect(server_res).toBeDefined();
+    server_res!.write("Hello", () => {
+      server_res!.end(" World");
+    });
     const text = await response.text();
     expect(text).toBe("Hello World");
   });

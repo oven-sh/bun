@@ -43,6 +43,7 @@ pub const Flags = packed struct(u8) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
+    uncork_scheduled: bool = false,
 
     /// Did the user end the request?
     pub fn isRequestedCompletedOrEnded(this: *const Flags) bool {
@@ -1070,6 +1071,7 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
 
 fn uncorkSocket(this: *NodeHTTPResponse) void {
     defer this.deref();
+    this.flags.uncork_scheduled = false;
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
         this.raw_response.?.uncork();
     }
@@ -1080,7 +1082,8 @@ pub fn flushHeaders(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, 
         const raw_response = this.raw_response.?;
         // Don’t flush immediately; queue a microtask to uncork the socket.
         raw_response.flushHeaders(false);
-        if (raw_response.isCorked()) {
+        if (raw_response.isCorked() and !this.flags.uncork_scheduled) {
+            this.flags.uncork_scheduled = true;
             this.ref();
             globalObject.queueMicrotaskCallback(this, uncorkSocket);
         }

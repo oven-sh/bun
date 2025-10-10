@@ -35,7 +35,7 @@ upgrade_context: UpgradeCTX = .{},
 
 auto_flusher: AutoFlusher = .{},
 
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u8) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
     ended: bool = false,
@@ -45,7 +45,6 @@ pub const Flags = packed struct(u16) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
-    _: u7 = 0,
 
     /// Did the user end the request?
     pub fn isRequestedCompletedOrEnded(this: *const Flags) bool {
@@ -347,7 +346,7 @@ pub fn getFinished(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JS
 }
 
 pub fn getFlags(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.JSValue.jsNumber(@as(u16, @bitCast(this.flags)));
+    return jsc.JSValue.jsNumber(@as(u8, @bitCast(this.flags)));
 }
 
 pub fn getAborted(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {

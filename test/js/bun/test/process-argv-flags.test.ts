@@ -8,10 +8,9 @@ test("--update-snapshots flag appears in process.argv", async () => {
       import { test, expect } from "bun:test";
 
       test("check argv", () => {
-        const hasFlag = process.argv.includes("--update-snapshots") || process.argv.includes("-u");
-        console.log("process.argv:", JSON.stringify(process.argv));
-        console.log("hasFlag:", hasFlag);
-        expect(hasFlag).toBe(true);
+        expect(process.argv.includes("--update-snapshots")).toBe(true);
+        // Ensure the short form is NOT in argv (it gets normalized to long form)
+        expect(process.argv.includes("-u")).toBe(false);
       });
     `,
   });
@@ -29,19 +28,18 @@ test("--update-snapshots flag appears in process.argv", async () => {
   const stderr = await result.stderr.text();
 
   expect(exitCode).toBe(0);
-  expect(stdout).toContain("hasFlag: true");
 });
 
-test("-u (short flag) appears in process.argv", async () => {
+test("-u (short flag) is normalized to --update-snapshots in process.argv", async () => {
   using dir = tempDir("test-argv-u-flag", {
     "test.test.ts": `
       import { test, expect } from "bun:test";
 
       test("check argv", () => {
-        const hasFlag = process.argv.includes("--update-snapshots") || process.argv.includes("-u");
-        console.log("process.argv:", JSON.stringify(process.argv));
-        console.log("hasFlag:", hasFlag);
-        expect(hasFlag).toBe(true);
+        // -u should be normalized to --update-snapshots
+        expect(process.argv.includes("--update-snapshots")).toBe(true);
+        // The short form should NOT appear in argv
+        expect(process.argv.includes("-u")).toBe(false);
       });
     `,
   });
@@ -59,7 +57,6 @@ test("-u (short flag) appears in process.argv", async () => {
   const stderr = await result.stderr.text();
 
   expect(exitCode).toBe(0);
-  expect(stdout).toContain("hasFlag: true");
 });
 
 test("--only flag appears in process.argv", async () => {
@@ -68,9 +65,7 @@ test("--only flag appears in process.argv", async () => {
       import { test, expect } from "bun:test";
 
       test("check argv", () => {
-        const hasFlag = process.argv.includes("--only");
-        console.log("process.argv:", JSON.stringify(process.argv));
-        expect(hasFlag).toBe(true);
+        expect(process.argv.includes("--only")).toBe(true);
       });
     `,
   });
@@ -96,9 +91,7 @@ test("--todo flag appears in process.argv", async () => {
       import { test, expect } from "bun:test";
 
       test("check argv", () => {
-        const hasFlag = process.argv.includes("--todo");
-        console.log("process.argv:", JSON.stringify(process.argv));
-        expect(hasFlag).toBe(true);
+        expect(process.argv.includes("--todo")).toBe(true);
       });
     `,
   });
@@ -124,11 +117,8 @@ test("multiple test flags appear in process.argv", async () => {
       import { test, expect } from "bun:test";
 
       test("check argv", () => {
-        const hasConcurrent = process.argv.includes("--concurrent");
-        const hasRandomize = process.argv.includes("--randomize");
-        console.log("process.argv:", JSON.stringify(process.argv));
-        expect(hasConcurrent).toBe(true);
-        expect(hasRandomize).toBe(true);
+        expect(process.argv.includes("--concurrent")).toBe(true);
+        expect(process.argv.includes("--randomize")).toBe(true);
       });
     `,
   });

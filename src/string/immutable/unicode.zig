@@ -262,7 +262,7 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), utf16: []const u16) OOM!std.
     var list = list_;
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
-        list.items.ptr[0..list.capacity],
+        list.allocatedSlice(),
     );
     if (result.status == .surrogate) {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
@@ -273,11 +273,11 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), utf16: []const u16) OOM!std.
     return list;
 }
 
-pub fn convertUTF16ToUTF8WithoutInvalidSurrogatePairs(list_: std.ArrayList(u8), utf16: []const u16) !std.ArrayList(u8) {
+pub fn convertUTF16ToUTF8WithoutInvalidSurrogatePairs(list_: std.ArrayList(u8), utf16: []const u16) error{SurrogatePair}!std.ArrayList(u8) {
     var list = list_;
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
-        list.items.ptr[0..list.capacity],
+        list.allocatedSlice(),
     );
     if (result.status == .surrogate) {
         return error.SurrogatePair;
@@ -287,10 +287,10 @@ pub fn convertUTF16ToUTF8WithoutInvalidSurrogatePairs(list_: std.ArrayList(u8), 
     return list;
 }
 
-pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !void {
+pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) OOM!void {
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
-        list.items.ptr[list.items.len..list.capacity],
+        list.unusedCapacitySlice(),
     );
 
     if (result.status == .surrogate) {
@@ -302,7 +302,7 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !v
     list.items.len += result.count;
 }
 
-pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Allocator, utf16: []const u16) ![]u8 {
+pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Allocator, utf16: []const u16) OOM![]u8 {
     if (bun.FeatureFlags.use_simdutf) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         // add 16 bytes of padding for SIMDUTF
@@ -1651,10 +1651,10 @@ pub fn copyUTF16IntoUTF8Impl(buf: []u8, utf16: []const u16, comptime allow_trunc
         else
             buf.len;
 
-        return copyUTF16IntoUTF8WithBufferImpl(buf, utf16, trimmed, out_len, allow_truncated_utf8_sequence);
+        return copyUTF16IntoUTF8WithBufferImpl(buf, utf16, out_len, allow_truncated_utf8_sequence);
     }
 
-    return copyUTF16IntoUTF8WithBufferImpl(buf, utf16, utf16, utf16.len, allow_truncated_utf8_sequence);
+    return copyUTF16IntoUTF8WithBufferImpl(buf, utf16, utf16.len, allow_truncated_utf8_sequence);
 }
 
 /// Q: What does the `allow_truncated_utf8_sequence` parameter do?
@@ -1672,7 +1672,7 @@ pub fn copyUTF16IntoUTF8Impl(buf: []u8, utf16: []const u16, comptime allow_trunc
 /// buffer.fill("\u0222");
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
-pub fn copyUTF16IntoUTF8WithBufferImpl(buf: []u8, utf16: []const u16, trimmed: []const u16, out_len: usize, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
+pub fn copyUTF16IntoUTF8WithBufferImpl(buf: []u8, utf16: []const u16, out_len: usize, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
@@ -1681,11 +1681,11 @@ pub fn copyUTF16IntoUTF8WithBufferImpl(buf: []u8, utf16: []const u16, trimmed: [
         if (bun.FeatureFlags.use_simdutf) {
             log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
             if (remaining.len >= out_len) {
-                const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining);
+                const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(utf16, remaining);
                 if (result.status == .surrogate) break :brk;
 
                 return EncodeIntoResult{
-                    .read = @as(u32, @truncate(trimmed.len)),
+                    .read = @as(u32, @truncate(utf16.len)),
                     .written = @as(u32, @truncate(result.count)),
                 };
             }

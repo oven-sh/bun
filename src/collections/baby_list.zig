@@ -405,57 +405,32 @@ pub fn BabyList(comptime Type: type) type {
             return this.len - initial;
         }
 
-        /// This method is available only for `BabyList(u8)`.
+        /// This method is available only for `BabyList(u8)`. Invalid characters are replaced with
+        /// replacement character
         pub fn writeUTF16(this: *Self, allocator: std.mem.Allocator, str: []const u16) OOM!u32 {
             if ((comptime safety_checks) and str.len > 0) this.assertOwned();
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
             var list_ = this.listManaged(allocator);
-            const initial = this.len;
-            outer: {
-                defer this.update(list_);
-                const trimmed = bun.simdutf.trim.utf16(str);
-                if (trimmed.len == 0)
-                    break :outer;
-                const available_len = (list_.capacity - list_.items.len);
+            defer this.update(list_);
 
-                // maximum UTF-16 length is 3 times the UTF-8 length + 2
-                // only do the pass over the input length if we may not have enough space
-                const out_len = if (available_len <= (trimmed.len * 3 + 2))
-                    bun.simdutf.length.utf8.from.utf16.le(trimmed)
-                else
-                    str.len;
+            const initial_len = this.len;
 
-                if (out_len == 0)
-                    break :outer;
+            // Maximum UTF-16 length is 3 times the UTF-8 length + 2
+            const total_length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
+                // This length is an estimate. `str` isn't validated and might contain invalid
+                // sequences. If it does simdutf will assume they require 2 characters instead
+                // of 3.
+                bun.simdutf.length.utf8.from.utf16.le(str)
+            else
+                str.len;
 
-                // intentionally over-allocate a little
-                try list_.ensureTotalCapacity(list_.items.len + out_len);
+            try list_.ensureTotalCapacity(total_length_estimate);
 
-                var remain = str;
-                while (remain.len > 0) {
-                    const orig_len = list_.items.len;
+            try strings.convertUTF16ToUTF8Append(&list_, str);
 
-                    const slice_ = list_.items.ptr[orig_len..list_.capacity];
-                    const result = strings.copyUTF16IntoUTF8WithBufferImpl(
-                        slice_,
-                        remain,
-                        trimmed,
-                        out_len,
-                        // FIXME: Unclear whether or not we should allow
-                        //        incomplete UTF-8 sequences. If you are solving a bug
-                        //        with invalid UTF-8 sequences, this may be the
-                        //        culprit...
-                        true,
-                    );
-                    remain = remain[result.read..];
-                    list_.items.len += @as(usize, result.written);
-                    if (result.read == 0 or result.written == 0) break;
-                }
-            }
-
-            return this.len - initial;
+            return this.len - initial_len;
         }
 
         /// This method is available only for `BabyList(u8)`.

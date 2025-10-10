@@ -1,16 +1,14 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("invalid bun: module should preserve prefix in error", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "bun-invalid-module-"));
-  const file = join(dir, "test.js");
-  writeFileSync(file, 'import foo from "bun:apskdaposkdpok"');
+  const dir = tempDirWithFiles("bun-invalid-module", {
+    "test.js": 'import foo from "bun:apskdaposkdpok"',
+  });
 
   const { stderr } = Bun.spawnSync({
-    cmd: [bunExe(), file],
+    cmd: [bunExe(), "test.js"],
+    cwd: dir,
     env: bunEnv,
     stderr: "pipe",
   });

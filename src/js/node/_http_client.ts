@@ -250,7 +250,7 @@ function ClientRequest(input, options, cb) {
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
-    if (!this[abortedSymbol]) {
+    if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }

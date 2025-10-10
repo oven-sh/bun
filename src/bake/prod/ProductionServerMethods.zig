@@ -130,7 +130,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                 .{ .path = .{ .string = bun.PathString.init(html_path) } },
                 bun.http.MimeType.html,
                 bun.default_allocator,
-            ) catch bun.outOfMemory();
+            ) catch |e| bun.handleOom(e);
 
             html_store.ref();
             ssg.store = html_store;
@@ -169,7 +169,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                 .{ .path = .{ .string = bun.PathString.init(rsc_path) } },
                 bun.http.MimeType.javascript,
                 bun.default_allocator,
-            ) catch bun.outOfMemory();
+            ) catch |e| bun.handleOom(e);
 
             const rsc_blob = jsc.WebCore.Blob{
                 .size = jsc.WebCore.Blob.max_size,
@@ -188,7 +188,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
 
             // Register the client entrypoint if we haven't already
             if (ssg.entrypoint.len > 0) {
-                const result = client_entrypoints_seen.getOrPut(ssg.entrypoint) catch bun.outOfMemory();
+                const result = client_entrypoints_seen.getOrPut(ssg.entrypoint) catch |e| bun.handleOom(e);
                 if (!result.found_existing) {
                     // Serve the client JS file (e.g., /_bun/2eeb5qyr.js)
                     // The file is in dist/_bun/xxx.js
@@ -205,7 +205,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                         .{ .path = .{ .string = bun.PathString.init(client_path) } },
                         bun.http.MimeType.javascript,
                         bun.default_allocator,
-                    ) catch bun.outOfMemory();
+                    ) catch |e| bun.handleOom(e);
 
                     const client_blob = jsc.WebCore.Blob{
                         .size = jsc.WebCore.Blob.max_size,
@@ -219,7 +219,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                         .status_code = 200,
                     });
 
-                    const client_url = bun.default_allocator.dupe(u8, ssg.entrypoint) catch bun.outOfMemory();
+                    const client_url = bun.default_allocator.dupe(u8, ssg.entrypoint) catch |e| bun.handleOom(e);
                     ServerConfig.applyStaticRoute(any_server, Server.ssl_enabled, app, *FileRoute, client_route, client_url, .{ .method = bun.http.Method.Set.init(.{ .GET = true }) });
                 }
             }

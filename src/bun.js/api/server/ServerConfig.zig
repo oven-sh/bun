@@ -890,7 +890,7 @@ pub fn fromJS(
                         const ret = types.items;
                         types = .{};
                         break :types ret;
-                    }, bun.default_allocator)) catch bun.outOfMemory();
+                    }, bun.default_allocator)) catch |e| bun.handleOom(e);
                     errdefer if (router) |*r| {
                         r.get().deinit(bun.default_allocator);
                         r.deinitShallow();

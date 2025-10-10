@@ -357,7 +357,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     Output.prettyErrorln("Rendering routes", .{});
     Output.flush();
 
-    var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
+    var root_dir = try bun.FD.cwd().stdDir().makeOpenPath("dist", .{});
     defer root_dir.close();
 
     var maybe_runtime_file_index: ?u32 = null;
@@ -811,7 +811,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             const manifest_utf8 = manifest_str.toUTF8(allocator);
             defer manifest_utf8.deinit();
 
-            try std.fs.cwd().writeFile(.{
+            try bun.FD.cwd().stdDir().writeFile(.{
                 .sub_path = manifest_path,
                 .data = manifest_utf8.slice(),
             });

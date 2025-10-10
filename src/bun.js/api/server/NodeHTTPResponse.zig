@@ -33,7 +33,7 @@ bytes_written: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
-pub const Flags = packed struct(u8) {
+pub const Flags = packed struct(u16) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
     ended: bool = false,
@@ -44,6 +44,7 @@ pub const Flags = packed struct(u8) {
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
     uncork_scheduled: bool = false,
+    _: u7 = 0,
 
     /// Did the user end the request?
     pub fn isRequestedCompletedOrEnded(this: *const Flags) bool {

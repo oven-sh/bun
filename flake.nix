@@ -35,12 +35,11 @@
         nodejs = pkgs.nodejs_24;
 
         # Build tools and dependencies
-        buildInputs = [
+        packages = [
           # Core build tools
           pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
           pkgs.ninja
           pkgs.pkg-config
-          pkgs.gnumake
           pkgs.ccache
 
           # Compilers and toolchain - version pinned to LLVM 19
@@ -78,8 +77,6 @@
           pkgs.wget
           pkgs.unzip
           pkgs.xz
-          pkgs.htop
-          pkgs.gnupg
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
@@ -130,23 +127,19 @@
 
       in
       {
-        devShells.default = pkgs.mkShell {
-          inherit buildInputs;
+        devShells.default = (pkgs.mkShell.override {
+          stdenv = pkgs.clangStdenv;
+        }) {
+          inherit packages;
 
           shellHook = ''
-            # Set up compiler environment (LLVM 19)
-            export CC="${pkgs.lib.getExe clang}"
-            export CXX="${pkgs.lib.getExe' clang "clang++"}"
-            export AR="${llvm}/bin/llvm-ar"
-            export RANLIB="${llvm}/bin/llvm-ranlib"
-            export CMAKE_C_COMPILER="$CC"
-            export CMAKE_CXX_COMPILER="$CXX"
+            # Set up build environment
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '' + ''
 
             # Print welcome message

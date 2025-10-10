@@ -43,7 +43,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     }
 
     if (pass != this.flags.not) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     // handle failure

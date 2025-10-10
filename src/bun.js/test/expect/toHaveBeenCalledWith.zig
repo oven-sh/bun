@@ -47,7 +47,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     }
 
     if (pass != this.flags.not) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     // handle failure

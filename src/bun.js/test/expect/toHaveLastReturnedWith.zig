@@ -46,7 +46,7 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
     }
 
     if (pass != this.flags.not) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     // Handle failure

@@ -9,7 +9,7 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     const not = this.flags.not;
     const pass = value.isObject() != not;
 
-    if (pass) return thisValue;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

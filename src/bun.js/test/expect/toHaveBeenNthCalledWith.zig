@@ -51,7 +51,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
     }
 
     if (pass != this.flags.not) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     // handle failure

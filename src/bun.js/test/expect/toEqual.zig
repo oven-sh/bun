@@ -18,7 +18,7 @@ pub fn toEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     var pass = try value.jestDeepEquals(expected, globalThis);
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     const diff_formatter = DiffFormatter{

@@ -50,7 +50,7 @@ pub fn toHaveLength(
     }
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     if (not) {

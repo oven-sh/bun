@@ -10,7 +10,7 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     if (value.isUndefined()) pass = true;
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };

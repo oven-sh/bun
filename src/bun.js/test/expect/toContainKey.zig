@@ -28,7 +28,7 @@ pub fn toContainKey(
     var pass = try value.hasOwnPropertyValue(globalThis, expected);
 
     if (not) pass = !pass;
-    if (pass) return thisValue;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
 

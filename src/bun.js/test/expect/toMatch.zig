@@ -39,7 +39,7 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     };
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     const expected_fmt = expected_value.toFmt(&formatter);

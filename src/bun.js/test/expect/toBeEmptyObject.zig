@@ -10,7 +10,7 @@ pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
     var pass = try value.isObjectEmpty(globalThis);
 
     if (not) pass = !pass;
-    if (pass) return thisValue;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

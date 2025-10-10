@@ -3,7 +3,7 @@
 # This uses unpinned <nixpkgs> for simplicity; flake.nix provides version pinning via flake.lock
 { pkgs ? import <nixpkgs> {} }:
 
-pkgs.mkShell {
+pkgs.mkShell rec {
   packages = with pkgs; [
     # Core build tools (matching bootstrap.sh)
     cmake

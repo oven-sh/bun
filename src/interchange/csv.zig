@@ -1,7 +1,7 @@
 const std = @import("std");
 const logger = bun.logger;
 const importRecord = @import("../import_record.zig");
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const options = @import("../options.zig");
 const fs = @import("../fs.zig");
 const bun = @import("bun");
@@ -9,12 +9,10 @@ const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = @import("../string_immutable.zig");
+const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const JSC = bun.JSC;
+const JSC = bun.jsc;
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -130,31 +128,31 @@ pub const CSV = struct {
         const loc = logger.Loc{ .start = 0 };
 
         // Set data property in the result object
-        try return_value.data.e_object.properties.push(p.allocator, .{
+        try return_value.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "data" }, loc),
             .value = p.result.data_array,
         });
 
         // Set metadata fields according to CSVParserMetadata interface
-        try return_value.data.e_object.properties.push(p.allocator, .{
+        try return_value.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "rows" }, loc),
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.rows)) }, loc),
         });
 
-        try return_value.data.e_object.properties.push(p.allocator, .{
+        try return_value.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "columns" }, loc),
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.columns)) }, loc),
         });
 
         if (p.result.errors.data.e_array.items.len > 0) {
-            try return_value.data.e_object.properties.push(p.allocator, .{
+            try return_value.data.e_object.properties.append(p.allocator, .{
                 .key = p.e(E.String{ .data = "errors" }, loc),
                 .value = p.result.errors,
             });
         }
 
         if (p.result.comments.data.e_array.items.len > 0) {
-            try return_value.data.e_object.properties.push(p.allocator, .{
+            try return_value.data.e_object.properties.append(p.allocator, .{
                 .key = p.e(E.String{ .data = "comments" }, loc),
                 .value = p.result.comments,
             });
@@ -422,8 +420,14 @@ pub const CSV = struct {
                             break;
                         }
 
-                        // Check for line breaks (simple ASCII check for performance)
-                        if (c == '\n' or c == '\r') {
+                        // Check for line breaks - need to check codepoints for Unicode line breaks
+                        // Save current position and check if we're at a line break
+                        const saved_index = p.index;
+                        p.index = field_end_index;
+                        const at_line_break = p.isEndOfLine();
+                        p.index = saved_index;
+
+                        if (at_line_break) {
                             break;
                         }
 
@@ -432,7 +436,9 @@ pub const CSV = struct {
                             break;
                         }
 
-                        field_end_index += 1;
+                        // Move to next codepoint (not just next byte) to properly handle UTF-8
+                        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[field_end_index]);
+                        field_end_index += cp_len;
                     }
 
                     // Update parser position
@@ -462,12 +468,20 @@ pub const CSV = struct {
                         // Look for line breaks before the delimiter
                         var line_break_pos = search_start;
                         while (line_break_pos < field_end_index) {
-                            const c = p.contents[line_break_pos];
-                            if (c == '\n' or c == '\r') {
+                            // Check if we're at a line break using proper codepoint detection
+                            const saved_index = p.index;
+                            p.index = line_break_pos;
+                            const at_line_break = p.isEndOfLine();
+                            p.index = saved_index;
+
+                            if (at_line_break) {
                                 field_end_index = line_break_pos;
                                 break;
                             }
-                            line_break_pos += 1;
+
+                            // Move to next codepoint (not just next byte) to properly handle UTF-8
+                            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[line_break_pos]);
+                            line_break_pos += cp_len;
                         }
 
                         // Check for comment character if enabled
@@ -846,7 +860,7 @@ pub const CSV = struct {
                     else
                         p.e(E.String{ .data = "" }, .{ .start = @intCast(idx) });
 
-                    try row_object.data.e_object.properties.push(p.allocator, .{
+                    try row_object.data.e_object.properties.append(p.allocator, .{
                         .key = key_expr,
                         .value = value_expr,
                     });
@@ -918,12 +932,12 @@ pub const CSV = struct {
 
         var comment_obj = p.e(E.Object{}, loc);
 
-        try comment_obj.data.e_object.properties.push(p.allocator, .{
+        try comment_obj.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "line" }, loc),
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
         });
 
-        try comment_obj.data.e_object.properties.push(p.allocator, .{
+        try comment_obj.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "text" }, loc),
             .value = p.e(E.String{ .data = strings.trim(comment_text, " \t\n\r") }, loc),
         });
@@ -936,12 +950,12 @@ pub const CSV = struct {
 
         var error_obj = p.e(E.Object{}, loc);
 
-        try error_obj.data.e_object.properties.push(p.allocator, .{
+        try error_obj.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "line" }, loc),
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
         });
 
-        try error_obj.data.e_object.properties.push(p.allocator, .{
+        try error_obj.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "message" }, loc),
             .value = p.e(E.String{ .data = error_message }, loc),
         });

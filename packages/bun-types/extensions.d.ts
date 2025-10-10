@@ -91,7 +91,7 @@ declare module "*.tsv" {
     | undefined;
 }
 
-declare module "*.tsv?no_header" {
+declare module "*.tsv?header=false" {
   export var data: string[][];
   export default data;
   export var rows: number;

@@ -30,7 +30,7 @@ pub fn parse(
     }
 
     // Default parser options
-    var parser_options = CSVParser.CSVParserOptions{};
+    var parser_options = CSV.CSVParserOptions{};
 
     // Process options if provided
     if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull() and arguments[1].isObject()) {
@@ -108,7 +108,7 @@ pub fn parse(
     var source = logger.Source.initPathString("input.csv", input_slice.slice());
 
     // Parse the CSV data
-    const parse_result = CSVParser.CSV.parse(&source, &log, allocator, false, parser_options) catch {
+    const parse_result = CSV.CSV.parse(&source, &log, allocator, false, parser_options) catch {
         return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse CSV") catch bun.outOfMemory());
     };
 
@@ -125,7 +125,7 @@ pub fn parse(
 }
 
 const CSVObject = @This();
-const JSC = bun.JSC;
+const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
@@ -135,4 +135,4 @@ const logger = bun.logger;
 const bun = @import("bun");
 const js_printer = bun.js_printer;
 const default_allocator = bun.default_allocator;
-const CSVParser = @import("../../csv/csv_parser.zig");
+const CSV = bun.interchange.csv;

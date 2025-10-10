@@ -1121,45 +1121,7 @@ pub fn transpileSourceCode(
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createUTF8(csv_module_source_code_string),
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = .esm,
-                };
-            }
-
-            if (loader.isCSVLike()) {
-                const options_string = switch (loader) {
-                    .csv => "{}",
-                    .csv_no_header => "{ header: false }",
-                    .tsv => "{ delimiter: '\\t' }",
-                    .tsv_no_header => "{ delimiter: '\\t', header: false }",
-                    else => unreachable,
-                };
-
-                const csv_module_source_code_string = std.fmt.allocPrint(allocator,
-                    \\// Generated code
-                    \\import {{CSV}} from 'bun';
-                    \\const parsed = CSV.parse(await Bun.file(import.meta.path).text(),{s});
-                    \\
-                    \\export const __esModule = true;
-                    \\export const data = parsed.data;
-                    \\export const rows = parsed.rows;
-                    \\export const columns = parsed.columns;
-                    \\export const errors = parsed.errors;
-                    \\export const comments = parsed.comments;
-                    \\export default parsed.data;
-                , .{
-                    options_string,
-                    path.text,
-                    specifier,
-                    input_specifier,
-                    referrer,
-                }) catch bun.outOfMemory();
-
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.createUTF8(csv_module_source_code_string),
+                    .source_code = bun.String.cloneUTF8(csv_module_source_code_string),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,

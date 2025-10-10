@@ -503,7 +503,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded, .csv, .csv_no_header, .tsv, .tsv_no_header => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,
@@ -512,7 +512,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch |err| bun.handleOom(err);
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh, .csv, .csv_no_header, .tsv, .tsv_no_header => {},
+                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
                 }
             }

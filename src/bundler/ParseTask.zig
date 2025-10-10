@@ -1486,7 +1486,7 @@ const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
-const CSV = @import("../csv/csv_parser.zig").CSV;
+const CSV = bun.interchange.csv.CSV;
 
 const js_ast = bun.ast;
 const E = js_ast.E;

@@ -1075,6 +1075,7 @@ pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
         this.raw_response.?.uncork();
     }
+    this.auto_flusher.registered = false;
     return false;
 }
 

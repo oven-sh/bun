@@ -349,7 +349,8 @@ pub const WriteFileWindows = struct {
     fd: uv.uv_file = -1,
     err: ?bun.sys.Error = null,
     total_written: usize = 0,
-    event_loop: *jsc.EventLoop,
+    #event_loop: *jsc.EventLoop,
+    #did_ref: bool = false,
 
     owned_fd: bool = false,
 
@@ -373,7 +374,7 @@ pub const WriteFileWindows = struct {
             .mkdirp_if_not_exists = mkdirp_if_not_exists and file_blob.store.?.data.file.pathlike == .path,
             .io_request = std.mem.zeroes(uv.fs_t),
             .uv_bufs = .{.{ .base = undefined, .len = 0 }},
-            .event_loop = event_loop,
+            .#event_loop = event_loop,
         });
         file_blob.store.?.ref();
         bytes_blob.store.?.ref();
@@ -404,12 +405,12 @@ pub const WriteFileWindows = struct {
             },
         }
 
-        write_file.event_loop.refConcurrently();
+        write_file.setRef(true);
         return write_file;
     }
 
     pub inline fn loop(this: *const WriteFileWindows) *uv.Loop {
-        return this.event_loop.virtual_machine.event_loop_handle.?;
+        return this.#event_loop.virtual_machine.event_loop_handle.?;
     }
 
     pub fn open(this: *WriteFileWindows) WriteFileWindowsError!void {
@@ -481,7 +482,7 @@ pub const WriteFileWindows = struct {
     fn mkdirp(this: *WriteFileWindows) void {
         log("mkdirp", .{});
         this.mkdirp_if_not_exists = false;
-        this.event_loop.refConcurrently();
+        this.#event_loop.refConcurrently();
 
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         jsc.Node.fs.Async.AsyncMkdirp.new(.{
@@ -494,7 +495,7 @@ pub const WriteFileWindows = struct {
     }
 
     fn onMkdirpComplete(this: *WriteFileWindows) void {
-        this.event_loop.unrefConcurrently();
+        this.#event_loop.unrefConcurrently();
 
         const err = this.err;
         this.err = null;
@@ -515,7 +516,7 @@ pub const WriteFileWindows = struct {
         log("mkdirp complete", .{});
         bun.assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
-        this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
+        this.#event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
     fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
@@ -538,9 +539,19 @@ pub const WriteFileWindows = struct {
         };
     }
 
+    pub fn setRef(this: *WriteFileWindows, value: bool) void {
+        if (value == this.#did_ref) return;
+        if (value) {
+            this.#event_loop.refConcurrently();
+        } else {
+            this.#event_loop.unrefConcurrently();
+        }
+        this.#did_ref = value;
+    }
+
     pub fn onFinish(container: *WriteFileWindows) WriteFileWindowsError {
-        container.event_loop.unrefConcurrently();
-        var event_loop = container.event_loop;
+        container.setRef(false);
+        var event_loop = container.#event_loop;
         event_loop.enter();
         defer event_loop.exit();
 

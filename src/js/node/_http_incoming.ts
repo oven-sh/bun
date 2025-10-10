@@ -334,7 +334,7 @@ const IncomingMessagePrototype = {
       }
     }
     const req = this.req;
-    if (req) {
+    if (req && !this.complete) {
       req[kAbortController]?.abort?.();
     }
 

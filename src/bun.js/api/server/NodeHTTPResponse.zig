@@ -1068,9 +1068,20 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
-pub fn flushHeaders(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null)
-        this.raw_response.?.flushHeaders();
+fn uncorkSocket(this: *NodeHTTPResponse) void {
+    defer this.deref();
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        this.raw_response.?.uncork();
+    }
+}
+
+pub fn flushHeaders(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        // we will not flush immediately here, we will queue a microtask to uncork the socket
+        this.raw_response.?.flushHeaders(false);
+        this.ref();
+        globalObject.queueMicrotaskCallback(this, uncorkSocket);
+    }
 
     return .js_undefined;
 }

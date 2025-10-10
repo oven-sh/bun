@@ -478,7 +478,7 @@ public:
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 
-    void flushHeaders() {
+    void flushHeaders(bool flushImmediately = false) {
 
         writeStatus(HTTP_200_OK);
 
@@ -499,8 +499,10 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
-        /* Uncork the socket to send data to the client immediately */
-        this->uncork();
+        if (flushImmediately) {
+            /* Uncork the socket to send data to the client immediately */
+            this->uncork();
+        }
     }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {

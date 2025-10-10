@@ -160,7 +160,16 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
         : false;
 
     if (getIsNextIncomingMessageHTTPS()) {
-      this.socket.encrypted = true;
+      const socket = (this[fakeSocketSymbol] = new FakeSocket(this));
+      socket.encrypted = true;
+      socket.authorized = true;
+      // Make socket an own property for hasOwnProperty() compatibility with legacy libraries
+      Object.defineProperty(this, "socket", {
+        value: socket,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
       setIsNextIncomingMessageHTTPS(false);
     }
   }

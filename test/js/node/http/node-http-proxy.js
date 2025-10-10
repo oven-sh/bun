@@ -55,7 +55,7 @@ export async function run() {
         try {
           assert.strictEqual(res.statusCode, 200);
           assert(data.length > 0);
-          assert(data.includes("This domain is for use in illustrative examples in documents"));
+          assert(data.includes("This domain is for use in documentation examples without needing permission."));
           resolve();
         } catch (err) {
           reject(err);

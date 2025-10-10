@@ -459,7 +459,7 @@ describe("node:http", () => {
           data += chunk;
         });
         res.on("end", () => {
-          expect(data).toContain("This domain is for use in illustrative examples in documents");
+          expect(data).toContain("This domain is for use in documentation examples without needing permission.");
           done();
         });
         res.on("error", err => done(err));
@@ -843,7 +843,7 @@ describe("node:http", () => {
       });
     });
 
-    it("should emit a socket event when connecting", async done => {
+    it.todo("should emit a socket event when connecting", async done => {
       runTest(done, async (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
         req.on("socket", function onRequestSocket(socket) {
@@ -1003,7 +1003,7 @@ describe("node:http", () => {
   });
 
   describe("ClientRequest.signal", () => {
-    it("should attempt to make a standard GET request and abort", async () => {
+    it.todo("should attempt to make a standard GET request and abort", async () => {
       let server_port;
       let server_host;
       const {

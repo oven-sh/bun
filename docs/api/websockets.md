@@ -107,6 +107,8 @@ Bun.serve({
 
 Contextual `data` can be attached to a new WebSocket in the `.upgrade()` call. This data is made available on the `ws.data` property inside the WebSocket handlers.
 
+To strongly type `ws.data`, add a `data` property to the `websocket` handler object. This types `ws.data` across all lifecycle hooks.
+
 ```ts
 type WebSocketData = {
   createdAt: number;
@@ -147,6 +149,10 @@ Bun.serve({
   },
 });
 ```
+
+{% callout %}
+**Note:** Previously, you could specify the type of `ws.data` using a generic on `Bun.serve`, like `Bun.serve<MyData>({...})`. This pattern is now deprecated in favor of the `data` property shown above.
+{% /callout %}
 
 To connect to this server from the browser, create a new `WebSocket`.
 

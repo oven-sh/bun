@@ -65,6 +65,34 @@ Test files matching this pattern will behave as if the `--concurrent` flag was p
 
 The `--concurrent` CLI flag will override this setting when specified, forcing all tests to run concurrently regardless of the glob pattern.
 
+#### randomize
+
+Run tests in random order to identify tests with hidden dependencies:
+
+```toml
+[test]
+randomize = true
+```
+
+#### seed
+
+Specify a seed for reproducible random test order. Requires `randomize = true`:
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+#### rerunEach
+
+Re-run each test file multiple times to identify flaky tests:
+
+```toml
+[test]
+rerunEach = 3
+```
+
 ### Coverage options
 
 In addition to the options documented in the [coverage documentation](./coverage.md), the following options are available:

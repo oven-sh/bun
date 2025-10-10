@@ -220,6 +220,15 @@ pub const CSV = struct {
     fn consumeQuote(p: *CSV) bool {
         const quote = p.options.quote;
 
+        // Optimize for single character quotes
+        if (quote.len == 1) {
+            if (p.index < p.contents.len and p.contents[p.index] == quote[0]) {
+                p.index += 1;
+                return true;
+            }
+            return false;
+        }
+
         // If we don't have enough characters left to match the quote, it can't match
         if (p.index + quote.len > p.contents.len) {
             return false;
@@ -237,6 +246,11 @@ pub const CSV = struct {
     fn checkQuote(p: *CSV) bool {
         const quote = p.options.quote;
 
+        // Optimize for single character quotes
+        if (quote.len == 1) {
+            return p.index < p.contents.len and p.contents[p.index] == quote[0];
+        }
+
         // If we don't have enough characters left to match the quote, it can't match
         if (p.index + quote.len > p.contents.len) {
             return false;
@@ -248,6 +262,15 @@ pub const CSV = struct {
 
     fn consumeDelimiter(p: *CSV) bool {
         const delimiter = p.options.delimiter;
+
+        // Optimize for single character delimiters
+        if (delimiter.len == 1) {
+            if (p.index < p.contents.len and p.contents[p.index] == delimiter[0]) {
+                p.index += 1;
+                return true;
+            }
+            return false;
+        }
 
         // If we don't have enough characters left to match the delimiter, it can't match
         if (p.index + delimiter.len > p.contents.len) {
@@ -265,6 +288,11 @@ pub const CSV = struct {
 
     fn checkDelimiter(p: *CSV) bool {
         const delimiter = p.options.delimiter;
+
+        // Optimize for single character delimiters
+        if (delimiter.len == 1) {
+            return p.index < p.contents.len and p.contents[p.index] == delimiter[0];
+        }
 
         // If we don't have enough characters left to match the delimiter, it can't match
         if (p.index + delimiter.len > p.contents.len) {
@@ -373,65 +401,156 @@ pub const CSV = struct {
                 }
             }
         } else {
-            // For non-quoted fields, track if we've seen non-whitespace content
-            var has_content = false;
+            // Non-quoted field - try to optimize with direct slicing when possible
+            const field_start_index = p.index;
 
-            // Keep track of trailing whitespace for trimming if needed
-            var last_non_whitespace_index = field.items.len;
+            // If no trimming needed, we can try to use direct slicing
+            if (!p.options.trim_whitespace) {
+                // Find the end of the field using slice operations for better performance
+                var field_end_index = p.index;
+                const delimiter = p.options.delimiter;
 
-            // Parse non-quoted field
-            while (true) {
-                const c = p.peekCodepoint() orelse break;
+                // Use optimized search for single-character delimiters
+                if (delimiter.len == 1) {
+                    const delimiter_char = delimiter[0];
 
-                if (p.isEndOfLine()) {
-                    break;
-                }
+                    while (field_end_index < p.contents.len) {
+                        const c = p.contents[field_end_index];
 
-                // Check for delimiter
-                if (p.index + p.options.delimiter.len <= p.contents.len) {
-                    if (std.mem.eql(u8, p.contents[p.index .. p.index + p.options.delimiter.len], p.options.delimiter)) {
+                        // Check for delimiter
+                        if (c == delimiter_char) {
+                            break;
+                        }
+
+                        // Check for line breaks (simple ASCII check for performance)
+                        if (c == '\n' or c == '\r') {
+                            break;
+                        }
+
+                        // Check for comment character if enabled
+                        if (p.options.comments and p.options.comment_char.len == 1 and c == p.options.comment_char[0]) {
+                            break;
+                        }
+
+                        field_end_index += 1;
+                    }
+
+                    // Update parser position
+                    p.index = field_end_index;
+
+                    // Consume any whitespace between the end of the field and the delimiter
+                    while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
+                        _ = p.nextCodepoint();
+                    }
+
+                    // Return direct slice - no allocation needed!
+                    return .{
+                        .value = p.contents[field_start_index..field_end_index],
+                        .was_quoted = false,
+                    };
+                } else {
+                    // Multi-character delimiter - use indexOf for efficiency
+                    const search_start = p.index;
+                    while (search_start < p.contents.len) {
+                        // Look for delimiter
+                        if (std.mem.indexOf(u8, p.contents[search_start..], delimiter)) |delimiter_pos| {
+                            field_end_index = search_start + delimiter_pos;
+                        } else {
+                            field_end_index = p.contents.len;
+                        }
+
+                        // Look for line breaks before the delimiter
+                        var line_break_pos = search_start;
+                        while (line_break_pos < field_end_index) {
+                            const c = p.contents[line_break_pos];
+                            if (c == '\n' or c == '\r') {
+                                field_end_index = line_break_pos;
+                                break;
+                            }
+                            line_break_pos += 1;
+                        }
+
+                        // Check for comment character if enabled
+                        if (p.options.comments) {
+                            if (std.mem.indexOf(u8, p.contents[search_start..field_end_index], p.options.comment_char)) |comment_pos| {
+                                field_end_index = search_start + comment_pos;
+                            }
+                        }
+
                         break;
                     }
+
+                    // Update parser position
+                    p.index = field_end_index;
+
+                    // Consume any whitespace between the end of the field and the delimiter
+                    while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
+                        _ = p.nextCodepoint();
+                    }
+
+                    // Return direct slice - no allocation needed!
+                    return .{
+                        .value = p.contents[field_start_index..field_end_index],
+                        .was_quoted = false,
+                    };
                 }
+            } else {
+                // Trimming is enabled, so we need to process character by character
+                var has_content = false;
+                var last_non_whitespace_index = field.items.len;
 
-                // Check for comment character (end of field)
-                if (p.options.comments and p.isCommentLine()) {
-                    break;
-                }
+                // Parse non-quoted field
+                while (true) {
+                    const c = p.peekCodepoint() orelse break;
 
-                // Accept any character in non-escaped fields except separators and line endings
-                _ = p.nextCodepoint();
+                    if (p.isEndOfLine()) {
+                        break;
+                    }
 
-                // Determine if we should append the character or skip it for trimming
-                const should_append = !p.options.trim_whitespace or !isUnicodeWhitespace(c) or has_content;
+                    // Check for delimiter
+                    if (p.checkDelimiter()) {
+                        break;
+                    }
 
-                // If this is leading whitespace and we're trimming, skip it
-                if (p.options.trim_whitespace and isUnicodeWhitespace(c) and !has_content) {
-                    continue;
-                }
+                    // Check for comment character (end of field)
+                    if (p.options.comments and p.isCommentLine()) {
+                        break;
+                    }
 
-                // Mark that we've seen non-whitespace content
-                if (!isUnicodeWhitespace(c)) {
-                    has_content = true;
-                    last_non_whitespace_index = field.items.len;
-                }
+                    // Accept any character in non-escaped fields except separators and line endings
+                    _ = p.nextCodepoint();
 
-                // Encode the Unicode codepoint to UTF-8 and append it
-                if (should_append) {
-                    var buf: [4]u8 = undefined;
-                    const len = strings.encodeWTF8RuneT(&buf, u21, c);
-                    try field.appendSlice(buf[0..len]);
+                    // Determine if we should append the character or skip it for trimming
+                    const should_append = !p.options.trim_whitespace or !isUnicodeWhitespace(c) or has_content;
 
-                    // Update last non-whitespace position if this isn't whitespace
+                    // If this is leading whitespace and we're trimming, skip it
+                    if (p.options.trim_whitespace and isUnicodeWhitespace(c) and !has_content) {
+                        continue;
+                    }
+
+                    // Mark that we've seen non-whitespace content
                     if (!isUnicodeWhitespace(c)) {
+                        has_content = true;
                         last_non_whitespace_index = field.items.len;
                     }
-                }
-            }
 
-            // Trim trailing whitespace if option is enabled
-            if (p.options.trim_whitespace and field.items.len > 0) {
-                field.shrinkRetainingCapacity(last_non_whitespace_index);
+                    // Encode the Unicode codepoint to UTF-8 and append it
+                    if (should_append) {
+                        var buf: [4]u8 = undefined;
+                        const len = strings.encodeWTF8RuneT(&buf, u21, c);
+                        try field.appendSlice(buf[0..len]);
+
+                        // Update last non-whitespace position if this isn't whitespace
+                        if (!isUnicodeWhitespace(c)) {
+                            last_non_whitespace_index = field.items.len;
+                        }
+                    }
+                }
+
+                // Trim trailing whitespace if option is enabled
+                if (p.options.trim_whitespace and field.items.len > 0) {
+                    field.shrinkRetainingCapacity(last_non_whitespace_index);
+                }
             }
         }
 
@@ -453,8 +572,6 @@ pub const CSV = struct {
             .was_quoted = is_quoted,
         };
     }
-
-    // Refactored public function
     pub fn parseField(p: *CSV, row_index: usize) !Expr {
         const field_result = try p._parseField();
         errdefer p.allocator.free(field_result.value); // _parseField allocates

@@ -1117,13 +1117,7 @@ pub fn transpileSourceCode(
                     \\export const errors = parsed.errors;
                     \\export const comments = parsed.comments;
                     \\export default parsed.data;
-                , .{
-                    options_string,
-                    path.text,
-                    specifier,
-                    input_specifier,
-                    referrer,
-                }) catch bun.outOfMemory();
+                , .{options_string}) catch bun.outOfMemory();
 
                 return ResolvedSource{
                     .allocator = null,

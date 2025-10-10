@@ -26,12 +26,12 @@
           };
         };
 
-        # LLVM 19 - matching the bootstrap script version (19.1.7)
+        # LLVM 19 - matching the bootstrap script (targets 19.1.7, actual version from nixpkgs-unstable)
         llvm = pkgs.llvm_19;
         clang = pkgs.clang_19;
         lld = pkgs.lld_19;
 
-        # Node.js - matching the bootstrap script version (24.3.0)
+        # Node.js 24 - matching the bootstrap script (targets 24.3.0, actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_24;
 
         # Build tools and dependencies
@@ -175,9 +175,6 @@
         pureShell = pkgs.mkShell {
           inherit buildInputs;
 
-          # Use clang as the C/C++ compiler
-          stdenv = pkgs.clangStdenv;
-
           shellHook = ''
             # Set up compiler environment (LLVM 19)
             export CC="${clang}/bin/clang"
@@ -201,10 +198,10 @@
             echo "====================================="
             echo "Bun Development Environment"
             echo "====================================="
-            echo "Node.js: $(node --version)"
-            echo "Bun: $(bun --version)"
-            echo "Clang: $(clang --version | head -n1)"
-            echo "CMake: $(cmake --version | head -n1)"
+            echo "Node.js: $(node --version 2>/dev/null || echo 'not found')"
+            echo "Bun: $(bun --version 2>/dev/null || echo 'not found')"
+            echo "Clang: $(clang --version 2>/dev/null | head -n1 || echo 'not found')"
+            echo "CMake: $(cmake --version 2>/dev/null | head -n1 || echo 'not found')"
             echo "LLVM: ${llvm.version}"
             echo ""
             echo "Quick start:"

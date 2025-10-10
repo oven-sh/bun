@@ -6,12 +6,35 @@ _file_arguments() {
     # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
     local re_escape_sed='[]~$"'\''`><()[{}=|*?;&#\]';
 
-    # requires "findutils" package
-    readarray -t -d '' COMPREPLY < <(
-        find . -regextype posix-extended -maxdepth 1 \
-            -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
-        sed -z "s/\n/\$'n'/g;s/${re_escape_sed}/\\\\&/g"
+    if [[ "$(which find && find --version | head -1)" == *GNU* ]] && \
+        [[ "$(sed --version | head -1)" == *GNU* ]]
+    then
+        # requires "findutils" package
+        readarray -t -d '' COMPREPLY < <(
+            find . -regextype posix-extended -maxdepth 1 \
+                -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
+            sed -z "s/\n/\$'n'/g;s/${re_escape_sed}/\\\\&/g"
     )
+    else
+        # shellcheck disable=SC2064 # current state of `globstar` is needed
+        trap "$(shopt -p globstar)" RETURN
+        shopt -s globstar
+
+        # the following two `readarray` assumes that filenames has no newline characters in it,
+        # otherwise they will be splitted into separate completions. the only safe way to permit
+        # newlines in filenames is to use `find` with `-regexptype posix-extended` and `-print0`,
+        # then `readarray -t -d '' ...`.
+        if [[ -z "${cur_word}" ]]; then
+            readarray -t COMPREPLY <<<"$(compgen -f -X "${extensions}" )";
+        else
+            readarray -t COMPREPLY <<<"$(compgen -f -X "${extensions}" -- "${cur_word}")";
+        fi
+        # if pathname expansion above produces no matching files, then
+        # `compgen` output single newline character `\n`, resulting in
+        # singleton `COMPREPLY` with empty string, let us mitigate this.
+        [[ -z ${COMPREPLY[0]} ]] && COMPREPLY=()
+    fi
+
 }
 
 _long_short_completion() {

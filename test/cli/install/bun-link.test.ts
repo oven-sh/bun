@@ -63,7 +63,7 @@ it("should link and unlink workspace package", async () => {
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "2 packages installed",
+    "Done! Checked 3 packages (no changes)",
   ]);
 
   let { stdout, stderr, exited } = spawn({

@@ -1086,7 +1086,7 @@ pub fn migrateNPMLockfile(
     return LoadResult{
         .ok = .{
             .lockfile = this,
-            .was_migrated = true,
+            .migrated = .npm,
             .loaded_from_binary_lockfile = false,
             .serializer_result = .{},
             .format = .binary,

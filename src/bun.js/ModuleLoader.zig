@@ -38,7 +38,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
 
     // atomically write to a tmpfile and then move it to the final destination
     var tmpname_buf: bun.PathBuffer = undefined;
-    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
+    const tmpfilename = bun.fs.FileSystem.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null;
 
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 

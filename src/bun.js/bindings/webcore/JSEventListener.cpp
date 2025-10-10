@@ -206,6 +206,9 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
+            // Don't report termination exceptions
+            if (vm.isTerminationException(exception))
+                return;
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
             return;
@@ -233,14 +236,15 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-        //     auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
-        //     bool terminatorCausedException = (exception && vm.isTerminationException(exception));
-        //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution()))
-        //         scriptController->forbidExecution();
-        // }
-
         if (exception) {
+            // Check if this is a termination exception (e.g., from process.exit() or worker shutdown)
+            // Termination exceptions should not be reported as they are expected
+            bool isTermination = vm.isTerminationException(exception);
+            if (isTermination) {
+                // For termination exceptions, just return without reporting
+                return true;
+            }
+
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
             return true;
@@ -253,11 +257,16 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node
-    if (retval.isObject()) {
+    // Skip promise handling for workers to avoid VM entry scope issues when async errors occur (fixes #20911)
+    // Workers handle unhandled rejections through their own error event mechanism
+    if (retval.isObject() && !scriptExecutionContext.isWorkerGlobalScope()) {
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
+            // Don't report termination exceptions
+            if (vm.isTerminationException(exception))
+                return;
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
             return;
@@ -267,9 +276,18 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             arglist.append(JSValue(JSC::jsUndefined()));
             arglist.append(JSValue(JSC::JSFunction::create(vm, lexicalGlobalObject, 1, String(), jsFunctionEmitUncaughtExceptionNextTick, ImplementationVisibility::Public, NoIntrinsic))); // err => process.nextTick(() => throw err)
             JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
+
+            // Check if VM termination was requested during the call
+            if (vm.hasTerminationRequest()) {
+                return;
+            }
+
             if (scope.exception()) [[unlikely]] {
                 auto* exception = scope.exception();
                 scope.clearException();
+                // Don't report termination exceptions
+                if (vm.isTerminationException(exception))
+                    return;
                 event.target()->uncaughtExceptionInEventHandler();
                 reportException(lexicalGlobalObject, exception);
                 return;

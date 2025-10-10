@@ -412,23 +412,25 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
-            var list_ = this.listManaged(allocator);
-            defer this.update(list_);
-
             const initial_len = this.len;
 
-            // Maximum UTF-16 length is 3 times the UTF-8 length + 2
-            const total_length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
-                // This length is an estimate. `str` isn't validated and might contain invalid
-                // sequences. If it does simdutf will assume they require 2 characters instead
-                // of 3.
-                bun.simdutf.length.utf8.from.utf16.le(str)
-            else
-                str.len;
+            var list_ = this.listManaged(allocator);
+            {
+                defer this.update(list_);
 
-            try list_.ensureTotalCapacity(total_length_estimate);
+                // Maximum UTF-16 length is 3 times the UTF-8 length + 2
+                const total_length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
+                    // This length is an estimate. `str` isn't validated and might contain invalid
+                    // sequences. If it does simdutf will assume they require 2 characters instead
+                    // of 3.
+                    bun.simdutf.length.utf8.from.utf16.le(str)
+                else
+                    str.len;
 
-            try strings.convertUTF16ToUTF8Append(&list_, str);
+                try list_.ensureTotalCapacity(total_length_estimate);
+
+                try strings.convertUTF16ToUTF8Append(&list_, str);
+            }
 
             return this.len - initial_len;
         }

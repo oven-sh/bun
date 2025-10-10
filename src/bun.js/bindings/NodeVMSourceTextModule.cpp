@@ -107,7 +107,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTFMove(identifier), contextValue,
-        WTFMove(sourceCode), moduleWrapper, initializeImportMeta);
+        WTFMove(sourceCode), moduleWrapper, initializeImportMeta.isUndefined() ? JSValue() : initializeImportMeta);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 

@@ -4475,7 +4475,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onLoaded(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.resolve(this.global, .true) catch {}; // TODO: properly propagate exception upwards
+        try this.p.?.resolve(this.global, .true);
         this.dev.vm.drainMicrotasks();
     }
 
@@ -4492,7 +4492,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onPluginError(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.reject(this.global, bun.String.static("Plugin error").toJS(this.global)) catch {}; // TODO: properly propagate exception upwards
+        try this.p.?.reject(this.global, bun.String.static("Plugin error").toJS(this.global));
         this.dev.vm.drainMicrotasks();
     }
 

@@ -862,56 +862,26 @@ describe("node:http", () => {
   });
 
   describe("https.request with custom tls options", () => {
-    const createServer = () =>
-      new Promise(resolve => {
-        const server = createHttpsServer(
-          {
-            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
-            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-            rejectUnauthorized: true,
-          },
-          (req, res) => {
-            res.writeHead(200);
-            res.end("hello world");
-          },
-        );
+    it("supports custom tls args", async () => {
+      using httpsServer = exampleSite();
 
-        listen(server, "https").then(url => {
-          resolve({
-            server,
-            close: () => server.close(),
-            url,
-          });
-        });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const options: https.RequestOptions = {
+        method: "GET",
+        url: httpsServer.url.href as string,
+        port: httpsServer.url.port,
+        ca: httpsServer.ca,
+      };
+      const req = https.request(options, res => {
+        res.on("data", () => null);
+        res.on("end", resolve);
       });
 
-    it("supports custom tls args", async done => {
-      const { url, close } = await createServer();
-      try {
-        const options: https.RequestOptions = {
-          method: "GET",
-          url,
-          port: url.port,
-          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
-        };
-        const req = https.request(options, res => {
-          res.on("data", () => null);
-          res.on("end", () => {
-            close();
-            done();
-          });
-        });
+      req.on("error", reject);
 
-        req.on("error", error => {
-          close();
-          done(error);
-        });
+      req.end();
 
-        req.end();
-      } catch (e) {
-        close();
-        throw e;
-      }
+      await promise;
     });
   });
 

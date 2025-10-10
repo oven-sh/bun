@@ -2,7 +2,21 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, please refer to [this guide](https://bun.com/docs/project/building-windows)
 
-## Install Dependencies
+## Using Nix (Alternative)
+
+A Nix flake is provided as an alternative to manual dependency installation:
+
+```bash
+nix develop
+# or explicitly use the pure shell
+# nix develop .#pure
+export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
+bun bd
+```
+
+This provides all dependencies in an isolated, reproducible environment without requiring sudo.
+
+## Install Dependencies (Manual)
 
 Using your system's package manager, install Bun's dependencies:
 

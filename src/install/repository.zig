@@ -301,7 +301,7 @@ pub const Repository = extern struct {
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
                 // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
-                try writer.writeAll("ssh:++");
+                try writer.writeAll("ssh++");
             }
 
             try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});

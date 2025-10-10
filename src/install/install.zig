@@ -255,6 +255,7 @@ pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
 pub const Store = @import("./isolated_install/Store.zig").Store;
+pub const FileCopier = @import("./isolated_install/FileCopier.zig").FileCopier;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;

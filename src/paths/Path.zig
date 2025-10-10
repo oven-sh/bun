@@ -398,11 +398,6 @@ pub fn Path(comptime opts: Options) type {
             return this;
         }
         pub fn from(input: anytype) Result(@This()) {
-            switch (comptime @TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => {},
-                []u16, []const u16, [:0]u16, [:0]const u16 => {},
-                else => @compileError("unsupported type: " ++ @typeName(@TypeOf(input))),
-            }
             const trimmed = switch (comptime opts.kind) {
                 .abs => trimmed: {
                     bun.debugAssert(isInputAbsolute(input));

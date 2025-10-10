@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, gcTick, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
 const tmpbase = tmpdir() + path.sep;
@@ -154,31 +154,30 @@ const IS_UV_FS_COPYFILE_DISABLED =
     } catch (e) {}
     await gcTick();
 
-    const file = path.join(import.meta.dir, "fetch.js.txt");
-    await gcTick();
-    const text = fs.readFileSync(file, "utf8");
-    fs.writeFileSync(tmpbase + "fetch.js.in", text);
+    fs.writeFileSync(tmpbase + "fetch.js.in", exampleHtml);
     await gcTick();
     {
       const result = await Bun.write(Bun.file(tmpbase + "fetch.js.out"), Bun.file(tmpbase + "fetch.js.in"));
       await gcTick();
-      expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(text);
+      expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
       await gcTick();
     }
 
     {
       await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (text.length / 2) | 0),
+        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
         Bun.file(tmpbase + "fetch.js.out"),
       );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(text.substring(0, (text.length / 2) | 0));
+      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
+        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
+      );
     }
 
     {
       await gcTick();
       await Bun.write(tmpbase + "fetch.js.in", Bun.file(tmpbase + "fetch.js.out"));
       await gcTick();
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(text);
+      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
   });
 
@@ -267,20 +266,18 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.file -> Response", async () => {
+    using server = exampleSite("https");
     // ensure the file doesn't already exist
     try {
       fs.unlinkSync(tmpbase + "fetch.js.out");
     } catch {}
     await gcTick();
-    const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();
-    const text = fs.readFileSync(file, "utf8").replaceAll("\r\n", "\n");
-    await gcTick();
-    const resp = await fetch("https://example.com");
+    const resp = await fetch(server.url, { tls: { ca: server.ca } });
     await gcTick();
     await gcTick();
-    expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(text.length);
-    expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(text);
+    expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(exampleHtml.length);
+    expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
     await gcTick();
   });
 

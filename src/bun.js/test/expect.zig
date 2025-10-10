@@ -747,7 +747,7 @@ pub const Expect = struct {
             if (bun.detectCI()) |_| {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.", .{});
                 }
             }
             var buntest_strong = this.bunTest() orelse {

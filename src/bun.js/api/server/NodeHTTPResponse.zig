@@ -1070,13 +1070,6 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
-fn uncorkSocket(this: *NodeHTTPResponse) void {
-    defer this.deref();
-    this.flags.uncork_scheduled = false;
-    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
-        this.raw_response.?.uncork();
-    }
-}
 pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
     defer this.deref();
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {

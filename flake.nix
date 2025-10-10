@@ -134,6 +134,14 @@
 
           shellHook = ''
             # Set up build environment
+            export CC="${pkgs.lib.getExe clang}"
+            export CXX="${pkgs.lib.getExe' clang "clang++"}"
+            export AR="${llvm}/bin/llvm-ar"
+            export RANLIB="${llvm}/bin/llvm-ranlib"
+            export CMAKE_C_COMPILER="$CC"
+            export CMAKE_CXX_COMPILER="$CXX"
+            export CMAKE_AR="$AR"
+            export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''

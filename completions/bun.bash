@@ -19,25 +19,20 @@ _file_arguments() {
 
     if _is_exist_and_gnu find && _is_exist_and_gnu sed
     then
-        # requires "findutils" package
         readarray -t -d '' COMPREPLY < <(
             find . -regextype posix-extended -maxdepth 1 \
                 -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
-            sed -z "s/\n/\$'n'/g;s/${re_escape_sed}/\\\\&/g"
+            sed -z "s/\n/\$'n'/g"
     )
     else
-        # shellcheck disable=SC2064 # current state of `globstar` is needed
-        trap "$(shopt -p globstar)" RETURN
-        shopt -s globstar
-
-        # the following two `readarray` assumes that filenames has no newline characters in it,
-        # otherwise they will be splitted into separate completions. the only safe way to permit
-        # newlines in filenames is to use `find` with `-regexptype posix-extended` and `-print0`,
-        # then `readarray -t -d '' ...`.
+        local -a candidates;
+        # the following two `readarray` assumes that filenames has
+        # no newline characters in it, otherwise they will be splitted
+        # into separate completions.
         if [[ -z "${cur_word}" ]]; then
-            readarray -t COMPREPLY <<<"$(compgen -f -X "${extensions}" )";
+            readarray -t candidates <<<"$(compgen -f)";
         else
-            readarray -t COMPREPLY <<<"$(compgen -f -X "${extensions}" -- "${cur_word}")";
+            readarray -t candidates <<<"$(compgen -f -- "${cur_word}")";
         fi
         # if pathname expansion above produces no matching files, then
         # `compgen` output single newline character `\n`, resulting in
@@ -45,6 +40,10 @@ _file_arguments() {
         [[ -z ${COMPREPLY[0]} ]] && COMPREPLY=()
     fi
 
+    for cnd in "${candidates[@]}"; do
+        [[ -f "${cnd}" && "${cnd}" =~ ${extensions} ]] && \
+            COMPREPLY+=( "${cnd##*/}" )
+    done
 }
 
 _long_short_completion() {

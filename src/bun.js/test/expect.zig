@@ -750,7 +750,7 @@ pub const Expect = struct {
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                     defer formatter.deinit();
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {any}", .{value.toFmt(&formatter)});
                 }
             }
             var buntest_strong = this.bunTest() orelse {
@@ -849,9 +849,9 @@ pub const Expect = struct {
                         runner.snapshots.last_error_snapshot_name = null;
                     };
                     if (snapshot_name) |name| {
-                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nSnapshot name: \"{s}\"\nReceived: {any}", .{ name, value.toFmt(&formatter) });
+                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {any}", .{ name, value.toFmt(&formatter) });
                     } else {
-                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)});
+                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {any}", .{value.toFmt(&formatter)});
                     }
                 },
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),

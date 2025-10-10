@@ -610,7 +610,7 @@ pub const ShellRmTask = struct {
                     // It's possible that we queued this subdir task and it finished, while the parent
                     // was still in the `removeEntryDir` function
                     const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .seq_cst);
-                    const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.monotonic);
+                    const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.acquire);
                     if (!parent_still_in_remove_entry_dir and tasks_left_before_decrement == 2) {
                         this.parent_task.?.deleteAfterWaitingForChildren();
                     }
@@ -650,6 +650,10 @@ pub const ShellRmTask = struct {
                 },
                 .result => |deleted| {
                     if (!deleted) {
+                        // New children were enqueued, so we need to wait for them
+                        // Reset the flag so that when those children finish, they can properly clean up
+                        this.deleting_after_waiting_for_children.store(false, .seq_cst);
+                        this.need_to_wait.store(true, .release);
                         do_post_run = false;
                     }
                 },
@@ -739,7 +743,7 @@ pub const ShellRmTask = struct {
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
         };
 
-        const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
+        const count = parent_task.subtask_count.fetchAdd(1, .seq_cst);
         if (comptime bun.Environment.allow_assert) {
             assert(count > 0);
         }

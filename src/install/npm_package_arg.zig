@@ -102,12 +102,19 @@ pub const NpaSpec = struct {
     pub fn deinit(self: *Self) void {
         // Free common fields
         self._allocator.free(self.raw);
+        if (self.name) |n| self._allocator.free(n);
         self._allocator.free(self.raw_spec);
 
         // For remote type, _fetch_spec and save_spec point to the same memory as raw_spec
+        // For some git types, save_spec may also point to raw_spec (to avoid duplicate allocation)
         if (self.type != .remote) {
             if (self._fetch_spec) |*buf| buf.deinit();
-            if (self.save_spec) |ss| self._allocator.free(ss);
+            if (self.save_spec) |ss| {
+                // Only free save_spec if it's not the same pointer as raw_spec
+                if (@intFromPtr(ss.ptr) != @intFromPtr(self.raw_spec.ptr)) {
+                    self._allocator.free(ss);
+                }
+            }
         }
 
         // Free type-specific fields
@@ -229,14 +236,32 @@ pub const NpaSpec = struct {
         return object;
     }
 
+    /// Allocates the raw field based on raw_arg, name, and spec.
+    /// This is the single source of truth for computing the raw field.
+    fn allocateRaw(
+        allocator: std.mem.Allocator,
+        raw_arg: ?[]const u8,
+        name: ?[]const u8,
+        spec: []const u8,
+    ) ![]u8 {
+        return if (raw_arg) |arg|
+            try allocator.dupe(u8, arg)
+        else if (name) |n|
+            try std.fmt.allocPrint(allocator, "{s}@{s}", .{ n, spec })
+        else
+            try allocator.dupe(u8, spec);
+    }
+
     /// Given a URL-like spec, parses it into an NpaSpec.
     fn fromUrl(
         allocator: std.mem.Allocator,
         name: ?[]const u8,
         raw_spec: []const u8,
-        raw: []const u8,
+        raw_arg: ?[]const u8,
     ) !NpaSpec {
         var raw_spec_mut = raw_spec;
+        var raw_spec_to_free: ?[]const u8 = null;
+        defer if (raw_spec_to_free) |s| allocator.free(s);
 
         // Handle git+ssh:// SCP-style URLs
         // Regex: /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#(.*))?$/i
@@ -245,10 +270,14 @@ pub const NpaSpec = struct {
             // Filter out port number patterns: :[0-9]+(/|$)
             // If it doesn't contain a port number, it's SCP-style
             if (!SpecStrUtils.containsPortNumber(scp_result.fragment)) {
-                const raw_owned = try allocator.dupe(u8, raw);
+                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
+                errdefer allocator.free(raw_owned);
+                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+                errdefer if (name_owned) |n| allocator.free(n);
                 const fetch_spec = try allocator.dupe(u8, scp_result.fragment);
-                const save_spec = try allocator.dupe(u8, raw_spec);
+                errdefer allocator.free(fetch_spec);
                 const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+                errdefer allocator.free(raw_spec_owned);
 
                 // Parse the committish for special syntax like semver:, path:
                 var git_attrs = if (scp_result.committish) |c|
@@ -259,10 +288,10 @@ pub const NpaSpec = struct {
 
                 return .{
                     .raw = raw_owned,
-                    .name = name,
+                    .name = name_owned,
                     .raw_spec = raw_spec_owned,
                     ._fetch_spec = bun.strings.SlicedBuffer.initUnsliced(allocator, fetch_spec),
-                    .save_spec = save_spec,
+                    .save_spec = raw_spec_owned, // Same as raw_spec_owned, no duplicate allocation
                     .type = .{
                         .git = .{
                             .hosted = null,
@@ -281,7 +310,7 @@ pub const NpaSpec = struct {
                 const normalized = try allocator.dupe(u8, raw_spec);
                 pathlib.normalizeSeparatorsMut(normalized, &.{.only_on_windows});
                 raw_spec_mut = normalized;
-                // TODO(markovejnovic): Do you free the raw_spec_mut later?
+                raw_spec_to_free = normalized;
             }
         }
 
@@ -303,7 +332,7 @@ pub const NpaSpec = struct {
 
         var spec: NpaSpec = .{
             .raw = undefined,
-            .name = name,
+            .name = undefined,
             .raw_spec = undefined,
             ._fetch_spec = undefined,
             .save_spec = undefined,
@@ -313,11 +342,14 @@ pub const NpaSpec = struct {
 
         switch (protocol_type) {
             .http, .https => {
-                const raw_owned = try allocator.dupe(u8, raw);
+                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
                 errdefer allocator.free(raw_owned);
+                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+                errdefer if (name_owned) |n| allocator.free(n);
                 const raw_spec_owned = try allocator.dupe(u8, raw_spec);
                 errdefer allocator.free(raw_spec_owned);
                 spec.raw = raw_owned;
+                spec.name = name_owned;
                 spec.raw_spec = raw_spec_owned;
                 spec._fetch_spec = null; // For remote type, fetchSpec() returns raw_spec
                 spec.save_spec = raw_spec_owned;
@@ -362,17 +394,21 @@ pub const NpaSpec = struct {
                 // Strip git+ prefix from fetchSpec if present
                 const final_fetch_spec = SpecStrUtils.stripGitPlusPrefix(allocator, fetch_spec);
 
-                const raw_owned = try allocator.dupe(u8, raw);
-                const save_spec = try allocator.dupe(u8, raw_spec);
+                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
+                errdefer allocator.free(raw_owned);
+                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+                errdefer if (name_owned) |n| allocator.free(n);
                 const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+                errdefer allocator.free(raw_spec_owned);
 
                 var git_attrs = try GitAttrs.fromUrl(allocator, parsed_url);
                 errdefer if (git_attrs) |*a| a.deinit();
 
                 spec.raw = raw_owned;
+                spec.name = name_owned;
                 spec.raw_spec = raw_spec_owned;
                 spec._fetch_spec = final_fetch_spec;
-                spec.save_spec = save_spec;
+                spec.save_spec = raw_spec_owned; // Same as raw_spec_owned, no duplicate allocation
                 spec.type = .{
                     .git = .{
                         .attrs = git_attrs,
@@ -398,12 +434,12 @@ pub const NpaSpec = struct {
         allocator: std.mem.Allocator,
         name: ?[]const u8,
         raw_spec: []const u8,
-        raw: []const u8,
+        raw_arg: ?[]const u8,
     ) !NpaSpec {
         const trimmed = bun.strings.trimSpaces(raw_spec);
 
         // TODO(markovejnovic): This would be better if we made one contiguous page allocation.
-        const raw_owned = try allocator.dupe(u8, raw);
+        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
         errdefer allocator.free(raw_owned);
         const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
         errdefer if (name_owned) |n| allocator.free(n);
@@ -456,7 +492,7 @@ pub const NpaSpec = struct {
         name: ?[]const u8,
         raw_spec: []const u8,
         where: []const u8,
-        raw: []const u8,
+        raw_arg: ?[]const u8,
     ) NpaError!NpaSpec {
         const sub_spec = try npa(allocator, raw_spec["npm:".len..], where);
 
@@ -478,7 +514,7 @@ pub const NpaSpec = struct {
         errdefer allocator.destroy(sub_spec_ptr);
         sub_spec_ptr.* = sub_spec;
 
-        const my_raw = try allocator.dupe(u8, raw);
+        const my_raw = try allocateRaw(allocator, raw_arg, name, raw_spec);
         errdefer allocator.free(my_raw);
         const my_raw_spec = try allocator.dupe(u8, raw_spec);
         errdefer allocator.free(my_raw_spec);
@@ -504,7 +540,7 @@ pub const NpaSpec = struct {
         allocator: std.mem.Allocator,
         name: ?[]const u8,
         raw_spec: []const u8,
-        raw: []const u8,
+        raw_arg: ?[]const u8,
     ) !?NpaSpec {
         // We need a mutable reference to spec_str
         const mut_spec_str: []u8 = try allocator.dupe(u8, raw_spec);
@@ -548,11 +584,14 @@ pub const NpaSpec = struct {
             break :blk SpecStrUtils.stripGitPlusPrefix(allocator, url_str);
         };
 
-        const raw_owned = try allocator.dupe(u8, raw);
+        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        errdefer allocator.free(raw_owned);
+        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+        errdefer if (name_owned) |n| allocator.free(n);
 
         return .{
             .raw = raw_owned,
-            .name = name,
+            .name = name_owned,
             .raw_spec = mut_spec_str, // Use the duplicated string
             ._fetch_spec = fetch_spec,
             .save_spec = save_spec,
@@ -571,7 +610,7 @@ pub const NpaSpec = struct {
         name: ?[]const u8,
         raw_spec: []const u8,
         where: []const u8,
-        raw: []const u8,
+        raw_arg: ?[]const u8,
     ) !Self {
         var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(allocator, raw_spec) catch {
             return error.InvalidPath;
@@ -688,13 +727,17 @@ pub const NpaSpec = struct {
         }
 
         // Duplicate raw and raw_spec so we own them
-        const raw_owned = try allocator.dupe(u8, raw);
+        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        errdefer allocator.free(raw_owned);
+        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
+        errdefer if (name_owned) |n| allocator.free(n);
         const raw_spec_owned = try allocator.dupe(u8, raw_spec);
+        errdefer allocator.free(raw_spec_owned);
 
         // Determine type: file or directory based on extension
         return .{
             .raw = raw_owned,
-            .name = name,
+            .name = name_owned,
             .raw_spec = raw_spec_owned,
             ._fetch_spec = bun.strings.SlicedBuffer.initUnsliced(allocator, fetch_spec),
             .save_spec = save_spec,
@@ -930,40 +973,30 @@ fn resolve(
     const where = maybe_where orelse try std.process.getCwdAlloc(allocator);
     defer if (maybe_where == null) allocator.free(where);
 
-    // Compute raw as "name@spec" or just spec, matching npa.js Result constructor
-    // We always duplicate so the from* functions can borrow it
-    const raw = if (raw_arg) |arg|
-        try allocator.dupe(u8, arg)
-    else if (name) |n|
-        try std.fmt.allocPrint(allocator, "{s}@{s}", .{ n, spec })
-    else
-        try allocator.dupe(u8, spec);
-    defer allocator.free(raw);
-
     if (SpecStrUtils.isFile(spec)) {
-        return NpaSpec.fromFile(allocator, name, spec, where, raw);
+        return NpaSpec.fromFile(allocator, name, spec, where, raw_arg);
     }
 
     if (SpecStrUtils.isAlias(spec)) {
-        return NpaSpec.fromAlias(allocator, name, spec, where, raw);
+        return NpaSpec.fromAlias(allocator, name, spec, where, raw_arg);
     }
 
-    if (try NpaSpec.fromGitSpec(allocator, name, spec, raw)) |git_s| {
+    if (try NpaSpec.fromGitSpec(allocator, name, spec, raw_arg)) |git_s| {
         return git_s;
     }
 
     if (SpecStrUtils.isUrl(spec)) {
-        return NpaSpec.fromUrl(allocator, name, spec, raw);
+        return NpaSpec.fromUrl(allocator, name, spec, raw_arg);
     }
 
     // These are now best-guesses.
     // TODO(markovejnovic): This feels like an odd heuristic but it's what npm-package-arg does.
     // Notice how we don't use the SpecStrUtils.isFile function here. This matches npa.
     if (bun.path.hasPathSlashes(spec) or NpaSpec.Type.fromInodePath(spec) == .file) {
-        return NpaSpec.fromFile(allocator, name, spec, where, raw);
+        return NpaSpec.fromFile(allocator, name, spec, where, raw_arg);
     }
 
-    return NpaSpec.fromRegistry(allocator, name, spec, raw);
+    return NpaSpec.fromRegistry(allocator, name, spec, raw_arg);
 }
 
 const PathToFileUrlUtils = struct {
@@ -1156,7 +1189,10 @@ const SpecStrUtils = struct {
     /// Strips "git+" prefix from an owned string if present, returning a SlicedBuffer.
     /// When the prefix exists, avoids reallocation by returning a slice of the original buffer.
     /// Takes ownership of the input string.
-    fn stripGitPlusPrefix(allocator: std.mem.Allocator, owned_str: []const u8) bun.strings.SlicedBuffer {
+    fn stripGitPlusPrefix(
+        allocator: std.mem.Allocator,
+        owned_str: []const u8,
+    ) bun.strings.SlicedBuffer {
         if (!bun.strings.hasPrefixComptime(owned_str, "git+")) {
             // No prefix: the slice is the entire buffer
             return bun.strings.SlicedBuffer.initUnsliced(allocator, owned_str);

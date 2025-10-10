@@ -695,15 +695,15 @@ pub const Bunfig = struct {
 
                     if (install_obj.get("minimumReleaseAge")) |min_age| {
                         switch (min_age.data) {
-                            .e_number => |days| {
-                                if (days.value < 0) {
-                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
+                            .e_number => |minutes| {
+                                if (minutes.value < 0) {
+                                    try this.addError(min_age.loc, "Expected positive number of minutes for minimumReleaseAge");
                                     return;
                                 }
-                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
+                                install.minimum_release_age_ms = minutes.value * std.time.ms_per_min;
                             },
                             else => {
-                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
+                                try this.addError(min_age.loc, "Expected number of minutes for minimumReleaseAge");
                             },
                         }
                     }

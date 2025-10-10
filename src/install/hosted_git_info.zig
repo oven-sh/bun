@@ -349,16 +349,19 @@ fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) !struct {
 }
 
 /// Enumeration of possible URL protocols.
-const WellDefinedProtocol = enum {
+pub const WellDefinedProtocol = enum {
     const Self = @This();
 
-    git_plus_ssh,
-    ssh,
-    git_plus_https,
     git,
+    git_plus_file,
+    git_plus_ftp,
+    git_plus_http,
+    git_plus_https,
+    git_plus_rsync,
+    git_plus_ssh,
     http,
     https,
-    git_plus_http,
+    ssh,
 
     // Non-standard protocols.
     github,
@@ -367,21 +370,68 @@ const WellDefinedProtocol = enum {
     gist,
     sourcehut,
 
-    /// Mapping from string to WellDefinedProtocol.
-    const strings = bun.ComptimeStringMap(Self, .{
-        .{ "git+ssh:", .git_plus_ssh },
-        .{ "ssh:", .ssh },
-        .{ "git+https:", .git_plus_https },
-        .{ "git:", .git },
-        .{ "http:", .http },
-        .{ "https:", .https },
-        .{ "git+http:", .git_plus_http },
-        .{ "github:", .github },
-        .{ "bitbucket:", .bitbucket },
-        .{ "gitlab:", .gitlab },
-        .{ "gist:", .gist },
-        .{ "sourcehut:", .sourcehut },
+    /// Mapping from protocol string (without colon) to WellDefinedProtocol.
+    pub const strings = bun.ComptimeStringMap(Self, .{
+        .{ "bitbucket", .bitbucket },
+        .{ "gist", .gist },
+        .{ "git+file", .git_plus_file },
+        .{ "git+ftp", .git_plus_ftp },
+        .{ "git+http", .git_plus_http },
+        .{ "git+https", .git_plus_https },
+        .{ "git+rsync", .git_plus_rsync },
+        .{ "git+ssh", .git_plus_ssh },
+        .{ "git", .git },
+        .{ "github", .github },
+        .{ "gitlab", .gitlab },
+        .{ "http", .http },
+        .{ "https", .https },
+        .{ "sourcehut", .sourcehut },
+        .{ "ssh", .ssh },
     });
+
+    /// Look up a protocol from a string that includes the trailing colon (e.g., "https:").
+    /// This method strips the colon before looking up in the strings map.
+    pub fn fromStringWithColon(protocol_with_colon: []const u8) ?Self {
+        if (protocol_with_colon.len == 0) return null;
+
+        // Strip the trailing colon if present
+        const protocol = if (protocol_with_colon[protocol_with_colon.len - 1] == ':')
+            protocol_with_colon[0 .. protocol_with_colon.len - 1]
+        else
+            protocol_with_colon;
+
+        return strings.get(protocol);
+    }
+
+    /// Maximum length of any protocol string in the strings map (computed at compile time).
+    pub const max_protocol_length: comptime_int = blk: {
+        var max: usize = 0;
+        for (strings.kvs) |kv| {
+            if (kv.key.len > max) {
+                max = kv.key.len;
+            }
+        }
+        break :blk max;
+    };
+
+    /// Buffer type for holding a protocol string with colon (e.g., "git+rsync:").
+    /// Sized to hold the longest protocol name plus one character for the colon.
+    pub const StringWithColonBuffer = [max_protocol_length + 1]u8;
+
+    /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
+    /// Takes a buffer pointer to hold the result.
+    /// Returns a slice into that buffer containing the protocol string with colon.
+    pub fn toStringWithColon(self: Self, buf: *StringWithColonBuffer) []const u8 {
+        // Look up the protocol string (without colon) from the map
+        const protocol_str = inline for (strings.kvs) |kv| {
+            if (kv.value == self) break kv.key;
+        } else unreachable;
+
+        // Copy to buffer and append colon
+        @memcpy(buf[0..protocol_str.len], protocol_str);
+        buf[protocol_str.len] = ':';
+        return buf[0 .. protocol_str.len + 1];
+    }
 
     /// The set of characters that must appear between <protocol><resource-identifier>.
     /// For example, in `git+ssh://user@host:repo`, the `//` is the magic string. Some protocols
@@ -390,7 +440,17 @@ const WellDefinedProtocol = enum {
     /// Kind of arbitrary and implemented to match hosted-git-info's behavior.
     fn protocolResourceIdentifierConcatenationToken(self: Self) []const u8 {
         return switch (self) {
-            .git_plus_ssh, .ssh, .git_plus_https, .git_plus_http, .http, .https, .git => "//",
+            .git,
+            .git_plus_file,
+            .git_plus_ftp,
+            .git_plus_http,
+            .git_plus_https,
+            .git_plus_rsync,
+            .git_plus_ssh,
+            .http,
+            .https,
+            .ssh,
+            => "//",
             .github, .bitbucket, .gitlab, .gist, .sourcehut => "",
         };
     }
@@ -401,7 +461,7 @@ const WellDefinedProtocol = enum {
         return switch (self) {
             .git_plus_ssh, .ssh, .git_plus_http => .sshurl,
             .git_plus_https => .https,
-            .git => .git,
+            .git_plus_file, .git_plus_ftp, .git_plus_rsync, .git => .git,
             .http => .http,
             .https => .https,
             .github, .bitbucket, .gitlab, .gist, .sourcehut => .shortcut,
@@ -520,6 +580,8 @@ const UrlProtocolPair = struct {
 
         var alloc = std.heap.stackFallback(long_url_thresh, allocator);
 
+        var protocol_buf: WellDefinedProtocol.StringWithColonBuffer = undefined;
+
         return concatPartsToUrl(
             alloc.get(),
             switch (self.protocol) {
@@ -529,7 +591,7 @@ const UrlProtocolPair = struct {
                 // This feels counter-intuitive but is correct. It's not github://foo/bar, it's
                 // github:foo/bar.
                 .well_formed => |proto_tag| &.{
-                    WellDefinedProtocol.strings.getKey(proto_tag).?,
+                    proto_tag.toStringWithColon(&protocol_buf),
                     // Wordy name for a double-slash or empty string. github:foo/bar is valid, but
                     // git+ssh://foo/bar is also valid.
                     proto_tag.protocolResourceIdentifierConcatenationToken(),
@@ -565,7 +627,7 @@ fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
     // The cast here is safe -- first_colon_idx is guaranteed to be [-1, infty)
     const proto_slice = npa_str[0..@intCast(first_colon_idx + 1)];
 
-    if (WellDefinedProtocol.strings.get(proto_slice)) |url_protocol| {
+    if (WellDefinedProtocol.fromStringWithColon(proto_slice)) |url_protocol| {
         // We need to slice off the protocol from the string. Note there are two very annoying
         // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
         var post_colon = bun.strings.drop(npa_str, @intCast(first_colon_idx + 1));

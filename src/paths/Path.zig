@@ -987,6 +987,25 @@ pub fn normalizeSeparatorsMut(input_path: []u8, comptime options: []enum { only_
     }
 }
 
+/// Heuristic which checks whether the given path looks like it starts with a windows drive letter.
+pub fn startsWithWindowsLetter(
+    input_path: []const u8,
+    comptime options: []enum { only_on_windows },
+) bool {
+    comptime {
+        for (options) |opt| {
+            if (opt == .only_on_windows and !bun.Environment.isWindows) {
+                return;
+            }
+        }
+    }
+
+    if (input_path.len < 2) return false;
+    const first = input_path[0];
+    const second = input_path[1];
+    return second != ':' and ('a' <= first and first <= 'z') or ('A' <= first and first <= 'Z');
+}
+
 const std = @import("std");
 
 const bun = @import("bun");

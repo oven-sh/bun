@@ -1559,6 +1559,21 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
+/// Count leading consecutive occurrences of a character.
+/// Returns the count of consecutive characters from the start of the slice.
+/// ```zig
+/// countLeadingChar("///foo", '/') -> 3
+/// countLeadingChar("foo", '/') -> 0
+/// ```
+pub fn countLeadingChar(slice: []const u8, char: u8) usize {
+    var count: usize = 0;
+    for (slice) |c| {
+        if (c != char) break;
+        count += 1;
+    }
+    return count;
+}
+
 /// Trim leading pattern of 2 bytes
 ///
 /// e.g.
@@ -2185,6 +2200,44 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         }
     };
 }
+
+/// Manages a slice of an owned buffer, useful for avoiding re-allocations when only a portion of
+/// an allocated buffer is needed.
+///
+/// Example: Parsing "123 Main St" where only "Main St" is needed but the entire
+/// string was allocated. SlicedBuffer owns the full buffer while exposing only
+/// the relevant slice.
+pub const SlicedBuffer = struct {
+    /// The full allocated buffer
+    buf: []const u8,
+    /// The slice of interest within buf
+    slice: []const u8,
+    /// Allocator used to free buf
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, buf: []const u8, slice: []const u8) SlicedBuffer {
+        bun.assert(@intFromPtr(slice.ptr) >= @intFromPtr(buf.ptr) and
+            @intFromPtr(slice.ptr) + slice.len <= @intFromPtr(buf.ptr) + buf.len);
+        return .{
+            .buf = buf,
+            .slice = slice,
+            .allocator = allocator,
+        };
+    }
+
+    /// Creates a SlicedBuffer where the slice is the entire buffer (no slicing).
+    pub fn initUnsliced(allocator: std.mem.Allocator, buf: []const u8) SlicedBuffer {
+        return .{
+            .buf = buf,
+            .slice = buf,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *const SlicedBuffer) void {
+        self.allocator.free(self.buf);
+    }
+};
 
 /// Generic. Works on []const u8, []const u16, etc
 pub fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) callconv(bun.callconv_inline) ?usize {

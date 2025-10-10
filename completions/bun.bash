@@ -28,7 +28,7 @@ _escape_bash_specials() {
     if (( has_patsub )); then
         echo "${word//${re_exp}/\\&}";
     else
-        echo "$(sed "s/${re_sed}/\\\\&/g" <<<"${word}")";
+        sed "s/${re_sed}/\\\\&/g" <<<"${word}";
     fi
 }
 

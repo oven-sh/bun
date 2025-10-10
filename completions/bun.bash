@@ -65,10 +65,6 @@ _long_short_completion() {
 
 # loads the scripts block in package.json
 _read_scripts_in_package_json() {
-    # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
-    trap "$(shopt -p patsub_replacement)" RETURN
-    shopt -s patsub_replacement
-
     local package_json;
     local line=0;
     local working_dir="${PWD}";
@@ -81,20 +77,34 @@ _read_scripts_in_package_json() {
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
-    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{[[:space:]]*(.*)\} ]] && {
+    [[ "${package_json}" =~ '"scripts"'[[:space:]]*':'[[:space:]]*\{[[:space:]]*(.*)\} ]] && {
+        local has_patsub=0;
+        if shopt -s patsub_replacement 2>/dev/null; then
+            # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
+            trap "$(shopt -p patsub_replacement)" RETURN;
+            has_patsub=1;
+        fi
+
         local package_json_compreply;
         local matched="${BASH_REMATCH[1]}";
         local scripts="${matched%\}*}";
         local scripts_rem="${scripts}";
+
         # escape all bash specials _except_ " (quote) and \ (backslash)
         # since they are already escaped in package.json: ]~$'`><()[{}=|*?;&#
-        local re_escape_bash='[]~$'"\'"'\`><\()[{\}=|*?;&#]';
-        while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
+        local re_escape_exp='[]~$'"\'"'\`><\()[{\}=|*?;&#]';
+        local re_escape_sed='[]~$'\''`><()[{}=|*?;&#]'
+
+        while [[ "${scripts_rem}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
             package_json_compreply+=( "${script_name}" );
             case "${script_name}" in
                 ( "${cur_word}"* )
-                    COMPREPLY+=( "${script_name//${re_escape_bash}/\\&}" );
+                    if (( has_patsub )); then
+                        COMPREPLY+=( "${script_name//${re_escape_exp}/\\&}" );
+                    else
+                        COMPREPLY+=( "$(sed "s/${re_escape_sed}/\\\\&/g" <<<"${script_name}")" )
+                    fi
                 ;;
             esac
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";

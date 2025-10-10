@@ -253,7 +253,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node
-    if (retval.isObject()) {
+    // Skip this for workers to avoid VM re-entrancy issues (see issue #20911)
+    if (retval.isObject() && !scriptExecutionContext.isWorkerGlobalScope()) {
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();

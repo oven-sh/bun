@@ -169,9 +169,9 @@ _bun_completions() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config)      _file_arguments ".+\.toml$" "${cur_word}" && return;;
-        --bunfile)        _file_arguments ".+\.bun$" "${cur_word}" && return;;
-        --server-bunfile) _file_arguments ".+\.server\.bun$" "${cur_word}" && return;;
+        -c|--config)      _file_arguments '.+\.toml$' "${cur_word}" && return;;
+        --bunfile)        _file_arguments '.+\.bun$' "${cur_word}" && return;;
+        --server-bunfile) _file_arguments '.+\.server\.bun$' "${cur_word}" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
@@ -222,7 +222,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments ".+\.(js|ts|jsx|tsx|mjs|cjs)$" "${cur_word}";
+            _file_arguments '.+\.(js|ts|jsx|tsx|mjs|cjs)$' "${cur_word}";
             # shellcheck disable=SC2207 # idem.
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json "${cur_word}" "${prev}";

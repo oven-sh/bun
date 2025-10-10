@@ -14,7 +14,6 @@ export async function renderRoutesForProdStatic(
   clientEntryUrl,
   routerTypeRoots,
   routerTypeServerEntrypoints,
-  serverRuntime,
 
   // The following fields represent a structure of arrays indexed by NAVIGABLE
   // route indices: these are the routes which are the leaves in the route graph

@@ -3,6 +3,12 @@
 # This uses unpinned <nixpkgs> for simplicity; flake.nix provides version pinning via flake.lock
 { pkgs ? import <nixpkgs> {} }:
 
+let
+  llvmVersion = pkgs.llvm_19.version;
+  llvmVersionMajor = pkgs.lib.versions.major llvmVersion;
+  llvmVersionMinor = pkgs.lib.versions.minor llvmVersion;
+  llvmVersionPatch = pkgs.lib.versions.patch llvmVersion;
+in
 pkgs.mkShell rec {
   packages = with pkgs; [
     # Core build tools (matching bootstrap.sh)
@@ -76,6 +82,9 @@ pkgs.mkShell rec {
     gdk-pixbuf
   ];
 
+  # Disable fortify hardening since Bun's debug build compiles with -O0.
+  hardeningDisable = [ "fortify" ];
+
   shellHook = ''
     export CC="${pkgs.lib.getExe pkgs.clang_19}"
     export CXX="${pkgs.lib.getExe' pkgs.clang_19 "clang++"}"
@@ -87,6 +96,10 @@ pkgs.mkShell rec {
     export CMAKE_RANLIB="$RANLIB"
     export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
+    export LLVM_VERSION="${llvmVersion}"
+    export LLVM_VERSION_MAJOR="${llvmVersionMajor}"
+    export LLVM_VERSION_MINOR="${llvmVersionMinor}"
+    export LLVM_VERSION_PATCH="${llvmVersionPatch}"
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
     export LD="${pkgs.lib.getExe' pkgs.lld_19 "ld.lld"}"
     export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"

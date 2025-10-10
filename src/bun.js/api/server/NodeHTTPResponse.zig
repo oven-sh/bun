@@ -346,7 +346,7 @@ pub fn getFinished(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JS
 }
 
 pub fn getFlags(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.JSValue.jsNumber(@as(u8, @bitCast(this.flags)));
+    return jsc.JSValue.jsNumber(@as(u16, @bitCast(this.flags)));
 }
 
 pub fn getAborted(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -1079,7 +1079,6 @@ fn uncorkSocket(this: *NodeHTTPResponse) void {
 }
 pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
     defer this.deref();
-    this.flags.uncork_scheduled = false;
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
         this.raw_response.?.uncork();
     }
@@ -1089,12 +1088,12 @@ pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
 fn registerAutoFlush(this: *NodeHTTPResponse) void {
     if (this.auto_flusher.registered) return;
     this.ref();
-    AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, this.globalThis.bunVM());
+    AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, jsc.VirtualMachine.get());
 }
 
 fn unregisterAutoFlush(this: *NodeHTTPResponse) void {
     if (!this.auto_flusher.registered) return;
-    AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, this.globalThis.bunVM());
+    AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, jsc.VirtualMachine.get());
     this.deref();
 }
 

@@ -3124,8 +3124,62 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
 }
 
 fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
+    const url_path = req.url();
+
+    // Try to serve static files first if static directories are configured
+    if (dev.framework.static_dirs.len > 0) {
+        // Remove leading slash from URL path for joining
+        const clean_path = if (url_path.len > 0 and url_path[0] == '/')
+            url_path[1..]
+        else
+            url_path;
+
+        for (dev.framework.static_dirs) |static_dir| {
+            const file_path = bun.path.joinAbsString(
+                static_dir,
+                &.{clean_path},
+                .auto,
+            );
+
+            // Try to open and serve the file
+            const file = std.fs.openFileAbsolute(file_path, .{}) catch continue;
+            defer file.close();
+
+            const stat = file.stat() catch continue;
+            if (stat.kind != .file) continue;
+
+            // Allocate and read file contents
+            const contents = dev.allocator().alloc(u8, @intCast(stat.size)) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Out of memory", false);
+                return;
+            };
+            errdefer dev.allocator().free(contents);
+
+            _ = file.readAll(contents) catch {
+                dev.allocator().free(contents);
+                continue;
+            };
+
+            // Determine MIME type from file extension
+            const ext = std.fs.path.extension(file_path);
+            const mime_type = if (ext.len > 0 and ext[0] == '.')
+                MimeType.byExtension(ext[1..])
+            else
+                MimeType.byExtension(ext);
+
+            // Create a temporary static route and serve it
+            const blob = AnyBlob.fromOwnedSlice(dev.allocator(), contents);
+            StaticRoute.sendBlobThenDeinit(AnyResponse.init(resp), &blob, .{
+                .mime_type = &mime_type,
+                .server = dev.server,
+            });
+            return;
+        }
+    }
+
     var params: FrameworkRouter.MatchedParams = undefined;
-    if (dev.router.matchSlow(req.url(), &params)) |route_index| {
+    if (dev.router.matchSlow(url_path, &params)) |route_index| {
         var ctx = RequestEnsureRouteBundledCtx{
             .dev = dev,
             .req = .{ .req = req },

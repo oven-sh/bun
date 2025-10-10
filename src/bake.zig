@@ -246,7 +246,7 @@ const BuildConfigSubset = struct {
 pub const Framework = struct {
     is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
-    // static_routers: [][]const u8,
+    static_dirs: [][]const u8 = &.{},
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
@@ -276,7 +276,7 @@ pub const Framework = struct {
                     .allow_layouts = true,
                 },
             }),
-            // .static_routers = try arena.dupe([]const u8, &.{"public"}),
+            .static_dirs = try arena.dupe([]const u8, &.{"public"}),
             .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(arena, &.{
                 "bun-framework-react/client.tsx",
                 "bun-framework-react/server.tsx",
@@ -402,6 +402,15 @@ pub const Framework = struct {
             fsr.root = try arena.dupe(u8, bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root));
             if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
             f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
+        }
+
+        // Resolve static_dirs to absolute paths
+        if (clone.static_dirs.len > 0) {
+            const resolved_static_dirs = try arena.alloc([]const u8, clone.static_dirs.len);
+            for (clone.static_dirs, 0..) |dir, i| {
+                resolved_static_dirs[i] = try arena.dupe(u8, bun.path.joinAbs(server.fs.top_level_dir, .auto, dir));
+            }
+            clone.static_dirs = resolved_static_dirs;
         }
 
         if (had_errors) return error.ModuleNotFound;
@@ -645,9 +654,24 @@ pub const Framework = struct {
         };
         errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
 
+        const static_dirs: [][]const u8 = brk: {
+            const array = try opts.getArray(global, "staticDirs") orelse
+                break :brk &.{};
+            const len = try array.getLength(global);
+            const dirs = try arena.alloc([]const u8, len);
+
+            var it = try array.arrayIterator(global);
+            var i: usize = 0;
+            while (try it.next()) |array_item| : (i += 1) {
+                dirs[i] = refs.track(try array_item.toSlice(global, arena));
+            }
+            break :brk dirs;
+        };
+
         const framework: Framework = .{
             .is_built_in_react = false,
             .file_system_router_types = file_system_router_types,
+            .static_dirs = static_dirs,
             .react_fast_refresh = react_fast_refresh,
             .server_components = server_components,
             .built_in_modules = built_in_modules,

@@ -124,9 +124,7 @@
           gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
-          darwin.apple_sdk.frameworks.CoreFoundation
-          darwin.apple_sdk.frameworks.CoreServices
-          darwin.apple_sdk.frameworks.Security
+          apple-sdk
         ];
 
         # FHS environment for better compatibility on non-NixOS systems
@@ -175,13 +173,10 @@
         pureShell = pkgs.mkShell {
           inherit buildInputs;
 
-          shellHook = ''
-            # Set up compiler environment
-            export CC="${clang}/bin/clang"
-            export CXX="${clang}/bin/clang++"
-            export AR="${llvm}/bin/llvm-ar"
-            export RANLIB="${llvm}/bin/llvm-ranlib"
+          # Use clang as the C/C++ compiler
+          stdenv = pkgs.clangStdenv;
 
+          shellHook = ''
             # LD/LDFLAGS are Linux-only (macOS uses system linker)
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD="${lld}/bin/lld"
@@ -207,10 +202,6 @@
             echo "Quick start:"
             echo "  bun bd                    # Build debug binary"
             echo "  bun bd test <test-file>   # Run tests"
-            echo ""
-            echo "Environment variables set:"
-            echo "  CC=${clang}/bin/clang"
-            echo "  CXX=${clang}/bin/clang++"
             echo "====================================="
           '';
 
@@ -229,7 +220,7 @@
         devShells.pure = pureShell;
 
         # Add a formatter
-        formatter = pkgs.nixpkgs-fmt;
+        formatter = pkgs.nixfmt-rfc-style;
       }
     );
 }

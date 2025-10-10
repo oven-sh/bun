@@ -2554,12 +2554,18 @@ pub const RuntimeTranspilerStore = struct {
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                    import_record.path.namespace = "bun";
-                    import_record.is_external_without_side_effects = true;
+                    // Validate and strip the bun: prefix for builtin modules.
+                    // Invalid modules (e.g., "bun:invalid") are left unchanged so the
+                    // resolver can report an error with the full "bun:invalid" name instead
+                    // of the confusing "Cannot find package 'invalid'".
+                    if (HardcodedModule.map.has(import_record.path.text)) {
+                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                        import_record.path.namespace = "bun";
+                        import_record.is_external_without_side_effects = true;
 
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
+                        if (strings.eqlComptime(import_record.path.text, "test")) {
+                            import_record.tag = .bun_test;
+                        }
                     }
                 }
             }

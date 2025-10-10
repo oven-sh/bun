@@ -232,11 +232,11 @@ namespace uWS
         TransferEncoding getTransferEncoding()
         {
             TransferEncoding te;
-            
+
             if (!bf.mightHave("transfer-encoding")) {
                 return te;
             }
-            
+
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
                     // Parse comma-separated values, ensuring "chunked" is last if present
@@ -244,33 +244,33 @@ namespace uWS
                     size_t pos = 0;
                     size_t lastTokenStart = 0;
                     size_t lastTokenLen = 0;
-        
+
                     while (pos < value.length()) {
                         // Skip leading whitespace
                         while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
                             pos++;
                         }
-                        
+
                         // Remember start of this token
                         size_t tokenStart = pos;
-                        
+
                         // Find end of token (until comma or end)
                         while (pos < value.length() && value[pos] != ',') {
                             pos++;
                         }
-                        
+
                         // Trim trailing whitespace from token
                         size_t tokenEnd = pos;
                         while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
                             tokenEnd--;
                         }
-                        
+
                         size_t tokenLen = tokenEnd - tokenStart;
                         if (tokenLen > 0) {
                             lastTokenStart = tokenStart;
                             lastTokenLen = tokenLen;
                         }
-                        
+
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
                             pos++;
@@ -283,12 +283,12 @@ namespace uWS
                     }
 
                     te.has = lastTokenLen > 0;
-                    
+
                     // Check if the last token is "chunked"
                     if (lastTokenLen == 7 && !strncmp(value.data() + lastTokenStart, "chunked", 7)) [[likely]] {
                         te.chunked = true;
                     }
-                    
+
                 }
             }
 
@@ -852,7 +852,7 @@ namespace uWS
             * ought to be handled as an error. */
             const std::string_view contentLengthString = req->getHeader("content-length");
             const auto contentLengthStringLen = contentLengthString.length();
-            
+
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
@@ -962,7 +962,7 @@ public:
                 data = (char *) dataToConsume.data();
                 length = (unsigned int) dataToConsume.length();
             } else {
-                
+
                 // this is exactly the same as below!
                 // todo: refactor this
                 if (remainingStreamingBytes >= length) {

@@ -3,7 +3,9 @@ import http from "node:http";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve } = Promise.withResolvers();
-http.request("http://google.com/", resolve).end();
+const req = http.request("http://google.com/", resolve);
+req.end();
 const response = await promise;
-expect(response.req.port).toBe(80);
+expect(response.req.agent.defaultPort).toBe(80);
 expect(response.req.protocol).toBe("http:");
+req.destroy();

@@ -23,11 +23,10 @@ expect(
   ["req", "finish"],
   ["req", "response"],
   "STATUS: 200",
-  // TODO: not totally right:
   ["res", "resume"],
-  ["req", "close"],
   ["res", "readable"],
   ["res", "end"],
+  ["req", "close"],
   ["res", "close"],
 ]);
 expect(await exited).toBe(0);

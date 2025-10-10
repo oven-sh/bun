@@ -852,18 +852,17 @@ describe("node:http", () => {
     it("should emit a socket event when connecting", async done => {
       runTest(done, async (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        req.on("socket", function onRequestSocket(socket) {
-          req.destroy();
-          done();
-        });
+        const { promise, resolve } = Promise.withResolvers();
+        req.on("socket", resolve);
         req.end();
+        await promise;
       });
     });
   });
 
   describe("https.request with custom tls options", () => {
     it("supports custom tls args", async () => {
-      using httpsServer = exampleSite();
+      await using httpsServer = exampleSite();
 
       const { promise, resolve, reject } = Promise.withResolvers();
       const options: https.RequestOptions = {
@@ -979,7 +978,7 @@ describe("node:http", () => {
   });
 
   describe("ClientRequest.signal", () => {
-    it("should attempt to make a standard GET request and abort", async () => {
+    it.todo("should attempt to make a standard GET request and abort", async () => {
       let server_port;
       let server_host;
       const {

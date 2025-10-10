@@ -19,7 +19,7 @@ const req = http.get(
   resolve,
 );
 
-const { socket } = req;
 await promise;
+const socket = req.res.socket;
 expect(socket._httpMessage).toBe(req);
 socket.destroy();

@@ -566,12 +566,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
+
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
+
         pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false);
+
         pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false);
+
         pub const doReload = onReload;
+
         pub const doFetch = onFetch;
+
         pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false);
+
         pub const doTimeout = timeout;
 
         pub const UserRoute = struct {

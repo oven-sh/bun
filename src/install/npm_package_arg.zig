@@ -18,8 +18,11 @@ pub const NpaSpec = struct {
     type: Type,
 
     _allocator: std.mem.Allocator,
-    /// Holds the fetch spec, potentially as a slice of a larger buffer (e.g., after stripping "git+" prefix)
-    _fetch_spec: ?bun.strings.SlicedBuffer,
+    /// Single arena buffer containing all owned strings (raw, name, raw_spec, save_spec, fetch_spec)
+    /// All string fields are slices into this buffer (or null)
+    _arena_buffer: ?[]u8,
+    /// The fetch spec slice (may be null, or a slice into arena_buffer or raw_spec)
+    _fetch_spec_slice: ?[]const u8,
 
     pub const Type = union(enum) {
         git: struct {
@@ -100,21 +103,10 @@ pub const NpaSpec = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // Free common fields
-        self._allocator.free(self.raw);
-        if (self.name) |n| self._allocator.free(n);
-        self._allocator.free(self.raw_spec);
-
-        // For remote type, _fetch_spec and save_spec point to the same memory as raw_spec
-        // For some git types, save_spec may also point to raw_spec (to avoid duplicate allocation)
-        if (self.type != .remote) {
-            if (self._fetch_spec) |*buf| buf.deinit();
-            if (self.save_spec) |ss| {
-                // Only free save_spec if it's not the same pointer as raw_spec
-                if (@intFromPtr(ss.ptr) != @intFromPtr(self.raw_spec.ptr)) {
-                    self._allocator.free(ss);
-                }
-            }
+        // Free the single arena buffer if it exists
+        // All string fields (raw, name, raw_spec, save_spec, fetch_spec) are slices into this buffer
+        if (self._arena_buffer) |arena| {
+            self._allocator.free(arena);
         }
 
         // Free type-specific fields
@@ -147,10 +139,7 @@ pub const NpaSpec = struct {
         if (self.type == .remote) {
             return self.raw_spec;
         }
-        if (self._fetch_spec) |buf| {
-            return buf.slice;
-        }
-        return null;
+        return self._fetch_spec_slice;
     }
 
     /// Convert this NpaSpec to a JavaScript object
@@ -270,14 +259,49 @@ pub const NpaSpec = struct {
             // Filter out port number patterns: :[0-9]+(/|$)
             // If it doesn't contain a port number, it's SCP-style
             if (!SpecStrUtils.containsPortNumber(scp_result.fragment)) {
-                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                errdefer allocator.free(raw_owned);
-                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-                errdefer if (name_owned) |n| allocator.free(n);
-                const fetch_spec = try allocator.dupe(u8, scp_result.fragment);
-                errdefer allocator.free(fetch_spec);
-                const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-                errdefer allocator.free(raw_spec_owned);
+                // PASS 1: Compute strings temporarily
+                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+                defer allocator.free(raw_temp);
+
+                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+                defer if (name_temp) |n| allocator.free(n);
+
+                const fetch_spec_temp = try allocator.dupe(u8, scp_result.fragment);
+                defer allocator.free(fetch_spec_temp);
+
+                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+                defer allocator.free(raw_spec_temp);
+
+                // PASS 2: Calculate arena size
+                var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len;
+                if (name_temp) |n| arena_size += n.len;
+
+                // PASS 3: Allocate arena and copy
+                const arena = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(arena);
+
+                var offset: usize = 0;
+
+                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+                const raw_slice = arena[offset..][0..raw_temp.len];
+                offset += raw_temp.len;
+
+                const name_slice = if (name_temp) |n| blk: {
+                    @memcpy(arena[offset..][0..n.len], n);
+                    const slice = arena[offset..][0..n.len];
+                    offset += n.len;
+                    break :blk slice;
+                } else null;
+
+                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+                offset += raw_spec_temp.len;
+
+                @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
+                const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
+                offset += fetch_spec_temp.len;
+
+                bun.assert(offset == arena_size);
 
                 // Parse the committish for special syntax like semver:, path:
                 var git_attrs = if (scp_result.committish) |c|
@@ -287,11 +311,12 @@ pub const NpaSpec = struct {
                 errdefer if (git_attrs) |*a| a.deinit();
 
                 return .{
-                    .raw = raw_owned,
-                    .name = name_owned,
-                    .raw_spec = raw_spec_owned,
-                    ._fetch_spec = bun.strings.SlicedBuffer.initUnsliced(allocator, fetch_spec),
-                    .save_spec = raw_spec_owned, // Same as raw_spec_owned, no duplicate allocation
+                    .raw = raw_slice,
+                    .name = name_slice,
+                    .raw_spec = raw_spec_slice,
+                    ._arena_buffer = arena,
+                    ._fetch_spec_slice = fetch_spec_slice,
+                    .save_spec = raw_spec_slice, // Alias to raw_spec
                     .type = .{
                         .git = .{
                             .hosted = null,
@@ -334,7 +359,8 @@ pub const NpaSpec = struct {
             .raw = undefined,
             .name = undefined,
             .raw_spec = undefined,
-            ._fetch_spec = undefined,
+            ._arena_buffer = undefined,
+            ._fetch_spec_slice = undefined,
             .save_spec = undefined,
             .type = undefined,
             ._allocator = allocator,
@@ -342,17 +368,49 @@ pub const NpaSpec = struct {
 
         switch (protocol_type) {
             .http, .https => {
-                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                errdefer allocator.free(raw_owned);
-                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-                errdefer if (name_owned) |n| allocator.free(n);
-                const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-                errdefer allocator.free(raw_spec_owned);
-                spec.raw = raw_owned;
-                spec.name = name_owned;
-                spec.raw_spec = raw_spec_owned;
-                spec._fetch_spec = null; // For remote type, fetchSpec() returns raw_spec
-                spec.save_spec = raw_spec_owned;
+                // PASS 1: Compute strings temporarily
+                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+                defer allocator.free(raw_temp);
+
+                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+                defer if (name_temp) |n| allocator.free(n);
+
+                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+                defer allocator.free(raw_spec_temp);
+
+                // PASS 2: Calculate arena size
+                var arena_size: usize = raw_temp.len + raw_spec_temp.len;
+                if (name_temp) |n| arena_size += n.len;
+
+                // PASS 3: Allocate arena and copy
+                const arena = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(arena);
+
+                var offset: usize = 0;
+
+                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+                const raw_slice = arena[offset..][0..raw_temp.len];
+                offset += raw_temp.len;
+
+                const name_slice = if (name_temp) |n| blk: {
+                    @memcpy(arena[offset..][0..n.len], n);
+                    const slice = arena[offset..][0..n.len];
+                    offset += n.len;
+                    break :blk slice;
+                } else null;
+
+                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+                offset += raw_spec_temp.len;
+
+                bun.assert(offset == arena_size);
+
+                spec.raw = raw_slice;
+                spec.name = name_slice;
+                spec.raw_spec = raw_spec_slice;
+                spec._arena_buffer = arena;
+                spec._fetch_spec_slice = null; // For remote type, fetchSpec() returns raw_spec
+                spec.save_spec = raw_spec_slice; // Alias to raw_spec
                 spec.type = .remote;
             },
 
@@ -366,8 +424,8 @@ pub const NpaSpec = struct {
             .git_plus_ssh,
             .ssh,
             => {
-                // Compute fetch_spec - special handling for git+file:// with Windows drive letters
-                const fetch_spec = if (protocol_type == .git_plus_file) blk: {
+                // PASS 1: Compute fetch_spec - special handling for git+file:// with Windows drive letters
+                const fetch_spec_temp = if (protocol_type == .git_plus_file) blk: {
                     const after_protocol = raw_spec_mut["git+file://".len..];
 
                     if (pathlib.startsWithWindowsLetter(after_protocol, &.{})) {
@@ -390,25 +448,62 @@ pub const NpaSpec = struct {
                     }
                     break :blk try SpecStrUtils.getUrlHrefWithoutHash(allocator, parsed_url);
                 } else try SpecStrUtils.getUrlHrefWithoutHash(allocator, parsed_url);
+                defer allocator.free(fetch_spec_temp);
 
-                // Strip git+ prefix from fetchSpec if present
-                const final_fetch_spec = SpecStrUtils.stripGitPlusPrefix(allocator, fetch_spec);
+                // Determine if we need to strip git+ prefix
+                const has_git_plus = bun.strings.hasPrefixComptime(fetch_spec_temp, "git+");
+                const fetch_spec_stripped = if (has_git_plus) fetch_spec_temp[4..] else fetch_spec_temp;
 
-                const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                errdefer allocator.free(raw_owned);
-                const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-                errdefer if (name_owned) |n| allocator.free(n);
-                const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-                errdefer allocator.free(raw_spec_owned);
+                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+                defer allocator.free(raw_temp);
+
+                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+                defer if (name_temp) |n| allocator.free(n);
+
+                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+                defer allocator.free(raw_spec_temp);
+
+                // PASS 2: Calculate arena size
+                var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_stripped.len;
+                if (name_temp) |n| arena_size += n.len;
+
+                // PASS 3: Allocate arena and copy
+                const arena = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(arena);
+
+                var offset: usize = 0;
+
+                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+                const raw_slice = arena[offset..][0..raw_temp.len];
+                offset += raw_temp.len;
+
+                const name_slice = if (name_temp) |n| blk: {
+                    @memcpy(arena[offset..][0..n.len], n);
+                    const slice = arena[offset..][0..n.len];
+                    offset += n.len;
+                    break :blk slice;
+                } else null;
+
+                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+                offset += raw_spec_temp.len;
+
+                // Copy stripped fetch_spec
+                @memcpy(arena[offset..][0..fetch_spec_stripped.len], fetch_spec_stripped);
+                const fetch_spec_slice = arena[offset..][0..fetch_spec_stripped.len];
+                offset += fetch_spec_stripped.len;
+
+                bun.assert(offset == arena_size);
 
                 var git_attrs = try GitAttrs.fromUrl(allocator, parsed_url);
                 errdefer if (git_attrs) |*a| a.deinit();
 
-                spec.raw = raw_owned;
-                spec.name = name_owned;
-                spec.raw_spec = raw_spec_owned;
-                spec._fetch_spec = final_fetch_spec;
-                spec.save_spec = raw_spec_owned; // Same as raw_spec_owned, no duplicate allocation
+                spec.raw = raw_slice;
+                spec.name = name_slice;
+                spec.raw_spec = raw_spec_slice;
+                spec._arena_buffer = arena;
+                spec._fetch_spec_slice = fetch_spec_slice;
+                spec.save_spec = raw_spec_slice; // Alias to raw_spec
                 spec.type = .{
                     .git = .{
                         .attrs = git_attrs,
@@ -438,21 +533,60 @@ pub const NpaSpec = struct {
     ) !NpaSpec {
         const trimmed = bun.strings.trimSpaces(raw_spec);
 
-        // TODO(markovejnovic): This would be better if we made one contiguous page allocation.
-        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        errdefer allocator.free(raw_owned);
-        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-        errdefer if (name_owned) |n| allocator.free(n);
-        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-        errdefer allocator.free(raw_spec_owned);
-        const fetch_spec_owned = try allocator.dupe(u8, trimmed);
-        errdefer allocator.free(fetch_spec_owned);
+        // PASS 1: Compute all strings temporarily
+        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        defer allocator.free(raw_temp);
+
+        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+        defer if (name_temp) |n| allocator.free(n);
+
+        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+        defer allocator.free(raw_spec_temp);
+
+        const fetch_spec_temp = try allocator.dupe(u8, trimmed);
+        defer allocator.free(fetch_spec_temp);
+
+        // PASS 2: Calculate arena size
+        var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len;
+        if (name_temp) |n| arena_size += n.len;
+
+        // PASS 3: Allocate arena and copy all strings
+        const arena = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(arena);
+
+        var offset: usize = 0;
+
+        // Copy raw
+        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+        const raw_slice = arena[offset..][0..raw_temp.len];
+        offset += raw_temp.len;
+
+        // Copy name (if present)
+        const name_slice = if (name_temp) |n| blk: {
+            @memcpy(arena[offset..][0..n.len], n);
+            const slice = arena[offset..][0..n.len];
+            offset += n.len;
+            break :blk slice;
+        } else null;
+
+        // Copy raw_spec
+        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+        offset += raw_spec_temp.len;
+
+        // Copy fetch_spec
+        @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
+        const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
+        offset += fetch_spec_temp.len;
+
+        bun.assert(offset == arena_size);
 
         var res: NpaSpec = .{
-            .raw = raw_owned,
-            .name = name_owned,
-            .raw_spec = raw_spec_owned,
-            ._fetch_spec = bun.strings.SlicedBuffer.initUnsliced(allocator, fetch_spec_owned),
+            .raw = raw_slice,
+            .name = name_slice,
+            .raw_spec = raw_spec_slice,
+            ._arena_buffer = arena,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = null,
             .type = undefined,
             ._allocator = allocator,
@@ -514,18 +648,52 @@ pub const NpaSpec = struct {
         errdefer allocator.destroy(sub_spec_ptr);
         sub_spec_ptr.* = sub_spec;
 
-        const my_raw = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        errdefer allocator.free(my_raw);
-        const my_raw_spec = try allocator.dupe(u8, raw_spec);
-        errdefer allocator.free(my_raw_spec);
-        const my_name = if (name) |n| try allocator.dupe(u8, n) else null;
-        errdefer if (my_name) |n| allocator.free(n);
+        // PASS 1: Compute all strings temporarily
+        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        defer allocator.free(raw_temp);
+
+        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+        defer if (name_temp) |n| allocator.free(n);
+
+        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+        defer allocator.free(raw_spec_temp);
+
+        // PASS 2: Calculate arena size
+        var arena_size: usize = raw_temp.len + raw_spec_temp.len;
+        if (name_temp) |n| arena_size += n.len;
+
+        // PASS 3: Allocate arena and copy all strings
+        const arena = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(arena);
+
+        var offset: usize = 0;
+
+        // Copy raw
+        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+        const raw_slice = arena[offset..][0..raw_temp.len];
+        offset += raw_temp.len;
+
+        // Copy name (if present)
+        const name_slice = if (name_temp) |n| blk: {
+            @memcpy(arena[offset..][0..n.len], n);
+            const slice = arena[offset..][0..n.len];
+            offset += n.len;
+            break :blk slice;
+        } else null;
+
+        // Copy raw_spec
+        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+        offset += raw_spec_temp.len;
+
+        bun.assert(offset == arena_size);
 
         return .{
-            .raw = my_raw,
-            .name = my_name,
-            .raw_spec = my_raw_spec,
-            ._fetch_spec = null,
+            .raw = raw_slice,
+            .name = name_slice,
+            .raw_spec = raw_spec_slice,
+            ._arena_buffer = arena,
+            ._fetch_spec_slice = null,
             .save_spec = null,
             .type = .{
                 .alias = .{
@@ -551,8 +719,10 @@ pub const NpaSpec = struct {
             return null;
         };
 
+        // PASS 1: Compute all strings temporarily
         // This returns the appropriate format based on default_representation
-        const save_spec = try hosted.toString(allocator);
+        const save_spec_temp = try hosted.toString(allocator);
+        defer allocator.free(save_spec_temp);
 
         // Parse the committish to extract gitCommittish, gitRange, and gitSubdir
         var git_attrs = if (hosted.committish) |c|
@@ -565,7 +735,7 @@ pub const NpaSpec = struct {
         // For shortcuts, fetchSpec is null; otherwise it's the string representation
         // fetchSpec should NEVER include the hash/committish
         // Also, fetchSpec has git+ prefix stripped
-        const fetch_spec = if (hosted.default_representation == .shortcut)
+        const fetch_spec_temp = if (hosted.default_representation == .shortcut)
             null
         else blk: {
             // Always strip committish from fetchSpec by creating temp hosted without it
@@ -579,22 +749,70 @@ pub const NpaSpec = struct {
                 ._memory_buffer = hosted._memory_buffer,
             };
             const url_str = try temp_hosted.toString(allocator);
+            defer allocator.free(url_str);
 
-            // Strip git+ prefix from fetchSpec
-            break :blk SpecStrUtils.stripGitPlusPrefix(allocator, url_str);
+            // Strip git+ prefix if present
+            const has_git_plus = bun.strings.hasPrefixComptime(url_str, "git+");
+            const stripped = if (has_git_plus) url_str[4..] else url_str;
+            break :blk try allocator.dupe(u8, stripped);
         };
+        defer if (fetch_spec_temp) |f| allocator.free(f);
 
-        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        errdefer allocator.free(raw_owned);
-        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-        errdefer if (name_owned) |n| allocator.free(n);
+        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        defer allocator.free(raw_temp);
+
+        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+        defer if (name_temp) |n| allocator.free(n);
+
+        // PASS 2: Calculate arena size
+        var arena_size: usize = raw_temp.len + mut_spec_str.len + save_spec_temp.len;
+        if (name_temp) |n| arena_size += n.len;
+        if (fetch_spec_temp) |f| arena_size += f.len;
+
+        // PASS 3: Allocate arena and copy
+        const arena = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(arena);
+
+        var offset: usize = 0;
+
+        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+        const raw_slice = arena[offset..][0..raw_temp.len];
+        offset += raw_temp.len;
+
+        const name_slice = if (name_temp) |n| blk: {
+            @memcpy(arena[offset..][0..n.len], n);
+            const slice = arena[offset..][0..n.len];
+            offset += n.len;
+            break :blk slice;
+        } else null;
+
+        @memcpy(arena[offset..][0..mut_spec_str.len], mut_spec_str);
+        const raw_spec_slice = arena[offset..][0..mut_spec_str.len];
+        offset += mut_spec_str.len;
+
+        @memcpy(arena[offset..][0..save_spec_temp.len], save_spec_temp);
+        const save_spec_slice = arena[offset..][0..save_spec_temp.len];
+        offset += save_spec_temp.len;
+
+        const fetch_spec_slice = if (fetch_spec_temp) |f| blk: {
+            @memcpy(arena[offset..][0..f.len], f);
+            const slice = arena[offset..][0..f.len];
+            offset += f.len;
+            break :blk slice;
+        } else null;
+
+        bun.assert(offset == arena_size);
+
+        // Free mut_spec_str since we copied it into arena
+        allocator.free(mut_spec_str);
 
         return .{
-            .raw = raw_owned,
-            .name = name_owned,
-            .raw_spec = mut_spec_str, // Use the duplicated string
-            ._fetch_spec = fetch_spec,
-            .save_spec = save_spec,
+            .raw = raw_slice,
+            .name = name_slice,
+            .raw_spec = raw_spec_slice,
+            ._arena_buffer = arena,
+            ._fetch_spec_slice = fetch_spec_slice,
+            .save_spec = save_spec_slice,
             .type = .{
                 .git = .{
                     .attrs = git_attrs,
@@ -701,8 +919,8 @@ pub const NpaSpec = struct {
             resolved_path = stripWindowsLeadingSlashes(resolved_path);
         }
 
-        // Handle special cases for saveSpec and fetchSpec
-        const fetch_spec, const save_spec = Self.normalizePath(
+        // PASS 1: Handle special cases for saveSpec and fetchSpec
+        const fetch_spec_temp, var save_spec_temp = Self.normalizePath(
             allocator,
             spec_path,
             raw_spec_cleanest,
@@ -711,36 +929,73 @@ pub const NpaSpec = struct {
         ) catch {
             return error.InvalidPath;
         };
-        errdefer allocator.free(save_spec);
-        errdefer allocator.free(fetch_spec);
+        defer allocator.free(fetch_spec_temp);
+        defer allocator.free(save_spec_temp);
 
         // Normalize slashes in saveSpec (replace backslashes with forward slashes on Windows)
         if (bun.Environment.isWindows) {
-            pathlib.normalizeSeparatorsMut(save_spec, &.{.only_on_windows});
+            pathlib.normalizeSeparatorsMut(save_spec_temp, &.{.only_on_windows});
 
             // Fix double slashes: file://C:/foo -> file:/C:/foo
-            if (bun.strings.hasPrefixComptime(save_spec, "file://")) {
-                const temp = save_spec;
-                save_spec = try std.fmt.allocPrint(allocator, "file:/{s}", .{temp[7..]});
+            if (bun.strings.hasPrefixComptime(save_spec_temp, "file://")) {
+                const temp = save_spec_temp;
+                save_spec_temp = try std.fmt.allocPrint(allocator, "file:/{s}", .{temp[7..]});
                 allocator.free(temp);
             }
         }
 
-        // Duplicate raw and raw_spec so we own them
-        const raw_owned = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        errdefer allocator.free(raw_owned);
-        const name_owned = if (name) |n| try allocator.dupe(u8, n) else null;
-        errdefer if (name_owned) |n| allocator.free(n);
-        const raw_spec_owned = try allocator.dupe(u8, raw_spec);
-        errdefer allocator.free(raw_spec_owned);
+        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
+        defer allocator.free(raw_temp);
+
+        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
+        defer if (name_temp) |n| allocator.free(n);
+
+        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
+        defer allocator.free(raw_spec_temp);
+
+        // PASS 2: Calculate arena size
+        var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len + save_spec_temp.len;
+        if (name_temp) |n| arena_size += n.len;
+
+        // PASS 3: Allocate arena and copy
+        const arena = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(arena);
+
+        var offset: usize = 0;
+
+        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
+        const raw_slice = arena[offset..][0..raw_temp.len];
+        offset += raw_temp.len;
+
+        const name_slice = if (name_temp) |n| blk: {
+            @memcpy(arena[offset..][0..n.len], n);
+            const slice = arena[offset..][0..n.len];
+            offset += n.len;
+            break :blk slice;
+        } else null;
+
+        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
+        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
+        offset += raw_spec_temp.len;
+
+        @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
+        const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
+        offset += fetch_spec_temp.len;
+
+        @memcpy(arena[offset..][0..save_spec_temp.len], save_spec_temp);
+        const save_spec_slice = arena[offset..][0..save_spec_temp.len];
+        offset += save_spec_temp.len;
+
+        bun.assert(offset == arena_size);
 
         // Determine type: file or directory based on extension
         return .{
-            .raw = raw_owned,
-            .name = name_owned,
-            .raw_spec = raw_spec_owned,
-            ._fetch_spec = bun.strings.SlicedBuffer.initUnsliced(allocator, fetch_spec),
-            .save_spec = save_spec,
+            .raw = raw_slice,
+            .name = name_slice,
+            .raw_spec = raw_spec_slice,
+            ._arena_buffer = arena,
+            ._fetch_spec_slice = fetch_spec_slice,
+            .save_spec = save_spec_slice,
             .type = Self.Type.fromInodePath(raw_spec),
             ._allocator = allocator,
         };

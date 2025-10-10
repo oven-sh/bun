@@ -246,6 +246,7 @@ pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObjec
 
 fn markRequestAsDone(this: *NodeHTTPResponse) void {
     log("markRequestAsDone()", .{});
+    defer this.deref();
     this.flags.is_request_pending = false;
 
     this.clearOnDataCallback(this.getThisValue(), jsc.VirtualMachine.get().global);
@@ -254,8 +255,8 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
     this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
     const server = this.server;
     this.poll_ref.unref(jsc.VirtualMachine.get());
-    this.deref();
     this.unregisterAutoFlush();
+
     server.onRequestComplete();
 }
 

@@ -3,22 +3,35 @@ import { vi, test, beforeAll, afterAll, expect } from "vitest";
 beforeAll(() => vi.useFakeTimers());
 afterAll(() => vi.useRealTimers());
 
-test.each(Array.from({ length: 2 }).map((_, i) => i))("runAllTimers runs in order of time", i => {
-  const order: string[] = [];
-  const orderNum: number[] = [];
-
-  let base = 0;
-  const time = (d: number, l: string, cb: () => void) => {
-    const start = base;
+class TimeHelper {
+  base: number = 0;
+  order: string[] = [];
+  orderNum: number[] = [];
+  time(d: number, l: string, cb: () => void) {
+    const start = this.base;
     setTimeout(() => {
-      orderNum.push(start + d);
-      order.push(`${start + d}${l ? ` (${l})` : ""}`);
-      if (base != 0) throw new Error("base is not 0");
-      base = start + d;
+      this.addOrder(start + d, l);
+      if (this.base != 0) throw new Error("base is not 0");
+      this.base = start + d;
       cb();
-      base = 0;
+      this.base = 0;
     }, d);
-  };
+  }
+  addOrder(d: number, l: string) {
+    this.orderNum.push(d);
+    this.order.push(`${d}${l ? ` (${l})` : ""}`);
+  }
+  expectOrder() {
+    expect(this.orderNum).toEqual(this.orderNum.toSorted((a, b) => a - b));
+    const order = this.order;
+    this.order = [];
+    return expect(order);
+  }
+}
+
+test.each(["runAllTimers", "advanceTimersToNextTimer"])("%s runs in order of time", mode => {
+  const tester = new TimeHelper();
+  const time = tester.time.bind(tester);
 
   time(1000, "", () => {
     time(500, "", () => {});
@@ -41,18 +54,30 @@ test.each(Array.from({ length: 2 }).map((_, i) => i))("runAllTimers runs in orde
   const interval = setInterval(() => {
     if (intervalCount > 3) clearInterval(interval);
     intervalCount += 1;
-    orderNum.push(intervalCount * 499);
-    order.push(`${intervalCount * 499} (interval)`);
+    tester.addOrder(intervalCount * 499, "interval");
     setTimeout(() => {
-      orderNum.push(intervalCount * 499 + 25);
-      order.push(`${intervalCount * 499 + 25} (interval + 25)`);
+      tester.addOrder(intervalCount * 499 + 25, "interval + 25");
     }, 25);
   }, 499);
 
-  vi.runAllTimers();
+  if (mode === "runAllTimers") {
+    vi.runAllTimers();
+  } else if (mode === "advanceTimersToNextTimer") {
+    let orderLen = 0;
+    while (true) {
+      vi.advanceTimersToNextTimer();
+      if (tester.order.length > orderLen) {
+        expect(tester.order.length).toBe(orderLen + 1);
+        orderLen = tester.order.length;
+      } else if (tester.order.length === orderLen) {
+        break;
+      } else {
+        expect.fail();
+      }
+    }
+  }
 
-  expect(orderNum).toEqual(orderNum.toSorted((a, b) => a - b));
-  expect(order).toMatchInlineSnapshot(`
+  tester.expectOrder().toMatchInlineSnapshot(`
     [
       "0 (zero 1)",
       "0 (zero 2)",
@@ -87,8 +112,6 @@ test("runAllTimers supports interval", () => {
     ticks += 1;
     if (ticks >= 10) clearInterval(interval);
   }, 25);
-
-  vi.runAllTimers();
 
   expect(ticks).toBe(10);
 });

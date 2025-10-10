@@ -1423,6 +1423,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
+extern "C" void Bun__Timer__initViTime(void*);
+
 // Enables fake timers and sets up Date mocking
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1433,6 +1435,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalO
         // Initialize with current time if not already set
         globalObject->overridenDateNow = globalObject->jsDateNow();
     }
+
+    // Initialize vi_current_time so timers are scheduled relative to time 0
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* vm = bunGlobal->bunVM();
+    if (vm) {
+        Bun__Timer__initViTime(vm);
+    }
+
     return JSValue::encode(callframe->thisValue());
 }
 

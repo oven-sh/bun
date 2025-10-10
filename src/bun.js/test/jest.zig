@@ -260,6 +260,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("isFakeTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("isFakeTimers"), 0, JSMock__jsIsFakeTimers, false));
         vi.put(globalObject, ZigString.static("runAllTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runAllTimers"), 0, Bun__Timer__runAllTimers, false));
         vi.put(globalObject, ZigString.static("runAllTicks"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runAllTicks"), 0, JSMock__jsRunAllTicks, false));
+        vi.put(globalObject, ZigString.static("advanceTimersToNextTimer"), jsc.host_fn.NewFunction(globalObject, ZigString.static("advanceTimersToNextTimer"), 0, Bun__Timer__advanceTimersToNextTimer, false));
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -278,6 +279,7 @@ pub const Jest = struct {
     extern fn JSMock__jsUseFakeTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsUseRealTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn Bun__Timer__runAllTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn Bun__Timer__advanceTimersToNextTimer(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     pub fn call(
         globalObject: *JSGlobalObject,

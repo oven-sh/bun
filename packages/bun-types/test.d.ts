@@ -191,6 +191,31 @@ declare module "bun:test" {
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
     runAllTicks: typeof jest.runAllTicks;
+    /**
+     * Advances all timers to the next timer (earliest scheduled timer).
+     * Useful for stepping through timers one at a time.
+     *
+     * @returns this (the vi object) for chaining
+     *
+     * @example
+     * ```ts
+     * import { vi, test, expect } from "bun:test";
+     *
+     * test("vi.advanceTimersToNextTimer", () => {
+     *   vi.useFakeTimers();
+     *
+     *   let i = 0;
+     *   setInterval(() => console.log(++i), 50);
+     *
+     *   vi.advanceTimersToNextTimer() // log: 1
+     *     .advanceTimersToNextTimer() // log: 2
+     *     .advanceTimersToNextTimer(); // log: 3
+     *
+     *   vi.useRealTimers();
+     * });
+     * ```
+     */
+    advanceTimersToNextTimer(): typeof vi;
   };
 
   interface FunctionLike {

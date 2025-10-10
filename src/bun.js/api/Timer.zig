@@ -578,6 +578,35 @@ pub const All = struct {
         return .js_undefined;
     }
 
+    /// Internal function that advances to the next timer in the vi_timers heap.
+    /// Returns true if a timer was fired, false if no timers remain.
+    fn advanceToNextViTimer(timer: *All, vm: *VirtualMachine) bool {
+        // Get the next timer from the heap
+        timer.lock.lock();
+        const event_timer = timer.vi_timers.deleteMin();
+        timer.lock.unlock();
+
+        if (event_timer) |et| {
+            // Set the virtual time to this timer's scheduled time
+            // This ensures nested timers scheduled during callbacks get the correct base time
+            timer.vi_current_time = et.next;
+
+            // Fire the timer at its scheduled time
+            const arm_result = et.fire(&et.next, vm);
+
+            // If the timer wants to rearm (like setInterval), reinsert it
+            if (arm_result == .rearm) {
+                timer.lock.lock();
+                timer.vi_timers.insert(et);
+                timer.lock.unlock();
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     pub fn runAllTimers(
         globalThis: *JSGlobalObject,
         _: *jsc.CallFrame,
@@ -588,32 +617,34 @@ pub const All = struct {
 
         // Keep firing timers until there are no more
         // We need to keep checking the heap because firing timers can schedule new timers
-        while (true) {
-            timer.lock.lock();
-            const event_timer = timer.vi_timers.deleteMin();
-            timer.lock.unlock();
-
-            if (event_timer == null) break;
-
-            // Set the virtual time to this timer's scheduled time
-            // This ensures nested timers scheduled during callbacks get the correct base time
-            timer.vi_current_time = event_timer.?.next;
-
-            // Fire the timer at its scheduled time
-            const arm_result = event_timer.?.fire(&event_timer.?.next, vm);
-
-            // If the timer wants to rearm (like setInterval), reinsert it
-            if (arm_result == .rearm) {
-                timer.lock.lock();
-                timer.vi_timers.insert(event_timer.?);
-                timer.lock.unlock();
-            }
-        }
+        while (advanceToNextViTimer(timer, vm)) {}
 
         // Clear the virtual time when we're done
         timer.vi_current_time = null;
 
         return .js_undefined;
+    }
+
+    pub fn advanceTimersToNextTimer(
+        globalThis: *JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) JSError!JSValue {
+        jsc.markBinding(@src());
+        const vm = globalThis.bunVM();
+        const timer = &vm.timer;
+
+        // Advance to the next timer (if any)
+        _ = advanceToNextViTimer(timer, vm);
+
+        // Keep the virtual time set for subsequent calls (don't clear it)
+        // Return the 'this' value (the vi object) for chaining
+        return callframe.this();
+    }
+
+    export fn Bun__Timer__initViTime(vm: *VirtualMachine) callconv(.C) void {
+        const timer = &vm.timer;
+        // Initialize virtual time to zero so timers are scheduled relative to time 0
+        timer.vi_current_time = timespec{ .sec = 0, .nsec = 0 };
     }
 
     export fn Bun__Timer__clearViTimers(vm: *VirtualMachine) callconv(.C) void {
@@ -636,7 +667,9 @@ pub const All = struct {
         @export(&jsc.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
         @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
         @export(&jsc.host_fn.wrap2(runAllTimers), .{ .name = "Bun__Timer__runAllTimers" });
+        @export(&jsc.host_fn.wrap2(advanceTimersToNextTimer), .{ .name = "Bun__Timer__advanceTimersToNextTimer" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
+        _ = &Bun__Timer__initViTime;
         _ = &Bun__Timer__clearViTimers;
     }
 };

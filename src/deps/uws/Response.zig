@@ -45,7 +45,9 @@ pub fn NewResponse(ssl_flag: i32) type {
         pub fn flushHeaders(res: *Response, flushImmediately: bool) void {
             c.uws_res_flush_headers(ssl_flag, res.downcast(), flushImmediately);
         }
-
+        pub fn isCorked(res: *Response) bool {
+            return c.uws_res_is_corked(ssl_flag, res.downcast());
+        }
         pub fn state(res: *const Response) State {
             return c.uws_res_state(ssl_flag, @as(*const c.uws_res, @ptrCast(@alignCast(res))));
         }
@@ -382,6 +384,11 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.flushHeaders(flushImmediately),
         }
     }
+    pub fn isCorked(this: AnyResponse) bool {
+        return switch (this) {
+            inline else => |resp| resp.isCorked(),
+        };
+    }
     pub fn uncork(this: AnyResponse) void {
         switch (this) {
             inline else => |resp| resp.uncork(),
@@ -664,6 +671,7 @@ const c = struct {
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
     pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res, flushImmediately: bool) void;
+    pub extern fn uws_res_is_corked(ssl: i32, res: *c.uws_res) bool;
     pub extern fn uws_res_get_socket_data(ssl: i32, res: *c.uws_res) ?*uws.SocketData;
     pub extern fn uws_res_pause(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_resume(ssl: i32, res: *c.uws_res) void;

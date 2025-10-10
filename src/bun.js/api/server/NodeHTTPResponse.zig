@@ -1077,10 +1077,13 @@ fn uncorkSocket(this: *NodeHTTPResponse) void {
 
 pub fn flushHeaders(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
-        // we will not flush immediately here, we will queue a microtask to uncork the socket
-        this.raw_response.?.flushHeaders(false);
-        this.ref();
-        globalObject.queueMicrotaskCallback(this, uncorkSocket);
+        const raw_response = this.raw_response.?;
+        // Don’t flush immediately; queue a microtask to uncork the socket.
+        raw_response.flushHeaders(false);
+        if (raw_response.isCorked()) {
+            this.ref();
+            globalObject.queueMicrotaskCallback(this, uncorkSocket);
+        }
     }
 
     return .js_undefined;

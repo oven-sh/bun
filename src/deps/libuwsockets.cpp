@@ -1811,6 +1811,16 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  bool uws_res_is_corked(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isCorked();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isCorked();
+    }
+  }
+
   void *uws_res_get_socket_data(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

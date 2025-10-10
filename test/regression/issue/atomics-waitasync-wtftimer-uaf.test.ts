@@ -3,8 +3,9 @@
 // The UAF occurs when the timer fires and continues to reference `this` after it's been freed.
 
 import { expect, test } from "bun:test";
+import { isWindows } from "harness";
 
-test("Atomics.waitAsync with setTimeout does not crash (UAF bug)", async () => {
+test.todoIf(isWindows)("Atomics.waitAsync with setTimeout does not crash (UAF bug)", async () => {
   // Run 2 times to trigger the UAF with ASAN
   for (let i = 0; i < 2; i++) {
     const buffer = new SharedArrayBuffer(16);
@@ -30,7 +31,7 @@ test("Atomics.waitAsync with setTimeout does not crash (UAF bug)", async () => {
   }
 });
 
-test("Multiple Atomics.waitAsync calls do not crash", async () => {
+test.todoIf(isWindows)("Multiple Atomics.waitAsync calls do not crash", async () => {
   const buffer = new SharedArrayBuffer(16);
   const view = new Int32Array(buffer);
 

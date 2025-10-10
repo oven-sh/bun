@@ -151,7 +151,7 @@ Bun.serve({
 ```
 
 {% callout %}
-**Note:** Previously, you could specify the type of `ws.data` using a generic on `Bun.serve`, like `Bun.serve<MyData>({...})`. This pattern is now deprecated in favor of the `data` property shown above.
+**Note:** Previously, you could specify the type of `ws.data` using a type parameter on `Bun.serve`, like `Bun.serve<MyData>({...})`. This pattern was removed due to [a limitation in TypeScript](https://github.com/microsoft/TypeScript/issues/26242) in favor of the `data` property shown above.
 {% /callout %}
 
 To connect to this server from the browser, create a new `WebSocket`.

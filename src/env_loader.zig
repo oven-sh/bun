@@ -1019,6 +1019,21 @@ const Parser = struct {
         var last = value.len;
         while (true) : (pos -= 1) {
             if (value[pos] == '$') {
+                // Check if $ is inside backticks
+                var in_backticks = false;
+                var scan = pos;
+                while (scan > 0) : (scan -= 1) {
+                    if (value[scan] == '`') {
+                        in_backticks = !in_backticks;
+                    }
+                }
+                if (in_backticks) {
+                    // Don't expand, just copy as-is
+                    try this.value_buffer.insertSlice(0, value[pos..last]);
+                    last = pos;
+                    continue;
+                }
+
                 if (pos > 0 and value[pos - 1] == '\\') {
                     try this.value_buffer.insertSlice(0, value[pos..last]);
                     pos -= 1;

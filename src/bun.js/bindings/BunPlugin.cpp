@@ -426,7 +426,7 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSModuleMock = std::forward<decltype(space)>(space); });
     }
 
-    void finishCreation(JSC::VM&, JSC::JSObject* callback);
+    void finishCreation(JSC::VM&);
 
 private:
     JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback);
@@ -437,11 +437,11 @@ const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nul
 JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
 {
     JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback);
-    ptr->finishCreation(vm, callback);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
-void JSModuleMock::finishCreation(JSC::VM& vm, JSObject* callback)
+void JSModuleMock::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 }

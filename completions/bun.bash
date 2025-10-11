@@ -137,10 +137,17 @@ _subcommand_comp_reply() {
     local sub_commands="${1}";
     local cur_word="${2}";
     local prev="${3}";
+
     local regexp_subcommand="^[dbcriauh]";
+
     [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-        # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
-        COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
+        if [[ -z "${cur_word}" ]]; then
+            # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
+            COMPREPLY+=( $(compgen -W "${sub_commands}") );
+        else
+            # shellcheck disable=SC2207 # idem.
+            COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
+        fi
     }
 }
 

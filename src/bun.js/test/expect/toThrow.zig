@@ -39,7 +39,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     if (not) {
         const signature = comptime getSignature("toThrow", "<green>expected<r>", true);
 
-        if (!did_throw) return .js_undefined;
+        if (!did_throw) return this.returnMatcherValue(globalThis);
 
         const result: JSValue = result_.?;
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -76,7 +76,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 defer expected_slice.deinit();
                 const received_slice = try received_message.toSliceOrNull(globalThis);
                 defer received_slice.deinit();
-                if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .js_undefined;
+                if (!strings.contains(received_slice.slice(), expected_slice.slice())) return this.returnMatcherValue(globalThis);
             }
 
             return this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -95,7 +95,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             if (try expected_value.get(globalThis, "test")) |test_fn| {
                 const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                if (!matches.toBoolean()) return .js_undefined;
+                if (!matches.toBoolean()) return this.returnMatcherValue(globalThis);
             }
 
             return this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -112,12 +112,12 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             if (globalThis.hasException()) return .zero;
 
             // no partial match for this case
-            if (!try expected_message.isSameValue(received_message, globalThis)) return .js_undefined;
+            if (!try expected_message.isSameValue(received_message, globalThis)) return this.returnMatcherValue(globalThis);
 
             return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
         }
 
-        if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
+        if (!result.isInstanceOf(globalThis, expected_value)) return this.returnMatcherValue(globalThis);
 
         var expected_class = ZigString.Empty;
         try expected_value.getClassName(globalThis, &expected_class);
@@ -126,7 +126,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     }
 
     if (did_throw) {
-        if (expected_value == .zero or expected_value.isUndefined()) return .js_undefined;
+        if (expected_value == .zero or expected_value.isUndefined()) return this.returnMatcherValue(globalThis);
 
         const result: JSValue = if (result_.?.toError()) |r|
             r
@@ -146,7 +146,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 defer expected_slice.deinit();
                 const received_slice = try received_message.toSlice(globalThis, globalThis.allocator());
                 defer received_slice.deinit();
-                if (strings.contains(received_slice.slice(), expected_slice.slice())) return .js_undefined;
+                if (strings.contains(received_slice.slice(), expected_slice.slice())) return this.returnMatcherValue(globalThis);
             }
 
             // error: message from received error does not match expected string
@@ -171,7 +171,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (try expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                    if (matches.toBoolean()) return .js_undefined;
+                    if (matches.toBoolean()) return this.returnMatcherValue(globalThis);
                 }
             }
 
@@ -202,7 +202,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             }
 
             if (is_equal) {
-                return .js_undefined;
+                return this.returnMatcherValue(globalThis);
             }
 
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -219,7 +219,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
             if (_received_message) |received_message| {
-                if (try received_message.isSameValue(expected_message, globalThis)) return .js_undefined;
+                if (try received_message.isSameValue(expected_message, globalThis)) return this.returnMatcherValue(globalThis);
             }
 
             // error: message from received error does not match expected error message.
@@ -237,7 +237,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
         }
 
-        if (result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
+        if (result.isInstanceOf(globalThis, expected_value)) return this.returnMatcherValue(globalThis);
 
         // error: received error not instance of received error constructor
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };

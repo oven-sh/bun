@@ -55,7 +55,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     }
 
     if (pass != this.flags.not) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     // Handle failure

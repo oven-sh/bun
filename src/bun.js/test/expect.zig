@@ -848,7 +848,7 @@ pub const Expect = struct {
         if (existing_value) |saved_value| {
             if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
-                return .js_undefined;
+                return this.returnMatcherValue(globalThis);
             }
 
             Jest.runner.?.snapshots.failed += 1;
@@ -863,7 +863,7 @@ pub const Expect = struct {
             return globalThis.throwPretty(fmt, .{diff_format});
         }
 
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     pub fn getStaticNot(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
@@ -1229,6 +1229,16 @@ pub const Expect = struct {
     pub fn postMatch(_: *Expect, globalThis: *JSGlobalObject) void {
         var vm = globalThis.bunVM();
         vm.autoGarbageCollect();
+    }
+
+    /// Helper function for matchers to return the correct value based on whether
+    /// .resolves or .rejects was used. When async flags are set, returns a resolved promise.
+    /// Otherwise returns undefined.
+    pub inline fn returnMatcherValue(this: *const Expect, globalThis: *JSGlobalObject) JSValue {
+        if (this.flags.promise != .none) {
+            return JSPromise.resolvedPromiseValue(globalThis, .js_undefined);
+        }
+        return .js_undefined;
     }
 
     pub fn doUnreachable(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -2246,6 +2256,7 @@ const strings = bun.strings;
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const ZigString = jsc.ZigString;

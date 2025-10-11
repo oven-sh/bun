@@ -32,7 +32,7 @@ pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
     const not = this.flags.not;
     if (not) pass = !pass;
 
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

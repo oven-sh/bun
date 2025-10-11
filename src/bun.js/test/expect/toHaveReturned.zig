@@ -43,7 +43,7 @@ inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, call
 
     const not = this.flags.not;
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     switch (not) {
         inline else => |is_not| {

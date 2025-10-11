@@ -57,7 +57,7 @@ _bun_escape_glob_specials() {
 }
 
 # check if tool is a gnu version
-# @param `$1` - tool/command to check
+# @param `$1`: string - tool/command to check
 _bun_is_exist_and_gnu() {
     local cmd="${1}"
     local version_string

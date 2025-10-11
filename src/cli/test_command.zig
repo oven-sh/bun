@@ -2003,12 +2003,12 @@ const strings = bun.strings;
 const uws = bun.uws;
 const HTTPThread = bun.http.HTTPThread;
 
+const coverage = bun.SourceMap.coverage;
+const CodeCoverageReport = coverage.Report;
+
 const jsc = bun.jsc;
 const jest = jsc.Jest;
 const Snapshots = jsc.Snapshot.Snapshots;
 
 const TestRunner = jsc.Jest.TestRunner;
 const Test = TestRunner.Test;
-
-const coverage = bun.SourceMap.coverage;
-const CodeCoverageReport = coverage.Report;

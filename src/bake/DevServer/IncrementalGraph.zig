@@ -2034,6 +2034,9 @@ const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const useAllFields = bun.meta.useAllFields;
 
+const SourceMap = bun.SourceMap;
+const VLQ = SourceMap.VLQ;
+
 const DevServer = bake.DevServer;
 const ChunkKind = DevServer.ChunkKind;
 const DevAllocator = DevServer.DevAllocator;
@@ -2058,9 +2061,6 @@ const Chunk = bun.bundle_v2.Chunk;
 
 const Owned = bun.ptr.Owned;
 const Shared = bun.ptr.Shared;
-
-const SourceMap = bun.SourceMap;
-const VLQ = SourceMap.VLQ;
 
 const std = @import("std");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;

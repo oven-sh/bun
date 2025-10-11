@@ -422,8 +422,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
-const options = bun.options;
 const SourceMap = bun.SourceMap;
+const options = bun.options;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
 const bundler = bun.bundle_v2;

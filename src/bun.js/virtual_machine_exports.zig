@@ -224,10 +224,10 @@ const std = @import("std");
 const bun = @import("bun");
 const PluginRunner = bun.transpiler.PluginRunner;
 
+const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-
-const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
-const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;

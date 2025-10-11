@@ -51,7 +51,7 @@ pub const MacroContext = struct {
         bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
         const input_specifier = brk: {
-            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun, .{})) |replacement| {
                 break :brk replacement.path;
             }
 

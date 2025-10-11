@@ -142,7 +142,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target, .{ .rewrite_jest_for_tests = linker.options.rewrite_jest_for_tests })) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -159,29 +159,9 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        // TODO: this is technical debt
-                        if (linker.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
-                                import_record.path.text = "test";
-                                continue;
-                            }
-                        }
-
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
 
                             // don't link bun
                             continue;

@@ -13,7 +13,8 @@
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
 /// Version 16: Added typeof undefined minification optimization.
-const expected_version = 16;
+/// Version 17: Added import.meta.glob support.
+const expected_version = 17;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

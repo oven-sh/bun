@@ -392,6 +392,7 @@ exports[`fast-glob e2e tests patterns regular cwd **/{nested,file.md}/*: **/{nes
 
 exports[`fast-glob e2e tests patterns regular relative cwd ./*: ./* 1`] = `
 [
+  "./import-meta-glob.test.ts",
   "./leak.test.ts",
   "./match.test.ts",
   "./proto.test.ts",

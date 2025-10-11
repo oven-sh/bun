@@ -19,11 +19,11 @@ _escape_bash_specials() {
     fi
 
     local has_patsub=0;
-    if shopt -s patsub_replacement 2>/dev/null; then
+    shopt -s patsub_replacement 2>/dev/null && {
         # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
         trap "$(shopt -p patsub_replacement)" RETURN;
         has_patsub=1;
-    fi
+    }
 
     if (( has_patsub )); then
         echo "${word//${re_exp}/\\&}";
@@ -32,15 +32,17 @@ _escape_bash_specials() {
     fi
 }
 
+
 _is_exist_and_gnu() {
     local cmd="${1}";
     local version_string;
     version_string="$(
         command -v "$cmd" >/dev/null 2>&1   && \
-        "$cmd" --version 2>/dev/null | head -1
+        "$cmd" --version 2>/dev/null | head -1;
     )";
     [[ "$version_string" == *GNU* ]] && return 0 || return 1;
 }
+
 
 _file_arguments() {
     local extensions="${1}";
@@ -93,13 +95,15 @@ _long_short_completion() {
     fi
 }
 
+
 # loads the scripts block in package.json
 _read_scripts_in_package_json() {
-    local package_json;
-    local line=0;
-    local working_dir="${PWD}";
     local cur_word="${1}";
-    local prev="${2}";
+    local pre_word="${2}";
+
+    local package_json;
+    local working_dir="${PWD}";
+    local line=0;
 
     for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
         [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[((line + 1))]}";
@@ -119,7 +123,7 @@ _read_scripts_in_package_json() {
             script="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)";
 
             # when a script is passed as an option, do not show other scripts as part of the completion anymore
-            [[ "${script}" == "${prev}" ]] && _prev_is_script=1 && return;
+            [[ "${script}" == "${pre_word}" ]] && _pre_is_script=1 && return;
 
             script_candidates+=( "${script}" );
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
@@ -127,7 +131,7 @@ _read_scripts_in_package_json() {
     }
 
     for script in "${script_candidates[@]}"; do
-        [[ "${script}" == "${cur_word}"* ]] && COMPREPLY+=( "${script}" )
+        [[ "${script}" == "${cur_word}"* ]] && COMPREPLY+=( "${script}" );
     done
 
 }
@@ -136,11 +140,11 @@ _read_scripts_in_package_json() {
 _subcommand_comp_reply() {
     local sub_commands="${1}";
     local cur_word="${2}";
-    local prev="${3}";
+    local pre_word="${3}";
 
     local regexp_subcommand="^[dbcriauh]";
 
-    [[ "${prev}" =~ ${regexp_subcommand} ]] && {
+    [[ "${pre_word}" =~ ${regexp_subcommand} ]] && {
         if [[ -z "${cur_word}" ]]; then
             # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
             COMPREPLY+=( $(compgen -W "${sub_commands}") );
@@ -174,9 +178,9 @@ _bun_completions() {
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
+    local pre_word="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
 
-    case "${prev}" in
+    case "${pre_word}" in
         help|--help|-h|-v|--version) return;;
         -c|--config)      _file_arguments '.+\.toml$' "${cur_word}" && return;;
         --bunfile)        _file_arguments '.+\.bun$' "${cur_word}" && return;;
@@ -208,7 +212,7 @@ _bun_completions() {
             return;;
     esac
 
-    declare -g _prev_is_script=0;
+    declare -g _pre_is_script=0;
 
     case "${COMP_WORDS[1]}" in
         help|completions|--help|-h|-v|--version) return;;
@@ -236,7 +240,7 @@ _bun_completions() {
             _file_arguments '.+\.(js|ts|jsx|tsx|mjs|cjs)$' "${cur_word}";
             # shellcheck disable=SC2207 # idem.
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
-            _read_scripts_in_package_json "${cur_word}" "${prev}";
+            _read_scripts_in_package_json "${cur_word}" "${pre_word}";
             return;;
         pm)
             _long_short_completion \
@@ -251,35 +255,36 @@ _bun_completions() {
                 "${GLOBAL_OPTIONS[LONG_OPTIONS]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
                 "${cur_word}";
-            _read_scripts_in_package_json "${cur_word}" "${prev}";
-            _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${prev}";
+            _read_scripts_in_package_json "${cur_word}" "${pre_word}";
+            _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${pre_word}";
 
-            # Determine if completion should be continued when
+            # determine if completion should be continued when
             # the current word is an empty string and either:
-            # a. the previous word is part of the allowed completion, or
+            # a. the previous word is part of the allowed completion
             # b. the previous word is an argument to second-to-previous option
             # c. the previouos word is the script name
             # FIXME: Is c. a valid case here?
             [[ -z "${cur_word}" ]] && {
                 for comp in "${COMPREPLY[@]}"; do
-                    # if `prev` is script name, then scripts are filtred out from `COMPREPLY`, so
-                    # the `_prev_is_script` is needed to detect that previous word is the script name
-                    [[ "${prev}" == "${comp}" ]] && return; # a.
+                    # if `pre_word` is script name, then scripts are filtred out from `COMPREPLY`, so
+                    # the `_pre_is_script` is needed to detect that previous word is the script name
+                    [[ "${pre_word}" == "${comp}" ]] && return; # a.
                 done
 
-                local pre_prev="${COMP_WORDS[(( COMP_CWORD - 2 ))]}";
+                local pre_pre_word="${COMP_WORDS[(( COMP_CWORD - 2 ))]}";
                 local global_options_with_arg="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
 
                 for opt in "${global_options_with_arg[@]}"; do
-                    [[ "${pre_prev}" == "${opt}" ]] && return; # b.
+                    [[ "${pre_pre_word}" == "${opt}" ]] && return; # b.
                 done
 
-                (( _prev_is_script )) && return; # c.
+                (( _pre_is_script )) && return; # c.
 
                 unset COMPREPLY;
             }
             return;;
     esac
 }
+
 
 complete -F _bun_completions bun

@@ -953,6 +953,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // Write cookies if they were set on the request
+            // This must happen after the status is written but before the upgrade
+            if (upgrader.cookies) |cookies| {
+                // Write the 101 status if it hasn't been written yet
+                // (this happens when no custom headers are provided via upgrade options)
+                resp.writeStatus("101 Switching Protocols");
+                cookies.write(globalThis, ssl_enabled, @ptrCast(resp)) catch |err| {
+                    return err;
+                };
+            }
+
             // --- After this point, do not throw an exception
             // See https://github.com/oven-sh/bun/issues/1339
 

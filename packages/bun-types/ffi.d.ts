@@ -1083,8 +1083,12 @@ declare module "bun:ffi" {
      * freed.
      */
     ptr: Pointer;
-    byteOffset?: number;
-    byteLength?: number;
+    byteOffset: number;
+
+    /**
+     * Get the `byteLength` of the CString
+     */
+    get byteLength(): number;
 
     /**
      * Get the {@link ptr} as an `ArrayBuffer`

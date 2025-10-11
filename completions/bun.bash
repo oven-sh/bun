@@ -33,7 +33,30 @@ _escape_bash_specials() {
     fi
 }
 
-_is_exist_and_gnu() {
+
+# escapes characters having special meaning inside glob-patterns
+# @param `$1`: string - string/word to escape characters in
+_bun_escape_glob_specials() {
+  local word="${1}"
+
+  local has_patsub=0
+  shopt -s patsub_replacement 2> /dev/null && {
+      # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
+      trap "$(shopt -p patsub_replacement)" RETURN
+      has_patsub=1
+  }
+
+  if ((has_patsub)); then
+      echo "${word//[][!?*]/\\&}"
+  else
+      # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
+      sed 's/[][!?*]/\\&/g' <<< "${word}"
+  fi
+}
+
+# check if tool is a gnu version
+# @param `$1` - tool/command to check
+_bun_is_exist_and_gnu() {
     local cmd="${1}"
     local version_string
     version_string="$(
@@ -50,9 +73,10 @@ _file_arguments() {
     local -a candidates
     if _is_exist_and_gnu find && _is_exist_and_gnu sed; then
         readarray -t -d '' candidates < <(
-            find . -regextype posix-extended -maxdepth 1 \
-                -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
-                sed -z "s/\n/\$'n'/g"
+            find . -regextype posix-extended \
+                -maxdepth 1 -xtype f -regex "${extensions}" \
+                -name "$(_bun_escape_glob_specials "${cur_word}")*" \
+                -printf '%f\0' | sed -z "s/\n/\$'n'/g"
         )
     else
         # the following two `readarray` assumes that filenames has

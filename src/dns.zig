@@ -402,7 +402,7 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
             });
         },
         std.posix.AF.INET6 => {
-            var stack = std.heap.stackFallback(512, default_allocator);
+            var stack = bun.allocators.stackFallback(512, default_allocator);
             const allocator = stack.get();
             var out = try std.fmt.allocPrint(allocator, "{any}", .{address.*});
             defer allocator.free(out);

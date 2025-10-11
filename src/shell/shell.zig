@@ -1587,7 +1587,7 @@ pub const Parser = struct {
     }
 
     fn parse_atom(self: *Parser) !?AST.Atom {
-        var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
+        var array_alloc = bun.allocators.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
         var atoms = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         var has_brace_open = false;
         var has_brace_close = false;
@@ -4316,7 +4316,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var stack_alloc = bun.allocators.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
@@ -4384,7 +4384,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var stack_alloc = bun.allocators.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {

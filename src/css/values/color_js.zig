@@ -139,7 +139,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
-    var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
+    var stack_fallback = bun.allocators.stackFallback(4096, arena.allocator());
     const allocator = stack_fallback.get();
 
     var log = bun.logger.Log.init(allocator);

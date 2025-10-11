@@ -469,7 +469,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?*Context {
             debug("connect({s}, {d})", .{ host, port });
 
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
@@ -576,7 +576,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
             const path_ = bun.handleOom(allocator.dupeZ(u8, path));
             defer allocator.free(path_);
@@ -599,7 +599,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them

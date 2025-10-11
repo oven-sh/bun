@@ -55,7 +55,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     const values = try jsc.JSValue.createEmptyArray(globalThis, 0);
     var num_cpus: u32 = 0;
 
-    var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(1024 * 8, bun.default_allocator);
     var file_buf = std.ArrayList(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 

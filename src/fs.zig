@@ -152,7 +152,7 @@ pub const FileSystem = struct {
 
             const stored = try brk: {
                 if (prev_map) |map| {
-                    var stack_fallback = std.heap.stackFallback(512, allocator);
+                    var stack_fallback = bun.allocators.stackFallback(512, allocator);
                     const stack = stack_fallback.get();
                     const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, name_slice);
                     defer prehashed.deinit(stack);

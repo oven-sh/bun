@@ -3438,7 +3438,7 @@ pub const Resolver = struct {
     pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.C) bun.jsc.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
-        var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
+        var stack_fallback_allocator = bun.allocators.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();
 
         var list = std.ArrayList(bun.String).init(alloc);

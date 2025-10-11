@@ -5791,7 +5791,7 @@ pub fn printAst(
         }
     }
     printer.was_lazy_export = tree.has_lazy_export;
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = bun.allocators.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
@@ -5879,7 +5879,7 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = bun.allocators.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
@@ -5985,7 +5985,7 @@ pub fn printWithWriterAndPlatform(
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
     printer.was_lazy_export = ast.has_lazy_export;
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = bun.allocators.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
@@ -6067,7 +6067,7 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
-    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    var bin_stack_heap = bun.allocators.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 

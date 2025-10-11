@@ -11,32 +11,26 @@ const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 
+// Import shared PostgreSQL encoding utilities (types only via import type, runtime via require)
+import type { CopyBinaryType, CopyBinaryBaseType } from "internal/sql/postgres-encoding";
+
+const {
+  encodeBinaryValue,
+  encodeBinaryRow,
+  encodeArray1D,
+  createBinaryCopyHeader,
+  createBinaryCopyTrailer,
+  copyTextEscape,
+  csvQuote: pgCsvQuote,
+  needsCsvQuote,
+  TYPE_OID,
+  TYPE_ARRAY_OID,
+} = require("internal/sql/postgres-encoding");
+
 const defineProperties = Object.defineProperties;
 
-// Typed Copy options and binary type tokens
-type CopyBinaryBaseType =
-  | "bool"
-  | "int2"
-  | "int4"
-  | "int8"
-  | "float4"
-  | "float8"
-  | "text"
-  | "varchar"
-  | "bpchar"
-  | "bytea"
-  | "date"
-  | "time"
-  | "timestamp"
-  | "timestamptz"
-  | "uuid"
-  | "json"
-  | "jsonb"
-  | "numeric"
-  | "interval";
-
-type CopyBinaryArrayType = `${CopyBinaryBaseType}[]`;
-type CopyBinaryType = CopyBinaryBaseType | CopyBinaryArrayType;
+// Re-export types for convenience
+export type { CopyBinaryType, CopyBinaryBaseType };
 
 interface CopyFromOptionsBase {
   format?: "text" | "csv" | "binary";
@@ -117,6 +111,175 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
     default:
       throw new Error(`Unsupported adapter: ${(options as { adapter?: string }).adapter}.`);
   }
+}
+
+// Helper types and functions for COPY protocol
+type __CopyDefaults__ = {
+  from: { maxChunkSize: number; maxBytes: number };
+  to: { stream: boolean; maxBytes: number };
+};
+
+/**
+ * Resolves copyFrom limits (maxBytes, maxChunkSize) from options and pool defaults
+ */
+function resolveCopyFromLimits(options: any, pool: any): { maxBytes: number; maxChunkSize: number } {
+  const __defaults__: __CopyDefaults__ | undefined =
+    "getCopyDefaults" in pool
+      ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
+      : undefined;
+  const __fromDefaults__ = (__defaults__ && __defaults__.from) || { maxChunkSize: 256 * 1024, maxBytes: 0 };
+
+  const maxBytes =
+    options && typeof options.maxBytes === "number" && options.maxBytes > 0
+      ? Number(options.maxBytes)
+      : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
+
+  const maxChunkSize =
+    options && typeof options.maxChunkSize === "number" && options.maxChunkSize > 0
+      ? Number(options.maxChunkSize)
+      : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
+
+  return { maxBytes, maxChunkSize };
+}
+
+/**
+ * Resolves copyTo maxBytes from query options and pool defaults
+ */
+function resolveCopyToMaxBytes(queryOrOptions: any, pool: any): number {
+  const __defaults__: __CopyDefaults__ | undefined =
+    "getCopyDefaults" in pool
+      ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
+      : undefined;
+  const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0 };
+
+  return typeof queryOrOptions === "string"
+    ? Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0))
+    : typeof queryOrOptions?.maxBytes === "number" && queryOrOptions.maxBytes > 0
+      ? Number(queryOrOptions.maxBytes)
+      : Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0));
+}
+
+/**
+ * Sends data in chunks with backpressure handling
+ */
+async function sendChunkedData(
+  data: Uint8Array | string,
+  reserved: any,
+  pool: any,
+  limits: { maxBytes: number; maxChunkSize: number },
+  counters: { bytesSent: number; chunksSent: number },
+  notifyProgress: () => void,
+): Promise<void> {
+  const { maxBytes, maxChunkSize } = limits;
+
+  const sendAwaitWritable = async () => {
+    if (typeof reserved.awaitWritable === "function") {
+      await new Promise<void>(resolve => {
+        let settled = false;
+        reserved.awaitWritable(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        });
+        queueMicrotask(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        });
+      });
+    } else {
+      await new Promise<void>(resolve => {
+        let settled = false;
+        pool.awaitWritableFor(reserved, () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        });
+        queueMicrotask(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        });
+      });
+    }
+  };
+
+  const dataLength = typeof data === "string" ? data.length : data.byteLength;
+
+  if (dataLength <= maxChunkSize) {
+    if (maxBytes && counters.bytesSent + dataLength > maxBytes) {
+      throw new Error("copyFrom: maxBytes exceeded");
+    }
+    reserved.copySendData(data);
+    counters.bytesSent += dataLength;
+    counters.chunksSent += 1;
+    notifyProgress();
+    await sendAwaitWritable();
+  } else {
+    for (let i = 0; i < dataLength; i += maxChunkSize) {
+      const part =
+        typeof data === "string"
+          ? data.slice(i, i + maxChunkSize)
+          : data.subarray(i, Math.min(dataLength, i + maxChunkSize));
+      const partLength = typeof part === "string" ? part.length : part.byteLength;
+
+      if (maxBytes && counters.bytesSent + partLength > maxBytes) {
+        throw new Error("copyFrom: maxBytes exceeded");
+      }
+      reserved.copySendData(part);
+      counters.bytesSent += partLength;
+      counters.chunksSent += 1;
+      notifyProgress();
+      await sendAwaitWritable();
+    }
+  }
+}
+
+/**
+ * Validates binary types for COPY FROM binary format
+ */
+function validateBinaryTypes(options: any, columns: string[] | undefined): string[] {
+  const types = options?.binaryTypes as string[] | undefined;
+  if (!types || !Array.isArray(types)) {
+    throw new Error(
+      "Binary COPY format requires raw bytes or provide options.binaryTypes to enable automatic binary row encoding.",
+    );
+  }
+  if (types.length !== (columns?.length ?? types.length)) {
+    throw new Error("binaryTypes length must match number of columns for COPY FROM.");
+  }
+
+  // Validate that each provided token is a supported base or array type
+  // Supported bases and arrays are defined by TYPE_OID and TYPE_ARRAY_OID from internal/sql/postgres-encoding
+  const isSupportedToken = (token: string): boolean => {
+    if (typeof token !== "string" || token.length === 0) return false;
+
+    if (token.endsWith("[]")) {
+      // exact match required, e.g. "int4[]", "timestamptz[]"
+      return Object.hasOwn(TYPE_ARRAY_OID, token);
+    }
+    // base type, e.g. "int4", "varchar"
+    return Object.hasOwn(TYPE_OID, token);
+  };
+
+  for (let i = 0; i < types.length; i++) {
+    const tok = types[i];
+    if (!isSupportedToken(tok)) {
+      throw new Error(
+        `Unsupported COPY binaryTypes token at index ${i}: "${tok}".` +
+          " Supported base types include: " +
+          Object.keys(TYPE_OID).sort().join(", ") +
+          "; supported array types include: " +
+          Object.keys(TYPE_ARRAY_OID).sort().join(", "),
+      );
+    }
+  }
+
+  return types;
 }
 
 const SQL: typeof Bun.SQL = function SQL(
@@ -1126,18 +1289,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
     };
 
-    const needsCsvQuoting = (s: string) =>
-      s.includes('"') || s.includes("\n") || s.includes("\r") || s.includes(delimiter);
-    const csvQuote = (s: string) => `"${s.replaceAll('"', '""')}"`;
-
-    // COPY text format escaping per PostgreSQL:
-    // - Backslash is escape: \\ -> \\\\
-    // - Tab -> \\t, LF -> \\n, CR -> \\r
-    // Nulls use the caller-provided nullToken (default \\N) and should not be escaped here.
-    const copyTextEscape = (s: string) => {
-      // order matters: backslash first
-      return s.replaceAll("\\", "\\\\").replaceAll("\t", "\\t").replaceAll("\n", "\\n").replaceAll("\r", "\\r");
-    };
+    // Use shared needsCsvQuote(s, delimiter) from encoding utilities
 
     const serializeRow = (row: any[]): string => {
       if (fmt === "csv") {
@@ -1149,9 +1301,9 @@ const SQL: typeof Bun.SQL = function SQL(
           const s = serializeValue(v);
           // Empty string should be quoted to distinguish from NULL
           if (s === "") {
-            return csvQuote("");
+            return pgCsvQuote("");
           }
-          return needsCsvQuoting(s) ? csvQuote(s) : s;
+          return needsCsvQuote(s, delimiter) ? pgCsvQuote(s) : s;
         });
         return parts.join(delimiter) + "\n";
       } else {
@@ -1165,48 +1317,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
     };
 
-    // Hoisted OID maps for both encoder and validator
-    const TYPE_OID: Record<string, number> = {
-      bool: 16,
-      int2: 21,
-      int4: 23,
-      int8: 20,
-      float4: 700,
-      float8: 701,
-      text: 25,
-      varchar: 1043,
-      bpchar: 1042,
-      bytea: 17,
-      date: 1082,
-      time: 1083,
-      timestamp: 1114,
-      timestamptz: 1184,
-      uuid: 2950,
-      json: 114,
-      jsonb: 3802,
-      numeric: 1700,
-      interval: 1186,
-    };
-    const TYPE_ARRAY_OID: Record<string, number> = {
-      "bool[]": 1000,
-      "int2[]": 1005,
-      "int4[]": 1007,
-      "int8[]": 1016,
-      "float4[]": 1021,
-      "float8[]": 1022,
-      "text[]": 1009,
-      "varchar[]": 1015,
-      "bpchar[]": 1014,
-      "bytea[]": 1001,
-      "date[]": 1182,
-      "time[]": 1183,
-      "timestamp[]": 1115,
-      "timestamptz[]": 1185,
-      "uuid[]": 2951,
-      "json[]": 199,
-      "jsonb[]": 3807,
-      "numeric[]": 1231,
-    };
+    // TYPE_OID and TYPE_ARRAY_OID are now imported from postgres-encoding
 
     const feedData = async () => {
       // Batch size for accumulating small chunks (configurable, default 64KB)
@@ -1216,395 +1327,16 @@ const SQL: typeof Bun.SQL = function SQL(
           : 64 * 1024;
       let batch = "";
 
-      // Binary COPY row encoder support (when options.binaryTypes is provided)
-      // Minimal encoder for common base types; extend as needed.
+      // Binary COPY support using shared encoding utilities
       let binaryHeaderSent = false;
       const sendBinaryHeader = () => {
         if (binaryHeaderSent) return;
-        const sig = new Uint8Array([0x50, 0x47, 0x43, 0x4f, 0x50, 0x59, 0x0a, 0xff, 0x0d, 0x0a, 0x00]);
-        const flags = new Uint8Array(4); // 0
-        const extlen = new Uint8Array(4); // 0
-        (reserved as any).copySendData(new Uint8Array([...sig, ...flags, ...extlen]));
+        (reserved as any).copySendData(createBinaryCopyHeader());
         binaryHeaderSent = true;
       };
       const sendBinaryTrailer = () => {
         if (!binaryHeaderSent) return;
-        // int16 -1 (0xFFFF) big-endian
-        (reserved as any).copySendData(new Uint8Array([0xff, 0xff]));
-      };
-
-      const be16 = (n: number) => {
-        const b = new Uint8Array(2);
-        new DataView(b.buffer).setInt16(0, n, false);
-        return b;
-      };
-      const be32 = (n: number) => {
-        const b = new Uint8Array(4);
-        new DataView(b.buffer).setInt32(0, n, false);
-        return b;
-      };
-      const encText = new TextEncoder();
-
-      // Encode one row into COPY BINARY tuple: int16 fieldCount; for each field: int32 length; value bytes
-      // Supported binaryTypes:
-      //   "bool","int2","int4","int8","float4","float8","text","bytea","date","time","timestamp","timestamptz","uuid","json","jsonb","numeric","interval","varchar","bpchar"
-      //   arrays of the above: "<type>[]", e.g. "int4[]","text[]","uuid[]","varchar[]","bpchar[]"
-      // OIDs and Array OIDs are hoisted above for use by both encoder and OID validator
-
-      const encodeIntervalBinary = (val: any): Uint8Array => {
-        let months = 0,
-          days = 0;
-        let micros = 0n;
-        if (val && typeof val === "object") {
-          if ("months" in val) months = Number((val as any).months) | 0;
-          if ("days" in val) days = Number((val as any).days) | 0;
-          if ("micros" in val) micros = BigInt((val as any).micros);
-          else if ("ms" in val) micros = BigInt(Math.trunc((val as any).ms)) * 1000n;
-          else if ("seconds" in val) micros = BigInt(Math.trunc((val as any).seconds)) * 1_000_000n;
-        } else if (typeof val === "string") {
-          const m = val.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/);
-          if (m) {
-            const hh = Number(m[1]) | 0,
-              mm = Number(m[2]) | 0,
-              ss = Number(m[3]) | 0;
-            const frac = (m[4] || "").padEnd(6, "0").slice(0, 6);
-            const us = Number(frac) | 0;
-            micros = BigInt((hh * 3600 + mm * 60 + ss) * 1_000_000 + us);
-          } else {
-            micros = 0n;
-          }
-        } else if (typeof val === "number") {
-          micros = BigInt(Math.trunc(val)) * 1000n; // assume ms
-        }
-        const out = new Uint8Array(16);
-        const dv = new DataView(out.buffer);
-        dv.setInt32(0, Number((micros >> 32n) & 0xffffffffn), false);
-        dv.setUint32(4, Number(micros & 0xffffffffn), false);
-        dv.setInt32(8, days, false);
-        dv.setInt32(12, months, false);
-        return out;
-      };
-
-      const expandExponent = (s: string): string => {
-        const m = s.match(/^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
-        if (!m) return s;
-        const sign = m[1] === "-" ? "-" : "";
-        let intPart = m[2] || "0";
-        let fracPart = m[3] || "";
-        const exp = Number(m[4]) | 0;
-        if (exp > 0) {
-          const needed = exp - fracPart.length;
-          if (needed >= 0) {
-            intPart = intPart + fracPart + "0".repeat(needed);
-            fracPart = "";
-          } else {
-            intPart = intPart + fracPart.slice(0, exp);
-            fracPart = fracPart.slice(exp);
-          }
-        } else if (exp < 0) {
-          const zeros = "0".repeat(Math.max(0, -exp - intPart.length));
-          const all = zeros ? zeros + intPart : intPart;
-          const idx = all.length + exp; // exp negative
-          fracPart = all.slice(idx) + fracPart;
-          intPart = all.slice(0, idx) || "0";
-        }
-        intPart = intPart.replace(/^0+/, "") || "0";
-        return fracPart ? `${sign}${intPart}.${fracPart}` : `${sign}${intPart}`;
-      };
-
-      const encodeNumericBinary = (val: any): Uint8Array => {
-        let s = typeof val === "bigint" ? val.toString() : typeof val === "number" ? val.toString() : String(val);
-        s = s.trim();
-        if (!/^-?(\d+)(\.\d+)?([eE][+-]?\d+)?$/.test(s)) {
-          throw new Error("numeric: value must be a plain decimal string/number");
-        }
-        if (/[eE]/.test(s)) s = expandExponent(s);
-        let sign = 0x0000;
-        if (s.startsWith("-")) {
-          sign = 0x4000;
-          s = s.slice(1);
-        } else if (s.startsWith("+")) {
-          s = s.slice(1);
-        }
-        let intPart = s;
-        let fracPart = "";
-        const dot = s.indexOf(".");
-        if (dot !== -1) {
-          intPart = s.slice(0, dot);
-          fracPart = s.slice(dot + 1);
-        }
-        intPart = intPart.replace(/^0+/, "") || "0";
-        const padLeft = (4 - (intPart.length % 4)) % 4;
-        const intPadded = "0".repeat(padLeft) + intPart;
-        const intGroups: number[] = [];
-        for (let i = 0; i < intPadded.length; i += 4) {
-          intGroups.push(parseInt(intPadded.slice(i, i + 4), 10) || 0);
-        }
-        const dscale = fracPart.length;
-        const padRight = (4 - (fracPart.length % 4)) % 4;
-        const fracPadded = fracPart + "0".repeat(padRight);
-        const fracGroups: number[] = [];
-        for (let i = 0; i < fracPadded.length; i += 4) {
-          if (i < fracPart.length || padRight > 0) {
-            const g = fracPadded.slice(i, i + 4);
-            fracGroups.push(parseInt(g, 10) || 0);
-          }
-        }
-        while (intGroups.length > 0 && intGroups[0] === 0) intGroups.shift();
-        let weight = intGroups.length - 1;
-        let digits = intGroups.concat(fracGroups);
-        while (digits.length > 0 && digits[digits.length - 1] === 0) digits.pop();
-        if (digits.length === 0) {
-          const out = new Uint8Array(8);
-          const dv = new DataView(out.buffer);
-          dv.setInt16(0, 0, false);
-          dv.setInt16(2, 0, false);
-          dv.setInt16(4, 0x0000, false);
-          dv.setInt16(6, dscale | 0, false);
-          return out;
-        }
-        const ndigits = digits.length;
-        const out = new Uint8Array(8 + ndigits * 2);
-        const dv = new DataView(out.buffer);
-        dv.setInt16(0, ndigits, false);
-        dv.setInt16(2, weight, false);
-        dv.setInt16(4, sign, false);
-        dv.setInt16(6, dscale | 0, false);
-        let o = 8;
-        for (let i = 0; i < ndigits; i++) {
-          dv.setInt16(o, digits[i], false);
-          o += 2;
-        }
-        return out;
-      };
-
-      const encodeArray1D = (arr: unknown[], elemType: CopyBinaryBaseType): Uint8Array => {
-        const oid = TYPE_OID[elemType];
-        if (!oid) throw new Error(`Unsupported array base type for binary encoding: ${elemType}`);
-        const n = arr.length;
-        let hasNull = 0;
-        const elems: Uint8Array[] = new Array(n);
-        for (let i = 0; i < n; i++) {
-          const v = arr[i];
-          if (v === null || v === undefined) {
-            elems[i] = new Uint8Array(0);
-            hasNull = 1;
-          } else {
-            elems[i] = encodeBinaryValue(v, elemType);
-          }
-        }
-        let size = 4 * 3 + 8; // ndim, hasnull, oid, dim length + lbound
-        for (let i = 0; i < n; i++) {
-          size += 4 + (elems[i].length || 0);
-        }
-        const out = new Uint8Array(size);
-        const dv = new DataView(out.buffer);
-        let o = 0;
-        dv.setInt32(o, 1, false);
-        o += 4;
-        dv.setInt32(o, hasNull, false);
-        o += 4;
-        dv.setInt32(o, oid, false);
-        o += 4;
-        dv.setInt32(o, n, false);
-        o += 4;
-        dv.setInt32(o, 1, false);
-        o += 4;
-        for (let i = 0; i < n; i++) {
-          if (arr[i] === null || arr[i] === undefined) {
-            dv.setInt32(o, -1, false);
-            o += 4;
-          } else {
-            const b = elems[i];
-            dv.setInt32(o, b.length, false);
-            o += 4;
-            out.set(b, o);
-            o += b.length;
-          }
-        }
-        return out;
-      };
-
-      const encodeBinaryValue = (v: unknown, t: CopyBinaryType): Uint8Array => {
-        // Handle arrays like "int4[]"
-        if (t.endsWith("[]")) {
-          const base = t.slice(0, -2);
-          if (!Array.isArray(v)) throw new Error("binary array expects a JavaScript array value");
-          return encodeArray1D(v, base);
-        }
-        switch (t) {
-          case "bool": {
-            const out = new Uint8Array(1);
-            out[0] = v ? 1 : 0;
-            return out;
-          }
-          case "int2": {
-            const b = new Uint8Array(2);
-            new DataView(b.buffer).setInt16(0, Number(v) | 0, false);
-            return b;
-          }
-          case "int4": {
-            const b = new Uint8Array(4);
-            new DataView(b.buffer).setInt32(0, Number(v) | 0, false);
-            return b;
-          }
-          case "int8": {
-            const b = new Uint8Array(8);
-            const dv = new DataView(b.buffer);
-            const big = BigInt(v);
-            dv.setInt32(0, Number((big >> 32n) & 0xffffffffn), false);
-            dv.setUint32(4, Number(big & 0xffffffffn), false);
-            return b;
-          }
-          case "float4": {
-            const b = new Uint8Array(4);
-            new DataView(b.buffer).setFloat32(0, Number(v), false);
-            return b;
-          }
-          case "float8": {
-            const b = new Uint8Array(8);
-            new DataView(b.buffer).setFloat64(0, Number(v), false);
-            return b;
-          }
-          case "bytea": {
-            if (v instanceof Uint8Array) return v;
-            if (v && v.byteLength !== undefined) return new Uint8Array(v as ArrayBuffer);
-            const s = typeof v === "string" ? v : v == null ? "" : String(v);
-            return encText.encode(s);
-          }
-          case "date": {
-            // int32 days since 2000-01-01
-            const epoch2000 = Date.UTC(2000, 0, 1);
-            let ms: number;
-            if (v instanceof Date) ms = v.getTime();
-            else if (typeof v === "number") ms = v;
-            else ms = new Date(v).getTime();
-            const days = Math.floor((ms - epoch2000) / 86400000);
-            const b = new Uint8Array(4);
-            new DataView(b.buffer).setInt32(0, days, false);
-            return b;
-          }
-          case "time": {
-            // int64 microseconds since midnight
-            const toMicros = (val: any): bigint => {
-              if (typeof val === "number") return BigInt(Math.floor(val)); // assume already micros
-              if (val instanceof Date) {
-                const h = val.getUTCHours();
-                const m = val.getUTCMinutes();
-                const s = val.getUTCSeconds();
-                const ms = val.getUTCMilliseconds();
-                return BigInt(((h * 3600 + m * 60 + s) * 1000 + ms) * 1000);
-              }
-              const str = String(val);
-              // HH:MM:SS(.frac)
-              const m = str.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/);
-              if (!m) return 0n;
-              const hh = Number(m[1]) | 0;
-              const mm = Number(m[2]) | 0;
-              const ss = Number(m[3]) | 0;
-              const frac = (m[4] || "").padEnd(6, "0").slice(0, 6);
-              const us = Number(frac) | 0;
-              return BigInt((hh * 3600 + mm * 60 + ss) * 1_000_000 + us);
-            };
-            const micros = toMicros(v);
-            const b = new Uint8Array(8);
-            const dv = new DataView(b.buffer);
-            dv.setInt32(0, Number((micros >> 32n) & 0xffffffffn), false);
-            dv.setUint32(4, Number(micros & 0xffffffffn), false);
-            return b;
-          }
-          case "timestamp":
-          case "timestamptz": {
-            // int64 microseconds since 2000-01-01 UTC
-            const epoch2000 = Date.UTC(2000, 0, 1);
-            let ms: number;
-            if (v instanceof Date) ms = v.getTime();
-            else if (typeof v === "number") ms = v;
-            else ms = new Date(v).getTime();
-            const micros = BigInt(Math.round((ms - epoch2000) * 1000));
-            const b = new Uint8Array(8);
-            const dv = new DataView(b.buffer);
-            dv.setInt32(0, Number((micros >> 32n) & 0xffffffffn), false);
-            dv.setUint32(4, Number(micros & 0xffffffffn), false);
-            return b;
-          }
-          case "uuid": {
-            // 16 bytes
-            const s = String(v).toLowerCase();
-            const hex = s.replace(/-/g, "");
-            const out = new Uint8Array(16);
-            for (let i = 0; i < 16; i++) {
-              const byte = hex.slice(i * 2, i * 2 + 2);
-              out[i] = parseInt(byte, 16) || 0;
-            }
-            return out;
-          }
-          case "json": {
-            const s = typeof v === "string" ? v : JSON.stringify(v ?? null);
-            return encText.encode(s);
-          }
-          case "jsonb": {
-            const s = typeof v === "string" ? v : JSON.stringify(v ?? null);
-            const txt = encText.encode(s);
-            // version 1 + textual json
-            const out = new Uint8Array(1 + txt.length);
-            out[0] = 1;
-            out.set(txt, 1);
-            return out;
-          }
-          case "numeric": {
-            return encodeNumericBinary(v);
-          }
-          case "interval": {
-            return encodeIntervalBinary(v);
-          }
-          case "varchar":
-          case "bpchar":
-          case "text":
-          default: {
-            // default to text encoding for unknown types
-            const s = typeof v === "string" ? v : v == null ? "" : String(v);
-            return encText.encode(s);
-          }
-        }
-      };
-
-      const encodeBinaryRow = (row: any[], types: string[]): Uint8Array => {
-        const fieldCount = types.length;
-        // First pass: compute total size
-        let size = 2; // int16 field count
-        const vals: Uint8Array[] = new Array(fieldCount);
-        for (let i = 0; i < fieldCount; i++) {
-          const val = row[i];
-          if (val === null || val === undefined) {
-            size += 4; // -1 length
-            vals[i] = new Uint8Array(0); // placeholder
-            continue;
-          }
-          const t = types[i];
-          const bytes = encodeBinaryValue(val, t);
-          vals[i] = bytes;
-          size += 4 + bytes.length;
-        }
-        const out = new Uint8Array(size);
-        const dv = new DataView(out.buffer);
-        let o = 0;
-        dv.setInt16(o, fieldCount, false);
-        o += 2;
-        for (let i = 0; i < fieldCount; i++) {
-          const v = row[i];
-          if (v === null || v === undefined) {
-            dv.setInt32(o, -1, false);
-            o += 4;
-            continue;
-          }
-          const bytes = vals[i];
-          dv.setInt32(o, bytes.length, false);
-          o += 4;
-          out.set(bytes, o);
-          o += bytes.length;
-        }
-        return out;
+        (reserved as any).copySendData(createBinaryCopyTrailer());
       };
 
       const flushBatch = async () => {
@@ -1667,62 +1399,11 @@ const SQL: typeof Bun.SQL = function SQL(
       if (typeof data === "string") {
         if (aborted) throw new Error("AbortError");
         const payload = sanitizeString(data);
-        type __CopyDefaults__ = {
-          from: { maxChunkSize: number; maxBytes: number };
-          to: { stream: boolean; maxBytes: number };
-        };
-        const __defaults__: __CopyDefaults__ | undefined =
-          "getCopyDefaults" in pool
-            ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
-            : undefined;
-        const __fromDefaults__ = (__defaults__ && __defaults__.from) || { maxChunkSize: 256 * 1024, maxBytes: 0 };
-        const maxBytes =
-          options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
-            ? Number((options as any).maxBytes)
-            : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
-        const maxChunkSize =
-          options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
-            ? Number((options as any).maxChunkSize)
-            : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
-
-        if (payload.length <= maxChunkSize) {
-          if (maxBytes && bytesSent + payload.length > maxBytes) {
-            throw new Error("copyFrom: maxBytes exceeded");
-          }
-          (reserved as any).copySendData(payload);
-          bytesSent += payload.length;
-          chunksSent += 1;
-          notifyProgress();
-        } else {
-          for (let i = 0; i < payload.length; i += maxChunkSize) {
-            const part = payload.slice(i, i + maxChunkSize);
-            if (maxBytes && bytesSent + part.length > maxBytes) {
-              throw new Error("copyFrom: maxBytes exceeded");
-            }
-            (reserved as any).copySendData(part);
-            bytesSent += part.length;
-            chunksSent += 1;
-            notifyProgress();
-            {
-              await new Promise<void>(resolve => {
-                let settled = false;
-                (pool as any).awaitWritableFor(reserved, () => {
-                  if (!settled) {
-                    settled = true;
-                    resolve();
-                  }
-                });
-                // Fallback to avoid hanging if there's no backpressure
-                queueMicrotask(() => {
-                  if (!settled) {
-                    settled = true;
-                    resolve();
-                  }
-                });
-              });
-            }
-          }
-        }
+        const limits = resolveCopyFromLimits(options, pool);
+        const counters = { bytesSent, chunksSent };
+        await sendChunkedData(payload, reserved, pool, limits, counters, notifyProgress);
+        bytesSent = counters.bytesSent;
+        chunksSent = counters.chunksSent;
         (reserved as any).copyDone();
         return;
       }
@@ -1735,15 +1416,7 @@ const SQL: typeof Bun.SQL = function SQL(
           if (aborted) throw new Error("AbortError");
           if ($isArray(item)) {
             if (fmt === "binary") {
-              const types = (options as any)?.binaryTypes as string[] | undefined;
-              if (!types || !Array.isArray(types)) {
-                throw new Error(
-                  "Binary COPY format requires raw bytes or provide options.binaryTypes to enable automatic binary row encoding.",
-                );
-              }
-              if (types.length !== (columns?.length ?? types.length)) {
-                throw new Error("binaryTypes length must match number of columns for COPY FROM.");
-              }
+              const types = validateBinaryTypes(options, columns);
               await flushBatch();
               // header once
               sendBinaryHeader();
@@ -1780,61 +1453,11 @@ const SQL: typeof Bun.SQL = function SQL(
             const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
             // For binary format, send raw bytes as-is; for text/csv, sanitize NUL bytes if requested
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
-            type __CopyDefaults__ = {
-              from: { maxChunkSize: number; maxBytes: number };
-              to: { stream: boolean; maxBytes: number };
-            };
-            const __defaults__: __CopyDefaults__ | undefined =
-              "getCopyDefaults" in pool
-                ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
-                : undefined;
-            const __fromDefaults__ = (__defaults__ && __defaults__.from) || { maxChunkSize: 256 * 1024, maxBytes: 0 };
-            const maxBytes =
-              options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
-                ? Number((options as any).maxBytes)
-                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
-            const maxChunkSize =
-              options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
-                ? Number((options as any).maxChunkSize)
-                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
-
-            if (src.byteLength <= maxChunkSize) {
-              if (maxBytes && bytesSent + src.byteLength > maxBytes) {
-                throw new Error("copyFrom: maxBytes exceeded");
-              }
-              (reserved as any).copySendData(src);
-              bytesSent += src.byteLength;
-              chunksSent += 1;
-              notifyProgress();
-            } else {
-              for (let i = 0; i < src.byteLength; i += maxChunkSize) {
-                const part = src.subarray(i, Math.min(src.byteLength, i + maxChunkSize));
-                if (maxBytes && bytesSent + part.byteLength > maxBytes) {
-                  throw new Error("copyFrom: maxBytes exceeded");
-                }
-                (reserved as any).copySendData(part);
-                bytesSent += part.byteLength;
-                chunksSent += 1;
-                notifyProgress();
-                {
-                  await new Promise<void>(resolve => {
-                    let settled = false;
-                    (pool as any).awaitWritableFor(reserved, () => {
-                      if (!settled) {
-                        settled = true;
-                        resolve();
-                      }
-                    });
-                    queueMicrotask(() => {
-                      if (!settled) {
-                        settled = true;
-                        resolve();
-                      }
-                    });
-                  });
-                }
-              }
-            }
+            const limits = resolveCopyFromLimits(options, pool);
+            const counters = { bytesSent, chunksSent };
+            await sendChunkedData(src, reserved, pool, limits, counters, notifyProgress);
+            bytesSent = counters.bytesSent;
+            chunksSent = counters.chunksSent;
           } else {
             // fallback: attempt to serialize as a row
             await addToBatch(serializeRow(item));
@@ -1852,15 +1475,7 @@ const SQL: typeof Bun.SQL = function SQL(
         for (const item of maybeIter as Iterable<any>) {
           if ($isArray(item)) {
             if (fmt === "binary") {
-              const types = (options as any)?.binaryTypes as string[] | undefined;
-              if (!types || !Array.isArray(types)) {
-                throw new Error(
-                  "Binary COPY format requires raw bytes or provide options.binaryTypes to enable automatic binary row encoding.",
-                );
-              }
-              if (types.length !== (columns?.length ?? types.length)) {
-                throw new Error("binaryTypes length must match number of columns for COPY FROM.");
-              }
+              const types = validateBinaryTypes(options, columns);
               await flushBatch();
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
@@ -1912,82 +1527,11 @@ const SQL: typeof Bun.SQL = function SQL(
             await flushBatch();
             const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
-            type __CopyDefaults__ = {
-              from: { maxChunkSize: number; maxBytes: number };
-              to: { stream: boolean; maxBytes: number };
-            };
-            const __defaults__: __CopyDefaults__ | undefined =
-              "getCopyDefaults" in pool
-                ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
-                : undefined;
-            const __fromDefaults__ = (__defaults__ && __defaults__.from) || { maxChunkSize: 256 * 1024, maxBytes: 0 };
-            const maxBytes =
-              options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
-                ? Number((options as any).maxBytes)
-                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
-            const maxChunkSize =
-              options && typeof (options as any).maxChunkSize === "number" && (options as any).maxChunkSize > 0
-                ? Number((options as any).maxChunkSize)
-                : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
-
-            const sendAwaitWritable = async () => {
-              if (typeof (reserved as any).awaitWritable === "function") {
-                await new Promise<void>(resolve => {
-                  let settled = false;
-                  (reserved as any).awaitWritable(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                  // Fallback to avoid hanging if there's no backpressure
-                  queueMicrotask(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                });
-              } else {
-                await new Promise<void>(resolve => {
-                  let settled = false;
-                  (pool as any).awaitWritableFor(reserved, () => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                  queueMicrotask(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                });
-              }
-            };
-            if (src.byteLength <= maxChunkSize) {
-              if (maxBytes && bytesSent + src.byteLength > maxBytes) {
-                throw new Error("copyFrom: maxBytes exceeded");
-              }
-              (reserved as any).copySendData(src);
-              bytesSent += src.byteLength;
-              chunksSent += 1;
-              notifyProgress();
-              await sendAwaitWritable();
-            } else {
-              for (let i = 0; i < src.byteLength; i += maxChunkSize) {
-                const part = src.subarray(i, Math.min(src.byteLength, i + maxChunkSize));
-                if (maxBytes && bytesSent + part.byteLength > maxBytes) {
-                  throw new Error("copyFrom: maxBytes exceeded");
-                }
-                (reserved as any).copySendData(part);
-                bytesSent += part.byteLength;
-                chunksSent += 1;
-                notifyProgress();
-                await sendAwaitWritable();
-              }
-            }
+            const limits = resolveCopyFromLimits(options, pool);
+            const counters = { bytesSent, chunksSent };
+            await sendChunkedData(src, reserved, pool, limits, counters, notifyProgress);
+            bytesSent = counters.bytesSent;
+            chunksSent = counters.chunksSent;
           } else {
             await addToBatch(serializeRow(item));
           }
@@ -2241,21 +1785,7 @@ const SQL: typeof Bun.SQL = function SQL(
               chunksReceived += 1;
               notifyProgress();
               // Guardrail: maxBytes
-              type __CopyDefaults__ = {
-                from: { maxChunkSize: number; maxBytes: number };
-                to: { stream: boolean; maxBytes: number };
-              };
-              const __defaults__: __CopyDefaults__ | undefined =
-                "getCopyDefaults" in pool
-                  ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
-                  : undefined;
-              const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0 };
-              const toMax =
-                typeof queryOrOptions === "string"
-                  ? Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0))
-                  : typeof (queryOrOptions as any)?.maxBytes === "number" && (queryOrOptions as any).maxBytes > 0
-                    ? Number((queryOrOptions as any).maxBytes)
-                    : Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0));
+              const toMax = resolveCopyToMaxBytes(queryOrOptions, pool);
               if (toMax > 0 && bytesReceived > toMax) {
                 rejectErr = new Error("copyTo: maxBytes exceeded");
                 done = true;

@@ -14,6 +14,7 @@ function isTypedArray(value: any) {
 }
 
 const { PostgresError } = require("internal/sql/errors");
+const { arrayEscape } = require("internal/sql/postgres-encoding");
 
 const {
   createConnection: createPostgresConnection,
@@ -35,12 +36,6 @@ const writableHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection,
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const escapeBackslash = /\\/g;
-const escapeQuote = /"/g;
-
-function arrayEscape(value: string) {
-  return value.replace(escapeBackslash, "\\\\").replace(escapeQuote, '\\"');
-}
 const POSTGRES_ARRAY_TYPES = {
   // Boolean
   1000: "BOOLEAN", // bool_array
@@ -95,6 +90,7 @@ const POSTGRES_ARRAY_TYPES = {
   1040: "MACADDR", // macaddr_array
   1041: "INET", // inet_array
   775: "MACADDR8", // macaddr8_array
+  2951: "UUID", // uuid_array
 
   // Date/Time types
   1182: "DATE", // date_array
@@ -1685,4 +1681,7 @@ export default {
   SQLCommand,
   commandToString,
   detectCommand,
+  arrayValueSerializer,
+  getArrayType,
+  serializeArray,
 };

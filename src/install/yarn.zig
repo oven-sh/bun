@@ -76,7 +76,6 @@ pub fn migrateYarnLockfile(
     }
 
     const entries = try parseYarnV1Lockfile(data, allocator, log);
-    bun.Output.prettyErrorln("DEBUG: Parsed {d} entries from yarn.lock", .{entries.items.len});
     defer {
         for (entries.items) |*entry| {
             entry.deinit(allocator);
@@ -91,18 +90,101 @@ pub fn migrateYarnLockfile(
 
         try pkg_map.putNoClobber(bun.fs.FileSystem.instance.top_level_dir, 0);
 
+        var pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
+        defer pkg_json_path.deinit();
+
+        pkg_json_path.append("package.json");
+
+        const root_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, pkg_json_path.slice(), .{}).unwrap() catch {
+            return invalidYarnLockfile();
+        };
+
+        const root_json = root_pkg_json.root;
+
+        if (root_json.get("workspaces")) |workspaces_expr| {
+            var workspace_patterns = std.ArrayList([]const u8).init(allocator);
+            defer workspace_patterns.deinit();
+
+            if (workspaces_expr.data == .e_array) {
+                for (workspaces_expr.data.e_array.slice()) |pattern_expr| {
+                    if (pattern_expr.asString(allocator)) |pattern| {
+                        try workspace_patterns.append(pattern);
+                    }
+                }
+            } else if (workspaces_expr.data == .e_object) {
+                if (workspaces_expr.get("packages")) |packages_expr| {
+                    if (packages_expr.data == .e_array) {
+                        for (packages_expr.data.e_array.slice()) |pattern_expr| {
+                            if (pattern_expr.asString(allocator)) |pattern| {
+                                try workspace_patterns.append(pattern);
+                            }
+                        }
+                    }
+                }
+            }
+
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+
+            const GlobWalker = glob.GlobWalker(null, glob.walk.SyscallAccessor, false);
+
+            for (workspace_patterns.items) |user_pattern| {
+                defer _ = arena.reset(.retain_capacity);
+
+                const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_pattern, "package.json" };
+                    break :brk bun.handleOom(arena.allocator().dupe(u8, bun.path.join(parts, .auto)));
+                };
+
+                var walker: GlobWalker = .{};
+                const cwd = bun.fs.FileSystem.instance.top_level_dir;
+                if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |_| {
+                    continue;
+                }
+                defer walker.deinit(false);
+
+                var iter: GlobWalker.Iterator = .{
+                    .walker = &walker,
+                };
+                defer iter.deinit();
+                if ((try iter.init()).asErr()) |_| {
+                    continue;
+                }
+
+                while (switch (try iter.next()) {
+                    .result => |r| r,
+                    .err => |_| null,
+                }) |matched_path| {
+                    if (strings.eqlComptime(matched_path, "package.json")) continue;
+
+                    const entry_dir = bun.path.dirname(matched_path, .auto);
+
+                    var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
+                    defer ws_pkg_json_path.deinit();
+
+                    ws_pkg_json_path.append(matched_path);
+
+                    const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+                    const ws_json = ws_pkg_json.root;
+
+                    const name, _ = try ws_json.getString(allocator, "name") orelse continue;
+                    const name_hash = String.Builder.stringHash(name);
+
+                    try lockfile.workspace_paths.put(allocator, name_hash, try string_buf.append(entry_dir));
+
+                    if (try ws_json.getString(allocator, "version")) |version_info| {
+                        const version, _ = version_info;
+                        const version_str = try string_buf.append(version);
+                        const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+                        if (parsed.valid) {
+                            try lockfile.workspace_versions.put(allocator, name_hash, parsed.version.min());
+                        }
+                    }
+                }
+            }
+        }
+
         {
-            var pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-            defer pkg_json_path.deinit();
-
-            pkg_json_path.append("package.json");
-
-            const root_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, pkg_json_path.slice(), .{}).unwrap() catch {
-                return invalidYarnLockfile();
-            };
-
-            const root_json = root_pkg_json.root;
-
             var root_pkg: Lockfile.Package = .{};
 
             if (try root_json.getString(allocator, "name")) |name_info| {
@@ -112,7 +194,7 @@ pub fn migrateYarnLockfile(
                 root_pkg.name_hash = name_hash;
             }
 
-            const root_deps_off, const root_deps_len = try parsePackageJsonDependencies(
+            const root_deps_off, var root_deps_len = try parsePackageJsonDependencies(
                 lockfile,
                 manager,
                 allocator,
@@ -120,6 +202,37 @@ pub fn migrateYarnLockfile(
                 &string_buf,
                 log,
             );
+
+            // Add workspace packages as dependencies of root (before creating root package)
+            // This ensures workspace deps are contiguous with root's own deps in the buffer
+            const workspace_deps_start = lockfile.buffers.dependencies.items.len;
+            for (lockfile.workspace_paths.values()) |workspace_path| {
+                var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
+                defer ws_pkg_json_path.deinit();
+
+                ws_pkg_json_path.append(workspace_path.slice(string_buf.bytes.items));
+                ws_pkg_json_path.append("package.json");
+
+                const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+                const ws_json = ws_pkg_json.root;
+
+                const ws_name, _ = try ws_json.getString(allocator, "name") orelse continue;
+                const ws_name_hash = String.Builder.stringHash(ws_name);
+
+                const ws_dep: Dependency = .{
+                    .name = try string_buf.appendWithHash(ws_name, ws_name_hash),
+                    .name_hash = ws_name_hash,
+                    .behavior = .{ .workspace = true },
+                    .version = .{
+                        .tag = .workspace,
+                        .value = .{ .workspace = workspace_path },
+                    },
+                };
+
+                try lockfile.buffers.dependencies.append(allocator, ws_dep);
+            }
+            const workspace_deps_count: u32 = @intCast(lockfile.buffers.dependencies.items.len - workspace_deps_start);
+            root_deps_len += workspace_deps_count;
 
             root_pkg.dependencies = .{ .off = root_deps_off, .len = root_deps_len };
             root_pkg.resolutions = .{ .off = root_deps_off, .len = root_deps_len };
@@ -137,85 +250,51 @@ pub fn migrateYarnLockfile(
             try lockfile.packages.append(allocator, root_pkg);
             try lockfile.getOrPutID(0, root_pkg.name_hash);
 
-            if (root_json.get("workspaces")) |workspaces_expr| {
-                var workspace_patterns = std.ArrayList([]const u8).init(allocator);
-                defer workspace_patterns.deinit();
+            if (root_json.get("resolutions") orelse root_json.get("overrides")) |resolutions_expr| {
+                if (resolutions_expr.data == .e_object) {
+                    try lockfile.overrides.map.ensureUnusedCapacity(allocator, resolutions_expr.data.e_object.properties.len);
 
-                if (workspaces_expr.data == .e_array) {
-                    for (workspaces_expr.data.e_array.slice()) |pattern_expr| {
-                        if (pattern_expr.asString(allocator)) |pattern| {
-                            try workspace_patterns.append(pattern);
-                        }
-                    }
-                } else if (workspaces_expr.data == .e_object) {
-                    if (workspaces_expr.get("packages")) |packages_expr| {
-                        if (packages_expr.data == .e_array) {
-                            for (packages_expr.data.e_array.slice()) |pattern_expr| {
-                                if (pattern_expr.asString(allocator)) |pattern| {
-                                    try workspace_patterns.append(pattern);
-                                }
+                    for (resolutions_expr.data.e_object.properties.slice()) |prop| {
+                        const key = prop.key.?;
+                        const value = prop.value.?;
+
+                        var name_str = key.asString(allocator) orelse continue;
+                        const value_str = value.asString(allocator) orelse continue;
+
+                        if (strings.hasPrefixComptime(name_str, "**/"))
+                            name_str = name_str[3..];
+
+                        if (name_str.len == 0) continue;
+
+                        if (name_str[0] == '@') {
+                            const first_slash = strings.indexOfChar(name_str, '/') orelse continue;
+                            if (strings.indexOfChar(name_str[first_slash + 1 ..], '/') != null) {
+                                continue;
                             }
+                        } else if (strings.indexOfChar(name_str, '/') != null) {
+                            continue;
                         }
-                    }
-                }
 
-                var arena = std.heap.ArenaAllocator.init(allocator);
-                defer arena.deinit();
+                        const name_hash = String.Builder.stringHash(name_str);
+                        const name = try string_buf.appendWithHash(name_str, name_hash);
+                        const version_string = try string_buf.append(value_str);
+                        const version_sliced = version_string.sliced(string_buf.bytes.items);
 
-                const GlobWalker = glob.GlobWalker(null, glob.walk.SyscallAccessor, false);
+                        const dep: Dependency = .{
+                            .name = name,
+                            .name_hash = name_hash,
+                            .version = Dependency.parse(
+                                allocator,
+                                name,
+                                name_hash,
+                                version_sliced.slice,
+                                &version_sliced,
+                                log,
+                                manager,
+                            ) orelse continue,
+                        };
 
-                for (workspace_patterns.items) |user_pattern| {
-                    defer _ = arena.reset(.retain_capacity);
-
-                    const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
-                        const parts = [_][]const u8{ user_pattern, "package.json" };
-                        break :brk bun.handleOom(arena.allocator().dupe(u8, bun.path.join(parts, .auto)));
-                    };
-
-                    var walker: GlobWalker = .{};
-                    const cwd = bun.fs.FileSystem.instance.top_level_dir;
-                    if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |_| {
-                        continue;
-                    }
-                    defer walker.deinit(false);
-
-                    var iter: GlobWalker.Iterator = .{
-                        .walker = &walker,
-                    };
-                    defer iter.deinit();
-                    if ((try iter.init()).asErr()) |_| {
-                        continue;
-                    }
-
-                    while (switch (try iter.next()) {
-                        .result => |r| r,
-                        .err => |_| null,
-                    }) |matched_path| {
-                        if (strings.eqlComptime(matched_path, "package.json")) continue;
-
-                        const entry_dir = bun.path.dirname(matched_path, .auto);
-
-                        var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-                        defer ws_pkg_json_path.deinit();
-
-                        ws_pkg_json_path.append(matched_path);
-
-                        const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
-                        const ws_json = ws_pkg_json.root;
-
-                        const name, _ = try ws_json.getString(allocator, "name") orelse continue;
-                        const name_hash = String.Builder.stringHash(name);
-
-                        try lockfile.workspace_paths.put(allocator, name_hash, try string_buf.append(entry_dir));
-
-                        if (try ws_json.getString(allocator, "version")) |version_info| {
-                            const version, _ = version_info;
-                            const version_str = try string_buf.append(version);
-                            const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
-                            if (parsed.valid) {
-                                try lockfile.workspace_versions.put(allocator, name_hash, parsed.version.min());
-                            }
-                        }
+                        lockfile.overrides.map.putAssumeCapacity(name_hash, dep);
                     }
                 }
             }
@@ -274,16 +353,11 @@ pub fn migrateYarnLockfile(
         }
 
         const workspace_pkgs_end = lockfile.packages.len;
-
-        bun.Output.prettyErrorln("DEBUG: Phase 3 - Processing {d} entries", .{entries.items.len});
         var added_count: usize = 0;
         var skipped_workspace: usize = 0;
         var skipped_empty: usize = 0;
         var skipped_other: usize = 0;
         for (entries.items) |entry| {
-            if (entry.specs.items.len > 0) {
-                bun.Output.prettyErrorln("DEBUG: Checking entry: '{s}'", .{entry.specs.items[0]});
-            }
             if (entry.specs.items.len == 0 or entry.version.len == 0) {
                 skipped_empty += 1;
                 continue;
@@ -291,15 +365,26 @@ pub fn migrateYarnLockfile(
 
             const first_spec = entry.specs.items[0];
 
-            if (strings.eqlComptime(entry.version, "0.0.0-use.local") or
-                strings.hasPrefixComptime(entry.resolved, "file:packages/") or
-                strings.hasPrefixComptime(entry.resolved, "file:../"))
-            {
+            if (strings.eqlComptime(entry.version, "0.0.0-use.local")) {
                 skipped_workspace += 1;
                 continue;
             }
 
-            const name = blk: {
+            var is_github_spec = false;
+            var is_git_spec = false;
+            var is_tarball_url_spec = false;
+
+            if (strings.containsComptime(first_spec, "@github:")) {
+                is_github_spec = true;
+            } else if (strings.containsComptime(first_spec, "@git+")) {
+                is_git_spec = true;
+            } else if (strings.containsComptime(first_spec, "@https://") or
+                strings.containsComptime(first_spec, "@http://"))
+            {
+                is_tarball_url_spec = true;
+            }
+
+            const real_name = blk: {
                 if (strings.containsComptime(first_spec, "@npm:")) {
                     if (strings.hasPrefixComptime(first_spec, "@")) {
                         if (strings.indexOfChar(first_spec, '@')) |first_at| {
@@ -307,9 +392,9 @@ pub fn migrateYarnLockfile(
                             if (strings.indexOfChar(after_first_at, '@')) |second_at_in_substr| {
                                 const second_at = first_at + 1 + second_at_in_substr;
                                 if (strings.hasPrefixComptime(first_spec[second_at..], "@npm:")) {
-                                    const after_npm = first_spec[second_at + 5 ..];
-                                    const extracted = extractPackageName(after_npm);
-                                    break :blk extracted;
+                                    const real_spec = first_spec[second_at + 5 ..]; // Skip "@npm:"
+                                    const real_pkg_name = extractPackageName(real_spec);
+                                    break :blk real_pkg_name;
                                 }
                             }
                         }
@@ -317,9 +402,9 @@ pub fn migrateYarnLockfile(
                         if (strings.indexOfChar(first_spec, '@')) |at_pos| {
                             const after_at = first_spec[at_pos + 1 ..];
                             if (strings.hasPrefixComptime(after_at, "npm:")) {
-                                const after_npm = first_spec[at_pos + 5 ..];
-                                const extracted = extractPackageName(after_npm);
-                                break :blk extracted;
+                                const real_spec = first_spec[at_pos + 5 ..]; // Skip "@npm:"
+                                const real_pkg_name = extractPackageName(real_spec);
+                                break :blk real_pkg_name;
                             }
                         }
                     }
@@ -327,65 +412,221 @@ pub fn migrateYarnLockfile(
                 break :blk extractPackageName(first_spec);
             };
 
-            const name_hash = String.Builder.stringHash(name);
-            const name_string = try string_buf.appendWithHash(name, name_hash);
+            var real_name_hash = String.Builder.stringHash(real_name);
+            var real_name_string = try string_buf.appendWithHash(real_name, real_name_hash);
 
             var res: Resolution = undefined;
 
-            if (strings.hasPrefixComptime(entry.resolved, "https://") or
-                strings.hasPrefixComptime(entry.resolved, "http://"))
-            {
-                if (isDefaultRegistry(entry.resolved)) {
-                    const version_str = try string_buf.append(entry.version);
-                    const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+            if (is_github_spec) {
+                const at_github_idx = strings.indexOf(first_spec, "@github:") orelse {
+                    skipped_other += 1;
+                    continue;
+                };
+                const github_spec = first_spec[at_github_idx + 8 ..];
+                var repo = try Repository.parseAppendGithub(github_spec, &string_buf);
 
-                    if (!parsed.valid) {
+                // If no committish in spec, try to get it from resolved (e.g. codeload URL)
+                if (repo.committish.isEmpty() and entry.resolved.len > 0) {
+                    if (Resolution.fromPnpmLockfile(entry.resolved, &string_buf)) |resolved_res| {
+                        if (resolved_res.tag == .github) {
+                            repo.committish = resolved_res.value.github.committish;
+                        }
+                    } else |_| {}
+                }
+
+                // Truncate committish to 7 chars
+                if (repo.committish.len() > 0) {
+                    const committish = repo.committish.slice(string_buf.bytes.items);
+                    if (committish.len > 7) {
+                        repo.committish = try string_buf.append(committish[0..7]);
+                    }
+                }
+
+                res = .init(.{ .github = repo });
+                const alias_name = first_spec[0..at_github_idx];
+                real_name_hash = String.Builder.stringHash(alias_name);
+                real_name_string = try string_buf.appendWithHash(alias_name, real_name_hash);
+            } else if (is_git_spec) {
+                const at_git_idx = strings.indexOf(first_spec, "@git+") orelse {
+                    skipped_other += 1;
+                    continue;
+                };
+                const git_spec = first_spec[at_git_idx + 1 ..];
+
+                if (strings.containsComptime(git_spec, "github.com")) {
+                    const github_com_idx = strings.indexOf(git_spec, "github.com/") orelse {
+                        skipped_other += 1;
                         continue;
+                    };
+                    var path = git_spec[github_com_idx + "github.com/".len ..];
+
+                    if (strings.hasPrefixComptime(path, "git+")) {
+                        path = path["git+".len..];
                     }
 
-                    const scope = manager.scopeForPackageName(name);
-                    const url = try ExtractTarball.buildURL(
-                        scope.url.href,
-                        strings.StringOrTinyString.init(name_string.slice(string_buf.bytes.items)),
-                        parsed.version.min(),
-                        string_buf.bytes.items,
-                    );
+                    var hash_idx: usize = 0;
+                    var slash_idx: usize = 0;
+                    for (path, 0..) |c, i| {
+                        switch (c) {
+                            '/' => slash_idx = i,
+                            '#' => {
+                                hash_idx = i;
+                                break;
+                            },
+                            else => {},
+                        }
+                    }
 
-                    res = .init(.{ .npm = .{
-                        .version = parsed.version.min(),
-                        .url = try string_buf.append(url),
-                    } });
-                } else if (strings.hasSuffixComptime(entry.resolved, ".tgz") or
-                    strings.hasSuffixComptime(entry.resolved, ".tar.gz"))
-                {
-                    res = .init(.{ .remote_tarball = try string_buf.append(entry.resolved) });
+                    const owner = path[0..slash_idx];
+                    var repo_part = if (hash_idx == 0) path[slash_idx + 1 ..] else path[slash_idx + 1 .. hash_idx];
+
+                    if (strings.hasSuffixComptime(repo_part, ".git")) {
+                        repo_part = repo_part[0 .. repo_part.len - 4];
+                    }
+
+                    var repo_result: Repository = .{
+                        .owner = try string_buf.append(owner),
+                        .repo = try string_buf.append(repo_part),
+                    };
+
+                    if (hash_idx != 0) {
+                        const committish = path[hash_idx + 1 ..];
+                        const short_hash = if (committish.len > 7) committish[0..7] else committish;
+                        repo_result.committish = try string_buf.append(short_hash);
+                    } else if (entry.resolved.len > 0) {
+                        if (strings.indexOfChar(entry.resolved, '#')) |resolved_hash_idx| {
+                            const committish = entry.resolved[resolved_hash_idx + 1 ..];
+                            const short_hash = if (committish.len > 7) committish[0..7] else committish;
+                            repo_result.committish = try string_buf.append(short_hash);
+                        }
+                    }
+
+                    res = .init(.{ .github = repo_result });
+                    real_name_hash = String.Builder.stringHash(repo_part);
+                    real_name_string = repo_result.repo;
                 } else {
+                    var repo = try Repository.parseAppendGit(git_spec, &string_buf);
+                    res = .init(.{ .git = repo });
+                    var repo_name = repo.repo.slice(string_buf.bytes.items);
+                    if (strings.hasSuffixComptime(repo_name, ".git")) {
+                        repo_name = repo_name[0 .. repo_name.len - 4];
+                    }
+                    if (strings.lastIndexOfChar(repo_name, '/')) |slash| {
+                        repo_name = repo_name[slash + 1 ..];
+                    }
+                    real_name_hash = String.Builder.stringHash(repo_name);
+                    real_name_string = try string_buf.appendWithHash(repo_name, real_name_hash);
+                }
+            } else if (is_tarball_url_spec) {
+                const at_http_idx = strings.indexOf(first_spec, "@http") orelse {
+                    skipped_other += 1;
+                    continue;
+                };
+                const url_after_at = first_spec[at_http_idx + 1 ..];
+
+                if (strings.indexOf(url_after_at, "/-/")) |dash_slash_idx| {
+                    const before_dash_slash = url_after_at[0..dash_slash_idx];
+                    if (strings.lastIndexOfChar(before_dash_slash, '/')) |last_slash| {
+                        const real_pkg_name_from_url = before_dash_slash[last_slash + 1 ..];
+                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_url);
+                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_url, real_name_hash);
+                    } else {
+                        const real_pkg_name_from_spec = first_spec[0..at_http_idx];
+                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
+                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
+                    }
+                } else {
+                    const real_pkg_name_from_spec = first_spec[0..at_http_idx];
+                    real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
+                    real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
+                }
+                res = .init(.{ .remote_tarball = try string_buf.append(entry.resolved) });
+            } else if (entry.resolved.len == 0) {
+                if (strings.containsComptime(first_spec, "@file:")) {
+                    const at_file_idx = strings.indexOf(first_spec, "@file:") orelse {
+                        skipped_other += 1;
+                        continue;
+                    };
+                    const path = first_spec[at_file_idx + 6 ..];
+                    if (strings.hasSuffixComptime(path, ".tgz") or strings.hasSuffixComptime(path, ".tar.gz")) {
+                        res = .init(.{ .local_tarball = try string_buf.append(path) });
+                    } else {
+                        res = .init(.{ .folder = try string_buf.append(path) });
+                    }
+                } else {
+                    skipped_other += 1;
                     continue;
                 }
-            } else if (Dependency.Version.Tag.infer(entry.resolved) == .git) {
-                const repo = try Repository.parseAppendGit(entry.resolved, &string_buf);
-                res = .init(.{ .git = repo });
-            } else if (Dependency.Version.Tag.infer(entry.resolved) == .github) {
-                const repo = try Repository.parseAppendGithub(entry.resolved, &string_buf);
-                res = .init(.{ .github = repo });
-            } else if (strings.hasPrefixComptime(entry.resolved, "file:")) {
-                const path = strings.withoutPrefixComptime(entry.resolved, "file:");
-                if (strings.hasSuffixComptime(path, ".tgz") or strings.hasSuffixComptime(path, ".tar.gz")) {
-                    res = .init(.{ .local_tarball = try string_buf.append(path) });
-                } else {
-                    res = .init(.{ .folder = try string_buf.append(path) });
+            } else if (isDefaultRegistry(entry.resolved) and
+                (strings.hasPrefixComptime(entry.resolved, "https://") or
+                    strings.hasPrefixComptime(entry.resolved, "http://")))
+            {
+                const version_str = try string_buf.append(entry.version);
+                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid) {
+                    continue;
                 }
+
+                const scope = manager.scopeForPackageName(real_name);
+                const url = try ExtractTarball.buildURL(
+                    scope.url.href,
+                    strings.StringOrTinyString.init(real_name),
+                    parsed.version.min(),
+                    string_buf.bytes.items,
+                );
+
+                res = .init(.{ .npm = .{
+                    .version = parsed.version.min(),
+                    .url = try string_buf.append(url),
+                } });
             } else {
-                skipped_other += 1;
-                continue;
+                res = Resolution.fromPnpmLockfile(entry.resolved, &string_buf) catch {
+                    skipped_other += 1;
+                    continue;
+                };
+
+                switch (res.tag) {
+                    .github => {
+                        var repo = res.value.github;
+                        if (repo.committish.len() > 0) {
+                            const committish = repo.committish.slice(string_buf.bytes.items);
+                            if (committish.len > 7) {
+                                repo.committish = try string_buf.append(committish[0..7]);
+                                res = .init(.{ .github = repo });
+                            }
+                        }
+                        const repo_name = repo.repo.slice(string_buf.bytes.items);
+                        real_name_hash = String.Builder.stringHash(repo_name);
+                        real_name_string = repo.repo;
+                    },
+                    .git => {
+                        const repo = res.value.git;
+                        var repo_name = repo.repo.slice(string_buf.bytes.items);
+                        if (strings.hasSuffixComptime(repo_name, ".git")) {
+                            repo_name = repo_name[0 .. repo_name.len - 4];
+                        }
+                        if (strings.lastIndexOfChar(repo_name, '/')) |slash| {
+                            repo_name = repo_name[slash + 1 ..];
+                        }
+                        real_name_hash = String.Builder.stringHash(repo_name);
+                        real_name_string = try string_buf.appendWithHash(repo_name, real_name_hash);
+                    },
+                    else => {},
+                }
             }
 
             added_count += 1;
             var pkg: Lockfile.Package = .{
-                .name = name_string,
-                .name_hash = name_hash,
+                .name = real_name_string,
+                .name_hash = real_name_hash,
                 .resolution = res.copy(),
             };
+
+            if (res.tag == .github) {
+                const Output = bun.Output;
+                Output.prettyErrorln("Created GitHub package: {s} -> {s}", .{ real_name_string.slice(string_buf.bytes.items), entry.resolved });
+            }
 
             if (entry.integrity.len > 0) {
                 pkg.meta.integrity = Integrity.parse(entry.integrity);
@@ -414,8 +655,6 @@ pub fn migrateYarnLockfile(
             }
         }
 
-        bun.Output.prettyErrorln("DEBUG: Phase 3 complete - added={d}, skipped_empty={d}, skipped_workspace={d}, skipped_other={d}, total_packages={d}", .{ added_count, skipped_empty, skipped_workspace, skipped_other, lockfile.packages.len });
-
         break :build .{
             pkg_map,
             workspace_pkgs_off,
@@ -435,10 +674,23 @@ pub fn migrateYarnLockfile(
     const pkgs = lockfile.packages.slice();
     const pkg_deps = pkgs.items(.dependencies);
 
+    // Resolve root dependencies
     {
         for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
+
+            if (dep.behavior.isWorkspace()) {
+                const workspace_path = dep.version.value.workspace.slice(string_buf);
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+                defer path_buf.deinit();
+                path_buf.append(workspace_path);
+                if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
+                    lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
+                    continue;
+                }
+            }
+
             const dep_name = dep.name.slice(string_buf);
             const version_str = dep.version.literal.slice(string_buf);
 
@@ -453,6 +705,7 @@ pub fn migrateYarnLockfile(
         }
     }
 
+    // Resolve workspace package dependencies
     for (workspace_pkgs_off..workspace_pkgs_end) |_pkg_id| {
         const pkg_id: PackageID = @intCast(_pkg_id);
         const deps = pkg_deps[pkg_id];
@@ -460,6 +713,12 @@ pub fn migrateYarnLockfile(
         for (deps.begin()..deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
+
+            // Skip workspace dependencies in workspace packages (they're resolved from root)
+            if (dep.behavior.isWorkspace()) {
+                continue;
+            }
+
             const dep_name = dep.name.slice(string_buf);
             const version_str = dep.version.literal.slice(string_buf);
 
@@ -474,6 +733,7 @@ pub fn migrateYarnLockfile(
         }
     }
 
+    // Resolve migrated package dependencies
     for (workspace_pkgs_end..lockfile.packages.len) |_pkg_id| {
         const pkg_id: PackageID = @intCast(_pkg_id);
         const deps = pkg_deps[pkg_id];
@@ -579,8 +839,6 @@ fn parseYarnV1Lockfile(
         const content = line[indent..];
         if (content.len == 0) continue;
 
-        bun.Output.prettyErrorln("DEBUG: indent={d}, content='{s}'", .{ indent, content });
-
         switch (indent) {
             0 => {
                 current_entry_idx = null;
@@ -607,17 +865,14 @@ fn parseYarnV1Lockfile(
             2 => {
                 if (current_entry_idx == null) continue;
 
-                bun.Output.prettyErrorln("DEBUG: Processing indent=2, content='{s}'", .{content});
                 if (strings.indexOfChar(content, ' ')) |space_idx| {
                     const key = content[0..space_idx];
                     const value_raw = content[space_idx + 1 ..];
                     const value = strings.trim(value_raw, " \t\"");
 
-                    bun.Output.prettyErrorln("DEBUG: Found space at {d}, key='{s}', value='{s}'", .{ space_idx, key, value });
                     var entry = &entries.items[current_entry_idx.?];
                     if (strings.eqlComptime(key, "version")) {
                         entry.version = try allocator.dupe(u8, value);
-                        bun.Output.prettyErrorln("DEBUG: Set version to '{s}', entry.version='{s}'", .{ value, entry.version });
                     } else if (strings.eqlComptime(key, "resolved")) {
                         entry.resolved = try allocator.dupe(u8, value);
                     } else if (strings.eqlComptime(key, "integrity")) {
@@ -629,7 +884,6 @@ fn parseYarnV1Lockfile(
                     }
                 } else if (strings.hasSuffixComptime(content, ":")) {
                     const key = content[0 .. content.len - 1];
-                    bun.Output.prettyErrorln("DEBUG: Found colon suffix, key='{s}'", .{key});
                     var entry = &entries.items[current_entry_idx.?];
                     if (strings.eqlComptime(key, "dependencies")) {
                         current_dep_map = &entry.dependencies;

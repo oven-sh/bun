@@ -11,7 +11,7 @@ let githubToken = await secrets.get({
 });
 
 if (!githubToken) {
-  githubToekn = prompt("Please enter your GitHub token");
+  githubToken = prompt("Please enter your GitHub token");
   await secrets.set({
     service: "my-cli-tool",
     name: "github-token",

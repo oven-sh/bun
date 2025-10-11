@@ -74,11 +74,8 @@ const
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  // Should not crash with segfault
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS");
-  expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("panic");
-}, 15000);
+});

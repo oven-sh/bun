@@ -2840,8 +2840,8 @@ pub const Resolver = struct {
                         //
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
-                        switch (err) {
-                            error.FileNotFound => {},
+                        switch (@as(anyerror, err)) {
+                            error.ENOENT, error.FileNotFound => {},
                             else => {
                                 if (comptime enable_logging) {
                                     const pretty = queue_top.unsafe_path;

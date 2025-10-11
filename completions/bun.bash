@@ -437,7 +437,7 @@ _bun_completions() {
 
         # completion should be continued if the current word is
         # an empty string _and_ the previous word is either...
-        # a. 'bun', that is complete the initial `bun ` stirng, or
+        # a. 'bun', that is complete the initial `bun ` string, or
         # b. part of the allowed completion, or
         # c. an argument to the second-to-previous option, or
         # d. the script name

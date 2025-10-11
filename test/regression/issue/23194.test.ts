@@ -27,7 +27,7 @@ Comlink.expose({
     setTimeout(() => {
       clearInterval(interval);
       main.callback(i, Date.now(), true);
-    }, 3000);
+    }, 1000);
   },
 });
 `,
@@ -99,4 +99,4 @@ const
   expect(stdout).toContain("SUCCESS");
   expect(stderr).not.toContain("Segmentation fault");
   expect(stderr).not.toContain("panic");
-}, 30000);
+}, 15000);

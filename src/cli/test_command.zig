@@ -1766,7 +1766,8 @@ pub const TestCommand = struct {
         }
         const summary = reporter.summary();
 
-        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        const should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests and (failed_to_find_any_tests or summary.didLabelFilterOutAllTests());
+        if (should_fail_on_no_tests or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;

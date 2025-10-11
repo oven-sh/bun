@@ -737,6 +737,19 @@ pub const uv_buf_t = extern struct {
         return this.base[0..this.len];
     }
 };
+pub const uv_buf_t_const = extern struct {
+    len: ULONG,
+    base: [*]const u8,
+
+    pub fn init(input: []const u8) uv_buf_t {
+        bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
+    }
+
+    pub fn slice(this: *const @This()) []u8 {
+        return this.base[0..this.len];
+    }
+};
 pub const uv_file = c_int;
 pub const uv_os_sock_t = SOCKET;
 pub const uv_os_fd_t = HANDLE;

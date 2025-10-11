@@ -36,7 +36,10 @@ linker = "isolated"
 
 ### Default behavior
 
-By default, Bun uses the **hoisted** installation strategy for all projects. To use isolated installs, you must explicitly specify the `--linker isolated` flag or set it in your configuration file.
+- **Workspaces**: Bun uses **isolated** installs by default to prevent hoisting-related bugs
+- **Single projects**: Bun uses **hoisted** installs by default
+
+To override the default, use `--linker hoisted` or `--linker isolated`, or set it in your configuration file.
 
 ## How isolated installs work
 
@@ -174,14 +177,13 @@ The main difference is that Bun uses symlinks in `node_modules` while pnpm uses 
 
 ## When to use isolated installs
 
-**Use isolated installs when:**
+**Isolated installs are the default for workspaces.** You may want to explicitly enable them for single projects when:
 
-- Working in monorepos with multiple packages
 - Strict dependency management is required
 - Preventing phantom dependencies is important
 - Building libraries that need deterministic dependencies
 
-**Use hoisted installs when:**
+**Switch to hoisted installs (including for workspaces) when:**
 
 - Working with legacy code that assumes flat `node_modules`
 - Compatibility with existing build tools is required

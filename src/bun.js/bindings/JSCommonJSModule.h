@@ -83,9 +83,7 @@ public:
 
     void clearSourceCode() { sourceCode = JSC::SourceCode(); }
 
-    void finishCreation(JSC::VM& vm,
-        JSC::JSString* id, JSValue filename,
-        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
+    void finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode);
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
@@ -153,8 +151,11 @@ public:
 
     bool hasEvaluated = false;
 
-    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure)
+    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)
+        , m_id(id, JSC::WriteBarrierEarlyInit)
+        , m_filename(filename, JSC::WriteBarrierEarlyInit)
+        , m_dirname(dirname, JSC::WriteBarrierEarlyInit)
     {
     }
 };

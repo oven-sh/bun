@@ -183,7 +183,7 @@ pub const String = extern struct {
 
     pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
-        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
+        if (bun.strings.firstNonASCII16(bytes) == null) {
             return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
         return validateRefCount(bun.cpp.BunString__fromUTF16(bytes.ptr, bytes.len));

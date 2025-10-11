@@ -817,13 +817,10 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, const JSC::SourceCode& sourceCode)
+void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_id.set(vm, this, id);
-    m_filename.set(vm, this, filename);
-    m_dirname.set(vm, this, dirname);
     this->sourceCode = sourceCode;
 }
 
@@ -847,8 +844,8 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::JSString* dirname,
     const JSC::SourceCode& sourceCode)
 {
-    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure);
-    cell->finishCreation(vm, id, filename, dirname, sourceCode);
+    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure, id, filename, dirname);
+    cell->finishCreation(vm, sourceCode);
     return cell;
 }
 

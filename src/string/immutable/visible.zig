@@ -714,7 +714,7 @@ pub const visible = struct {
 
         while (true) {
             {
-                const idx = firstNonASCII16([]const u16, input) orelse input.len;
+                const idx = firstNonASCII16(input) orelse input.len;
                 for (0..idx) |j| {
                     const cp = input[j];
                     defer prev = cp;
@@ -760,7 +760,7 @@ pub const visible = struct {
                 input = input[idx..];
             }
             if (input.len == 0) break;
-            const replacement = utf16CodepointWithFFFD([]const u16, input);
+            const replacement = utf16CodepointWithFFFD(input);
             defer input = input[replacement.len..];
             if (replacement.fail) continue;
             const cp: u21 = @intCast(replacement.code_point);

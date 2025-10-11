@@ -424,3 +424,6 @@ test/bake/dev/deinitialization.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts
+
+# Need to run the event loop once more to ensure sockets close
+test/js/node/test/parallel/test-https-localaddress-bind-error.js

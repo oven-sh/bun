@@ -202,10 +202,10 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             // However, this is also what WebKit seems to do.
             //
             // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
-            const out_length = strings.elementLengthCP1252IntoUTF16([]const u8, buffer_slice);
+            const out_length = strings.elementLengthCP1252IntoUTF16(buffer_slice);
             const bytes = try bun.default_allocator.alloc(u16, out_length);
 
-            const out = strings.copyCP1252IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+            const out = strings.copyCP1252IntoUTF16(bytes, buffer_slice);
             return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
         },
         EncodingLabel.@"UTF-8" => {

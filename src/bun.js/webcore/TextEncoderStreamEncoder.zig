@@ -74,7 +74,7 @@ fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, 
 
     var remain = input;
     while (remain.len > 0) {
-        const result = strings.copyLatin1IntoUTF8(buffer.unusedCapacitySlice(), []const u8, remain);
+        const result = strings.copyLatin1IntoUTF8(buffer.unusedCapacitySlice(), remain);
 
         buffer.items.len += result.written;
         remain = remain[result.read..];
@@ -123,7 +123,7 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
             this.pending_lead_surrogate = null;
             const maybe_trail = remain[0];
             if (strings.u16IsTrail(maybe_trail)) {
-                const converted = strings.utf16CodepointWithFFFD([]const u16, &.{ lead, maybe_trail });
+                const converted = strings.utf16CodepointWithFFFD(&.{ lead, maybe_trail });
                 // shouldn't fail because `u16IsTrail` is true and `pending_lead_surrogate` is always
                 // a valid lead.
                 bun.debugAssert(!converted.fail);
@@ -164,7 +164,7 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
     switch (result.status) {
         else => {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-            const lead_surrogate = strings.toUTF8ListWithTypeBun(&buf, []const u16, remain, true) catch {
+            const lead_surrogate = strings.toUTF8ListWithTypeBun(&buf, remain, true) catch {
                 buf.deinit();
                 return globalObject.throwOutOfMemoryValue();
             };

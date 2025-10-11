@@ -1,13 +1,13 @@
-import { createTest } from "node-harness";
+import { createTest, exampleSite } from "node-harness";
 import https from "node:https";
 const { expect } = createTest(import.meta.path);
 
 // TODO: today we use a workaround to continue event, we need to fix it in the future.
-
+using server = exampleSite();
 let receivedContinue = false;
 const req = https.request(
-  "https://example.com",
-  { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+  server.url,
+  { ca: server.ca, headers: { "accept-encoding": "identity", "expect": "100-continue" } },
   res => {
     let data = "";
     res.setEncoding("utf8");

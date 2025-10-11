@@ -132,7 +132,7 @@ pub const ZigString = extern struct {
 
     pub fn isAllASCII(this: ZigString) bool {
         if (this.is16Bit()) {
-            return strings.firstNonASCII16([]const u16, this.utf16SliceAligned()) == null;
+            return strings.firstNonASCII16(this.utf16SliceAligned()) == null;
         }
 
         return strings.isAllASCII(this.slice());
@@ -224,7 +224,7 @@ pub const ZigString = extern struct {
         }
 
         if (this.is16Bit()) {
-            return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
+            return strings.elementLengthUTF16IntoUTF8(this.utf16SliceAligned());
         }
 
         return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
@@ -236,9 +236,9 @@ pub const ZigString = extern struct {
 
         var list = std.ArrayList(u8).init(allocator);
         list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+            try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
 
         if (list.capacity > list.items.len) {
             list.items.ptr[list.items.len] = 0;
@@ -258,9 +258,9 @@ pub const ZigString = extern struct {
 
         var list = std.ArrayList(u8).init(allocator);
         list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+            try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
 
         return list.toOwnedSliceSentinel(0);
     }
@@ -588,7 +588,7 @@ pub const ZigString = extern struct {
         }
 
         if (self.is16Bit()) {
-            try bun.fmt.formatUTF16Type(@TypeOf(self.utf16Slice()), self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16Type(self.utf16SliceAligned(), writer);
             return;
         }
 

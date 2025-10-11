@@ -34,6 +34,15 @@ test/package-json-lint.test.ts:
 Ran 4 tests across 1 files. [0.66ms]
 ```
 
+### Dots Reporter
+
+The dots reporter shows `.` for passing tests and `F` for failures—useful for large test suites.
+
+```sh
+$ bun test --dots
+$ bun test --reporter=dots
+```
+
 ### JUnit XML Reporter
 
 For CI/CD environments, Bun supports generating JUnit XML reports. JUnit XML is a widely-adopted format for test results that can be parsed by many CI/CD systems, including GitLab, Jenkins, and others.

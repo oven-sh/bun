@@ -36,7 +36,7 @@ export fn Bun__encoding__byteLengthLatin1AsUTF8(input: [*]const u8, len: usize) 
 
 // TODO(@190n) handle unpaired surrogates
 export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
-    return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
+    return strings.elementLengthUTF16IntoUTF8(input[0..len]);
 }
 
 export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
@@ -285,7 +285,7 @@ pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, com
         },
         .utf8 => {
             // need to encode
-            return strings.copyLatin1IntoUTF8(to_ptr[0..to_len], []const u8, input[0..len]).written;
+            return strings.copyLatin1IntoUTF8(to_ptr[0..to_len], input[0..len]).written;
         },
         // encode latin1 into UTF16
         .ucs2, .utf16le => {
@@ -296,13 +296,13 @@ pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, com
                 const buf = input[0..len];
 
                 const output = @as([*]u16, @ptrCast(@alignCast(to_ptr)))[0 .. to_len / 2];
-                const written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                const written = strings.copyLatin1IntoUTF16([]u16, output, buf).written;
                 return written * 2;
             } else {
                 const buf = input[0..len];
                 const output = @as([*]align(1) u16, @ptrCast(to_ptr))[0 .. to_len / 2];
 
-                const written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+                const written = strings.copyLatin1IntoUTF16([]align(1) u16, output, buf).written;
                 return written * 2;
             }
         },
@@ -331,7 +331,7 @@ pub fn byteLengthU8(input: [*]const u8, len: usize, comptime encoding: Encoding)
         },
 
         .ucs2, .utf16le => {
-            return strings.elementLengthUTF8IntoUTF16([]const u8, input[0..len]) * 2;
+            return strings.elementLengthUTF8IntoUTF16(input[0..len]) * 2;
         },
 
         .hex => {
@@ -361,7 +361,6 @@ pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, compt
         .utf8 => {
             return strings.copyUTF16IntoUTF8Impl(
                 to[0..to_len],
-                []const u16,
                 input[0..len],
                 allow_partial_write,
             ).written;
@@ -433,13 +432,13 @@ pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Alloca
         },
         .utf8 => {
             // need to encode
-            return strings.allocateLatin1IntoUTF8(allocator, []const u8, input[0..len]) catch return &[_]u8{};
+            return strings.allocateLatin1IntoUTF8(allocator, input[0..len]) catch return &[_]u8{};
         },
         // encode latin1 into UTF16
         // return as bytes
         .ucs2, .utf16le => {
             var to = allocator.alloc(u16, len) catch return &[_]u8{};
-            _ = strings.copyLatin1IntoUTF16([]u16, to, []const u8, input[0..len]);
+            _ = strings.copyLatin1IntoUTF16([]u16, to, input[0..len]);
             return std.mem.sliceAsBytes(to[0..len]);
         },
 
@@ -469,7 +468,7 @@ pub fn constructFromU16(input: [*]const u16, len: usize, allocator: std.mem.Allo
 
     switch (comptime encoding) {
         .utf8 => {
-            return strings.toUTF8AllocWithType(allocator, []const u16, input[0..len]) catch return &[_]u8{};
+            return strings.toUTF8AllocWithType(allocator, input[0..len]) catch return &[_]u8{};
         },
         .latin1, .buffer, .ascii => {
             var to = allocator.alloc(u8, len) catch return &[_]u8{};

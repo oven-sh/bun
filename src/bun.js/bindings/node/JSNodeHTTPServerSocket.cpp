@@ -97,8 +97,8 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
     : JSC::JSDestructibleObject(vm, structure)
     , socket(socket)
     , is_ssl(is_ssl)
+    , currentResponseObject(response, JSC::WriteBarrierEarlyInit)
 {
-    currentResponseObject.setEarlyValue(vm, this, response);
 }
 
 void JSNodeHTTPServerSocket::detach()

@@ -2085,7 +2085,7 @@ fn NewLexer_(
                     defer lexer.temp_buffer_u16.clearRetainingCapacity();
                     try lexer.temp_buffer_u16.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
                     try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, std.ArrayList(u16), &lexer.temp_buffer_u16);
-                    const first_non_ascii = strings.firstNonASCII16([]const u16, lexer.temp_buffer_u16.items);
+                    const first_non_ascii = strings.firstNonASCII16(lexer.temp_buffer_u16.items);
                     // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
                     if (first_non_ascii != null) {
                         return js_ast.E.String.init(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
@@ -2172,7 +2172,7 @@ fn NewLexer_(
         }
 
         pub fn utf16ToString(noalias lexer: *const LexerType, js: JavascriptString) !string {
-            return try strings.toUTF8AllocWithType(lexer.allocator, []const u16, js);
+            return try strings.toUTF8AllocWithType(lexer.allocator, js);
         }
         pub fn nextInsideJSXElement(noalias lexer: *LexerType) !void {
             lexer.assertNotJSON();

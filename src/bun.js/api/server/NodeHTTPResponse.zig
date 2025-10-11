@@ -33,6 +33,8 @@ bytes_written: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
+auto_flusher: AutoFlusher = .{},
+
 pub const Flags = packed struct(u8) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
@@ -244,6 +246,7 @@ pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObjec
 
 fn markRequestAsDone(this: *NodeHTTPResponse) void {
     log("markRequestAsDone()", .{});
+    defer this.deref();
     this.flags.is_request_pending = false;
 
     this.clearOnDataCallback(this.getThisValue(), jsc.VirtualMachine.get().global);
@@ -252,7 +255,8 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
     this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
     const server = this.server;
     this.poll_ref.unref(jsc.VirtualMachine.get());
-    this.deref();
+    this.unregisterAutoFlush();
+
     server.onRequestComplete();
 }
 
@@ -1068,9 +1072,36 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
 
+pub fn onAutoFlush(this: *NodeHTTPResponse) bool {
+    defer this.deref();
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        this.raw_response.?.uncork();
+    }
+    this.auto_flusher.registered = false;
+    return false;
+}
+
+fn registerAutoFlush(this: *NodeHTTPResponse) void {
+    if (this.auto_flusher.registered) return;
+    this.ref();
+    AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, jsc.VirtualMachine.get());
+}
+
+fn unregisterAutoFlush(this: *NodeHTTPResponse) void {
+    if (!this.auto_flusher.registered) return;
+    AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(NodeHTTPResponse, this, jsc.VirtualMachine.get());
+    this.deref();
+}
+
 pub fn flushHeaders(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null)
-        this.raw_response.?.flushHeaders();
+    if (!this.flags.socket_closed and !this.flags.upgraded and this.raw_response != null) {
+        const raw_response = this.raw_response.?;
+        // Don’t flush immediately; queue a microtask to uncork the socket.
+        raw_response.flushHeaders(false);
+        if (raw_response.isCorked()) {
+            this.registerAutoFlush();
+        }
+    }
 
     return .js_undefined;
 }
@@ -1199,6 +1230,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const AnyServer = jsc.API.AnyServer;
 const ServerWebSocket = jsc.API.ServerWebSocket;

@@ -112,48 +112,24 @@ _read_scripts_in_package_json() {
         local scripts="${matched%\}*}";
 
         local scripts_rem="${scripts}";
-        local -a package_json_compreply;
+        local -a script_candidates;
 
         while [[ "${scripts_rem}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
-            local script_name;
-            script_name="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)";
+            local script;
+            script="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)";
 
-            package_json_compreply+=( "${script_name}" );
-            if [[ "${script_name}" == "${cur_word}"* ]]; then
-                COMPREPLY+=( "${script_name}" );
-            fi
+            # when a script is passed as an option, do not show other scripts as part of the completion anymore
+            [[ "${script}" == "${prev}" ]] && _prev_is_script=1 && return;
+
+            script_candidates+=( "${script}" );
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
         done
     }
 
-    # when a script is passed as an option, do not show other scripts as part of the completion anymore
-    [[ -n "${COMP_WORDS[2]}" ]] && {
-        local found=0
-        for comp in "${COMPREPLY[@]}"; do
-            [[ "$comp" == "$prev" ]] && found=1 && break
-        done
+    for script in "${script_candidates[@]}"; do
+        [[ "${script}" == "${cur_word}"* ]] && COMPREPLY+=( "${script}" )
+    done
 
-        if ((found)); then
-            declare -a new_reply;
-            for comp in "${COMPREPLY[@]}"; do
-                local is_script=0
-                for script in "${package_json_compreply[@]}"; do
-                    [[ "$comp" == "$script" ]] && is_script=1 && break
-                done
-
-                if ((!is_script)) && [[ "$comp" == "$cur_word"* ]]; then
-                   new_reply+=( "$comp" )
-                fi
-            done
-
-            COMPREPLY=();
-            for comp in "${new_reply[@]}"; do
-                COMPREPLY+=( "${comp}" );
-            done
-
-            _replaced_script="${prev}";
-        fi
-    }
 }
 
 
@@ -225,6 +201,8 @@ _bun_completions() {
             return;;
     esac
 
+    declare -g _prev_is_script=0;
+
     case "${COMP_WORDS[1]}" in
         help|completions|--help|-h|-v|--version) return;;
         add|a)
@@ -262,7 +240,6 @@ _bun_completions() {
             COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
         *)
-            declare -g _replaced_script;
             _long_short_completion \
                 "${GLOBAL_OPTIONS[LONG_OPTIONS]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
@@ -270,26 +247,29 @@ _bun_completions() {
             _read_scripts_in_package_json "${cur_word}" "${prev}";
             _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${prev}";
 
-            # determine if completion should be continued
-            # when the current word is an empty string
-            # the previous word is not part of the allowed completion
-            # the previous word is not an argument to the last two options
+            # Determine if completion should be continued when
+            # the current word is an empty string and either:
+            # a. the previous word is part of the allowed completion, or
+            # b. the previous word is an argument to second-to-previous option
+            # c. the previouos word is the script name
+            # FIXME: Is c. a valid case here?
             [[ -z "${cur_word}" ]] && {
-                declare -A comp_reply_associative
-                    for comp in "${COMPREPLY[@]}"; do
-                        comp_reply_associative["$comp"]="${comp}"
-                    done
-                [[ -z "${comp_reply_associative["${prev}"]}" ]] && {
-                    local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
-                    [[ ( -n "${_replaced_script}" && "${_replaced_script}" == "${prev}" ) ]] || {
-                        case " ${global_option_with_extra_args} " in
-                            *" ${COMP_WORDS[(( COMP_CWORD - 2 ))]} "*)
-                                return
-                            ;;
-                        esac
-                    }
-                    unset COMPREPLY;
-                }
+                for comp in "${COMPREPLY[@]}"; do
+                    # if `prev` is script name, then scripts are filtred out from `COMPREPLY`, so
+                    # the `_prev_is_script` is needed to detect that previous word is the script name
+                    [[ "${prev}" == "${comp}" ]] && return; # a.
+                done
+
+                local pre_prev="${COMP_WORDS[(( COMP_CWORD - 2 ))]}";
+                local global_options_with_arg="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
+
+                for opt in "${global_options_with_arg[@]}"; do
+                    [[ "${pre_prev}" == "${opt}" ]] && return; # b.
+                done
+
+                (( _prev_is_script )) && return; # c.
+
+                unset COMPREPLY;
             }
             return;;
     esac

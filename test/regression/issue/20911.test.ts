@@ -17,6 +17,9 @@ const worker = new Worker(url)
 worker.onerror = (error) => console.error(error)
 worker.postMessage('ping')
 
+// Emit sentinel after error is handled to signal the test
+setTimeout(() => console.log("WORKER_ERROR_HANDLED"), 50)
+
 // keep alive
 setInterval(() => {}, 1000)
 `,
@@ -67,11 +70,34 @@ setInterval(() => {}, 1000)
   expect(result.hasError).toBe(true);
 
   if (!allowCrashAfterEvent) {
-    // Wait to ensure the process doesn't crash after displaying ErrorEvent
+    // Wait for the sentinel to ensure the process doesn't crash after displaying ErrorEvent
     // (the bug causes a crash shortly after ErrorEvent is printed)
+    const { promise: handledPromise, resolve: resolveHandled } = Promise.withResolvers<void>();
+
+    (async () => {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          if (buffer.includes("WORKER_ERROR_HANDLED")) {
+            resolveHandled();
+            return;
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    })();
+
     const crashCheck = await Promise.race([
       proc.exited.then(code => ({ crashed: true, code })),
-      new Promise(resolve => setTimeout(() => resolve({ crashed: false }), 200)),
+      handledPromise.then(() => ({ crashed: false })),
     ]);
 
     if (crashCheck.crashed) {

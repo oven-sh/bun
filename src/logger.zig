@@ -86,8 +86,6 @@ pub const Location = struct {
     length: usize = 0,
     /// Text on the line, avoiding the need to refetch the source code
     line_text: ?string = null,
-    // TODO: remove this unused field
-    suggestion: ?string = null,
     // TODO: document or remove
     offset: usize = 0,
 
@@ -96,7 +94,6 @@ pub const Location = struct {
         cost += this.file.len;
         cost += this.namespace.len;
         if (this.line_text) |text| cost += text.len;
-        if (this.suggestion) |text| cost += text.len;
         return cost;
     }
 
@@ -104,7 +101,6 @@ pub const Location = struct {
         builder.count(this.file);
         builder.count(this.namespace);
         if (this.line_text) |text| builder.count(text);
-        if (this.suggestion) |text| builder.count(text);
     }
 
     pub fn clone(this: Location, allocator: std.mem.Allocator) !Location {
@@ -115,7 +111,6 @@ pub const Location = struct {
             .column = this.column,
             .length = this.length,
             .line_text = if (this.line_text != null) try allocator.dupe(u8, this.line_text.?) else null,
-            .suggestion = if (this.suggestion != null) try allocator.dupe(u8, this.suggestion.?) else null,
             .offset = this.offset,
         };
     }
@@ -128,7 +123,6 @@ pub const Location = struct {
             .column = this.column,
             .length = this.length,
             .line_text = if (this.line_text != null) string_builder.append(this.line_text.?) else null,
-            .suggestion = if (this.suggestion != null) string_builder.append(this.suggestion.?) else null,
             .offset = this.offset,
         };
     }
@@ -140,7 +134,6 @@ pub const Location = struct {
             .line = this.line,
             .column = this.column,
             .line_text = this.line_text orelse "",
-            .suggestion = this.suggestion orelse "",
             .offset = @as(u32, @truncate(this.offset)),
         };
     }
@@ -148,7 +141,7 @@ pub const Location = struct {
     // don't really know what's safe to deinit here!
     pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
-    pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string, suggestion: ?string) Location {
+    pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string) Location {
         return Location{
             .file = file,
             .namespace = namespace,
@@ -156,7 +149,6 @@ pub const Location = struct {
             .column = column,
             .length = length,
             .line_text = line_text,
-            .suggestion = suggestion,
             .offset = length,
         };
     }

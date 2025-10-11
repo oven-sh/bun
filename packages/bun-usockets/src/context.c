@@ -502,7 +502,7 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
 }
 
 /* Helper function to parse local address for binding */
-static struct sockaddr_storage *parse_local_address(const char *local_host, int local_port, struct sockaddr_storage *storage) {
+static struct sockaddr_storage *parse_local_address(const char *local_host, unsigned short local_port, struct sockaddr_storage *storage) {
     if (local_host == NULL) {
         return NULL;
     }
@@ -513,7 +513,7 @@ static struct sockaddr_storage *parse_local_address(const char *local_host, int 
     return NULL;
 }
 
-void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *local_host, int local_port, int options, int socket_ext_size, int* has_dns_resolved) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *local_host, unsigned short local_port, int options, int socket_ext_size, int* has_dns_resolved) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
         return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, local_host, local_port, options, socket_ext_size, has_dns_resolved);

@@ -112,7 +112,7 @@ _read_scripts_in_package_json() {
         local scripts="${matched%\}*}";
 
         local scripts_rem="${scripts}";
-        local package_json_compreply;
+        local -a package_json_compreply;
 
         while [[ "${scripts_rem}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name;

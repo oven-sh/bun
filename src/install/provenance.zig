@@ -36,8 +36,10 @@ pub const ProvenanceGenerator = struct {
             return ProvenanceError.UnsupportedCIProvider;
         }
 
-        if (access == null or !std.mem.eql(u8, access.?, "public")) {
-            return ProvenanceError.PublicAccessRequired;
+        if (access) |a| {
+            if (!std.mem.eql(u8, a, "public")) {
+                return ProvenanceError.PublicAccessRequired;
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-#! /usr/bin/env bash
+#!/usr/bin/env bash
 
 _escape_bash_specials() {
     local word="${1}";

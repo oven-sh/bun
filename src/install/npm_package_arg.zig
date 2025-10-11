@@ -1777,13 +1777,14 @@ const PathHelpers = struct {
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
+const pathlib = @import("../paths/Path.zig");
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
+const PercentEncoding = @import("../url.zig").PercentEncoding;
+
 const HostedGitInfo = @import("./hosted_git_info.zig").HostedGitInfo;
 const WellDefinedProtocol = @import("./hosted_git_info.zig").WellDefinedProtocol;
-const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
 const Semver = bun.Semver;
 const jsc = bun.jsc;
-const pathlib = @import("../paths/Path.zig");

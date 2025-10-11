@@ -192,5 +192,5 @@ pub fn queryHomeDirWindows(allocator: std.mem.Allocator, user: ?[]const u8) !Man
     return error.FailedToFindHomeDir;
 }
 
+const bun = @import("./bun.zig");
 const std = @import("std");
-const bun = @import("bun.zig");

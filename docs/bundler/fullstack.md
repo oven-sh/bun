@@ -174,6 +174,18 @@ export function App() {
 
 {% /codetabs %}
 
+### Server Components (Experimental)
+
+Enable React Server Components with `--server-components` (requires server-side target):
+
+```bash
+bun build ./app/page.tsx --server-components --target bun --outdir ./dist
+```
+
+{% callout %}
+Server Components support is experimental and the API may change.
+{% /callout %}
+
 ### Development mode
 
 When building locally, enable development mode by setting `development: true` in `Bun.serve()`.

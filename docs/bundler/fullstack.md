@@ -340,6 +340,8 @@ $ bun add bun-plugin-tailwind
 ```toml#bunfig.toml
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
+# Optionally disable minification
+# minify = false
 ```
 
 This will allow you to use TailwindCSS utility classes in your HTML and CSS files. All you need to do is import `tailwindcss` somewhere:
@@ -375,6 +377,21 @@ plugins = ["./my-plugin-implementation.ts"]
 Bun will lazily resolve and load each plugin and use them to bundle your routes.
 
 Note: this is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in the CLI.
+
+### Minification
+
+Control minification of HTML imports via `bunfig.toml`:
+
+```toml#bunfig.toml
+[serve.static]
+minify = false
+# or granular control:
+# minify.whitespace = false
+# minify.identifiers = false
+# minify.syntax = false
+```
+
+By default, minification is enabled when `development: false` and disabled when `development: true`.
 
 ## How this works
 

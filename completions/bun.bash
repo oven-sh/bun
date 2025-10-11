@@ -29,10 +29,10 @@ _bun_escape_bash_specials() {
     }
 
     if ((has_patsub)); then
-        echo "${word//${re_exp}/\\&}"
+        printf '%s' "${word//${re_exp}/\\&}"
     else
         # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
-        sed "s/${re_sed}/\\\\&/g" <<< "${word}"
+        printf '%s' "$(sed "s/${re_sed}/\\\\&/g" <<< "${word}")"
     fi
 }
 
@@ -49,10 +49,10 @@ _bun_escape_glob_specials() {
     }
 
     if ((has_patsub)); then
-        echo "${word//[][!?*]/\\&}"
+        printf '%s' "${word//[][!?*]/\\&}"
     else
         # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
-        sed 's/[][!?*]/\\&/g' <<< "${word}"
+        printf '%s' "$(sed 's/[][!?*]/\\&/g' <<< "${word}")"
     fi
 }
 

@@ -93,6 +93,24 @@ pub const ProvenanceGenerator = struct {
         const package_url = try std.fmt.allocPrint(self.allocator, "pkg:npm/{s}@{s}", .{ package_name, package_version });
         defer self.allocator.free(package_url);
 
+        const base64_payload = try self.createBase64PayloadGitHub(
+            package_url,
+            integrity_sha512,
+            github_server_url,
+            github_repository,
+            workflow_ref,
+            workflow_path,
+            github_event_name,
+            github_repository_id,
+            github_repository_owner_id,
+            github_ref,
+            github_sha,
+            runner_environment,
+            github_run_id,
+            github_run_attempt,
+        );
+        defer self.allocator.free(base64_payload);
+
         const bundle_json = try std.fmt.allocPrint(self.allocator,
             \\{{
             \\  "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.2",
@@ -112,22 +130,7 @@ pub const ProvenanceGenerator = struct {
             \\    }}]
             \\  }}
             \\}}
-        , .{try self.createBase64PayloadGitHub(
-            package_url,
-            integrity_sha512,
-            github_server_url,
-            github_repository,
-            workflow_ref,
-            workflow_path,
-            github_event_name,
-            github_repository_id,
-            github_repository_owner_id,
-            github_ref,
-            github_sha,
-            runner_environment,
-            github_run_id,
-            github_run_attempt,
-        )});
+        , .{base64_payload});
 
         return bundle_json;
     }
@@ -150,6 +153,17 @@ pub const ProvenanceGenerator = struct {
         const package_url = try std.fmt.allocPrint(self.allocator, "pkg:npm/{s}@{s}", .{ package_name, package_version });
         defer self.allocator.free(package_url);
 
+        const base64_payload = try self.createBase64PayloadGitLab(
+            package_url,
+            integrity_sha512,
+            ci_project_url,
+            ci_commit_sha,
+            ci_job_name,
+            ci_runner_id,
+            ci_job_url,
+        );
+        defer self.allocator.free(base64_payload);
+
         const bundle_json = try std.fmt.allocPrint(self.allocator,
             \\{{
             \\  "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.2",
@@ -169,15 +183,7 @@ pub const ProvenanceGenerator = struct {
             \\    }}]
             \\  }}
             \\}}
-        , .{try self.createBase64PayloadGitLab(
-            package_url,
-            integrity_sha512,
-            ci_project_url,
-            ci_commit_sha,
-            ci_job_name,
-            ci_runner_id,
-            ci_job_url,
-        )});
+        , .{base64_payload});
 
         return bundle_json;
     }

@@ -115,7 +115,7 @@ const handlers = {
       ws.send("i" + config.generation);
     }
   },
-  [MessageId.hot_update](view) {
+  [MessageId.hot_update](view: DataView<ArrayBuffer>) {
     const reader = new DataViewReader(view, 1);
 
     // The code genearting each list is annotated with equivalent "List n"
@@ -316,6 +316,7 @@ testingHook?.({
 
 try {
   const { refresh } = config;
+
   if (refresh) {
     const refreshRuntime = await loadModuleAsync(refresh, false, null);
     setRefreshRuntime(refreshRuntime);

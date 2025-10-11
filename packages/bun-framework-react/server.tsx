@@ -1,23 +1,24 @@
-import type { Bake } from "bun";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
-import { serverManifest } from "bun:bake/server";
+import * as Bake from "bun:app";
+import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
-import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
-import type { RequestContext } from "../hmr-runtime-server";
+import type { RequestContext } from "../../src/bake/hmr-runtime-server.ts";
+import { renderToPipeableStream } from "./vendor/react-server-dom-bun/server.node.unbundled.js";
 
-function assertReactComponent(Component: any) {
+function assertReactComponent(Component: unknown): asserts Component is React.JSXElementConstructor<unknown> {
   if (typeof Component !== "function") {
     console.log("Expected a React component", Component, typeof Component);
     throw new Error("Expected a React component");
   }
 }
 
-// This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
+function getPage(meta: Bake.RouteMetadata & { request?: Request | undefined }, styles: readonly string[]) {
   let route = component(meta.pageModule, meta.params, meta.request);
+
   for (const layout of meta.layouts) {
-    const Layout = layout.default;
+    const Layout = layout.default as typeof layout.default & { displayName?: string };
+    Layout.displayName ??= "Layout";
     if (import.meta.env.DEV) assertReactComponent(Layout);
     route = <Layout params={meta.params}>{route}</Layout>;
   }
@@ -26,7 +27,6 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Bun + React Server Components</title>
         {styles.map(url => (
           // `data-bake-ssr` is used on the client-side to construct the styles array.
           <link key={url} rel="stylesheet" href={url} data-bake-ssr />
@@ -37,8 +37,12 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
   );
 }
 
-function component(mod: any, params: Record<string, string> | null, request?: Request) {
+function component(mod: any, params: Record<string, string | string[]> | null, request?: Request) {
+  if (!mod || !mod.default) {
+    throw new Error("Pages must have a default export that is a React component");
+  }
   const Page = mod.default;
+
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
 
@@ -51,7 +55,6 @@ function component(mod: any, params: Record<string, string> | null, request?: Re
     props = method();
   }
 
-  // Pass request prop if mode is 'ssr'
   if (mod.mode === "ssr" && request) {
     props.request = request;
   }
@@ -76,7 +79,7 @@ export async function render(
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
   // Check if the page module has a streaming export, default to false
-  const streaming = meta.pageModule.streaming ?? false;
+  const streaming = meta.pageModule?.streaming ?? false;
 
   // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);
@@ -104,7 +107,6 @@ export async function render(
 
       // Mark as aborted and call the abort function
       signal.aborted = err;
-      // @ts-expect-error
       signal.abort(err);
       rscPayload.destroy(err);
     },
@@ -236,5 +238,5 @@ export const contentTypeToStaticFile = {
 export interface MiniAbortSignal {
   aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
-  abort: () => void;
+  abort: (reason?: any) => void;
 }

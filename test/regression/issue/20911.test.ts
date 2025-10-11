@@ -69,14 +69,11 @@ setInterval(() => {}, 1000)
     })),
   ]);
 
-  // If process exited early, check if it crashed
   if (result.type === "exited") {
-    expect(result.code).not.toBe(134); // 134 = SIGABRT (abort/crash)
-    expect(result.code).not.toBe(139); // 139 = SIGSEGV (segfault)
-  } else {
-    // We saw the ErrorEvent, process is still alive - good!
-    expect(result.hasError).toBe(true);
+    throw new Error(`Expected ErrorEvent before exit (code ${result.code})`);
   }
+
+  expect(result.hasError).toBe(true);
 
   // Terminate the process if it's still running
   proc.kill();

@@ -177,27 +177,94 @@ _bun_subcommand_completions() {
 }
 
 _bun_completions() {
-    declare -A GLOBAL_OPTIONS
-    declare -A PACKAGE_OPTIONS
-    declare -A PM_OPTIONS
+    GLOBAL_OPTIONS_LONG=(
+			--use
+			--cwd
+			--bunfile
+			--server-bunfile
+			--config
+			--disable-react-fast-refresh
+			--disable-hmr
+			--env-file
+			--extension-order
+			--jsx-factory
+			--jsx-fragment
+			--extension-order
+			--jsx-factory
+			--jsx-fragment
+			--jsx-import-source
+			--jsx-production
+			--jsx-runtime
+			--main-fields
+			--no-summary
+			--version
+			--platform
+			--public-dir
+			--tsconfig-override
+			--define
+			--external
+			--help
+			--inject
+			--loader
+			--origin
+			--port
+			--dump-environment-variables
+			--dump-limits
+			--disable-bun-js
+		)
+    GLOBAL_OPTIONS_SHORT=(-c -v -d -e -h -i -l -u -p)
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build"
+    PACKAGE_OPTIONS_ADD_LONG=(--development --optional --peer)
+    PACKAGE_OPTIONS_ADD_SHORT=()
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js"
-    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p"
+    PACKAGE_OPTIONS_REMOVE_LONG=()
+    PACKAGE_OPTIONS_REMOVE_SHORT=()
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer"
-    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d"
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]=""
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]=""
+    PACKAGE_OPTIONS_SHARED_LONG=(
+			--config
+			--yarn
+			--production
+			--frozen-lockfile
+			--no-save
+			--dry-run
+			--force
+			--cache-dir
+			--no-cache
+			--silent
+			--verbose
+			--global
+			--cwd
+			--backend
+			--link-native-bins
+			--help
+		)
+    PACKAGE_OPTIONS_SHARED_SHORT=(-c -y -p -f -g)
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help"
-    PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g"
+    PM_OPTIONS_LONG=(
+			--config
+			--yarn
+			--production
+			--frozen-lockfile
+			--no-save
+			--dry-run
+			--force
+			--cache-dir
+			--no-cache
+			--silent
+			--verbose
+			--no-progress
+			--no-summary
+			--no-verify
+			--ignore-scripts
+			--global
+			--cwd
+			--backend
+			--link-native-bins
+			--help
+		)
+    PM_OPTIONS_SHORT=(-c -y -p -f -g)
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
-    PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
-
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+		local fst_word="${COMP_WORDS[1]}"
     local pre_word="${COMP_WORDS[$((COMP_CWORD - 1))]}"
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
 
@@ -207,10 +274,17 @@ _bun_completions() {
     --bunfile) _file_arguments '.+\.bun$' "${cur_word}" && return ;;
     --server-bunfile) _file_arguments '.+\.server\.bun$' "${cur_word}" && return ;;
     --backend)
-        case "${COMP_WORDS[1]}" in
+        case "${fst_word}" in
         a | add | remove | rm | install | i)
-            # shellcheck disable=SC2207 # the literal space separated string is used, each element has no whitespace characters inside
-            COMPREPLY=($(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}"))
+						local backend_args=(
+							clonefile
+							copyfile
+							hardlink
+							clonefile_each_dir
+							symlink
+						)
+            # shellcheck disable=SC2207 # `backend_args` is array of words with no space inside each element
+            COMPREPLY=($(compgen -W "${backend_args[*]}" -- "${cur_word}"))
             ;;
         esac
         return
@@ -220,70 +294,114 @@ _bun_completions() {
         return
         ;;
     --jsx-runtime)
+				local jsx_runtime_args=(automatic classic)
         # shellcheck disable=SC2207 # see above
-        COMPREPLY=($(compgen -W "automatic classic" -- "${cur_word}"))
+        COMPREPLY=($(compgen -W "${jsx_runtime_args[*]}" -- "${cur_word}"))
         return
         ;;
     --target)
-        # shellcheck disable=SC2207 # idem.
-        COMPREPLY=($(compgen -W "browser node bun" -- "${cur_word}"))
+				local target_args=(browser node bun)
+        # shellcheck disable=SC2207 # see above
+        COMPREPLY=($(compgen -W "${target_args[*]}" -- "${cur_word}"))
         return
         ;;
     -l | --loader)
         [[ ${cur_word} =~ (:) ]] && {
-            local cut_colon_forward="${cur_word%%:*}"
-            readarray -t COMPREPLY <<< "$(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}")"
+            local cur_word_wo_suffix="${cur_word%%:*}"
+            local loader_args=(
+              jsx
+              js
+              json
+              tsx
+              ts
+              css
+            )
+            readarray -t COMPREPLY <<< "$(
+              compgen -W "${loader_args[@]/#/${cur_word_wo_suffix}:}" -- "${cur_word}"
+            )"
         }
         return
         ;;
     esac
 
-    case "${COMP_WORDS[1]}" in
+    case "${fst_word}" in
     help | completions | --help | -h | -v | --version) return ;;
     add | a)
-        _long_short_completion \
-            "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]}" \
-            "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+        _bun_long_short_completions \
+            "${PACKAGE_OPTIONS_ADD_LONG[*]} ${PACKAGE_OPTIONS_SHARED_LONG[*]}" \
+            "${PACKAGE_OPTIONS_ADD_SHORT[*]} ${PACKAGE_OPTIONS_SHARED_SHORT[*]}" \
             "${cur_word}"
         return
         ;;
     remove | rm | i | install | link | unlink)
-        _long_short_completion \
-            "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]}" \
-            "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+        _bun_long_short_completions \
+            "${PACKAGE_OPTIONS_REMOVE_LONG[*]} ${PACKAGE_OPTIONS_SHARED_LONG[*]}" \
+            "${PACKAGE_OPTIONS_REMOVE_SHORT[*]} ${PACKAGE_OPTIONS_SHARED_SHORT[*]}" \
             "${cur_word}"
         return
         ;;
     create | c)
-        # shellcheck disable=SC2207 # the literal string of space separated flags is used, there are no flags containing whitespace character
-        COMPREPLY=($(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}"))
+        local create_options=(
+          --force
+          --no-install
+          --help
+          --no-git
+          --verbose
+          --no-package-json
+          --open next react
+        )
+        # shellcheck disable=SC2207 # `create_options` is array of words with no space inside each element
+        COMPREPLY=($(compgen -W "${create_options[*]}" -- "${cur_word}"))
         return
         ;;
     upgrade)
+        local upgrade_options=(
+          --version
+          --cwd
+          --help
+          -v
+          -h
+        )
         # shellcheck disable=SC2207 # see above
-        COMPREPLY=($(compgen -W "--version --cwd --help -v -h" -- "${cur_word}"))
+        COMPREPLY=($(compgen -W "${upgrade_options[*]}" -- "${cur_word}"))
         return
         ;;
     run)
-        _file_arguments '.+\.(js|ts|jsx|tsx|mjs|cjs)$' "${cur_word}"
-        # shellcheck disable=SC2207 # idem.
-        COMPREPLY+=($(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}"))
-        _read_scripts_in_package_json "${cur_word}" "${pre_word}"
+        _bun_files_completions '.+\.(js|ts|jsx|tsx|mjs|cjs)$' "${cur_word}"
+        local run_options=(
+          --version
+          --cwd
+          --help
+          --silent
+          -v
+          -h
+        )
+        # shellcheck disable=SC2207 # see above
+        COMPREPLY+=($(compgen -W "${run_options[*]}" -- "${cur_word}"))
+        _bun_scripts_completions "${cur_word}" "${pre_word}"
         return
         ;;
     pm)
-        _long_short_completion \
-            "${PM_OPTIONS[LONG_OPTIONS]}" \
-            "${PM_OPTIONS[SHORT_OPTIONS]}" \
+        _bun_scripts_completions \
+            "${PM_OPTIONS_LONG[*]}" \
+            "${PM_OPTIONS_SHORT[*]}" \
             "${cur_word}"
-        # shellcheck disable=SC2207 # the literal space-separated string of subcommands is used, no subcommand containing the space character exists
-        COMPREPLY+=($(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}"))
+        local pm_options=(
+          bin
+          ls
+          cache
+          hash
+          hash-print
+          hash-string
+        )
+        # shellcheck disable=SC2207 # see above
+        COMPREPLY+=($(compgen -W "${pm_options[*]}" -- "${cur_word}"))
         return
         ;;
     *)
-        _long_short_completion \
-            "${GLOBAL_OPTIONS[LONG_OPTIONS]}" \
-            "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
+        _bun_scripts_completions \
+            "${GLOBAL_OPTIONS_LONG[*]}" \
+            "${GLOBAL_OPTIONS_SHORT[*]}" \
             "${cur_word}"
         local pre_is_script=0
         _bun_scripts_completions "${cur_word}" "${pre_word}" || pre_is_script=1

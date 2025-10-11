@@ -937,10 +937,12 @@ class PostgresAdapter
     (setCopyStreamingMode as any)(connection, !!enable);
   }
   static setCopyTimeout(connection: $ZigGeneratedClasses.PostgresSQLConnection, ms: number) {
-    (setCopyTimeout as any)(connection, (ms | 0) >>> 0);
+    const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(ms) || 0)));
+    (setCopyTimeout as any)(connection, n);
   }
   static setMaxCopyBufferSize(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
-    (setMaxCopyBufferSize as any)(connection, (bytes | 0) >>> 0);
+    const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(bytes) || 0)));
+    (setMaxCopyBufferSize as any)(connection, n);
   }
   static onWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
     writableHandlers.set(connection, handler);

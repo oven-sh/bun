@@ -123,7 +123,7 @@ _read_scripts_in_package_json() {
             script="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)";
 
             # when a script is passed as an option, do not show other scripts as part of the completion anymore
-            [[ "${script}" == "${pre_word}" ]] && _pre_is_script=1 && return;
+            [[ "${script}" == "${pre_word}" ]] && return 1;
 
             script_candidates+=( "${script}" );
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
@@ -133,7 +133,7 @@ _read_scripts_in_package_json() {
     for script in "${script_candidates[@]}"; do
         [[ "${script}" == "${cur_word}"* ]] && COMPREPLY+=( "${script}" );
     done
-
+    return 0;
 }
 
 
@@ -212,8 +212,6 @@ _bun_completions() {
             return;;
     esac
 
-    declare -g _pre_is_script=0;
-
     case "${COMP_WORDS[1]}" in
         help|completions|--help|-h|-v|--version) return;;
         add|a)
@@ -255,7 +253,8 @@ _bun_completions() {
                 "${GLOBAL_OPTIONS[LONG_OPTIONS]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
                 "${cur_word}";
-            _read_scripts_in_package_json "${cur_word}" "${pre_word}";
+            local pre_is_script=0;
+            _read_scripts_in_package_json "${cur_word}" "${pre_word}" || pre_is_script=1;
             _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${pre_word}";
 
             # determine if completion should be continued when
@@ -278,7 +277,7 @@ _bun_completions() {
                     [[ "${pre_pre_word}" == "${opt}" ]] && return; # b.
                 done
 
-                (( _pre_is_script )) && return; # c.
+                (( pre_is_script )) && return; # c.
 
                 unset COMPREPLY;
             }

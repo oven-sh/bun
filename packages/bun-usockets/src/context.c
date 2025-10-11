@@ -501,6 +501,18 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
     return 0;
 }
 
+/* Helper function to parse local address for binding */
+static struct sockaddr_storage *parse_local_address(const char *local_host, int local_port, struct sockaddr_storage *storage) {
+    if (local_host == NULL) {
+        return NULL;
+    }
+    if (try_parse_ip(local_host, local_port, storage)) {
+        return storage;
+    }
+    errno = EINVAL;
+    return NULL;
+}
+
 void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *local_host, int local_port, int options, int socket_ext_size, int* has_dns_resolved) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
@@ -512,15 +524,9 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     // Parse local address if provided
     struct sockaddr_storage local_addr_storage;
-    struct sockaddr_storage *local_addr = NULL;
-    if (local_host != NULL) {
-        if (try_parse_ip(local_host, local_port, &local_addr_storage)) {
-            local_addr = &local_addr_storage;
-        } else {
-            // Invalid local address format
-            errno = EINVAL;
-            return NULL;
-        }
+    struct sockaddr_storage *local_addr = parse_local_address(local_host, local_port, &local_addr_storage);
+    if (local_host != NULL && local_addr == NULL) {
+        return NULL;
     }
 
     // fast path for IP addresses in text form
@@ -580,12 +586,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 int start_connections(struct us_connecting_socket_t *c, int count) {
     // Parse local address if provided
     struct sockaddr_storage local_addr_storage;
-    struct sockaddr_storage *local_addr = NULL;
-    if (c->local_host != NULL) {
-        if (try_parse_ip(c->local_host, c->local_port, &local_addr_storage)) {
-            local_addr = &local_addr_storage;
-        }
-    }
+    struct sockaddr_storage *local_addr = parse_local_address(c->local_host, c->local_port, &local_addr_storage);
 
     int opened = 0;
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {

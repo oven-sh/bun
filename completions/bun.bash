@@ -127,7 +127,7 @@ _bun_long_short_completions() {
 
 # appends the script names from package.json inside the current directory, if any, to the list of completions
 # @param `$1`: string - word immediately before the cursor
-# @param `$2`: string - word before $1`
+# @param `$2`: string - word before $1
 _bun_scripts_completions() {
     local cur_word="${1}"
     local pre_word="${2}"
@@ -167,7 +167,7 @@ _bun_scripts_completions() {
 
 # appends subcommands to the list of completions
 # @param `$1`: string - word immediately before the cursor
-# @param `$2`: string - word before $1`
+# @param `$2`: string - word before $1
 _bun_subcommand_completions() {
     local cur_word="${1}"
     local pre_word="${2}"
@@ -435,17 +435,20 @@ _bun_completions() {
         _bun_scripts_completions "${cur_word}" "${pre_word}" || pre_is_script=1
         _bun_subcommand_completions "${cur_word}" "${pre_word}"
 
-        # determine if completion should be continued when
-        # the current word is an empty string and either:
-        # a. the previous word is part of the allowed completion, or
-        # b. the previous word is an argument to second-to-previous option, or
-        # c. the previous word is the script name is true
+        # completion should be continued if the current word is
+        # an empty string _and_ the previous word is either...
+        # a. 'bun', that is complete the initial `bun ` stirng, or
+        # b. part of the allowed completion, or
+        # c. an argument to the second-to-previous option, or
+        # d. the script name
         # FIXME: Is c. a valid case here?
         [[ -z ${cur_word} ]] && {
+            [[ ${pre_word} == 'bun' ]] && return # a.
+
             for comp in "${COMPREPLY[@]}"; do
                 # if `pre_word` is script name, then scripts are filtered out from `COMPREPLY`, so
                 # the `_pre_is_script` is needed to detect that previous word is the script name
-                [[ ${pre_word} == "${comp}" ]] && return # a.
+                [[ ${pre_word} == "${comp}" ]] && return # b.
             done
 
             local pre_pre_word="${COMP_WORDS[COMP_CWORD - 2]}"
@@ -462,10 +465,10 @@ _bun_completions() {
             )
 
             for opt in "${global_options_with_arg[@]}"; do
-                [[ ${pre_pre_word} == "${opt}" ]] && return # b.
+                [[ ${pre_pre_word} == "${opt}" ]] && return # c.
             done
 
-            ((pre_is_script)) && return # c.
+            ((pre_is_script)) && return # d.
 
             unset COMPREPLY
         }

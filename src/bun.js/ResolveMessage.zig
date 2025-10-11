@@ -1,8 +1,6 @@
 pub const ResolveMessage = struct {
-    pub const js = jsc.Codegen.JSResolveMessage;
-    pub const toJS = js.toJS;
-    pub const fromJS = js.fromJS;
-    pub const fromJSDirect = js.fromJSDirect;
+    // Remove codegen references since we're not using the class generator anymore
+    pub extern fn ResolveMessage__toJS(*ResolveMessage, *jsc.JSGlobalObject) jsc.JSValue;
 
     msg: logger.Msg,
     allocator: std.mem.Allocator,
@@ -169,13 +167,21 @@ pub const ResolveMessage = struct {
         msg: logger.Msg,
         referrer: string,
     ) bun.OOM!jsc.JSValue {
-        var resolve_error = try allocator.create(ResolveMessage);
+        const resolve_error = try allocator.create(ResolveMessage);
+        // Don't clone the msg - the metadata.resolve ranges point to offsets in msg.data.text
+        // Cloning creates a new text buffer but keeps the same ranges, causing use-after-poison
         resolve_error.* = ResolveMessage{
-            .msg = try msg.clone(allocator),
+            .msg = msg,
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };
-        return resolve_error.toJS(globalThis);
+
+        // Pass the actual ResolveMessage pointer, the C++ side will create and store the tagged pointer
+        return ResolveMessage__toJS(resolve_error, globalThis);
+    }
+
+    pub fn toJS(this: *ResolveMessage, globalThis: *JSGlobalObject) jsc.JSValue {
+        return ResolveMessage__toJS(this, globalThis);
     }
 
     pub fn getPosition(
@@ -190,6 +196,12 @@ pub const ResolveMessage = struct {
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
         return ZigString.init(this.msg.data.text).toJS(globalThis);
+    }
+
+    pub fn getMessageString(
+        this: *const ResolveMessage,
+    ) bun.String {
+        return bun.String.init(this.msg.data.text);
     }
 
     pub fn getLevel(
@@ -227,10 +239,101 @@ pub const ResolveMessage = struct {
     pub fn finalize(this: *ResolveMessage) callconv(.C) void {
         this.msg.deinit(bun.default_allocator);
     }
+
+    pub fn fromJS(value: jsc.JSValue) ?*ResolveMessage {
+        const bun_error_data = BunErrorData.fromJS(value) orelse return null;
+        if (bun_error_data.is(ResolveMessage)) {
+            return bun_error_data.as(ResolveMessage);
+        }
+        return null;
+    }
+
+    pub export fn ResolveMessage__fromJS(value: jsc.JSValue) ?*ResolveMessage {
+        return ResolveMessage.fromJS(value);
+    }
+
+    // Export functions for C++ bindings
+    pub export fn ResolveMessage__getMessage(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getMessage(globalThis);
+    }
+
+    pub export fn ResolveMessage__getMessageString(this: *ResolveMessage) bun.String {
+        return this.getMessageString();
+    }
+
+    pub export fn ResolveMessage__getCode(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getCode(globalThis);
+    }
+
+    pub export fn ResolveMessage__getLevel(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getLevel(globalThis);
+    }
+
+    pub export fn ResolveMessage__getReferrer(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getReferrer(globalThis);
+    }
+
+    pub export fn ResolveMessage__getSpecifier(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getSpecifier(globalThis);
+    }
+
+    pub export fn ResolveMessage__getImportKind(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getImportKind(globalThis);
+    }
+
+    pub export fn ResolveMessage__getPosition(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getPosition(globalThis);
+    }
+
+    pub export fn ResolveMessage__getLine(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getLine(globalThis);
+    }
+
+    pub export fn ResolveMessage__getColumn(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        return this.getColumn(globalThis);
+    }
+
+    pub export fn ResolveMessage__toString(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
+        return this.toStringFn(globalThis);
+    }
+
+    pub export fn ResolveMessage__toJSON(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
+        return this.toJSON(globalThis, callframe) catch globalThis.throwOutOfMemoryValue();
+    }
+
+    pub export fn ResolveMessage__toPrimitive(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
+        return this.toPrimitive(globalThis, callframe) catch jsc.JSValue.jsNull();
+    }
+
+    /// Create a synthetic stack frame for error stack traces
+    pub export fn ResolveMessage__createSyntheticStackFrame(this: *ResolveMessage, frame: *jsc.ZigStackFrame) void {
+        const location = this.msg.data.location orelse {
+            frame.* = jsc.ZigStackFrame.Zero;
+            return;
+        };
+
+        frame.* = .{
+            .function_name = bun.String.empty,
+            .source_url = bun.String.init(location.file),
+            .position = .{
+                .line = bun.Ordinal.fromOneBased(location.line),
+                .column = bun.Ordinal.fromOneBased(location.column),
+                .line_start_byte = -1,
+            },
+            .code_type = .None,
+            .is_async = false,
+            .remapped = true, // Mark as remapped so it's not processed again
+        };
+    }
+
+    pub export fn ResolveMessage__finalize(this: *ResolveMessage) void {
+        this.finalize();
+    }
 };
 
 const string = []const u8;
 
+const BunErrorData = @import("./BunErrorData.zig");
 const Resolver = @import("../resolver//resolver.zig");
 const std = @import("std");
 

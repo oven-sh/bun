@@ -518,6 +518,8 @@ public:
     V(public, JSC::LazyClassStructure, m_JSStatFSClassStructure)                                             \
     V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
     V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
+    V(public, JSC::LazyClassStructure, m_JSBuildMessageClassStructure)                                       \
+    V(public, JSC::LazyClassStructure, m_JSResolveMessageClassStructure)                                     \
                                                                                                              \
     V(private, WebCore::JSBuiltinInternalFunctions, m_builtinInternalFunctions)                              \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \

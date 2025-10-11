@@ -1777,6 +1777,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     const old_log = jsc_vm.log;
     // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
     var log = logger.Log.init(bun.default_allocator);
+    log.clone_line_text = true; // Clone line_text to prevent use-after-free when source buffers are recycled
     defer log.deinit();
     jsc_vm.log = &log;
     jsc_vm.transpiler.resolver.log = &log;
@@ -2452,7 +2453,9 @@ fn printErrorFromMaybePrivateData(
                     build_error.msg,
                 ) catch {};
             }
-            return true;
+            // Return false to suppress the JavaScript stack trace
+            // BuildMessage already shows the source location via writeFormat()
+            return false;
         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
             defer Output.flush();
             if (!resolve_error.logged) {
@@ -2471,7 +2474,9 @@ fn printErrorFromMaybePrivateData(
                     resolve_error.msg,
                 ) catch {};
             }
-            return true;
+            // Return false to suppress the JavaScript stack trace
+            // ResolveMessage already shows the source location via writeFormat()
+            return false;
         }
     }
 

@@ -1,4 +1,4 @@
-const CopyOutResponse = @This();
+const CopyBothResponse = @This();
 
 overall_format: u8 = 0,
 column_format_codes: []u16 = &[_]u16{},
@@ -16,11 +16,12 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
         .overall_format = 0,
         .column_format_codes = &[_]u16{},
     };
-
     _ = try reader.length();
 
     const overall_format = try reader.int(u8);
     const column_count: usize = @intCast(@max(try reader.short(), 0));
+
+    // Existing allocation free removed; struct is initialized at function entry
 
     const column_format_codes = try bun.default_allocator.alloc(u16, column_count);
     errdefer bun.default_allocator.free(column_format_codes);
@@ -35,7 +36,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     };
 }
 
-pub const decode = DecoderWrap(CopyOutResponse, decodeInternal).decode;
+pub const decode = DecoderWrap(CopyBothResponse, decodeInternal).decode;
 
 const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;

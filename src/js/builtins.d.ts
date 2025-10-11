@@ -2,6 +2,156 @@
 /// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
 /// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
 /// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+// Bun.SQL COPY streaming helpers (copyFrom / copyTo)
+declare namespace Bun {
+  interface SQL {
+    /**
+     * COPY FROM STDIN - High-level helper for bulk data import.
+     *
+     * Efficiently inserts large amounts of data into PostgreSQL using the COPY protocol.
+     * Much faster than individual INSERT statements for bulk operations.
+     *
+     * @param table - Target table name (will be properly escaped)
+     * @param columns - Array of column names to insert into
+     * @param data - Data to insert, supporting multiple formats:
+     *   - `string`: Raw text data (tab-delimited by default, or CSV if format="csv")
+     *   - `any[][]`: Array of row arrays (will be serialized based on format)
+     *   - `Iterable<any[]>`: Generator or iterable of row arrays
+     *   - `AsyncIterable<any[]>`: Async iterable of row arrays
+     *   - `AsyncIterable<string | Uint8Array>`: Raw data chunks (for streaming)
+     *   - `() => Iterable<any[]>`: Function returning an iterable
+     *
+     * @param options - Configuration options:
+     *   - `format`: "text" (default), "csv", or "binary"
+     *   - `delimiter`: Custom delimiter (default: tab for text, comma for csv)
+     *   - `null`: Custom NULL representation (default: \N for text, empty for csv)
+     *   - `sanitizeNUL`: Strip NUL bytes (0x00) from data (default: false)
+     *   - `replaceInvalid`: Replacement string for NUL bytes (default: "")
+     *   - `signal`: AbortSignal for cancellation
+     *   - `onProgress`: Callback for progress tracking (receives {bytesSent, chunksSent})
+     *
+     * @returns Promise<SQLResultArray> with command tag and row count
+     *
+     * @throws Error if connection is not available or COPY operation fails
+     *
+     * @example
+     * ```typescript
+     * // Array of rows
+     * await sql.copyFrom("users", ["id", "name"], [
+     *   [1, "Alice"],
+     *   [2, "Bob"]
+     * ]);
+     *
+     * // Generator for memory efficiency
+     * async function* generateRows() {
+     *   for (let i = 0; i < 1000000; i++) {
+     *     yield [i, `User ${i}`];
+     *   }
+     * }
+     * await sql.copyFrom("users", ["id", "name"], generateRows());
+     *
+     * // CSV format with progress
+     * await sql.copyFrom("users", ["id", "name"], csvData, {
+     *   format: "csv",
+     *   onProgress: ({ bytesSent }) => console.log(`Sent ${bytesSent} bytes`)
+     * });
+     * ```
+     */
+    copyFrom(
+      table: string,
+      columns: string[],
+      data:
+        | string
+        | any[]
+        | Iterable<any[]>
+        | AsyncIterable<any[]>
+        | AsyncIterable<string | Uint8Array>
+        | (() => Iterable<any[]>),
+      options?: {
+        /** Data format: "text" (default), "csv", or "binary" */
+        format?: "text" | "csv" | "binary";
+        /** Field delimiter (default: tab for text, comma for csv) */
+        delimiter?: string;
+        /** NULL representation (default: \N for text, empty for csv) */
+        null?: string;
+        /** Strip NUL (0x00) bytes from strings and data (default: false) */
+        sanitizeNUL?: boolean;
+        /** Replacement for NUL bytes when sanitizeNUL is true (default: "") */
+        replaceInvalid?: string;
+        /** AbortSignal for cancellation */
+        signal?: AbortSignal;
+        /** Progress callback receiving {bytesSent, chunksSent} */
+        onProgress?: (info: { bytesSent: number; chunksSent: number }) => void;
+      },
+    ): Promise<any>;
+
+    /**
+     * COPY TO STDOUT - Streaming helper for bulk data export.
+     *
+     * Efficiently exports data from PostgreSQL using the COPY protocol.
+     * Returns an async iterable that streams data chunks as they arrive.
+     * Much faster than fetching individual rows for large datasets.
+     *
+     * @param queryOrOptions - Either:
+     *   - A string SQL query: `"COPY table_name TO STDOUT"` or `"COPY (SELECT ...) TO STDOUT"`
+     *   - An options object with table, columns, and format
+     *
+     * @returns AsyncIterable<string | ArrayBuffer> - Stream of data chunks
+     *   - For "text" or "csv" format: yields `string` chunks
+     *   - For "binary" format: yields `ArrayBuffer` chunks
+     *
+     * @throws Error if connection is not available or COPY operation fails
+     *
+     * @example
+     * ```typescript
+     * // Query string form
+     * for await (const chunk of sql.copyTo("COPY users TO STDOUT")) {
+     *   console.log(chunk); // string chunk
+     * }
+     *
+     * // Options form with CSV
+     * for await (const chunk of sql.copyTo({
+     *   table: "users",
+     *   columns: ["id", "name"],
+     *   format: "csv"
+     * })) {
+     *   process.stdout.write(chunk);
+     * }
+     *
+     * // With progress tracking and cancellation
+     * const controller = new AbortController();
+     * for await (const chunk of sql.copyTo({
+     *   table: "large_table",
+     *   format: "binary",
+     *   signal: controller.signal,
+     *   onProgress: ({ bytesReceived }) => {
+     *     if (bytesReceived > 1000000) controller.abort();
+     *   }
+     * })) {
+     *   // Process binary chunk
+     * }
+     * ```
+     */
+    copyTo(
+      queryOrOptions:
+        | string
+        | {
+            /** Table name to export from */
+            table: string;
+            /** Column names to export (omit for all columns) */
+            columns?: string[];
+            /** Data format: "text" (default), "csv", or "binary" */
+            format?: "text" | "csv" | "binary";
+            /** AbortSignal for cancellation */
+            signal?: AbortSignal;
+            /** Progress callback receiving {bytesReceived, chunksReceived} */
+            onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void;
+          },
+    ): AsyncIterable<string | ArrayBuffer>;
+  }
+}
+</text>
+
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;

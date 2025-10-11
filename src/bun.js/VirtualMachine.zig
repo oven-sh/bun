@@ -220,7 +220,8 @@ pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value)
 /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
 /// true may expose bugs that would otherwise only occur using Workers. Controlled by
 pub fn shouldDestructMainThreadOnExit(_: *const VirtualMachine) bool {
-    return bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT);
+    // Destruct the VM on exit when ASAN is enabled to ensure GC timers and other resources are deinitialized.
+    return bun.Environment.enable_asan or bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT);
 }
 
 pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;

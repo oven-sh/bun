@@ -114,11 +114,9 @@ _read_scripts_in_package_json() {
     [[ "${package_json}" =~ '"scripts"'[[:space:]]*':'[[:space:]]*\{[[:space:]]*(.*)\} ]] && {
         local matched="${BASH_REMATCH[1]}";
         local scripts="${matched%\}*}";
-
-        local scripts_rem="${scripts}";
         local -a script_candidates;
 
-        while [[ "${scripts_rem}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
+        while [[ "${scripts}" =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script;
             script="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)";
 
@@ -126,7 +124,7 @@ _read_scripts_in_package_json() {
             [[ "${script}" == "${pre_word}" ]] && return 1;
 
             script_candidates+=( "${script}" );
-            scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
+            scripts="${scripts:${#BASH_REMATCH[0]}}";
         done
     }
 

@@ -892,6 +892,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            var status_written = false;
+
             if (optional) |opts| {
                 getter: {
                     if (opts.isEmptyOrUndefinedOrNull()) {
@@ -944,6 +946,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         // we must write the status first so that 200 OK isn't written
                         resp.writeStatus("101 Switching Protocols");
+                        status_written = true;
                         fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
                     }
 
@@ -951,6 +954,22 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return error.JSError;
                     }
                 }
+            }
+
+            // Write cookies if they were set on the request
+            // This must happen after the status is written but before the upgrade
+            if (upgrader.cookies) |cookies| {
+                upgrader.cookies = null;
+                defer cookies.deref();
+
+                // Write the 101 status if it hasn't been written yet
+                // (this happens when no custom headers are provided via upgrade options)
+                if (!status_written) {
+                    resp.writeStatus("101 Switching Protocols");
+                }
+                cookies.write(globalThis, ssl_enabled, @ptrCast(resp)) catch |err| {
+                    return err;
+                };
             }
 
             // --- After this point, do not throw an exception

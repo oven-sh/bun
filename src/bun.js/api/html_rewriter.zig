@@ -186,6 +186,24 @@ pub const HTMLRewriter = struct {
             return out;
         }
 
+        // Check if the value is a Blob or BunFile and handle it
+        if (response_value.jsType() == .DOMWrapper or response_value.as(jsc.WebCore.Blob) != null) {
+            const body_value = try jsc.WebCore.Body.extract(global, response_value);
+            const resp = bun.new(Response, Response{
+                .init = .{
+                    .status_code = 200,
+                },
+                .body = body_value,
+            });
+            defer resp.finalize();
+            const out = try this.beginTransform(global, resp);
+            // Check if the returned value is an error and throw it properly
+            if (out.toError()) |err| {
+                return global.throwValue(err);
+            }
+            return out;
+        }
+
         const ResponseKind = enum { string, array_buffer, other };
         const kind: ResponseKind = brk: {
             if (response_value.isString())

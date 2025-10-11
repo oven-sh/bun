@@ -1795,6 +1795,77 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   return 0;
 }
 
+/* Same as us_internal_ssl_socket_write but returns -errno on error instead of 0 */
+ssize_t us_internal_ssl_socket_write3(struct us_internal_ssl_socket_t *s,
+                                      const char *data, int length) {
+
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
+    return 0;
+  }
+
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *)loop->data.ssl_data;
+
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_socket = &s->s;
+
+  int written = SSL_write(s->ssl, data, length);
+
+  if (written > 0) {
+    return written;
+  }
+
+  int err = SSL_get_error(s->ssl, written);
+  if (err == SSL_ERROR_WANT_READ) {
+    // here we need to trigger writable event next ssl_read!
+    s->ssl_write_wants_read = 1;
+    return -EAGAIN;
+  } else if (err == SSL_ERROR_WANT_WRITE) {
+    return -EAGAIN;
+  } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+    // these two errors may add to the error queue, which is per thread and
+    // must be cleared
+    ERR_clear_error();
+    s->fatal_error = 1;
+
+    // Get the underlying error
+    unsigned long ssl_err = ERR_peek_error();
+    if (ssl_err != 0) {
+      return -EIO;
+    }
+
+    // Check for underlying socket error
+#ifdef _WIN32
+    int wsa_error = WSAGetLastError();
+    switch (wsa_error) {
+      case WSAEWOULDBLOCK: return -EWOULDBLOCK;
+      case WSAECONNRESET: return -ECONNRESET;
+      case WSAECONNABORTED: return -ECONNABORTED;
+      case WSAENETDOWN: return -ENETDOWN;
+      case WSAENETRESET: return -ENETRESET;
+      case WSAENOTCONN: return -ENOTCONN;
+      case WSAESHUTDOWN: return -ESHUTDOWN;
+      case WSAETIMEDOUT: return -ETIMEDOUT;
+      default: return -EIO;
+    }
+#else
+    if (errno != 0) {
+      return -errno;
+    }
+    return -EIO;
+#endif
+  } else if (err == SSL_ERROR_ZERO_RETURN) {
+    // Connection closed
+    return -ECONNRESET;
+  }
+
+  return -EAGAIN;
+}
+
 void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
   return s + 1;
 }

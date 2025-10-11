@@ -376,6 +376,64 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     return written < 0 ? 0 : written;
 }
 
+/* Same as us_socket_write but returns -errno on error instead of 0 */
+ssize_t us_socket_write3(int ssl, struct us_socket_t *s, const char *data, int length) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        return us_internal_ssl_socket_write3((struct us_internal_ssl_socket_t *) s, data, length);
+    }
+#endif
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    ssize_t written = bsd_send(us_poll_fd(&s->p), data, length);
+
+    if (written < 0) {
+        // Handle errors by converting to -errno
+        int error_code;
+#ifdef _WIN32
+        // On Windows with winsock, we need to convert WSA error to errno-like value
+        int wsa_error = WSAGetLastError();
+        switch (wsa_error) {
+            case WSAEWOULDBLOCK: error_code = EWOULDBLOCK; break;
+            case WSAECONNRESET: error_code = ECONNRESET; break;
+            case WSAECONNABORTED: error_code = ECONNABORTED; break;
+            case WSAENETDOWN: error_code = ENETDOWN; break;
+            case WSAENETRESET: error_code = ENETRESET; break;
+            case WSAENOTCONN: error_code = ENOTCONN; break;
+            case WSAESHUTDOWN: error_code = ESHUTDOWN; break;
+            case WSAETIMEDOUT: error_code = ETIMEDOUT; break;
+            case WSAEACCES: error_code = EACCES; break;
+            case WSAEFAULT: error_code = EFAULT; break;
+            case WSAEINVAL: error_code = EINVAL; break;
+            case WSAEMSGSIZE: error_code = EMSGSIZE; break;
+            case WSAENETUNREACH: error_code = ENETUNREACH; break;
+            case WSAENOBUFS: error_code = ENOBUFS; break;
+            default: error_code = EIO; break;
+        }
+#else
+        error_code = errno;
+#endif
+
+        // Only re-subscribe for flow control errors (EAGAIN/EWOULDBLOCK)
+        if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
+            s->context->loop->data.last_write_failed = 1;
+            us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        }
+
+        return -error_code;
+    }
+
+    // Re-subscribe on partial writes (incomplete but successful)
+    if (written < length) {
+        s->context->loop->data.last_write_failed = 1;
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written;
+}
+
 #if !defined(_WIN32)
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */

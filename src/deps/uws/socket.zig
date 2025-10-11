@@ -326,6 +326,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        /// Same as write but returns -errno on error instead of 0 and does not re-subscribe to poll.
+        pub fn write3(this: ThisSocket, data: []const u8) isize {
+            return switch (this.socket) {
+                .upgradedDuplex => |socket| @intCast(socket.encodeAndWrite(data)),
+                .pipe => |pipe| if (comptime Environment.isWindows) @intCast(pipe.encodeAndWrite(data)) else 0,
+                .connected => |socket| socket.write3(is_ssl, data),
+                .connecting, .detached => 0,
+            };
+        }
+
         pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
             return switch (this.socket) {
                 .upgradedDuplex, .pipe => this.write(data),

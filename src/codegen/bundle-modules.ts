@@ -555,8 +555,9 @@ for (const file of evalFiles) {
     format: "esm",
     env: "disable",
     define: {
-      "process.platform": JSON.stringify(process.platform),
-      "process.arch": JSON.stringify(process.arch),
+      // Commented out to allow runtime detection of platform/arch
+      // "process.platform": JSON.stringify(process.platform),
+      // "process.arch": JSON.stringify(process.arch),
     },
   });
   writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());

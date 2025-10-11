@@ -85,7 +85,7 @@ _bun_files_completions() {
     else
         # the following two `readarray` assumes that filenames has
         # no newline characters in it, otherwise they will be split
-        # into separate completions.
+        # into separate completions
         if [[ -z ${cur_word} ]]; then
             readarray -t candidates <<< "$(compgen -f)"
         else
@@ -93,7 +93,7 @@ _bun_files_completions() {
         fi
         # if pathname expansion above produces no matching files, then
         # `compgen` output single newline character `\n`, resulting in
-        # singleton `candidates` with empty string, let us mitigate this.
+        # singleton `candidates` with empty string, let us mitigate this
         [[ -z ${candidates[0]} ]] && candidates=()
     fi
 

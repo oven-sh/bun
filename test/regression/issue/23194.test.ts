@@ -2,19 +2,11 @@
 // Test that MessagePort doesn't crash when postMessage is called
 // after the script execution context is destroyed
 import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("comlink worker communication doesn't segfault", async () => {
-  const testDir = join(tmpdir(), "comlink-test-" + Date.now());
-  mkdirSync(testDir, { recursive: true });
-
-  // Write worker file
-  writeFileSync(
-    join(testDir, "worker.js"),
-    `
+  using testDir = tempDir("comlink-test", {
+    "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 Comlink.expose({
@@ -31,12 +23,7 @@ Comlink.expose({
   },
 });
 `,
-  );
-
-  // Write main file
-  writeFileSync(
-    join(testDir, "main.js"),
-    `
+    "main.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 let mainloop = true;
@@ -59,23 +46,18 @@ const
   console.log("SUCCESS");
 })();
 `,
-  );
-
-  // Write package.json
-  writeFileSync(
-    join(testDir, "package.json"),
-    JSON.stringify({
+    "package.json": JSON.stringify({
       dependencies: {
         comlink: "^4.4.2",
       },
       type: "module",
     }),
-  );
+  });
 
   // Install dependencies
   const installProc = Bun.spawn({
     cmd: [bunExe(), "install"],
-    cwd: testDir,
+    cwd: String(testDir),
     env: bunEnv,
     stdout: "ignore",
     stderr: "ignore",
@@ -86,7 +68,7 @@ const
   // Run the test
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.js"],
-    cwd: testDir,
+    cwd: String(testDir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

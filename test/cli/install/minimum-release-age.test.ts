@@ -828,7 +828,30 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("filters packages by minimum release age (numeric seconds form)", async () => {
+      using dir = tempDir("basic-filter-seconds", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "432000" /* 5d */, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -851,7 +874,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${9.5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "9.5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -877,7 +900,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -905,7 +928,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`, "--verbose"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "1.8d", "--verbose"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -945,7 +968,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "1.8d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -984,7 +1007,7 @@ describe("minimum-release-age", () => {
       //
       // Result: Selects 1.0.6 (gave up finding stable version)
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1011,7 +1034,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "3d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1039,7 +1062,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "3d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1064,7 +1087,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "10d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1095,7 +1118,7 @@ describe("minimum-release-age", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "3d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1127,7 +1150,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "3d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1180,7 +1203,7 @@ describe("minimum-release-age", () => {
       // - 1.1.0 (15 days): PASSES age gate, but beyond search window (3 + 7 = 10 days)
       // - Should return 1.1.0 as best_version before breaking, not error!
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "3d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1209,7 +1232,7 @@ describe("minimum-release-age", () => {
           },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
 minimumReleaseAgeExcludes = ["excluded-package"]
 registry = "${mockRegistryUrl}"`,
       });
@@ -1242,7 +1265,33 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("bunfig.toml configuration works (numeric seconds form)", async () => {
+      using dir = tempDir("bunfig-config-seconds", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = 432000 # 5d
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1268,13 +1317,13 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
+minimumReleaseAge = "10d"
 registry = "${mockRegistryUrl}"`,
       });
 
       // CLI says 5 days, bunfig says 10 days
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1297,7 +1346,7 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
+minimumReleaseAge = "10d"
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1321,7 +1370,7 @@ registry = "${mockRegistryUrl}"`,
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {
         ".bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1357,7 +1406,7 @@ registry = "${mockRegistryUrl}"`,
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config-override", {
         ".bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
+minimumReleaseAge = "10d"
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1367,7 +1416,7 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1407,7 +1456,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--verbose"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--verbose"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1440,7 +1489,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1471,7 +1520,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1497,12 +1546,12 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
 registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1531,7 +1580,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1561,7 +1610,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--dry-run"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--dry-run"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1601,7 +1650,7 @@ registry = "${mockRegistryUrl}"`,
 
       // Now update with minimum-release-age
       proc = Bun.spawn({
-        cmd: [bunExe(), "update", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "update", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1625,7 +1674,7 @@ registry = "${mockRegistryUrl}"`,
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
         "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAge = "5d"
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1679,7 +1728,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1710,7 +1759,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1745,7 +1794,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1775,7 +1824,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1942,7 +1991,7 @@ linker = "${linker}"
       // - stable-package (latest): 3.2.0 is 30 days old → select 3.2.0 (passes gate, is latest)
       // - stable-package (3.0.0): pinned to 3.0.0 (legacy workspace - no age check on exact versions)
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2094,7 +2143,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2119,7 +2168,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2146,7 +2195,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2175,7 +2224,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2202,7 +2251,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2235,7 +2284,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2263,7 +2312,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -2289,7 +2338,7 @@ linker = "${linker}"
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "5d", "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",

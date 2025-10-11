@@ -1018,30 +1018,20 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
                         }
                     } else if (dir.abs_real_path.len > 0) {
+                        // When the directory is a symlink, we don't need to call getFdPath.
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
                         var buf: bun.PathBuffer = undefined;
 
-                        var out = r.fs.absBuf(&parts, &buf);
+                        const out = r.fs.absBuf(&parts, &buf);
 
                         const store_fd = r.store_fd;
 
-                        if (!query.entry.cache.fd.isValid()) {
+                        if (!query.entry.cache.fd.isValid() and store_fd) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file: bun.FD = if (store_fd)
-                                .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }))
-                            else
-                                .fromStdFile(try bun.openFileForPath(span));
-
-                            if (!store_fd) {
-                                assert(file.stdioTag() == null);
-                                out = try file.getFdPath(&buf);
-                                file.close();
-                                query.entry.cache.fd = .invalid;
-                            } else {
-                                query.entry.cache.fd = file;
-                                Fs.FileSystem.setMaxFd(file.native());
-                            }
+                            var file: bun.FD = .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }));
+                            query.entry.cache.fd = file;
+                            Fs.FileSystem.setMaxFd(file.native());
                         }
 
                         defer {
@@ -1052,10 +1042,6 @@ pub const Resolver = struct {
                                     query.entry.cache.fd = .invalid;
                                 }
                             }
-                        }
-
-                        if (store_fd) {
-                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);

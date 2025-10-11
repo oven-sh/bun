@@ -39,13 +39,16 @@ pub noinline fn computeChunks(
         entry_bits.set(entry_bit);
 
         const has_html_chunk = loaders[source_index] == .html;
+        const is_worker = this.graph.files.items(.entry_point_kind)[source_index] == .dynamic_import;
         const js_chunk_key = brk: {
             if (code_splitting) {
                 break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
             } else {
-                // Force HTML chunks to always be generated, even if there's an identical JS file.
+                // Force HTML chunks and worker chunks to always be generated, even if there's an identical JS file.
+                // Workers must be separate because they run in separate threads.
                 break :brk try std.fmt.allocPrint(temp_allocator, "{}", .{JSChunkKeyFormatter{
                     .has_html = has_html_chunk,
+                    .is_worker = is_worker,
                     .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
                 }});
             }
@@ -404,10 +407,15 @@ pub noinline fn computeChunks(
 
 const JSChunkKeyFormatter = struct {
     has_html: bool,
+    is_worker: bool,
     entry_bits: []const u8,
 
     pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        try writer.writeAll(&[_]u8{@intFromBool(!this.has_html)});
+        // Encode both flags into a single byte for the chunk key
+        // Workers and HTML files must get unique chunk keys to prevent merging
+        const flags: u8 = (@as(u8, @intFromBool(!this.has_html)) << 0) |
+            (@as(u8, @intFromBool(this.is_worker)) << 1);
+        try writer.writeAll(&[_]u8{flags});
         try writer.writeAll(this.entry_bits);
     }
 };

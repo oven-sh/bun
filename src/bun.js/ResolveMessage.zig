@@ -28,7 +28,7 @@ pub const ResolveMessage = struct {
                             break :brk "MODULE_NOT_FOUND",
                         // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
                         .require_resolve => "MODULE_NOT_FOUND",
-                        .stmt, .dynamic => if (bun.strings.hasPrefixComptime(specifier, "node:"))
+                        .stmt, .dynamic, .worker => if (bun.strings.hasPrefixComptime(specifier, "node:"))
                             break :brk "ERR_UNKNOWN_BUILTIN_MODULE"
                         else
                             break :brk "ERR_MODULE_NOT_FOUND",

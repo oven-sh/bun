@@ -159,6 +159,9 @@ pub const Runtime = struct {
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
         inlining: bool = false,
+        /// Transform `new Worker()` calls into separate entry points.
+        /// This enables worker bundling in production builds.
+        worker_entrypoint: bool = false,
 
         inject_jest_globals: bool = false,
 

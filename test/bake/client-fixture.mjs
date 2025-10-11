@@ -4,6 +4,7 @@
 import { Window } from "happy-dom";
 import assert from "node:assert/strict";
 import util from "node:util";
+import { Worker as NodeWorker } from "node:worker_threads";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
 const args = process.argv.slice(2);
@@ -69,6 +70,9 @@ function createWindow(windowUrl) {
     window.internal = internal;
   };
 
+  // Make NodeWorker available in window scope for the Worker polyfill
+  window.NodeWorker = NodeWorker;
+
   const original_window_fetch = window.fetch;
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -106,6 +110,219 @@ function createWindow(windowUrl) {
     close() {
       super.close();
       webSockets = webSockets.filter(ws => ws !== this);
+    }
+  };
+
+  // Provide Worker using Node.js worker_threads
+  window.Worker = class Worker {
+    #worker;
+    #messageHandlers = [];
+    #errorHandlers = [];
+    #messageQueue = []; // Queue messages sent before worker is ready
+    #workerReady = false;
+    #terminated = false;
+    onmessage = null;
+    onerror = null;
+
+    constructor(scriptURL, options) {
+      // Note: Worker options (type, credentials, name) are currently not implemented
+      // in this test harness polyfill. Workers always run as ES modules.
+      if (options && Object.keys(options).length > 0) {
+        console.warn("[Worker polyfill] Worker options are not implemented in test harness:", options);
+      }
+
+      // Convert URL to absolute path if needed
+      let workerPath;
+      if (scriptURL instanceof URL) {
+        workerPath = scriptURL.href;
+      } else {
+        workerPath = new URL(scriptURL, window.location.href).href;
+      }
+
+      // Fetch the worker script from the dev server
+      window
+        .fetch(workerPath)
+        .then(response => {
+          if (!response.ok) {
+            const error = new Error(`Failed to load worker script: ${workerPath}`);
+            this.#dispatchError(error);
+            return;
+          }
+          return response.text();
+        })
+        .then(workerCode => {
+          if (!workerCode) return;
+
+          // Bail out if worker was terminated before fetch completed
+          if (this.#terminated) {
+            return;
+          }
+
+          // Create a worker that evaluates the fetched code
+          // Bootstrap code is separate to avoid code injection from workerCode
+          const bootstrapCode = `
+            const { parentPort, workerData } = require('worker_threads');
+            const EventEmitter = require('events');
+
+            // Set up worker global scope with full event API
+            const self = global;
+            const eventEmitter = new EventEmitter();
+
+            // Event listener management
+            const listeners = new Map(); // type -> Set of handlers
+
+            self.addEventListener = (type, handler) => {
+              if (!listeners.has(type)) {
+                listeners.set(type, new Set());
+              }
+              listeners.get(type).add(handler);
+            };
+
+            self.removeEventListener = (type, handler) => {
+              const typeListeners = listeners.get(type);
+              if (typeListeners) {
+                typeListeners.delete(handler);
+              }
+            };
+
+            self.dispatchEvent = (event) => {
+              const typeListeners = listeners.get(event.type);
+              if (typeListeners) {
+                typeListeners.forEach(handler => handler(event));
+              }
+              // Also call onmessage/onerror if set
+              if (event.type === 'message' && self.onmessage) {
+                self.onmessage(event);
+              } else if (event.type === 'error' && self.onerror) {
+                self.onerror(event);
+              }
+              return true;
+            };
+
+            self.onmessage = null;
+            self.onerror = null;
+
+            // Override console.log to send messages to parent
+            const originalLog = console.log;
+            console.log = (...args) => {
+              parentPort.postMessage({ __console: true, args });
+              originalLog(...args);
+            };
+
+            // Handle postMessage from main thread
+            parentPort.on('message', (data) => {
+              const event = { type: 'message', data };
+              self.dispatchEvent(event);
+            });
+
+            // Provide postMessage to worker code
+            self.postMessage = (data) => {
+              parentPort.postMessage({ __console: false, data });
+            };
+
+            // Support self.close() to shut down the worker
+            self.close = () => {
+              if (parentPort) {
+                parentPort.close();
+              }
+              process.exit(0);
+            };
+
+            // Execute the worker code (passed via workerData)
+            eval(workerData);
+          `;
+
+          this.#worker = new window.NodeWorker(bootstrapCode, {
+            eval: true,
+            workerData: workerCode,
+          });
+
+          // Check again if terminated after creating worker
+          if (this.#terminated) {
+            this.#worker.terminate();
+            this.#worker = null;
+            return;
+          }
+
+          // Mark worker as ready and flush queued messages
+          this.#workerReady = true;
+          while (this.#messageQueue.length > 0) {
+            const data = this.#messageQueue.shift();
+            this.#worker.postMessage(data);
+          }
+
+          // Forward messages from worker to main thread
+          this.#worker.on("message", msg => {
+            if (msg.__console) {
+              // Forward console.log to the main client
+              process.send({ type: "message", args: msg.args });
+            } else {
+              // Regular postMessage
+              const event = { type: "message", data: msg.data };
+              if (this.onmessage) {
+                this.onmessage(event);
+              }
+              this.#messageHandlers.forEach(handler => handler(event));
+            }
+          });
+
+          // Forward errors from worker to main thread
+          this.#worker.on("error", error => {
+            this.#dispatchError(error);
+          });
+
+          this.#worker.on("exit", code => {
+            if (code !== 0) {
+              this.#dispatchError(new Error(`Worker stopped with exit code ${code}`));
+            }
+          });
+        })
+        .catch(error => {
+          this.#dispatchError(error);
+        });
+    }
+
+    #dispatchError(error) {
+      const event = { type: "error", error, message: error.message };
+      if (this.onerror) {
+        this.onerror(event);
+      }
+      this.#errorHandlers.forEach(handler => handler(event));
+    }
+
+    postMessage(data) {
+      if (this.#workerReady && this.#worker) {
+        this.#worker.postMessage(data);
+      } else if (!this.#terminated) {
+        // Queue message until worker is ready (unless already terminated)
+        this.#messageQueue.push(data);
+      }
+    }
+
+    terminate() {
+      this.#terminated = true;
+      this.#messageQueue.length = 0;
+      this.#workerReady = false;
+      if (this.#worker) {
+        this.#worker.terminate();
+        this.#worker = null;
+      }
+    }
+
+    addEventListener(type, handler) {
+      if (type === "message") {
+        this.#messageHandlers.push(handler);
+      } else if (type === "error") {
+        this.#errorHandlers.push(handler);
+      }
+    }
+
+    removeEventListener(type, handler) {
+      if (type === "message") {
+        this.#messageHandlers = this.#messageHandlers.filter(h => h !== handler);
+      } else if (type === "error") {
+        this.#errorHandlers = this.#errorHandlers.filter(h => h !== handler);
+      }
     }
   };
 

@@ -640,7 +640,11 @@ fn getCodeForParseTaskWithoutPlugins(
                 if (task.ctx.framework) |f| {
                     if (f.built_in_modules.get(file_path.text)) |file| {
                         switch (file) {
-                            .code => |code| break :brk .{ .contents = code, .fd = bun.invalid_fd },
+                            .code => |code| break :brk .{
+                                .contents = code,
+                                .fd = bun.invalid_fd,
+                                .external_free_function = .none,
+                            },
                             .import => |path| {
                                 file_path.* = Fs.Path.init(path);
                                 break :lookup_builtin;
@@ -652,6 +656,7 @@ fn getCodeForParseTaskWithoutPlugins(
                 break :brk .{
                     .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     .fd = bun.invalid_fd,
+                    .external_free_function = .none,
                 };
             }
 
@@ -696,6 +701,7 @@ fn getCodeForParseTaskWithoutPlugins(
         .contents => |contents| .{
             .contents = contents,
             .fd = bun.invalid_fd,
+            .external_free_function = .none,
         },
     };
 }

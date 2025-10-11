@@ -4020,6 +4020,186 @@ declare module "bun" {
    */
   function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
 
+  /**
+   * Options for creating a tar archive
+   */
+  interface TarballOptions {
+    /**
+     * Files to include in the archive.
+     *
+     * Keys are the paths inside the tar archive.
+     * Use POSIX-style forward slashes (`/`) for separators. Avoid absolute paths,
+     * backslashes (`\`), and `..` segments; these may be rejected or normalized.
+     *
+     * Values are the file contents, which can be:
+     * - `string`: text content
+     * - `Blob` or `BunFile`: binary or text content
+     * - `ArrayBuffer` / `TypedArray`: binary data
+     *
+     * @example
+     * ```ts
+     * {
+     *   "README.md": Bun.file("./README.md"),              // from BunFile
+     *   "data.json": new Blob([JSON.stringify(data)]),     // from Blob
+     *   "binary.dat": new Uint8Array([1, 2, 3])            // from TypedArray
+     * }
+     * ```
+     */
+    files: Record<string, string | Blob | BunFile | ArrayBufferView | ArrayBuffer>;
+
+    /**
+     * Optional destination for the archive.
+     *
+     * - If omitted: returns the archive as a `Blob` (in-memory)
+     * - If string path: writes to file and returns byte count
+     *
+     * **Note**: In-memory creation uses a pre-allocated buffer limited to 100MB.
+     * For larger archives, use the `destination` option to write directly to disk.
+     *
+     * @example
+     * ```ts
+     * await Bun.tarball({ files: {...} })                    // returns Blob
+     * await Bun.tarball({ files: {...}, destination: "out.tar" })  // returns number
+     * ```
+     */
+    destination?: string;
+
+    /**
+     * Optional compression.
+     *
+     * - `"gzip"`: use gzip with default level (6)
+     * - `{ type: "gzip", level: 0-9 }`: use gzip with specific compression level
+     *   - 0 = no compression (fastest)
+     *   - 9 = maximum compression (slowest)
+     *
+     * @example
+     * ```ts
+     * await Bun.tarball({ files: {...}, compress: "gzip" })
+     * await Bun.tarball({ files: {...}, compress: { type: "gzip", level: 9 } })
+     * ```
+     */
+    compress?: "gzip" | { type: "gzip"; level?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 };
+  }
+
+  /**
+   * Create a tar archive from files.
+   *
+   * When `destination` is specified, writes to a file and returns the number of bytes written.
+   * When `destination` is omitted, returns the archive as a `Blob`.
+   *
+   * @example
+   * ```ts
+   * // Create tar.gz in memory
+   * const blob = await Bun.tarball({
+   *   files: {
+   *     "README.md": Bun.file("./README.md"),
+   *     "package.json": Bun.file("./package.json"),
+   *     "src/index.ts": Bun.file("./src/index.ts"),
+   *   },
+   *   compress: "gzip",
+   * });
+   * await Bun.write("archive.tar.gz", blob);
+   *
+   * // Write directly to file
+   * const bytes = await Bun.tarball({
+   *   files: {
+   *     "data.json": new Blob([JSON.stringify({ foo: "bar" })]),
+   *   },
+   *   destination: "./output.tar",
+   *   compress: { type: "gzip", level: 9 },
+   * });
+   * console.log(`Wrote ${bytes} bytes`);
+   * ```
+   */
+  function tarball(options: TarballOptions & { destination: string }): Promise<number>;
+  function tarball(options: Omit<TarballOptions, "destination">): Promise<Blob>;
+
+  interface ExtractOptions {
+    /**
+     * Glob pattern(s) to filter which files to extract.
+     * Supports standard glob syntax including `*`, `?`, and `[...]`.
+     * Multiple patterns can be provided as an array.
+     * Patterns starting with `!` are treated as negations.
+     *
+     * @example
+     * ```ts
+     * // Extract only TypeScript files
+     * await Bun.extract("archive.tar", { glob: "*.ts" })
+     *
+     * // Extract multiple patterns
+     * await Bun.extract("archive.tar", { glob: ["src/*.js", "!src/test.js"] })
+     * ```
+     */
+    glob?: string | string[];
+
+    /**
+     * Number of leading path components to skip when extracting.
+     * Similar to `tar --strip-components`.
+     * Must be a non-negative integer (0-128).
+     *
+     * @example
+     * ```ts
+     * // If archive contains "foo/bar/baz.txt", skipPathComponents: 2 extracts as "baz.txt"
+     * await Bun.extract("archive.tar", { skipPathComponents: 2 })
+     * ```
+     */
+    skipPathComponents?: number;
+
+    /**
+     * Directory to extract files into.
+     * If omitted, returns files as an object of Blobs.
+     *
+     * @example
+     * ```ts
+     * await Bun.extract("archive.tar")  // returns Record<string, Blob>
+     * await Bun.extract("archive.tar", { destination: "./out" })  // returns number of files
+     * ```
+     */
+    destination?: string;
+  }
+
+  /**
+   * Extract files from a tar archive.
+   *
+   * When `destination` is specified, extracts to disk and returns the number of files extracted.
+   * When `destination` is omitted, returns files as an object mapping paths to Blobs.
+   *
+   * **Limitations**:
+   * - When passing a file path as a string, archives are limited to 100MB to prevent OOM.
+   *   For larger archives, pass a Blob or Buffer directly instead.
+   * - Symlinks in archives are currently **not extracted** and are silently skipped.
+   *   This is a security measure to prevent symlink-based attacks.
+   * - Future versions may add opt-in symlink support with safety checks.
+   *
+   * @param path Path to archive file (max 100MB), or archive data as Blob/Buffer/ArrayBufferView
+   * @param options Extract options
+   *
+   * @example
+   * ```ts
+   * // Extract to memory
+   * const files = await Bun.extract("archive.tar.gz");
+   * console.log(await files["README.md"].text());
+   *
+   * // Extract to disk
+   * const count = await Bun.extract("archive.tar", { destination: "./output" });
+   * console.log(`Extracted ${count} files`);
+   *
+   * // With path stripping
+   * await Bun.extract("archive.tar", {
+   *   destination: "./src",
+   *   skipPathComponents: 1,
+   * });
+   * ```
+   */
+  function extract(
+    path: string | Blob | BunFile | ArrayBufferView | ArrayBuffer,
+    options: ExtractOptions & { destination: string },
+  ): Promise<number>;
+  function extract(
+    path: string | Blob | BunFile | ArrayBufferView | ArrayBuffer,
+    options?: Omit<ExtractOptions, "destination">,
+  ): Promise<Record<string, Blob>>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,

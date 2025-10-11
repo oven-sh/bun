@@ -63,7 +63,7 @@ pub noinline fn computeChunks(
                     },
                     .entry_bits = entry_bits.*,
                     .content = .html,
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                    .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                     .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
@@ -97,7 +97,7 @@ pub noinline fn computeChunks(
                             .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                         },
                     },
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                    .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                     .has_html_chunk = has_html_chunk,
                     .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
@@ -120,7 +120,7 @@ pub noinline fn computeChunks(
                 .javascript = .{},
             },
             .has_html_chunk = has_html_chunk,
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+            .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
         };
 
@@ -173,7 +173,7 @@ pub noinline fn computeChunks(
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                        .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                         .has_html_chunk = has_html_chunk,
                         .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                     };
@@ -217,7 +217,7 @@ pub noinline fn computeChunks(
                                 .content = .{
                                     .javascript = .{},
                                 },
-                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                                 .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
                             };
                         }
@@ -423,7 +423,7 @@ const std = @import("std");
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const options = bun.options;
-const sourcemap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
 const bundler = bun.bundle_v2;

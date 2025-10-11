@@ -29,7 +29,7 @@ pub const Chunk = struct {
     has_html_chunk: bool = false,
     is_browser_chunk_from_server_build: bool = false,
 
-    output_source_map: sourcemap.SourceMapPieces,
+    output_source_map: SourceMap.SourceMapPieces,
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
@@ -116,7 +116,7 @@ pub const Chunk = struct {
 
         pub const CodeResult = struct {
             buffer: []u8,
-            shifts: []sourcemap.SourceMapShifts,
+            shifts: []SourceMap.SourceMapShifts,
         };
 
         pub fn getSize(this: *const IntermediateOutput) usize {
@@ -181,12 +181,12 @@ pub const Chunk = struct {
                     const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
 
                     var shift = if (enable_source_map_shifts)
-                        sourcemap.SourceMapShifts{
+                        SourceMap.SourceMapShifts{
                             .after = .{},
                             .before = .{},
                         };
                     var shifts = if (enable_source_map_shifts)
-                        try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
+                        try std.ArrayList(SourceMap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
 
                     if (enable_source_map_shifts)
                         shifts.appendAssumeCapacity(shift);
@@ -245,7 +245,7 @@ pub const Chunk = struct {
                     }
 
                     const debug_id_len = if (enable_source_map_shifts and FeatureFlags.source_map_debug_id)
-                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                        std.fmt.count("\n//# debugId={}\n", .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }})
                     else
                         0;
 
@@ -256,7 +256,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (enable_source_map_shifts) {
-                            var data_offset = sourcemap.LineColumnOffset{};
+                            var data_offset = SourceMap.LineColumnOffset{};
                             data_offset.advance(data);
                             shift.before.add(data_offset);
                             shift.after.add(data_offset);
@@ -353,7 +353,7 @@ pub const Chunk = struct {
                         remain = remain[(std.fmt.bufPrint(
                             remain,
                             "\n//# debugId={}\n",
-                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                            .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => std.debug.panic(
                                 "unexpected NoSpaceLeft error from bufPrint",
@@ -370,7 +370,7 @@ pub const Chunk = struct {
                         .shifts = if (enable_source_map_shifts)
                             shifts.items
                         else
-                            &[_]sourcemap.SourceMapShifts{},
+                            &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .joiner => |*joiner| {
@@ -386,7 +386,7 @@ pub const Chunk = struct {
                             const debug_id_fmt = std.fmt.allocPrint(
                                 graph.heap.allocator(),
                                 "\n//# debugId={}\n",
-                                .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                                .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                             ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
@@ -397,12 +397,12 @@ pub const Chunk = struct {
 
                     return .{
                         .buffer = buffer,
-                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                        .shifts = &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .empty => return .{
                     .buffer = "",
-                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                    .shifts = &[_]SourceMap.SourceMapShifts{},
                 },
             }
         }
@@ -654,7 +654,7 @@ const Output = bun.Output;
 const StringJoiner = bun.StringJoiner;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BabyList = bun.collections.BabyList;

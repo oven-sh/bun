@@ -2059,7 +2059,7 @@ const Chunk = bun.bundle_v2.Chunk;
 const Owned = bun.ptr.Owned;
 const Shared = bun.ptr.Shared;
 
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const VLQ = SourceMap.VLQ;
 
 const std = @import("std");

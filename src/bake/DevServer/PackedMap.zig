@@ -114,7 +114,7 @@ pub const Shared = union(enum) {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
 const Chunk = bun.bundle_v2.Chunk;

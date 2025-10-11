@@ -959,7 +959,7 @@ pub const CommandLineReporter = struct {
 
         var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -970,10 +970,10 @@ pub const CommandLineReporter = struct {
         }
 
         std.sort.pdq(
-            bun.sourcemap.coverage.ByteRangeMapping,
+            bun.SourceMap.coverage.ByteRangeMapping,
             byte_ranges.items,
             {},
-            bun.sourcemap.coverage.ByteRangeMapping.isLessThan,
+            bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
         );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
@@ -983,7 +983,7 @@ pub const CommandLineReporter = struct {
         _: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
         opts: *TestCommand.CodeCoverageOptions,
-        byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
+        byte_ranges: []bun.SourceMap.coverage.ByteRangeMapping,
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
@@ -1053,7 +1053,7 @@ pub const CommandLineReporter = struct {
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
-        var avg = bun.sourcemap.coverage.Fraction{
+        var avg = bun.SourceMap.coverage.Fraction{
             .functions = 0.0,
             .lines = 0.0,
             .stmts = 0.0,
@@ -1184,7 +1184,7 @@ pub const CommandLineReporter = struct {
                     avg.stmts /= avg_count;
                 }
 
-                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.coverage.Fraction{
+                const failed = if (avg_count > 0) base_fraction else bun.SourceMap.coverage.Fraction{
                     .functions = 0,
                     .lines = 0,
                     .stmts = 0,
@@ -1279,7 +1279,7 @@ pub const TestCommand = struct {
         skip_test_files: bool = !Environment.allow_assert,
         reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
-        fractions: bun.sourcemap.coverage.Fraction = .{},
+        fractions: bun.SourceMap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
@@ -2010,5 +2010,5 @@ const Snapshots = jsc.Snapshot.Snapshots;
 const TestRunner = jsc.Jest.TestRunner;
 const Test = TestRunner.Test;
 
-const coverage = bun.sourcemap.coverage;
+const coverage = bun.SourceMap.coverage;
 const CodeCoverageReport = coverage.Report;

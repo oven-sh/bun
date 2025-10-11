@@ -229,5 +229,5 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
+const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;

@@ -416,11 +416,8 @@ pub fn createExportsForFile(
         c.graph.ast.items(.flags)[id].uses_exports_ref = true;
     }
 
-    // Decorate "module.exports" with the "__esModule" flag to indicate that
-    // we used to be an ES module. This is done by wrapping the exports object
-    // instead of by mutating the exports object because other modules in the
-    // bundle (including the entry point module) may do "import * as" to get
-    // access to the exports object and should NOT see the "__esModule" flag.
+    // Export the ES module exports as CommonJS exports.
+    // Wrap in __toCommonJS to add __esModule marker for interoperability
     if (force_include_exports_for_entry_point) {
         const toCommonJSRef = c.runtimeFunction("__toCommonJS");
 

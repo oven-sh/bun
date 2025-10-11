@@ -70,7 +70,7 @@ _bun_is_exist_and_gnu() {
 
 # appends filenames to the the list of completions, considers only files inside current working directory
 # @param `$1`: string - extended-regex aka ERE, white list of file extensions
-# @param `$2`: string - word imidiatelly before the cursor
+# @param `$2`: string - word immediately before the cursor
 _bun_files_completions() {
     local extensions="${1}" # FIXME: the list of candidates is filtred twice against `extensions`
     local cur_word="${2}"
@@ -85,7 +85,7 @@ _bun_files_completions() {
         )
     else
         # the following two `readarray` assumes that filenames has
-        # no newline characters in it, otherwise they will be splitted
+        # no newline characters in it, otherwise they will be split
         # into separate completions.
         if [[ -z ${cur_word} ]]; then
             readarray -t candidates <<< "$(compgen -f)"
@@ -107,7 +107,7 @@ _bun_files_completions() {
 # appends list of long and short options to the list of completions
 # @param `$1`: string - space-separated list of long options
 # @param `$2`: string - space-separated list of short options
-# @param `$3`: string - word imidiatelly before the cursor
+# @param `$3`: string - word immediately before the cursor
 _bun_long_short_completions() {
     local long_opts="${1}"
     local short_opts="${2}"
@@ -127,7 +127,7 @@ _bun_long_short_completions() {
 }
 
 # appends the script names from package.json inside the current directory, if any, to the list of completions
-# @param `$1`: string - word imidiatelly before the cursor
+# @param `$1`: string - word immediately before the cursor
 # @param `$2`: string - word before $1`
 _bun_scripts_completions() {
     local cur_word="${1}"
@@ -167,7 +167,7 @@ _bun_scripts_completions() {
 }
 
 # appends subcommands to the list of completions
-# @param `$1`: string - word imidiatelly before the cursor
+# @param `$1`: string - word immediately before the cursor
 # @param `$2`: string - word before $1`
 _bun_subcommand_completions() {
     local cur_word="${1}"
@@ -198,7 +198,7 @@ _bun_subcommand_completions() {
 
     [[ ${pre_word} == 'bun' ]] && {
         if [[ -z ${cur_word} ]]; then
-            # shellcheck disable=SC2207 # `sub_commands` is constant space dilimited list
+            # shellcheck disable=SC2207 # `sub_commands` is constant space delimited list
             COMPREPLY+=($(compgen -W "${subcommands[*]}"))
         else
             # shellcheck disable=SC2207 # idem.
@@ -443,11 +443,11 @@ _bun_completions() {
         # the current word is an empty string and either:
         # a. the previous word is part of the allowed completion, or
         # b. the previous word is an argument to second-to-previous option, or
-        # c. the previouos word is the script name is true
+        # c. the previous word is the script name is true
         # FIXME: Is c. a valid case here?
         [[ -z ${cur_word} ]] && {
             for comp in "${COMPREPLY[@]}"; do
-                # if `pre_word` is script name, then scripts are filtred out from `COMPREPLY`, so
+                # if `pre_word` is script name, then scripts are filtered out from `COMPREPLY`, so
                 # the `_pre_is_script` is needed to detect that previous word is the script name
                 [[ ${pre_word} == "${comp}" ]] && return # a.
             done

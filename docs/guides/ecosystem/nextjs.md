@@ -8,7 +8,10 @@ Initialize a Next.js app with `create-next-app`. This will scaffold a new Next.j
 $ bun create next-app
 ✔ What is your project named? … my-app
 ✔ Would you like to use TypeScript with this project? … No / Yes
-✔ Would you like to use ESLint with this project? … No / Yes
+✔ Which linter would you like to use? › - Use arrow-keys. Return to submit.
+    ESLint
+❯   Biome - Fast formatter and linter (fewer rules)
+    None
 ✔ Would you like to use Tailwind CSS? ... No / Yes
 ✔ Would you like to use `src/` directory with this project? … No / Yes
 ✔ Would you like to use App Router? (recommended) ... No / Yes

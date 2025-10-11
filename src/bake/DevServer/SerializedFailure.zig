@@ -180,14 +180,14 @@ fn writeLogMsg(msg: *const bun.logger.Msg, w: Writer) !void {
 fn writeLogData(data: bun.logger.Data, w: Writer) !void {
     try writeString32(data.text, w);
     if (data.location) |loc| {
-        if (loc.line < 0) {
+        if (loc.line.oneBased() < 0) {
             try w.writeInt(u32, 0, .little);
             return;
         }
-        assert(loc.column >= 0); // zero based and not negative
+        assert(loc.column.zeroBased() >= 0); // zero based and not negative
 
-        try w.writeInt(i32, @intCast(loc.line), .little);
-        try w.writeInt(u32, @intCast(loc.column), .little);
+        try w.writeInt(i32, @intCast(loc.line.oneBased()), .little);
+        try w.writeInt(u32, @intCast(loc.column.zeroBased()), .little);
         try w.writeInt(u32, @intCast(loc.length), .little);
 
         // TODO: syntax highlighted line text + give more context lines

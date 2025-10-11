@@ -5,24 +5,25 @@ Store and retrieve sensitive credentials securely using the operating system's n
 ```typescript
 import { secrets } from "bun";
 
-const githubToken = await secrets.get({
+let githubToken = await secrets.get({
   service: "my-cli-tool",
   name: "github-token",
 });
 
 if (!githubToken) {
-  const response = await fetch("https://api.github.com/name", {
-    headers: { "Authorization": `token ${githubToken}` },
-  });
-  console.log("Please enter your GitHub token");
-} else {
+  githubToekn = prompt("Please enter your GitHub token");
   await secrets.set({
     service: "my-cli-tool",
     name: "github-token",
-    value: prompt("Please enter your GitHub token"),
+    value: githubToken,
   });
   console.log("GitHub token stored");
 }
+
+const response = await fetch("https://api.github.com/user", {
+    headers: { "Authorization": `token ${githubToken}` },
+  });
+console.log(`Logged in as ${(await response.json()).login}`);
 ```
 
 ## Overview

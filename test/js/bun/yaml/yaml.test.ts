@@ -858,7 +858,7 @@ my_config:
           port: 5432,
         },
       };
-      expect(YAML.stringify(obj, null, 2)).toBe("database: \n  host: localhost\n  port: 5432");
+      expect(YAML.stringify(obj, null, 2)).toBe("database:\n  host: localhost\n  port: 5432");
     });
 
     test("stringifies mixed structures", () => {
@@ -869,7 +869,7 @@ my_config:
         ],
       };
       const expected =
-        "users: \n  - name: Alice\n    hobbies: \n      - reading\n      - hiking\n  - name: Bob\n    hobbies: \n      - gaming";
+        "users:\n  - name: Alice\n    hobbies:\n      - reading\n      - hiking\n  - name: Bob\n    hobbies:\n      - gaming";
       expect(YAML.stringify(obj, null, 2)).toBe(expected);
     });
 
@@ -1375,7 +1375,7 @@ my_config:
           str: new String("world"),
           bool: new Boolean(false),
         };
-        expect(YAML.stringify(obj, null, 2)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
+        expect(YAML.stringify(obj, null, 2)).toBe("num: 3.14\nstr: world\nbool: false");
       });
 
       test("handles Date objects", () => {
@@ -1387,7 +1387,7 @@ my_config:
 
         // In objects
         const obj = { created: date };
-        expect(YAML.stringify(obj, null, 2)).toBe("created: \n  {}");
+        expect(YAML.stringify(obj, null, 2)).toBe("created: {}");
       });
 
       test("handles RegExp objects", () => {
@@ -1396,7 +1396,7 @@ my_config:
         expect(YAML.stringify(regex)).toBe("{}");
 
         const obj = { pattern: regex };
-        expect(YAML.stringify(obj, null, 2)).toBe("pattern: \n  {}");
+        expect(YAML.stringify(obj, null, 2)).toBe("pattern: {}");
       });
 
       test("handles Error objects", () => {
@@ -1599,11 +1599,11 @@ my_config:
 
         const yaml1 = YAML.stringify(obj1, null, 2);
         expect(yaml1).toMatchInlineSnapshot(`
-"data: 
+"data:
   &data
   value: shared
-nested: 
-  data: 
+nested:
+  data:
     *data"
 `);
 
@@ -1633,25 +1633,25 @@ nested:
 
         const yaml2 = YAML.stringify(obj2, null, 2);
         expect(yaml2).toMatchInlineSnapshot(`
-"item: 
+"item:
   &item
   type: A
-nested1: 
-  item: 
+nested1:
+  item:
     *item
-  other: 
-    item: 
+  other:
+    item:
       &item1
       type: B
-nested2: 
-  item: 
+nested2:
+  item:
     *item1
-  sub: 
-    item: 
+  sub:
+    item:
       &item2
       type: C
-refs: 
-  item: 
+refs:
+  item:
     *item2"
 `);
 
@@ -1722,7 +1722,7 @@ refs:
 
         const yaml2 = YAML.stringify(complex, null, 2);
         expect(yaml2).toMatchInlineSnapshot(`
-"arrays: 
+"arrays:
   - &item0
     - 1
     - 2
@@ -1730,8 +1730,8 @@ refs:
     - 3
     - 4
   - *item0
-nested: 
-  moreArrays: 
+nested:
+  moreArrays:
     - &item2
       - 5
       - 6
@@ -1766,18 +1766,18 @@ nested:
 
         const yaml = YAML.stringify(mixed, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-"item: 
+"item:
   &item
   type: object
-items: 
+items:
   - &item0
     - array
   - &item1
     nested: obj
   - *item0
   - *item1
-refs: 
-  item: 
+refs:
+  item:
     *item"
 `);
 
@@ -1807,18 +1807,16 @@ refs:
 
         const yaml = YAML.stringify(obj, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-          """: 
+          """:
             &value0
             empty: key
-          nested: 
-            "": 
+          nested:
+            "":
               *value0
-          another: 
-            "": 
-              &value1
+          another:
+            "": &value1
               {}
-            what: 
-              *value1"
+            what: *value1"
         `);
         // Since empty names can't be used as anchors, they get a counter
 
@@ -1862,38 +1860,38 @@ refs:
 
         const yaml = YAML.stringify(complex, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-"data: 
+"data:
   &data
   id: 0
-level1: 
-  data: 
+level1:
+  data:
     *data
-  sub1: 
-    data: 
+  sub1:
+    data:
       &data1
       id: 1
-  sub2: 
-    data: 
+  sub2:
+    data:
       *data1
-level2: 
-  data: 
+level2:
+  data:
     &data2
     id: 2
-  nested: 
-    data: 
+  nested:
+    data:
       &data3
       id: 3
-    deep: 
-      data: 
+    deep:
+      data:
         &data4
         id: 4
-refs: 
-  data: 
+refs:
+  data:
     *data2
-  all: 
-    - data: 
+  all:
+    - data:
         *data3
-    - data: 
+    - data:
         *data4"
 `);
 
@@ -1934,13 +1932,11 @@ refs:
         obj.root2 = root;
         expect(YAML.stringify(obj, null, 2)).toMatchInlineSnapshot(`
           "&root
-          cycle: 
+          cycle:
             *root
-          root: 
-            &root1
+          root: &root1
             {}
-          root2: 
-            *root1"
+          root2: *root1"
         `);
       });
     });
@@ -2198,22 +2194,16 @@ refs:
 
         const yaml = YAML.stringify(nested, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-          "emptyObj: 
-            {}
-          emptyArr: 
-            []
-          nested: 
-            deepEmpty: 
-              {}
-            deepArr: 
-              []
-          mixed: 
+          "emptyObj: {}
+          emptyArr: []
+          nested:
+            deepEmpty: {}
+            deepArr: []
+          mixed:
             - {}
             - []
-            - inner: 
-                {}
-            - inner: 
-                []"
+            - inner: {}
+            - inner: []"
         `);
       });
 

@@ -205,10 +205,10 @@ pub const Result = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
 
-    pub fn deinit(this: *Result) void {
+    pub fn deinit(this: *Result, allocator: std.mem.Allocator) void {
         switch (this.*) {
-            .owned => |*owned| owned.clearAndFree(bun.default_allocator),
-            .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(bun.default_allocator),
+            .owned => |*owned| owned.clearAndFree(allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -269,6 +269,16 @@ pub const Result = union(Tag) {
             .owned_and_done => |owned_and_done| owned_and_done.slice(),
             .temporary_and_done => |temporary_and_done| temporary_and_done.slice(),
             .temporary => |temporary| temporary.slice(),
+            else => "",
+        };
+    }
+
+    pub fn allocatedSlice(this: *const Result) []const u8 {
+        return switch (this.*) {
+            .owned => |owned| owned.allocatedSlice(),
+            .owned_and_done => |owned_and_done| owned_and_done.allocatedSlice(),
+            .temporary_and_done => |temporary_and_done| temporary_and_done.allocatedSlice(),
+            .temporary => |temporary| temporary.allocatedSlice(),
             else => "",
         };
     }
@@ -559,15 +569,12 @@ pub const Result = union(Tag) {
     pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         if (jsc.VirtualMachine.get().isShuttingDown()) {
             var that = this.*;
-            that.deinit();
+            that.deinit(bun.default_allocator);
             return .zero;
         }
 
         switch (this.*) {
-            .owned => |list| {
-                return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
-            },
-            .owned_and_done => |list| {
+            .owned, .owned_and_done => |list| {
                 return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
             },
             .temporary => |temp| {

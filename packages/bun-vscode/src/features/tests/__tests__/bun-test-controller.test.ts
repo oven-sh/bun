@@ -393,7 +393,7 @@ describe("BunTestController", () => {
 });
 
 describe("BunTestController - Test Discovery and Management", () => {
-  describe("shouldUseTestNamePattern", () => {
+  describe("shouldFilterByTestName", () => {
     test("should return false for single file test", () => {
       const mockTests = [
         {
@@ -404,7 +404,7 @@ describe("BunTestController - Test Discovery and Management", () => {
         },
       ] as any;
 
-      const result = internal.shouldUseTestNamePattern(mockTests);
+      const result = internal.shouldFilterByTestName(mockTests);
       expect(result).toBe(false);
     });
 
@@ -425,12 +425,12 @@ describe("BunTestController - Test Discovery and Management", () => {
         },
       ] as any;
 
-      const result = internal.shouldUseTestNamePattern(mockTests);
+      const result = internal.shouldFilterByTestName(mockTests);
       expect(result).toBe(true);
     });
 
     test("should return false for empty test array", () => {
-      const result = internal.shouldUseTestNamePattern([]);
+      const result = internal.shouldFilterByTestName([]);
       expect(result).toBe(false);
     });
 
@@ -443,7 +443,7 @@ describe("BunTestController - Test Discovery and Management", () => {
         },
       ] as any;
 
-      const result = internal.shouldUseTestNamePattern(mockTests);
+      const result = internal.shouldFilterByTestName(mockTests);
       expect(result).toBe(false);
     });
 
@@ -471,7 +471,7 @@ describe("BunTestController - Test Discovery and Management", () => {
         },
       ] as any;
 
-      const result = internal.shouldUseTestNamePattern(mockTests);
+      const result = internal.shouldFilterByTestName(mockTests);
       expect(result).toBe(true);
     });
 
@@ -486,7 +486,7 @@ describe("BunTestController - Test Discovery and Management", () => {
         },
       ] as any;
 
-      const result = internal.shouldUseTestNamePattern(mockTests);
+      const result = internal.shouldFilterByTestName(mockTests);
 
       expect(result).toBe(false);
     });
@@ -892,101 +892,6 @@ Difference:
       expect(result.message).toContain("Cannot read property 'foo'");
     });
   });
-
-  describe("cleanupTestItem", () => {
-    test("should clean up test item and its children", () => {
-      const mockChild = {
-        id: "child",
-        tags: [],
-        children: new Map(),
-      };
-
-      const mockParent = {
-        id: "parent",
-        tags: [],
-        children: new Map([["child", mockChild]]),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, mockParent as any);
-      }).not.toThrow();
-    });
-
-    test("should handle item without children", () => {
-      const mockItem = {
-        id: "simple-item",
-        tags: [],
-        children: new Map(),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, mockItem as any);
-      }).not.toThrow();
-    });
-
-    test("should handle deeply nested cleanup", () => {
-      const createNestedItem = (depth: number): any => {
-        if (depth === 0) {
-          return {
-            id: `item-0`,
-            tags: [],
-            children: new Map(),
-          };
-        }
-
-        const child = createNestedItem(depth - 1);
-        return {
-          id: `item-${depth}`,
-          tags: [],
-          children: new Map([[`child-${depth}`, child]]),
-        };
-      };
-
-      const deeplyNested = createNestedItem(10);
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, deeplyNested);
-      }).not.toThrow();
-    });
-
-    test("should handle items with multiple children", () => {
-      const children = Array.from({ length: 20 }, (_, i) => ({
-        id: `child-${i}`,
-        tags: [],
-        children: new Map(),
-      }));
-
-      const parent = {
-        id: "parent-with-many-children",
-        tags: [],
-        children: new Map(children.map(child => [child.id, child])),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, parent as any);
-      }).not.toThrow();
-    });
-
-    test("should handle circular references gracefully", () => {
-      const item1: any = {
-        id: "item1",
-        tags: [],
-        children: new Map(),
-      };
-
-      const item2: any = {
-        id: "item2",
-        tags: [],
-        children: new Map([["item1", item1]]),
-      };
-
-      item1.children.set("item2", item2);
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, item1);
-      }).not.toThrow();
-    });
-  });
 });
 
 describe("BunTestController - Integration and Coverage", () => {
@@ -1000,7 +905,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(internal).toHaveProperty("stripAnsi");
       expect(internal).toHaveProperty("processErrorData");
       expect(internal).toHaveProperty("escapeTestName");
-      expect(internal).toHaveProperty("shouldUseTestNamePattern");
+      expect(internal).toHaveProperty("shouldFilterByTestName");
 
       expect(internal).toHaveProperty("isTestFile");
       expect(internal).toHaveProperty("customFilePattern");
@@ -1023,7 +928,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.parseTestBlocks).toBe("function");
       expect(typeof internal.getBraceDepth).toBe("function");
       expect(typeof internal.escapeTestName).toBe("function");
-      expect(typeof internal.shouldUseTestNamePattern).toBe("function");
+      expect(typeof internal.shouldFilterByTestName).toBe("function");
       expect(typeof internal.isTestFile).toBe("function");
       expect(typeof internal.customFilePattern).toBe("function");
       expect(typeof internal.getBunExecutionConfig).toBe("function");
@@ -1031,7 +936,6 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.findTestByName).toBe("function");
       expect(typeof internal.createTestItem).toBe("function");
       expect(typeof internal.createErrorMessage).toBe("function");
-      expect(typeof internal.cleanupTestItem).toBe("function");
     });
 
     test("should provide consistent API", () => {
@@ -1054,7 +958,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.processErrorData).toBe("function");
 
       expect(typeof internal.escapeTestName).toBe("function");
-      expect(typeof internal.shouldUseTestNamePattern).toBe("function");
+      expect(typeof internal.shouldFilterByTestName).toBe("function");
       expect(typeof internal.isTestFile).toBe("function");
       expect(typeof internal.customFilePattern).toBe("function");
       expect(typeof internal.getBunExecutionConfig).toBe("function");
@@ -1062,7 +966,6 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.findTestByName).toBe("function");
       expect(typeof internal.createTestItem).toBe("function");
       expect(typeof internal.createErrorMessage).toBe("function");
-      expect(typeof internal.cleanupTestItem).toBe("function");
 
       expect(controller).toBeDefined();
       expect(controller._internal).toBeDefined();

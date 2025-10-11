@@ -235,7 +235,7 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
       localRoot,
       remoteRoot,
     });
-    await adapter.initialize();
+    await adapter.initialize(session.configuration.debugServer);
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
 }
@@ -346,12 +346,13 @@ class FileDebugSession extends DebugSession {
     return p;
   }
 
-  async initialize() {
+  async initialize(url?: string) {
     const uniqueId = this.sessionId ?? Math.random().toString(36).slice(2);
-    const url =
-      process.platform === "win32"
+    url =
+      url ??
+      (process.platform === "win32"
         ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
-        : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+        : `ws+unix://${tmpdir()}/${uniqueId}.sock`);
 
     const { untitledDocPath, bunEvalPath } = this;
     this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);
@@ -432,6 +433,9 @@ class FileDebugSession extends DebugSession {
         }
       } else if (command === "source" && message.arguments?.source?.path) {
         message.arguments.source.path = this.mapLocalToRemote(message.arguments.source.path);
+      } else if (command === "initialize") {
+        // TODO: Only enable if we are running through the test explorer
+        message.arguments.enableTestReporter = true;
       }
 
       this.adapter.emit("Adapter.request", message);

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -31,28 +31,183 @@ export interface TestError {
   column: number;
 }
 
+function getBunExecutionConfig() {
+  const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
+  const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
+  const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
+
+  const [cmd, ...args] = customScript.split(/\s+/);
+
+  let bunCommand = "bun";
+  if (cmd === "bun") {
+    const bunRuntime = vscode.workspace.getConfiguration("bun").get<string>("runtime", "bun");
+    bunCommand = bunRuntime || "bun";
+  } else {
+    bunCommand = cmd;
+  }
+
+  const testArgs = args.length ? args : ["test"];
+  if (customFlag) {
+    testArgs.push(customFlag);
+  }
+
+  return { bunCommand, testArgs };
+}
+
+async function createOSSignal(): Promise<TCPSocketSignal | UnixSignal> {
+  if (process.platform === "win32") {
+    const port = await getAvailablePort();
+    return new TCPSocketSignal(port);
+  } else {
+    return new UnixSignal();
+  }
+}
+
+async function createSignal(callback: (socket: net.Socket) => void): Promise<TCPSocketSignal | UnixSignal> {
+  try {
+    const signal = await createOSSignal();
+    await signal.ready;
+    signal.on("Signal.Socket.connect", callback);
+
+    signal.on("Signal.error", (error: Error) => {
+      debug.appendLine(`Signal error: ${error.message}`);
+      signal.close();
+    });
+
+    return signal;
+  } catch (error) {
+    debug.appendLine(`Failed to initialize signal: ${error}`);
+    throw error;
+  }
+}
+
+type RunParams = {
+  run: vscode.TestRun;
+  command: string;
+  args: string[];
+  inspectorUrl?: string;
+  workspaceFolder: vscode.WorkspaceFolder;
+  token?: vscode.CancellationToken;
+  disposables: vscode.Disposable[];
+};
+
+async function runTestInProcess({
+  run,
+  command,
+  args,
+  inspectorUrl,
+  workspaceFolder,
+  token,
+}: RunParams): Promise<void> {
+  const proc = spawn(command, args, {
+    cwd: workspaceFolder.uri.fsPath,
+    env: {
+      BUN_DEBUG_QUIET_LOGS: "1",
+      FORCE_COLOR: "1",
+      BUN_INSPECT: inspectorUrl,
+      ...process.env,
+    },
+  });
+
+  proc.on("exit", (code, signal) => {
+    if (code !== 0 && code !== 1) {
+      debug.appendLine(`Test process failed: exit ${code}, signal ${signal}`);
+    }
+  });
+
+  proc.on("error", error => {
+    debug.appendLine(`Process error: ${error.message}`);
+  });
+
+  proc.stdout?.on("data", data => {
+    const dataStr = data.toString();
+    const formattedOutput = dataStr.replace(/\n/g, "\r\n");
+    run.appendOutput(formattedOutput);
+  });
+
+  proc.stderr?.on("data", data => {
+    const dataStr = data.toString();
+    const formattedOutput = dataStr.replace(/\n/g, "\r\n");
+    run.appendOutput(formattedOutput);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const handleClose = (code: number | null) => {
+      if (code === 0 || code === 1) {
+        resolve();
+      } else {
+        reject(new Error(`Process exited with code ${code}. Please check the console for more details.`));
+      }
+    };
+
+    const handleError = (error: Error) => {
+      reject(error);
+    };
+
+    const handleCancel = () => {
+      proc.kill("SIGTERM");
+      reject(new Error("Test run cancelled"));
+    };
+
+    proc.on("close", handleClose);
+    proc.on("error", handleError);
+
+    token?.onCancellationRequested(handleCancel);
+  });
+}
+
+async function runTestInDebugger({ run, command, args, inspectorUrl, workspaceFolder, disposables }: RunParams) {
+  const debugConfiguration: vscode.DebugConfiguration = {
+    args: args.slice(1),
+    console: "integratedTerminal",
+    cwd: "${workspaceFolder}",
+    internalConsoleOptions: "neverOpen",
+    name: "Bun Test Debug",
+    program: args.at(1),
+    request: "launch",
+    runtime: command,
+    type: "bun",
+    debugServer: inspectorUrl,
+    env: {
+      BUN_DEBUG_QUIET_LOGS: "1",
+      FORCE_COLOR: "1",
+      BUN_INSPECT: inspectorUrl,
+      ...process.env,
+    },
+  };
+
+  const res = await vscode.debug.startDebugging(workspaceFolder, debugConfiguration, {
+    testRun: run,
+  });
+  const activeDebugSession = vscode.debug.activeDebugSession;
+  if (!res || !activeDebugSession) throw new Error("Failed to start debugging session");
+
+  run.appendOutput("\n\x1b[33mDebug session started. Please open the debug console to see its output.\x1b[0m\r\n");
+
+  return new Promise<void>((resolve, _reject) => {
+    const dispose = vscode.debug.onDidTerminateDebugSession(session => {
+      if (activeDebugSession !== undefined && session.id === activeDebugSession.id) {
+        run.end();
+        resolve();
+      }
+    });
+    disposables.push(dispose);
+  });
+}
+
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
-  private activeProcesses: Set<ChildProcess> = new Set();
-  private debugAdapter: NodeSocketDebugAdapter | null = null;
-  private signal: UnixSignal | TCPSocketSignal | null = null;
 
   private inspectorToVSCode = new Map<number, vscode.TestItem>();
   private vscodeToInspector = new Map<string, number>();
 
   private testErrors = new Map<number, TestError>();
   private lastStartedTestId: number | null = null;
-  private currentRun: vscode.TestRun | null = null;
 
-  private testResultHistory = new Map<
-    string,
-    { status: "passed" | "failed" | "skipped"; message?: vscode.TestMessage; duration?: number }
-  >();
-  private currentRunType: "file" | "individual" = "file";
   private requestedTestIds: Set<string> = new Set();
   private discoveredTestIds: Set<string> = new Set();
-  private executedTestCount: number = 0;
-  private totalTestsStarted: number = 0;
+
+  private watchingTests = new Map<vscode.TestItem | "ALL", vscode.TestRunProfile | undefined>();
 
   constructor(
     private readonly testController: vscode.TestController,
@@ -64,23 +219,6 @@ export class BunTestController implements vscode.Disposable {
     this.setupWatchers();
     this.setupOpenDocumentListener();
     this.discoverInitialTests();
-    this.initializeSignal();
-  }
-
-  private async initializeSignal(): Promise<void> {
-    try {
-      this.signal = await this.createSignal();
-      await this.signal.ready;
-      this.signal.on("Signal.Socket.connect", (socket: net.Socket) => {
-        this.handleSocketConnection(socket, this.currentRun!);
-      });
-
-      this.signal.on("Signal.error", (error: Error) => {
-        debug.appendLine(`Signal error: ${error.message}`);
-      });
-    } catch (error) {
-      debug.appendLine(`Failed to initialize signal: ${error}`);
-    }
   }
 
   private setupTestController(): void {
@@ -107,6 +245,8 @@ export class BunTestController implements vscode.Disposable {
       vscode.TestRunProfileKind.Run,
       (request, token) => this.runHandler(request, token, false),
       true,
+      undefined,
+      true,
     );
 
     this.testController.createRunProfile(
@@ -114,6 +254,9 @@ export class BunTestController implements vscode.Disposable {
       vscode.TestRunProfileKind.Debug,
       (request, token) => this.runHandler(request, token, true),
       true,
+      undefined,
+      // TODO: Support continuous run for debug profile as well
+      false,
     );
   }
 
@@ -253,6 +396,26 @@ export class BunTestController implements vscode.Disposable {
       } else {
         this.discoverTests(false, uri.fsPath);
       }
+
+      // Run tests if in continuous mode
+      if (this.watchingTests.has("ALL")) {
+        this.runHandler(new vscode.TestRunRequest(undefined, undefined, this.watchingTests.get("ALL")));
+      } else {
+        const include: vscode.TestItem[] = [];
+        let profile: vscode.TestRunProfile | undefined;
+        for (const [item, thisProfile] of this.watchingTests) {
+          const cast = item as vscode.TestItem;
+          if (cast.uri?.toString() == uri.toString()) {
+            include.push(cast);
+            // TODO: This is only correct until the debug profile doesn't do continuous run
+            profile = thisProfile;
+          }
+        }
+
+        if (include.length) {
+          this.runHandler(new vscode.TestRunRequest(include, undefined, profile));
+        }
+      }
     };
 
     fileWatcher.onDidChange(refreshTestsForFile);
@@ -266,29 +429,6 @@ export class BunTestController implements vscode.Disposable {
     });
 
     this.disposables.push(fileWatcher);
-  }
-
-  private getBunExecutionConfig() {
-    const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
-    const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
-    const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
-
-    const [cmd, ...args] = customScript.split(/\s+/);
-
-    let bunCommand = "bun";
-    if (cmd === "bun") {
-      const bunRuntime = vscode.workspace.getConfiguration("bun").get<string>("runtime", "bun");
-      bunCommand = bunRuntime || "bun";
-    } else {
-      bunCommand = cmd;
-    }
-
-    const testArgs = args.length ? args : ["test"];
-    if (customFlag) {
-      testArgs.push(customFlag);
-    }
-
-    return { bunCommand, testArgs };
   }
 
   private async discoverTests(
@@ -319,9 +459,6 @@ export class BunTestController implements vscode.Disposable {
           fileUri,
         );
         this.testController.items.add(fileTestItem);
-      }
-      if (!this.currentRun) {
-        fileTestItem.children.replace([]);
       }
       fileTestItem.canResolveChildren = false;
 
@@ -544,51 +681,33 @@ export class BunTestController implements vscode.Disposable {
     return source.replace(/[^\w \-\u0080-\uFFFF]/g, "\\$&");
   }
 
-  private async createSignal(): Promise<UnixSignal | TCPSocketSignal> {
-    if (process.platform === "win32") {
-      const port = await getAvailablePort();
-      return new TCPSocketSignal(port);
-    } else {
-      return new UnixSignal();
-    }
-  }
-
   private async runHandler(
     request: vscode.TestRunRequest,
-    token: vscode.CancellationToken,
-    isDebug: boolean,
+    token?: vscode.CancellationToken,
+    isDebug: boolean = false,
   ): Promise<void> {
-    if (this.currentRun) {
-      this.closeAllActiveProcesses();
-      this.disconnectInspector();
-      if (this.currentRun) {
-        this.currentRun.appendOutput("\n\x1b[33mCancelled: Starting new test run\x1b[0m\n");
-        this.currentRun.end();
-        this.currentRun = null;
+    // For continuous tests we only add the files to the watcher and don't run anything
+    // Test will be run on file changes, or the user can run the test manually
+    if (request.continuous) {
+      if (request.include === undefined) {
+        this.watchingTests.set("ALL", request.profile);
+        token?.onCancellationRequested(() => this.watchingTests.delete("ALL"));
+      } else {
+        request.include.forEach(item => this.watchingTests.set(item, request.profile));
+        token?.onCancellationRequested(() => request.include!.forEach(item => this.watchingTests.delete(item)));
       }
-    }
-    this.totalTestsStarted++;
-    if (this.totalTestsStarted > 15) {
-      this.closeAllActiveProcesses();
-      this.disconnectInspector();
-      this.signal?.close();
-      this.signal = null;
+      return;
     }
 
     const run = this.testController.createTestRun(request);
 
-    token.onCancellationRequested(() => {
+    const cancelRun = () => {
       run.end();
-      this.closeAllActiveProcesses();
       this.disconnectInspector();
-    });
-
+    };
+    token?.onCancellationRequested(cancelRun);
     if ("onDidDispose" in run) {
-      (run.onDidDispose as vscode.Event<void>)(() => {
-        run?.end?.();
-        this.closeAllActiveProcesses();
-        this.disconnectInspector();
-      });
+      run.onDidDispose(cancelRun);
     }
 
     const queue: vscode.TestItem[] = [];
@@ -603,14 +722,8 @@ export class BunTestController implements vscode.Disposable {
       }
     }
 
-    if (isDebug) {
-      await this.debugTests(queue, request, run);
-      run.end();
-      return;
-    }
-
     try {
-      await this.runTestsWithInspector(queue, run, token);
+      await this.runTestsWithInspector(queue, run, token, isDebug);
     } catch (error) {
       for (const test of queue) {
         const msg = new vscode.TestMessage(`Error: ${error}`);
@@ -618,28 +731,29 @@ export class BunTestController implements vscode.Disposable {
         run.errored(test, msg);
       }
     } finally {
-      run.end();
+      if (!isDebug) run.end();
     }
   }
 
   private async runTestsWithInspector(
     tests: vscode.TestItem[],
     run: vscode.TestRun,
-    token: vscode.CancellationToken,
+    token?: vscode.CancellationToken,
+    isDebug = false,
   ): Promise<void> {
     const time = performance.now();
-    if (token.isCancellationRequested) return;
+    if (token?.isCancellationRequested) return;
 
     this.disconnectInspector();
 
-    const allFiles = new Set<string>();
+    const testFiles = new Set<string>();
     for (const test of tests) {
       if (!test.uri) continue;
       const filePath = windowsVscodeUri(test.uri.fsPath);
-      allFiles.add(filePath);
+      testFiles.add(filePath);
     }
 
-    if (allFiles.size === 0) {
+    if (testFiles.size === 0) {
       const errorMsg = "No test files found to run.";
       run.appendOutput(`\x1b[31mError: ${errorMsg}\x1b[0m\n`);
       for (const test of tests) {
@@ -651,30 +765,24 @@ export class BunTestController implements vscode.Disposable {
     }
 
     for (const test of tests) {
-      if (token.isCancellationRequested) return;
+      if (token?.isCancellationRequested) return;
       if (test.uri && test.canResolveChildren) {
         await this.discoverTests(test, undefined, token);
       }
     }
 
-    const isIndividualTestRun = this.shouldUseTestNamePattern(tests);
-    this.currentRunType = isIndividualTestRun ? "individual" : "file";
+    const isIndividualTestRun = this.shouldFilterByTestName(tests);
 
     this.requestedTestIds.clear();
     this.discoveredTestIds.clear();
-    this.executedTestCount = 0;
     for (const test of tests) {
       this.requestedTestIds.add(test.id);
     }
 
-    if (!this.signal) {
-      await this.initializeSignal();
-      if (!this.signal) {
-        throw new Error("Failed to initialize signal");
-      }
-    }
-
-    this.currentRun = run;
+    const signal = await createSignal((socket: net.Socket) => {
+      // We create the signal and the adapter, but in debug mode the debugger initializes it
+      this.handleSocketConnection(socket, run, !isDebug);
+    });
 
     const socketPromise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -688,20 +796,21 @@ export class BunTestController implements vscode.Disposable {
 
       const handleCancel = () => {
         clearTimeout(timeout);
-        this.signal!.off("Signal.Socket.connect", handleConnect);
+        signal.off("Signal.Socket.connect", handleConnect);
+        signal.close();
         reject(new Error("Test run cancelled"));
       };
-      token.onCancellationRequested(handleCancel);
+      token?.onCancellationRequested(handleCancel);
 
-      this.signal!.once("Signal.Socket.connect", handleConnect);
+      signal.once("Signal.Socket.connect", handleConnect);
     });
 
-    const { bunCommand, testArgs } = this.getBunExecutionConfig();
+    const { bunCommand, testArgs } = getBunExecutionConfig();
+    let args = [...testArgs, ...testFiles];
 
-    let args = [...testArgs, ...allFiles];
     let printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${bunCommand} ${testArgs.join(" ")}\x1b[2m`;
 
-    for (const file of allFiles) {
+    for (const file of testFiles) {
       const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file;
       if (f.includes(" ")) {
         printedArgs += ` ".${path.sep}${f}"`;
@@ -720,211 +829,98 @@ export class BunTestController implements vscode.Disposable {
     run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n");
 
     for (const test of tests) {
-      if (isIndividualTestRun || tests.length === 1) {
-        run.started(test);
-      } else {
-        run.enqueued(test);
-      }
+      run.enqueued(test);
     }
 
     let inspectorUrl: string | undefined =
-      this.signal.url.startsWith("ws") || this.signal.url.startsWith("tcp")
-        ? `${this.signal!.url}?wait=1`
-        : `${this.signal!.url}`;
+      signal.url.startsWith("ws") || signal.url.startsWith("tcp") ? `${signal.url}?wait=1` : `${signal.url}`;
 
     // right now there isnt a way to tell socket method to wait for the connection
     if (!inspectorUrl?.includes("?wait=1")) {
-      args.push(`--inspect-wait=${this.signal!.url}`);
+      args.push(`--inspect-wait=${signal.url}`);
       inspectorUrl = undefined;
     }
 
-    const proc = spawn(bunCommand, args, {
-      cwd: this.workspaceFolder.uri.fsPath,
-      env: {
-        BUN_DEBUG_QUIET_LOGS: "1",
-        FORCE_COLOR: "1",
-        BUN_INSPECT: inspectorUrl,
-        ...process.env,
-      },
-    });
+    const runParams: RunParams = {
+      run,
+      command: bunCommand,
+      args,
+      inspectorUrl,
+      workspaceFolder: this.workspaceFolder,
+      token,
+      disposables: this.disposables,
+    };
+    const runFunction = isDebug ? runTestInDebugger : runTestInProcess;
 
-    this.activeProcesses.add(proc);
-
-    let stdout = "";
-
-    proc.on("exit", (code, signal) => {
-      if (code !== 0 && code !== 1) {
-        debug.appendLine(`Test process failed: exit ${code}, signal ${signal}`);
-      }
-    });
-
-    proc.on("error", error => {
-      stdout += `Process error: ${error.message}\n`;
-      debug.appendLine(`Process error: ${error.message}`);
-    });
-
-    proc.stdout?.on("data", data => {
-      const dataStr = data.toString();
-      stdout += dataStr;
-      const formattedOutput = dataStr.replace(/\n/g, "\r\n");
-      run.appendOutput(formattedOutput);
-    });
-
-    proc.stderr?.on("data", data => {
-      const dataStr = data.toString();
-      stdout += dataStr;
-      const formattedOutput = dataStr.replace(/\n/g, "\r\n");
-      run.appendOutput(formattedOutput);
-    });
+    const testRunPromise = runFunction(runParams);
 
     try {
       await socketPromise;
     } catch (error) {
-      debug.appendLine(`Connection failed: ${error} (URL: ${this.signal!.url})`);
+      debug.appendLine(`Connection failed: ${error} (URL: ${signal.url})`);
       throw error;
     }
 
-    await new Promise<void>((resolve, reject) => {
-      const handleClose = (code: number | null) => {
-        this.activeProcesses.delete(proc);
-        if (code === 0 || code === 1) {
-          resolve();
-        } else {
-          reject(new Error(`Process exited with code ${code}. Please check the console for more details.`));
-        }
-      };
-
-      const handleError = (error: Error) => {
-        this.activeProcesses.delete(proc);
-        reject(error);
-      };
-
-      const handleCancel = () => {
-        proc.kill("SIGTERM");
-        this.activeProcesses.delete(proc);
-        reject(new Error("Test run cancelled"));
-      };
-
-      proc.on("close", handleClose);
-      proc.on("error", handleError);
-
-      token.onCancellationRequested(handleCancel);
-    }).finally(() => {
-      if (this.discoveredTestIds.size === 0) {
-        const errorMsg =
-          "No tests were executed. This could mean:\r\n- All tests were filtered out\r\n- The test runner crashed before running tests\r\n- No tests match the pattern";
-        run.appendOutput(`\n\x1b[31m\x1b[1mError:\x1b[0m\x1b[31m ${errorMsg}\x1b[0m\n`);
-
-        for (const test of tests) {
-          if (!this.testResultHistory.has(test.id)) {
-            const msg = new vscode.TestMessage(errorMsg + "\n\n----------\n" + stdout + "\n----------\n");
-            msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
-            run.errored(test, msg);
-          }
-        }
+    try {
+      await testRunPromise;
+    } catch (e) {
+      for (const test of tests) {
+        const msg = new vscode.TestMessage((e as Error).message);
+        msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
+        run.errored(test, msg);
       }
-
-      if (this.discoveredTestIds.size > 0 && this.executedTestCount > 0) {
-        if (isIndividualTestRun) {
-          this.applyPreviousResults(tests, run);
-          this.cleanupUndiscoveredTests(tests);
-        } else {
-          this.cleanupStaleTests(tests);
-        }
-      }
-
-      if (this.activeProcesses.has(proc)) {
-        proc.kill("SIGKILL");
-        this.activeProcesses.delete(proc);
-      }
-
-      this.disconnectInspector();
-      this.currentRun = null;
+    } finally {
       debug.appendLine(`Test run completed in ${performance.now() - time}ms`);
-    });
-  }
-
-  private applyPreviousResults(requestedTests: vscode.TestItem[], run: vscode.TestRun): void {
-    for (const file of new Set(requestedTests.map(t => t.uri?.toString()).filter(Boolean))) {
-      const fileItem = this.testController.items.get(file!);
-      if (fileItem) {
-        this.applyPreviousResultsToItem(fileItem, run, this.requestedTestIds);
-      }
+      this.disconnectInspector();
     }
   }
 
-  private applyPreviousResultsToItem(item: vscode.TestItem, run: vscode.TestRun, requestedTestIds: Set<string>): void {
-    if (!requestedTestIds.has(item.id)) {
-      const previousResult = this.testResultHistory.get(item.id);
-      if (previousResult) {
-        switch (previousResult.status) {
-          case "passed":
-            run.passed(item, previousResult.duration);
-            break;
-          case "failed":
-            run.failed(item, [], previousResult.duration);
-            break;
-          case "skipped":
-            run.skipped(item);
-            break;
-        }
-      }
-    }
+  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun, initializeDebugAdapter = true) {
+    const debugAdapter = new NodeSocketDebugAdapter(socket);
 
-    for (const [, child] of item.children) {
-      this.applyPreviousResultsToItem(child, run, requestedTestIds);
-    }
-  }
-
-  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun): Promise<void> {
-    if (this.debugAdapter) {
-      this.debugAdapter.close();
-      this.debugAdapter = null;
-    }
-
-    this.debugAdapter = new NodeSocketDebugAdapter(socket);
-
-    this.debugAdapter.on("TestReporter.found", event => {
+    debugAdapter.on("TestReporter.found", event => {
       this.handleTestFound(event, run);
     });
 
-    this.debugAdapter.on("TestReporter.start", event => {
+    debugAdapter.on("TestReporter.start", event => {
       this.handleTestStart(event, run);
     });
 
-    this.debugAdapter.on("TestReporter.end", event => {
+    debugAdapter.on("TestReporter.end", event => {
       this.handleTestEnd(event, run);
     });
 
-    this.debugAdapter.on("LifecycleReporter.error", event => {
+    debugAdapter.on("LifecycleReporter.error", event => {
       this.handleLifecycleError(event, run);
     });
 
-    this.debugAdapter.on("Inspector.error", e => {
+    debugAdapter.on("Inspector.error", e => {
       debug.appendLine(`Inspector error: ${e}`);
     });
 
     socket.on("close", () => {
-      this.debugAdapter = null;
+      debugAdapter.close();
     });
 
-    const ok = await this.debugAdapter.start();
+    const ok = await debugAdapter.start();
     if (!ok) {
       throw new Error("Failed to start debug adapter");
     }
 
-    this.debugAdapter.initialize({
-      adapterID: "bun-vsc-test-runner",
-      pathFormat: "path",
-      linesStartAt1: true,
-      columnsStartAt1: true,
-      supportsConfigurationDoneRequest: false,
-      enableDebugger: false,
-      enableLifecycleAgentReporter: true,
-      enableTestReporter: true,
-      enableConsole: false,
-      sendImmediatePreventExit: false,
-    });
+    // When debugging, the adapter is initialized by the debugger so we don't initialize it
+    if (initializeDebugAdapter)
+      debugAdapter.initialize({
+        adapterID: "bun-vsc-test-runner",
+        pathFormat: "path",
+        linesStartAt1: true,
+        columnsStartAt1: true,
+        supportsConfigurationDoneRequest: false,
+        enableDebugger: false,
+        enableLifecycleAgentReporter: true,
+        enableTestReporter: true,
+        enableConsole: false,
+        sendImmediatePreventExit: false,
+      });
   }
 
   private handleTestFound(params: JSC.TestReporter.FoundEvent, _run: vscode.TestRun): void {
@@ -1053,51 +1049,36 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private handleTestEnd(params: JSC.TestReporter.EndEvent, run: vscode.TestRun): void {
-    const { id, status, elapsed } = params;
+  private handleTestEnd({ id, status, elapsed }: JSC.TestReporter.EndEvent, run: vscode.TestRun): void {
     const testItem = this.inspectorToVSCode.get(id);
 
     if (!testItem) return;
 
     const duration = elapsed / 1000000;
-    this.executedTestCount++;
-
-    if (
-      this.currentRunType === "individual" &&
-      status === "skipped_because_label" &&
-      !this.requestedTestIds.has(testItem.id)
-    ) {
-      return;
-    }
 
     switch (status) {
       case "pass":
         run.passed(testItem, duration);
-        this.testResultHistory.set(testItem.id, { status: "passed", duration });
         break;
       case "fail":
         const errorInfo = this.testErrors.get(id);
         if (errorInfo) {
           const errorMessage = this.createErrorMessage(errorInfo, testItem);
           run.failed(testItem, errorMessage, duration);
-          this.testResultHistory.set(testItem.id, { status: "failed", message: errorMessage, duration });
         } else {
           const message = new vscode.TestMessage(`Test "${testItem.label}" failed - check output for details`);
           run.failed(testItem, message, duration);
-          this.testResultHistory.set(testItem.id, { status: "failed", message, duration });
         }
         break;
       case "skip":
       case "todo":
         run.skipped(testItem);
-        this.testResultHistory.set(testItem.id, { status: "skipped" });
         break;
       case "timeout":
         const timeoutMsg = new vscode.TestMessage(
           duration > 0 ? `Test timed out after ${duration.toFixed(0)}ms` : "Test timed out",
         );
         run.failed(testItem, timeoutMsg, duration);
-        this.testResultHistory.set(testItem.id, { status: "failed", message: timeoutMsg, duration });
         break;
       case "skipped_because_label":
         break;
@@ -1124,67 +1105,6 @@ export class BunTestController implements vscode.Disposable {
 
     if (this.lastStartedTestId !== null) {
       this.testErrors.set(this.lastStartedTestId, errorInfo);
-    }
-  }
-
-  private cleanupUndiscoveredTests(requestedTests: vscode.TestItem[]): void {
-    if (this.currentRunType !== "individual" || this.discoveredTestIds.size === 0) {
-      return;
-    }
-
-    const filesToCheck = new Set<string>();
-    for (const test of requestedTests) {
-      if (test.uri) {
-        filesToCheck.add(test.uri.toString());
-      }
-    }
-
-    for (const fileUri of filesToCheck) {
-      const fileItem = this.testController.items.get(fileUri);
-      if (fileItem) {
-        this.cleanupTestItem(fileItem);
-      }
-    }
-  }
-
-  private cleanupTestItem(item: vscode.TestItem): void {
-    const childrenToRemove: vscode.TestItem[] = [];
-
-    for (const [, child] of item.children) {
-      if (!this.discoveredTestIds.has(child.id)) {
-        childrenToRemove.push(child);
-      } else {
-        this.cleanupTestItem(child);
-      }
-    }
-
-    for (const child of childrenToRemove) {
-      item.children.delete(child.id);
-    }
-  }
-
-  private cleanupStaleTests(requestedTests: vscode.TestItem[]): void {
-    if (this.discoveredTestIds.size === 0) {
-      return;
-    }
-
-    const filesToCheck = new Set<string>();
-    for (const test of requestedTests) {
-      if (test.uri) {
-        filesToCheck.add(test.uri.toString());
-      }
-    }
-
-    for (const fileUri of filesToCheck) {
-      const fileItem = this.testController.items.get(fileUri);
-      if (fileItem) {
-        const hasTestsInThisFile = Array.from(this.discoveredTestIds).some(id =>
-          id.startsWith(fileItem.uri?.fsPath || ""),
-        );
-        if (hasTestsInThisFile) {
-          this.cleanupTestItem(fileItem);
-        }
-      }
     }
   }
 
@@ -1296,7 +1216,7 @@ export class BunTestController implements vscode.Disposable {
     return testMessage;
   }
 
-  private shouldUseTestNamePattern(tests: vscode.TestItem[]): boolean {
+  private shouldFilterByTestName(tests: vscode.TestItem[]): boolean {
     const testUriString = tests[0]?.uri?.toString();
     const testIdEndsWithFileName = tests[0]?.uri && tests[0].label === tests[0].uri.fsPath.split("/").pop();
 
@@ -1355,110 +1275,12 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private disconnectInspector(): void {
-    if (this.debugAdapter) {
-      this.debugAdapter.close();
-      this.debugAdapter = null;
-    }
     this.inspectorToVSCode.clear();
     this.vscodeToInspector.clear();
     this.requestedTestIds.clear();
   }
 
-  private async debugTests(
-    tests: vscode.TestItem[],
-    _request: vscode.TestRunRequest,
-    run: vscode.TestRun,
-  ): Promise<void> {
-    const testFiles = new Set<string>();
-    for (const test of tests) {
-      if (test.uri) {
-        testFiles.add(test.uri.fsPath);
-      }
-    }
-
-    const isIndividualTestRun = this.shouldUseTestNamePattern(tests);
-
-    if (testFiles.size === 0) {
-      const errorMsg = "No test files found to debug.";
-      run.appendOutput(`\x1b[31mError: ${errorMsg}\x1b[0m\n`);
-      for (const test of tests) {
-        const msg = new vscode.TestMessage(errorMsg);
-        msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
-        run.errored(test, msg);
-      }
-      run.end();
-      return;
-    }
-
-    const { bunCommand, testArgs } = this.getBunExecutionConfig();
-    const args = [...testArgs, ...testFiles];
-
-    if (!isIndividualTestRun) {
-      args.push("--inspect-brk");
-    } else {
-      const breakpoints: vscode.SourceBreakpoint[] = [];
-      for (const test of tests) {
-        if (test.uri) {
-          breakpoints.push(
-            new vscode.SourceBreakpoint(
-              new vscode.Location(test.uri, new vscode.Position((test.range?.end.line ?? 0) + 1, 0)),
-              true,
-            ),
-          );
-        }
-      }
-      vscode.debug.addBreakpoints(breakpoints);
-
-      const pattern = this.buildTestNamePattern(tests);
-      if (pattern) {
-        args.push("--test-name-pattern", pattern);
-      }
-    }
-
-    const debugConfiguration: vscode.DebugConfiguration = {
-      args: args.slice(1),
-      console: "integratedTerminal",
-      cwd: "${workspaceFolder}",
-      internalConsoleOptions: "neverOpen",
-      name: "Bun Test Debug",
-      program: args.at(1),
-      request: "launch",
-      runtime: bunCommand,
-      type: "bun",
-    };
-
-    try {
-      const res = await vscode.debug.startDebugging(this.workspaceFolder, debugConfiguration);
-      if (!res) throw new Error("Failed to start debugging session");
-    } catch (error) {
-      for (const test of tests) {
-        const msg = new vscode.TestMessage(`Error starting debugger: ${error}`);
-        msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
-        run.errored(test, msg);
-      }
-    }
-    run.appendOutput("\n\x1b[33mDebug session started. Please open the debug console to see its output.\x1b[0m\r\n");
-    run.end();
-  }
-
-  private closeAllActiveProcesses(): void {
-    for (const p of this.activeProcesses) {
-      p.kill();
-    }
-    this.activeProcesses.clear();
-  }
-
   public dispose(): void {
-    this.closeAllActiveProcesses();
-    if (this.signal) {
-      this.signal.close();
-      this.signal.removeAllListeners();
-      this.signal = null;
-    }
-    if (this.debugAdapter) {
-      this.debugAdapter.close();
-      this.debugAdapter = null;
-    }
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -1476,18 +1298,16 @@ export class BunTestController implements vscode.Disposable {
       stripAnsi: this.stripAnsi.bind(this),
       processErrorData: this.processErrorData.bind(this),
       escapeTestName: this.escapeTestName.bind(this),
-      shouldUseTestNamePattern: this.shouldUseTestNamePattern.bind(this),
+      shouldFilterByTestName: this.shouldFilterByTestName.bind(this),
 
       isTestFile: this.isTestFile.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
-      getBunExecutionConfig: this.getBunExecutionConfig.bind(this),
 
       findTestByPath: this.findTestByPath.bind(this),
       findTestByName: this.findTestByName.bind(this),
       createTestItem: this.createTestItem.bind(this),
 
       createErrorMessage: this.createErrorMessage.bind(this),
-      cleanupTestItem: this.cleanupTestItem.bind(this),
     };
   }
 }

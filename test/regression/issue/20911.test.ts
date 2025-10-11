@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Helper function to test worker error handling
-async function testWorkerErrorHandling(workerCode: string, description: string) {
+async function testWorkerErrorHandling(workerCode: string, description: string, allowCrashAfterEvent = false) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -66,6 +66,19 @@ setInterval(() => {}, 1000)
   }
   expect(result.hasError).toBe(true);
 
+  if (!allowCrashAfterEvent) {
+    // Wait to ensure the process doesn't crash after displaying ErrorEvent
+    // (the bug causes a crash shortly after ErrorEvent is printed)
+    const crashCheck = await Promise.race([
+      proc.exited.then(code => ({ crashed: true, code })),
+      new Promise(resolve => setTimeout(() => resolve({ crashed: false }), 200)),
+    ]);
+
+    if (crashCheck.crashed) {
+      throw new Error(`${description}: Process crashed after ErrorEvent (exit code ${crashCheck.code})`);
+    }
+  }
+
   // Clean up: terminate the process
   proc.kill();
   await proc.exited;
@@ -80,10 +93,11 @@ test("Worker async onmessage error should not crash process", async () => {
     }
     `,
     "async handler",
+    false, // Should NOT crash after ErrorEvent
   );
 });
 
-// TODO: Sync handlers also have a crash during worker exit (ASAN stack frame check failure)
+// Sync handlers display ErrorEvent correctly but still have a crash during worker exit (ASAN stack frame check failure)
 // This is a pre-existing bug that also happens on main branch, separate from the async handler issue
 test("Worker sync onmessage error should display ErrorEvent", async () => {
   await testWorkerErrorHandling(
@@ -93,5 +107,6 @@ test("Worker sync onmessage error should display ErrorEvent", async () => {
     }
     `,
     "sync handler",
+    true, // Allow crash after ErrorEvent (known ASAN bug)
   );
 });

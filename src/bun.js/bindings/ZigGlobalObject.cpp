@@ -437,19 +437,20 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
             prepareStackTrace = prepare;
         } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
             // If no cached value, check if user code replaced the property with Object.defineProperty
-            // Only call getIfPropertyExists if the property is an accessor (has custom getter/setter)
             auto scope = DECLARE_CATCH_SCOPE(vm);
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
             auto prepareStackTraceIdentifier = Identifier::fromString(vm, "prepareStackTrace"_s);
 
-            // Check if the property exists and is an accessor
+            // Check if the property has a custom getter (defined via Object.defineProperty)
             PropertySlot slot(errorConstructor, PropertySlot::InternalMethodType::GetOwnProperty);
             if (errorConstructor->getOwnPropertySlot(errorConstructor, lexicalGlobalObject, prepareStackTraceIdentifier, slot)) {
                 if (slot.isAccessor()) {
                     // Property has a custom getter (set via Object.defineProperty), invoke it
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
+                    auto resetFlag = WTF::makeScopeExit([&] {
+                        globalObject->isInsideErrorPrepareStackTraceCallback = false;
+                    });
                     prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, prepareStackTraceIdentifier);
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
                 }
             }
             CLEAR_IF_EXCEPTION(scope);
@@ -823,15 +824,18 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                 prepareStackTrace = prepare;
             } else {
                 // If no cached value, check if user code replaced the property with Object.defineProperty
-                // Only call getIfPropertyExists if the property is an accessor (has custom getter/setter)
-                auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+                auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
                 auto prepareStackTraceIdentifier = Identifier::fromString(vm, "prepareStackTrace"_s);
 
-                // Check if the property exists and is an accessor
+                // Check if the property has a custom getter (defined via Object.defineProperty)
                 PropertySlot slot(errorConstructor, PropertySlot::InternalMethodType::GetOwnProperty);
                 if (errorConstructor->getOwnPropertySlot(errorConstructor, lexicalGlobalObject, prepareStackTraceIdentifier, slot)) {
                     if (slot.isAccessor()) {
                         // Property has a custom getter (set via Object.defineProperty), invoke it
+                        globalObject->isInsideErrorPrepareStackTraceCallback = true;
+                        auto resetFlag = WTF::makeScopeExit([&] {
+                            globalObject->isInsideErrorPrepareStackTraceCallback = false;
+                        });
                         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, prepareStackTraceIdentifier);
                         RETURN_IF_EXCEPTION(scope, {});
                     }
@@ -839,6 +843,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             }
         } else {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+            // Non-Zig globals: still read via accessor if present
             prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -846,8 +851,10 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (prepareStackTrace) {
             if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
                 globalObject->isInsideErrorPrepareStackTraceCallback = true;
+                auto resetFlag = WTF::makeScopeExit([&] {
+                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
+                });
                 auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                globalObject->isInsideErrorPrepareStackTraceCallback = false;
                 RELEASE_AND_RETURN(scope, result);
             }
         }

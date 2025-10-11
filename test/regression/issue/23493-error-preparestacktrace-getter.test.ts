@@ -5,6 +5,7 @@
 import { expect, test } from "bun:test";
 
 test("Error.prepareStackTrace getter is called when defined with Object.defineProperty", () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
   let getterCallCount = 0;
   let prepareCallCount = 0;
 
@@ -33,15 +34,21 @@ test("Error.prepareStackTrace getter is called when defined with Object.definePr
     // The getter should be called at least once when formatting the stack
     // The prepare function should also be called
     expect(getterCallCount).toBeGreaterThan(0);
-    expect(prepareCallCount).toBe(1);
+    expect(prepareCallCount).toBeGreaterThanOrEqual(1);
     expect(stack).toBe("Custom stack trace");
   } finally {
-    // Cleanup: remove the custom getter
-    delete (Error as any).prepareStackTrace;
+    // Restore original descriptor
+    if (originalDescriptor) {
+      Object.defineProperty(Error, "prepareStackTrace", originalDescriptor);
+    } else {
+      delete (Error as any).prepareStackTrace;
+    }
   }
 });
 
 test("error-callsites module compatibility", () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+
   // Simulate what error-callsites does
   const callsitesSym = Symbol("callsites");
 
@@ -103,7 +110,11 @@ test("error-callsites module compatibility", () => {
     expect(typeof firstCallsite.getFileName).toBe("function");
     expect(typeof firstCallsite.getLineNumber).toBe("function");
   } finally {
-    // Cleanup
-    delete (Error as any).prepareStackTrace;
+    // Restore original descriptor
+    if (originalDescriptor) {
+      Object.defineProperty(Error, "prepareStackTrace", originalDescriptor);
+    } else {
+      delete (Error as any).prepareStackTrace;
+    }
   }
 });

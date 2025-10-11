@@ -254,6 +254,10 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
         struct us_connecting_socket_t *next = s->next;
+        // Free duplicated local_host string if present
+        if (s->local_host) {
+            free((void*)s->local_host);
+        }
         us_free(s);
         s = next;
     }

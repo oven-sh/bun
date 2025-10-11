@@ -413,7 +413,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
-    int port, const char *local_host, int local_port, int options, int socket_ext_size, int* is_resolved);
+    int port, const char *local_host, uint16_t local_port, int options, int socket_ext_size, int* is_resolved);
 
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,

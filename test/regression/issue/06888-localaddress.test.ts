@@ -32,14 +32,14 @@ test("TCP socket can bind to localAddress - IPv4", async () => {
   });
 
   await new Promise<void>(resolve => {
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(0, localIPv4, () => resolve());
   });
 
   const serverPort = (server.address() as net.AddressInfo).port;
 
   const clientPromise = new Promise<string>((resolve, reject) => {
     const client = net.createConnection({
-      host: "127.0.0.1",
+      host: localIPv4,
       port: serverPort,
       localAddress: localIPv4,
     });

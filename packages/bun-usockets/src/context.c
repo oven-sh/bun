@@ -561,7 +561,8 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
     c->port = port;
-    c->local_host = local_host;
+    // Duplicate local_host string so it persists after Zig frees its buffer
+    c->local_host = local_host ? strdup(local_host) : NULL;
     c->local_port = local_port;
     us_internal_socket_context_link_connecting_socket(ssl, context, c);
 

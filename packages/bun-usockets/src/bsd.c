@@ -1482,10 +1482,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
             addr_len = sizeof(struct sockaddr_in6);
         } else {
             bsd_close_socket(fd);
+#ifdef _WIN32
+            WSASetLastError(WSAEAFNOSUPPORT);
+#endif
+            errno = EAFNOSUPPORT;
             return LIBUS_SOCKET_ERROR;
         }
 
-        if (bind(fd, (struct sockaddr *)local_addr, addr_len) != 0) {
+        int bind_result;
+        do {
+            bind_result = bind(fd, (struct sockaddr *)local_addr, addr_len);
+        } while (IS_EINTR(bind_result));
+
+        if (bind_result != 0) {
             bsd_close_socket(fd);
             return LIBUS_SOCKET_ERROR;
         }

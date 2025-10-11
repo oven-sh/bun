@@ -1608,7 +1608,7 @@ static void us_internal_zero_ssl_data_for_connected_socket_before_onopen(struct 
 // TODO does this need more changes?
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, const char *local_host, int local_port, int options, int socket_ext_size, int* is_connecting) {
+    int port, const char *local_host, uint16_t local_port, int options, int socket_ext_size, int* is_connecting) {
   struct us_internal_ssl_socket_t *s = (struct us_internal_ssl_socket_t *)us_socket_context_connect(
       2, &context->sc, host, port, local_host, local_port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +

@@ -2842,31 +2842,38 @@ pub const Resolver = struct {
                     // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                     // list which contains such paths and treating them as missing means we just
                     // ignore them during path resolution.
-                    error.ENOENT,
-                    error.ENOTDIR,
-                    error.IsDir,
-                    error.NotDir,
-                    error.FileNotFound,
-                    => return null,
-
+                    error.ENOTDIR, error.IsDir, error.NotDir => return null,
                     else => {
                         const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        // If we don't properly cache not found, then we repeatedly attempt to open the same directories, which causes a perf trace that looks like this stupidity;
+                        //
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react/", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
-                        if (comptime enable_logging) {
-                            const pretty = queue_top.unsafe_path;
+                        switch (err) {
+                            error.FileNotFound => {},
+                            else => {
+                                if (comptime enable_logging) {
+                                    const pretty = queue_top.unsafe_path;
 
-                            r.log.addErrorFmt(
-                                null,
-                                logger.Loc{},
-                                r.allocator,
-                                "Cannot read directory \"{s}\": {s}",
-                                .{
-                                    pretty,
-                                    @errorName(err),
-                                },
-                            ) catch {};
+                                    r.log.addErrorFmt(
+                                        null,
+                                        logger.Loc{},
+                                        r.allocator,
+                                        "Cannot read directory \"{s}\": {s}",
+                                        .{
+                                            pretty,
+                                            @errorName(err),
+                                        },
+                                    ) catch {};
+                                }
+                            },
                         }
+
                         return null;
                     },
                 };

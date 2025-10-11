@@ -892,7 +892,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            var status_written = false;
+            var fetch_headers_to_use: ?*WebCore.FetchHeaders = null;
 
             if (optional) |opts| {
                 getter: {
@@ -917,7 +917,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             break :getter;
                         }
 
-                        var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
+                        fetch_headers_to_use = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                             if (headers_value.isObject()) {
                                 if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
@@ -936,18 +936,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
                             sec_websocket_extensions = protocol;
                         }
-
-                        // we must write the status first so that 200 OK isn't written
-                        resp.writeStatus("101 Switching Protocols");
-                        status_written = true;
-                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
                     }
 
                     if (globalThis.hasException()) {
@@ -956,20 +951,29 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // Write cookies if they were set on the request
-            // This must happen after the status is written but before the upgrade
+            var cookies_to_write: ?*WebCore.CookieMap = null;
             if (upgrader.cookies) |cookies| {
                 upgrader.cookies = null;
-                defer cookies.deref();
-
-                // Write the 101 status if it hasn't been written yet
-                // (this happens when no custom headers are provided via upgrade options)
-                if (!status_written) {
-                    resp.writeStatus("101 Switching Protocols");
+                cookies_to_write = cookies;
+            }
+            defer {
+                if (cookies_to_write) |cookies| {
+                    cookies.deref();
                 }
-                cookies.write(globalThis, ssl_enabled, @ptrCast(resp)) catch |err| {
-                    return err;
-                };
+            }
+
+            // Write status, custom headers, and cookies in one place
+            if (fetch_headers_to_use != null or cookies_to_write != null) {
+                // we must write the status first so that 200 OK isn't written
+                resp.writeStatus("101 Switching Protocols");
+
+                if (fetch_headers_to_use) |headers| {
+                    headers.toUWSResponse(comptime ssl_enabled, resp);
+                }
+
+                if (cookies_to_write) |cookies| {
+                    try cookies.write(globalThis, ssl_enabled, @ptrCast(resp));
+                }
             }
 
             // --- After this point, do not throw an exception

@@ -43,6 +43,11 @@ const EventNames& eventNames()
     return *eventNames_;
 }
 
+void clearEventNames()
+{
+    eventNames_.reset();
+}
+
 enum class DOMEventName : uint8_t {
     rename = 0,
     change = 1,

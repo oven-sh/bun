@@ -78,15 +78,15 @@ pub const S3HttpSimpleTask = struct {
 
     pub const new = bun.TrivialNew(@This());
     pub const Callback = union(enum) {
-        stat: *const fn (S3StatResult, *anyopaque) void,
-        download: *const fn (S3DownloadResult, *anyopaque) void,
-        upload: *const fn (S3UploadResult, *anyopaque) void,
-        delete: *const fn (S3DeleteResult, *anyopaque) void,
-        listObjects: *const fn (S3ListObjectsResult, *anyopaque) void,
-        commit: *const fn (S3CommitResult, *anyopaque) void,
-        part: *const fn (S3PartResult, *anyopaque) void,
+        stat: *const fn (S3StatResult, *anyopaque) bun.JSTerminated!void,
+        download: *const fn (S3DownloadResult, *anyopaque) bun.JSTerminated!void,
+        upload: *const fn (S3UploadResult, *anyopaque) bun.JSTerminated!void,
+        delete: *const fn (S3DeleteResult, *anyopaque) bun.JSTerminated!void,
+        listObjects: *const fn (S3ListObjectsResult, *anyopaque) bun.JSTerminated!void,
+        commit: *const fn (S3CommitResult, *anyopaque) bun.JSTerminated!void,
+        part: *const fn (S3PartResult, *anyopaque) bun.JSTerminated!void,
 
-        pub fn fail(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) void {
+        pub fn fail(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) bun.JSTerminated!void {
             switch (this) {
                 inline .upload,
                 .download,
@@ -95,7 +95,7 @@ pub const S3HttpSimpleTask = struct {
                 .listObjects,
                 .commit,
                 .part,
-                => |callback| callback(.{
+                => |callback| try callback(.{
                     .failure = .{
                         .code = code,
                         .message = message,
@@ -103,19 +103,19 @@ pub const S3HttpSimpleTask = struct {
                 }, context),
             }
         }
-        pub fn notFound(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) void {
+        pub fn notFound(this: @This(), code: []const u8, message: []const u8, context: *anyopaque) bun.JSTerminated!void {
             switch (this) {
                 inline .download,
                 .stat,
                 .delete,
                 .listObjects,
-                => |callback| callback(.{
+                => |callback| try callback(.{
                     .not_found = .{
                         .code = code,
                         .message = message,
                     },
                 }, context),
-                else => this.fail(code, message, context),
+                else => try this.fail(code, message, context),
             }
         }
     };
@@ -142,7 +142,7 @@ pub const S3HttpSimpleTask = struct {
         not_found,
         failure,
     };
-    fn errorWithBody(this: @This(), comptime error_type: ErrorType) void {
+    fn errorWithBody(this: @This(), comptime error_type: ErrorType) bun.JSTerminated!void {
         var code: []const u8 = "UnknownError";
         var message: []const u8 = "an unexpected error has occurred";
         var has_error_code = false;
@@ -172,13 +172,13 @@ pub const S3HttpSimpleTask = struct {
                 code = "NoSuchKey";
                 message = "The specified key does not exist.";
             }
-            this.callback.notFound(code, message, this.callback_context);
+            try this.callback.notFound(code, message, this.callback_context);
         } else {
-            this.callback.fail(code, message, this.callback_context);
+            try this.callback.fail(code, message, this.callback_context);
         }
     }
 
-    fn failIfContainsError(this: *@This(), status: u32) bool {
+    fn failIfContainsError(this: *@This(), status: u32) bun.JSTerminated!bool {
         var code: []const u8 = "UnknownError";
         var message: []const u8 = "an unexpected error has occurred";
 
@@ -209,14 +209,14 @@ pub const S3HttpSimpleTask = struct {
         } else if (status == 200 or status == 206) {
             return false;
         }
-        this.callback.fail(code, message, this.callback_context);
+        try this.callback.fail(code, message, this.callback_context);
         return true;
     }
     /// this is the task callback from the last task result and is always in the main thread
-    pub fn onResponse(this: *@This()) void {
+    pub fn onResponse(this: *@This()) bun.JSTerminated!void {
         defer this.deinit();
         if (!this.result.isSuccess()) {
-            this.errorWithBody(.failure);
+            try this.errorWithBody(.failure);
             return;
         }
         bun.assert(this.result.metadata != null);
@@ -225,7 +225,7 @@ pub const S3HttpSimpleTask = struct {
             .stat => |callback| {
                 switch (response.status_code) {
                     200 => {
-                        callback(.{
+                        try callback(.{
                             .success = .{
                                 .etag = response.headers.get("etag") orelse "",
                                 .lastModified = response.headers.get("last-modified") orelse "",
@@ -235,23 +235,23 @@ pub const S3HttpSimpleTask = struct {
                         }, this.callback_context);
                     },
                     404 => {
-                        this.errorWithBody(.not_found);
+                        try this.errorWithBody(.not_found);
                     },
                     else => {
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     },
                 }
             },
             .delete => |callback| {
                 switch (response.status_code) {
                     200, 204 => {
-                        callback(.{ .success = {} }, this.callback_context);
+                        try callback(.{ .success = {} }, this.callback_context);
                     },
                     404 => {
-                        this.errorWithBody(.not_found);
+                        try this.errorWithBody(.not_found);
                     },
                     else => {
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     },
                 }
             },
@@ -260,30 +260,30 @@ pub const S3HttpSimpleTask = struct {
                     200 => {
                         if (this.result.body) |body| {
                             const success = ListObjects.parseS3ListObjectsResult(body.slice()) catch {
-                                this.errorWithBody(.failure);
+                                try this.errorWithBody(.failure);
                                 return;
                             };
 
-                            callback(.{ .success = success }, this.callback_context);
+                            try callback(.{ .success = success }, this.callback_context);
                         } else {
-                            this.errorWithBody(.failure);
+                            try this.errorWithBody(.failure);
                         }
                     },
                     404 => {
-                        this.errorWithBody(.not_found);
+                        try this.errorWithBody(.not_found);
                     },
                     else => {
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     },
                 }
             },
             .upload => |callback| {
                 switch (response.status_code) {
                     200 => {
-                        callback(.{ .success = {} }, this.callback_context);
+                        try callback(.{ .success = {} }, this.callback_context);
                     },
                     else => {
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     },
                 }
             },
@@ -298,7 +298,7 @@ pub const S3HttpSimpleTask = struct {
                                 .capacity = 0,
                             },
                         };
-                        callback(.{
+                        try callback(.{
                             .success = .{
                                 .etag = response.headers.get("etag") orelse "",
                                 .body = body,
@@ -306,26 +306,26 @@ pub const S3HttpSimpleTask = struct {
                         }, this.callback_context);
                     },
                     404 => {
-                        this.errorWithBody(.not_found);
+                        try this.errorWithBody(.not_found);
                     },
                     else => {
                         //error
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     },
                 }
             },
             .commit => |callback| {
                 // commit multipart upload can fail with status 200
-                if (!this.failIfContainsError(response.status_code)) {
-                    callback(.{ .success = {} }, this.callback_context);
+                if (!try this.failIfContainsError(response.status_code)) {
+                    try callback(.{ .success = {} }, this.callback_context);
                 }
             },
             .part => |callback| {
-                if (!this.failIfContainsError(response.status_code)) {
+                if (!try this.failIfContainsError(response.status_code)) {
                     if (response.headers.get("etag")) |etag| {
-                        callback(.{ .etag = etag }, this.callback_context);
+                        try callback(.{ .etag = etag }, this.callback_context);
                     } else {
-                        this.errorWithBody(.failure);
+                        try this.errorWithBody(.failure);
                     }
                 }
             },
@@ -365,7 +365,7 @@ pub fn executeSimpleS3Request(
     options: S3SimpleRequestOptions,
     callback: S3HttpSimpleTask.Callback,
     callback_context: *anyopaque,
-) void {
+) bun.JSTerminated!void {
     var result = this.signRequest(.{
         .path = options.path,
         .method = options.method,
@@ -376,7 +376,7 @@ pub fn executeSimpleS3Request(
     }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
-        callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
+        try callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);
         return;
     };
 

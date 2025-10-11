@@ -492,6 +492,10 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSV
                 globalThis.reportActiveExceptionAsUnhandled(err);
                 return .js_undefined;
             },
+            error.JSTerminated => {
+                globalThis.reportActiveExceptionAsUnhandled(err);
+                return .js_undefined;
+            },
         };
         defer aws_options.deinit();
         const client = jsc.WebCore.S3Client.new(.{

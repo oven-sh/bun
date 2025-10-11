@@ -506,6 +506,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -517,6 +518,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return (this.tryTakeException() orelse {

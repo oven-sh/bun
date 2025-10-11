@@ -1103,6 +1103,7 @@ pub const JSBundler = struct {
                             bun.outOfMemory();
                         },
                         error.JSError => {},
+                        error.JSTerminated => {},
                     }
 
                     @panic("Unexpected: source_code is not a string");
@@ -1333,7 +1334,7 @@ pub const JSBundler = struct {
                             exception,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError => {
+                            error.JSError, error.JSTerminated => {
                                 plugin.globalObject().reportActiveExceptionAsUnhandled(err);
                                 return;
                             },
@@ -1351,7 +1352,7 @@ pub const JSBundler = struct {
                             exception,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError => {
+                            error.JSError, error.JSTerminated => {
                                 plugin.globalObject().reportActiveExceptionAsUnhandled(err);
                                 return;
                             },

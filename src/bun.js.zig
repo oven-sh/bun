@@ -419,7 +419,7 @@ pub const Run = struct {
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc_vm)) {
                                 .pending => {
-                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();

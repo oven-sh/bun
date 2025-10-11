@@ -365,7 +365,7 @@ pub const ZigString = extern struct {
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
-        pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) !Slice {
+        pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
             if (this.isAllocated()) {
                 return this;
             }

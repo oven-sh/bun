@@ -127,20 +127,20 @@ pub const Promise = struct {
         };
     }
 
-    pub fn resolve(self: *Promise, globalObject: *jsc.JSGlobalObject, value: *protocol.RESPValue) void {
+    pub fn resolve(self: *Promise, globalObject: *jsc.JSGlobalObject, value: *protocol.RESPValue) bun.JSTerminated!void {
         const options = protocol.RESPValue.ToJSOptions{
             .return_as_buffer = self.meta.return_as_buffer,
         };
 
         const js_value = value.toJSWithOptions(globalObject, options) catch |err| {
-            self.reject(globalObject, globalObject.takeError(err));
+            try self.reject(globalObject, globalObject.takeError(err));
             return;
         };
-        self.promise.resolve(globalObject, js_value);
+        try self.promise.resolve(globalObject, js_value);
     }
 
-    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) void {
-        self.promise.reject(globalObject, jsvalue);
+    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) bun.JSTerminated!void {
+        try self.promise.reject(globalObject, jsvalue);
     }
 
     pub fn deinit(self: *Promise) void {
@@ -155,8 +155,8 @@ pub const PromisePair = struct {
 
     pub const Queue = std.fifo.LinearFifo(PromisePair, .Dynamic);
 
-    pub fn rejectCommand(self: *PromisePair, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
-        self.promise.reject(globalObject, jsvalue);
+    pub fn rejectCommand(self: *PromisePair, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) bun.JSTerminated!void {
+        try self.promise.reject(globalObject, jsvalue);
     }
 };
 

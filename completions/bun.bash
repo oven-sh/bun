@@ -69,7 +69,6 @@ _file_arguments() {
         [[ -z ${candidates[0]} ]] && candidates=()
     fi
 
-    COMPREPLY=() # preserve the behavior of the earlier versoin of the script, update `COMPREPLY` instead of append
     for cnd in "${candidates[@]}"; do
         [[ -f "${cnd}" && "${cnd}" =~ ${extensions} ]] && \
             COMPREPLY+=( "$(_escape_bash_specials "${cnd##*/}" 1)" );
@@ -83,13 +82,13 @@ _long_short_completion() {
 
     if [[ -z "${cur_word}" ]]; then
         # shellcheck disable=SC2207 # the `wordlist` is constant and has no whitespace characters inside each word
-        COMPREPLY=( $(compgen -W "${long_opts} ${short_opts}") );
+        COMPREPLY+=( $(compgen -W "${long_opts} ${short_opts}") );
     elif [[ "${cur_word}" == --* ]]; then
         # shellcheck disable=SC2207 # idem.
-        COMPREPLY=( $(compgen -W "${long_opts}" -- "${cur_word}") );
+        COMPREPLY+=( $(compgen -W "${long_opts}" -- "${cur_word}") );
     elif [[ "${cur_word}" == -* ]]; then
         # shellcheck disable=SC2207 # idem.
-        COMPREPLY=( $(compgen -W "${long_opts} ${short_opts}" -- "${cur_word}") );
+        COMPREPLY+=( $(compgen -W "${long_opts} ${short_opts}" -- "${cur_word}") );
         return;
     fi
 }

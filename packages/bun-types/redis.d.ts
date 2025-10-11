@@ -3339,6 +3339,9 @@ declare module "bun" {
     ): Promise<[string, [string, number][]] | null>;
   }
 
+  // TODO(markovejnovic): Delete
+  export const RedisClient2 = RedisClient;
+
   /**
    * Default Redis client
    *

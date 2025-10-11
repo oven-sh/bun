@@ -86,6 +86,7 @@ pub const Classes = struct {
     pub const ResumableS3UploadSink = webcore.ResumableS3UploadSink;
     pub const HTMLBundle = api.HTMLBundle;
     pub const RedisClient = api.Valkey;
+    pub const RedisClient2 = api.Valkey2;
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.sourcemap.JSSourceMap;

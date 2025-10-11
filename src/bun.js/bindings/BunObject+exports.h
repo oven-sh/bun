@@ -21,6 +21,7 @@
     macro(YAML) \
     macro(Transpiler) \
     macro(ValkeyClient) \
+    macro(ValkeyClient2) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \

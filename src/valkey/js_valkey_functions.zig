@@ -1411,6 +1411,7 @@ const compile = struct {
             }
         };
     }
+
     pub fn @"(key: RedisKey, value: RedisValue)"(
         comptime name: []const u8,
         comptime command: []const u8,

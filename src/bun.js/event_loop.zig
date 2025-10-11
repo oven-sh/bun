@@ -110,6 +110,17 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
     return this.virtual_machine.rareData().pipeReadBuffer();
 }
 
+pub inline fn rejectPromise(
+    this: *EventLoop,
+    promise: *jsc.JSPromise,
+    global_object: *jsc.JSGlobalObject,
+    err_value: jsc.JSValue,
+) void {
+    this.enter();
+    defer this.exit();
+    promise.reject(global_object, err_value);
+}
+
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 const log = bun.Output.scoped(.EventLoop, .hidden);
 

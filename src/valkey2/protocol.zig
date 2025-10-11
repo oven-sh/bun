@@ -1,4 +1,9 @@
-// TODO(markovejnovic): Remove JS from this file. Why oh why is this not decoupled?
+//! Represents the RESP protocol used by Valkey and Redis.
+//!
+//! Note that this implementation has been blindly ported from the legacy
+//! Valkey implementation and may not be optimal, idiomatic or correct.
+//!
+//! TODO(markovejnovic): This code should not need to rely on JS objects.
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,

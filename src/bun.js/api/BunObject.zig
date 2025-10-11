@@ -77,6 +77,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const ValkeyClient2 = toJSLazyPropertyCallback(Bun.getValkeyClient2Constructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -143,6 +144,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.ValkeyClient2, .{ .name = lazyPropertyCallbackName("ValkeyClient2") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -1321,6 +1323,10 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getValkeyClient2Constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Valkey2.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {

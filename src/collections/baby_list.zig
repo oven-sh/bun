@@ -638,6 +638,11 @@ pub const OffsetByteList = struct {
         self.deinit(allocator);
         self.* = .{};
     }
+
+    /// Non-automatic memory usage of this object.
+    pub fn memoryCost(self: *const Self) usize {
+        return self.byte_list.memoryCost();
+    }
 };
 
 pub const safety_checks = Environment.ci_assert;

@@ -221,9 +221,6 @@ _bun_completions() {
         --extension-order
         --jsx-factory
         --jsx-fragment
-        --extension-order
-        --jsx-factory
-        --jsx-fragment
         --jsx-import-source
         --jsx-production
         --jsx-runtime

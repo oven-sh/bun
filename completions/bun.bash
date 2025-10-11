@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-
 # escapes characters having special meaning in bash
 # @param `$1`: string - string/word to escape characters in
 # @param `$2`: enum<int> - 0 escape all specials except " (quote) and \ (backslash), 1 escape all
@@ -37,25 +36,24 @@ _bun_escape_bash_specials() {
     fi
 }
 
-
 # escapes characters having special meaning inside glob-patterns
 # @param `$1`: string - string/word to escape characters in
 _bun_escape_glob_specials() {
-  local word="${1}"
+    local word="${1}"
 
-  local has_patsub=0
-  shopt -s patsub_replacement 2> /dev/null && {
-      # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
-      trap "$(shopt -p patsub_replacement)" RETURN
-      has_patsub=1
-  }
+    local has_patsub=0
+    shopt -s patsub_replacement 2> /dev/null && {
+        # shellcheck disable=SC2064 # current state of `patsub_replacement` is needed
+        trap "$(shopt -p patsub_replacement)" RETURN
+        has_patsub=1
+    }
 
-  if ((has_patsub)); then
-      echo "${word//[][!?*]/\\&}"
-  else
-      # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
-      sed 's/[][!?*]/\\&/g' <<< "${word}"
-  fi
+    if ((has_patsub)); then
+        echo "${word//[][!?*]/\\&}"
+    else
+        # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
+        sed 's/[][!?*]/\\&/g' <<< "${word}"
+    fi
 }
 
 # check if tool is a gnu version
@@ -69,7 +67,6 @@ _bun_is_exist_and_gnu() {
     )"
     [[ $version_string == *GNU* ]] && return 0 || return 1
 }
-
 
 # appends filenames to the the list of completions, considers only files inside current working directory
 # @param `$1`: string - extended-regex aka ERE, white list of file extensions
@@ -107,7 +104,6 @@ _bun_files_completions() {
     done
 }
 
-
 # appends list of long and short options to the list of completions
 # @param `$1`: string - space-separated list of long options
 # @param `$2`: string - space-separated list of short options
@@ -129,7 +125,6 @@ _bun_long_short_completions() {
         return
     fi
 }
-
 
 # appends the script names from package.json inside the current directory, if any, to the list of completions
 # @param `$1`: string - word imidiatelly before the cursor
@@ -171,7 +166,6 @@ _bun_scripts_completions() {
     return 0
 }
 
-
 # appends subcommands to the list of completions
 # @param `$1`: string - word imidiatelly before the cursor
 # @param `$2`: string - word before $1`
@@ -180,27 +174,27 @@ _bun_subcommand_completions() {
     local pre_word="${2}"
 
     local subcommands=(
-			dev
-			create
-			run
-			install
-			add
-			remove
-			upgrade
-			completions
-			discord
-			help
-			init
-			pm
-			x
-			test
-			repl
-			update
-			outdated
-			link
-			unlink
-			build
-		)
+        dev
+        create
+        run
+        install
+        add
+        remove
+        upgrade
+        completions
+        discord
+        help
+        init
+        pm
+        x
+        test
+        repl
+        update
+        outdated
+        link
+        unlink
+        build
+    )
 
     [[ ${pre_word} == 'bun' ]] && {
         if [[ -z ${cur_word} ]]; then
@@ -213,44 +207,43 @@ _bun_subcommand_completions() {
     }
 }
 
-
 # bun completions entry point function
 _bun_completions() {
     GLOBAL_OPTIONS_LONG=(
-			--use
-			--cwd
-			--bunfile
-			--server-bunfile
-			--config
-			--disable-react-fast-refresh
-			--disable-hmr
-			--env-file
-			--extension-order
-			--jsx-factory
-			--jsx-fragment
-			--extension-order
-			--jsx-factory
-			--jsx-fragment
-			--jsx-import-source
-			--jsx-production
-			--jsx-runtime
-			--main-fields
-			--no-summary
-			--version
-			--platform
-			--public-dir
-			--tsconfig-override
-			--define
-			--external
-			--help
-			--inject
-			--loader
-			--origin
-			--port
-			--dump-environment-variables
-			--dump-limits
-			--disable-bun-js
-		)
+        --use
+        --cwd
+        --bunfile
+        --server-bunfile
+        --config
+        --disable-react-fast-refresh
+        --disable-hmr
+        --env-file
+        --extension-order
+        --jsx-factory
+        --jsx-fragment
+        --extension-order
+        --jsx-factory
+        --jsx-fragment
+        --jsx-import-source
+        --jsx-production
+        --jsx-runtime
+        --main-fields
+        --no-summary
+        --version
+        --platform
+        --public-dir
+        --tsconfig-override
+        --define
+        --external
+        --help
+        --inject
+        --loader
+        --origin
+        --port
+        --dump-environment-variables
+        --dump-limits
+        --disable-bun-js
+    )
     GLOBAL_OPTIONS_SHORT=(-c -v -d -e -h -i -l -u -p)
 
     PACKAGE_OPTIONS_ADD_LONG=(--development --optional --peer)
@@ -260,50 +253,50 @@ _bun_completions() {
     PACKAGE_OPTIONS_REMOVE_SHORT=()
 
     PACKAGE_OPTIONS_SHARED_LONG=(
-			--config
-			--yarn
-			--production
-			--frozen-lockfile
-			--no-save
-			--dry-run
-			--force
-			--cache-dir
-			--no-cache
-			--silent
-			--verbose
-			--global
-			--cwd
-			--backend
-			--link-native-bins
-			--help
-		)
+        --config
+        --yarn
+        --production
+        --frozen-lockfile
+        --no-save
+        --dry-run
+        --force
+        --cache-dir
+        --no-cache
+        --silent
+        --verbose
+        --global
+        --cwd
+        --backend
+        --link-native-bins
+        --help
+    )
     PACKAGE_OPTIONS_SHARED_SHORT=(-c -y -p -f -g)
 
     PM_OPTIONS_LONG=(
-			--config
-			--yarn
-			--production
-			--frozen-lockfile
-			--no-save
-			--dry-run
-			--force
-			--cache-dir
-			--no-cache
-			--silent
-			--verbose
-			--no-progress
-			--no-summary
-			--no-verify
-			--ignore-scripts
-			--global
-			--cwd
-			--backend
-			--link-native-bins
-			--help
-		)
+        --config
+        --yarn
+        --production
+        --frozen-lockfile
+        --no-save
+        --dry-run
+        --force
+        --cache-dir
+        --no-cache
+        --silent
+        --verbose
+        --no-progress
+        --no-summary
+        --no-verify
+        --ignore-scripts
+        --global
+        --cwd
+        --backend
+        --link-native-bins
+        --help
+    )
     PM_OPTIONS_SHORT=(-c -y -p -f -g)
 
-		local fst_word="${COMP_WORDS[1]}"
+    local fst_word="${COMP_WORDS[1]}"
     local pre_word="${COMP_WORDS[$((COMP_CWORD - 1))]}"
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
 
@@ -315,13 +308,13 @@ _bun_completions() {
     --backend)
         case "${fst_word}" in
         a | add | remove | rm | install | i)
-						local backend_args=(
-							clonefile
-							copyfile
-							hardlink
-							clonefile_each_dir
-							symlink
-						)
+            local backend_args=(
+                clonefile
+                copyfile
+                hardlink
+                clonefile_each_dir
+                symlink
+            )
             # shellcheck disable=SC2207 # `backend_args` is array of words with no space inside each element
             COMPREPLY=($(compgen -W "${backend_args[*]}" -- "${cur_word}"))
             ;;
@@ -333,13 +326,13 @@ _bun_completions() {
         return
         ;;
     --jsx-runtime)
-				local jsx_runtime_args=(automatic classic)
+        local jsx_runtime_args=(automatic classic)
         # shellcheck disable=SC2207 # see above
         COMPREPLY=($(compgen -W "${jsx_runtime_args[*]}" -- "${cur_word}"))
         return
         ;;
     --target)
-				local target_args=(browser node bun)
+        local target_args=(browser node bun)
         # shellcheck disable=SC2207 # see above
         COMPREPLY=($(compgen -W "${target_args[*]}" -- "${cur_word}"))
         return
@@ -348,15 +341,15 @@ _bun_completions() {
         [[ ${cur_word} =~ (:) ]] && {
             local cur_word_wo_suffix="${cur_word%%:*}"
             local loader_args=(
-              jsx
-              js
-              json
-              tsx
-              ts
-              css
+                jsx
+                js
+                json
+                tsx
+                ts
+                css
             )
             readarray -t COMPREPLY <<< "$(
-              compgen -W "${loader_args[@]/#/${cur_word_wo_suffix}:}" -- "${cur_word}"
+                compgen -W "${loader_args[@]/#/${cur_word_wo_suffix}:}" -- "${cur_word}"
             )"
         }
         return
@@ -381,13 +374,13 @@ _bun_completions() {
         ;;
     create | c)
         local create_options=(
-          --force
-          --no-install
-          --help
-          --no-git
-          --verbose
-          --no-package-json
-          --open next react
+            --force
+            --no-install
+            --help
+            --no-git
+            --verbose
+            --no-package-json
+            --open next react
         )
         # shellcheck disable=SC2207 # `create_options` is array of words with no space inside each element
         COMPREPLY=($(compgen -W "${create_options[*]}" -- "${cur_word}"))
@@ -395,11 +388,11 @@ _bun_completions() {
         ;;
     upgrade)
         local upgrade_options=(
-          --version
-          --cwd
-          --help
-          -v
-          -h
+            --version
+            --cwd
+            --help
+            -v
+            -h
         )
         # shellcheck disable=SC2207 # see above
         COMPREPLY=($(compgen -W "${upgrade_options[*]}" -- "${cur_word}"))
@@ -408,12 +401,12 @@ _bun_completions() {
     run)
         _bun_files_completions '.+\.(js|ts|jsx|tsx|mjs|cjs)$' "${cur_word}"
         local run_options=(
-          --version
-          --cwd
-          --help
-          --silent
-          -v
-          -h
+            --version
+            --cwd
+            --help
+            --silent
+            -v
+            -h
         )
         # shellcheck disable=SC2207 # see above
         COMPREPLY+=($(compgen -W "${run_options[*]}" -- "${cur_word}"))
@@ -426,12 +419,12 @@ _bun_completions() {
             "${PM_OPTIONS_SHORT[*]}" \
             "${cur_word}"
         local pm_options=(
-          bin
-          ls
-          cache
-          hash
-          hash-print
-          hash-string
+            bin
+            ls
+            cache
+            hash
+            hash-print
+            hash-string
         )
         # shellcheck disable=SC2207 # see above
         COMPREPLY+=($(compgen -W "${pm_options[*]}" -- "${cur_word}"))
@@ -461,16 +454,16 @@ _bun_completions() {
 
             local pre_pre_word="${COMP_WORDS[COMP_CWORD - 2]}"
             local global_options_with_arg=(
-							--bunfile
-							--server-bunfile
-							--config
-							--port
-							--cwd
-							--public-dir
-							--jsx-runtime
-							--platform
-							--loader
-						)
+                --bunfile
+                --server-bunfile
+                --config
+                --port
+                --cwd
+                --public-dir
+                --jsx-runtime
+                --platform
+                --loader
+            )
 
             for opt in "${global_options_with_arg[@]}"; do
                 [[ ${pre_pre_word} == "${opt}" ]] && return # b.
@@ -484,6 +477,5 @@ _bun_completions() {
         ;;
     esac
 }
-
 
 complete -F _bun_completions bun

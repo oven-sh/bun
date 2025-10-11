@@ -2678,6 +2678,7 @@ pub const HardcodedModule = enum {
     @"node:stream/web",
     @"node:string_decoder",
     @"node:test",
+    @"node:test/reporters",
     @"node:timers",
     @"node:timers/promises",
     @"node:tls",
@@ -2760,6 +2761,7 @@ pub const HardcodedModule = enum {
         .{ "node:net", .@"node:net" },
         .{ "node:readline", .@"node:readline" },
         .{ "node:test", .@"node:test" },
+        .{ "node:test/reporters", .@"node:test/reporters" },
         .{ "node:os", .@"node:os" },
         .{ "node:path", .@"node:path" },
         .{ "node:path/posix", .@"node:path/posix" },
@@ -2899,6 +2901,7 @@ pub const HardcodedModule = enum {
             nodeEntry("node:zlib"),
             // New Node.js builtins only resolve from the prefixed one.
             nodeEntryOnlyPrefix("node:test"),
+            nodeEntryOnlyPrefix("node:test/reporters"),
 
             nodeEntry("assert"),
             nodeEntry("assert/strict"),

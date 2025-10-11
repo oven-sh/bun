@@ -3,7 +3,7 @@ name: Use Prisma with Bun
 ---
 
 {% callout %}
-**Note** — At the moment Prisma needs Node.js to be installed to run certain generation code. Make sure Node.js is installed in the environment where you're running `bunx prisma` commands.
+**Note** — At the moment Prisma needs Node.js to be installed to run certain generation code. Make sure Node.js is installed in the environment where you're running `bunx prisma` commands.
 {% /callout %}
 
 ---
@@ -18,33 +18,37 @@ $ bun init
 
 ---
 
-Then install the Prisma CLI (`prisma`) and Prisma Client (`@prisma/client`) as dependencies.
+Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the PostgreSQL adapter as dependencies.
 
 ```bash
 $ bun add -d prisma
-$ bun add @prisma/client
+$ bun add @prisma/client @prisma/adapter-pg
 ```
 
 ---
 
-We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
+We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory with Prisma Postgres.
 
 ```bash
-$ bunx --bun prisma init --datasource-provider sqlite
+$ bunx prisma init --db
 ```
 
 ---
 
-Open `prisma/schema.prisma` and add a simple `User` model.
+The `prisma init --db` command creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
 
 ```prisma-diff#prisma/schema.prisma
   generator client {
-    provider = "prisma-client-js"
-    output = "../generated/prisma"
+-   provider = "prisma-client-js"
+-   output   = "../generated/prisma"
++   provider = "prisma-client"
++   output = "../generated"
++   engineType = "client"
++   runtime = "bun"
   }
 
   datasource db {
-    provider = "sqlite"
+    provider = "postgresql"
     url      = env("DATABASE_URL")
   }
 
@@ -59,27 +63,17 @@ Open `prisma/schema.prisma` and add a simple `User` model.
 
 Then generate and run initial migration.
 
-This will generate a `.sql` migration file in `prisma/migrations`, create a new SQLite instance, and execute the migration against the new instance.
+This will generate a `.sql` migration file in `prisma/migrations` and execute the migration against your Prisma Postgres database.
 
 ```bash
 $ bunx prisma migrate dev --name init
 Environment variables loaded from .env
 Prisma schema loaded from prisma/schema.prisma
-Datasource "db": SQLite database "dev.db" at "file:./dev.db"
+Datasource "db": PostgreSQL database "postgres", schema "public" at "accelerate.prisma-data.net"
 
-SQLite database dev.db created at file:./dev.db
+Already in sync, no schema change or pending migration was found.
 
-Applying migration `20230928182242_init`
-
-The following migration(s) have been created and applied from new schema changes:
-
-migrations/
-  └─ 20230928182242_init/
-    └─ migration.sql
-
-Your database is now in sync with your schema.
-
-✔ Generated Prisma Client (v6.11.1) to ./generated/prisma in 41ms
+✔ Generated Prisma Client (v6.17.1, engine=none) to ./generated/prisma in 28ms
 ```
 
 ---
@@ -92,10 +86,11 @@ $ bunx prisma generate
 
 ---
 
-We can import the generated client from `@prisma/client`.
+Now we need to instantiate the PrismaClient using the PostgreSQL adapter. We can import the generated client and the adapter.
 
 ```ts#src/index.ts
-import {PrismaClient} from "@prisma/client";
+import { PrismaClient } from "../generated/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 ```
 
 ---
@@ -103,9 +98,11 @@ import {PrismaClient} from "@prisma/client";
 Let's write a simple script to create a new user, then count the number of users in the database.
 
 ```ts#index.ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../generated/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
-const prisma = new PrismaClient();
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 // create a new user
 await prisma.user.create({

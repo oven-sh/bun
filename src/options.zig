@@ -837,7 +837,9 @@ pub const Loader = enum(u8) {
         .{ "toml", .toml },
         .{ "yaml", .yaml },
         .{ "csv", .csv },
+        .{ "csv_no_header", .csv_no_header },
         .{ "tsv", .tsv },
+        .{ "tsv_no_header", .tsv_no_header },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -983,6 +985,10 @@ pub const Loader = enum(u8) {
             return .jsonc;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
             return .json;
+        } else if (strings.hasPrefixComptime(mime_type.value, "text/csv")) {
+            return .csv;
+        } else if (strings.hasPrefixComptime(mime_type.value, "text/tab-separated-values")) {
+            return .tsv;
         } else if (mime_type.category == .text) {
             return .text;
         } else {

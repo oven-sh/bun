@@ -797,13 +797,13 @@ declare module "bun" {
     } & {};
 
     /**
-     * Parse a CSV string into a JavaScript array.
+     * Parse a CSV string and return a CSVParserResult.
      *
      * @category Utilities
      *
      * @param input The CSV string to parse
      * @param options Parsing options
-     * @returns If has_header is true (default), returns Record<string, string>[]; otherwise, string[][]
+     * @returns If header is true (default), data is Record<string, string>[]; otherwise, data is string[][]
      */
     export function parse<T = undefined, const Opts extends CSVParserOptions = CSVParserOptions>(
       data: string,

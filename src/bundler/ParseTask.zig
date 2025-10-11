@@ -410,7 +410,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, .{ .header = true, .delimiter = "\"" });
+            const root = try CSV.parse(source, &temp_log, allocator, .{ .header = true, .delimiter = "\t" });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .tsv_no_header => {
@@ -421,7 +421,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try CSV.parse(source, &temp_log, allocator, .{ .header = false, .delimiter = "\"" });
+            const root = try CSV.parse(source, &temp_log, allocator, .{ .header = false, .delimiter = "\t" });
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {

@@ -251,6 +251,10 @@ const BunLoaderType BunLoaderTypeTOML = 9;
 const BunLoaderType BunLoaderTypeWASM = 10;
 const BunLoaderType BunLoaderTypeNAPI = 11;
 const BunLoaderType BunLoaderTypeYAML = 19;
+const BunLoaderType BunLoaderTypeCSV = 20;
+const BunLoaderType BunLoaderTypeCSVNoHeader = 21;
+const BunLoaderType BunLoaderTypeTSV = 22;
+const BunLoaderType BunLoaderTypeTSVNoHeader = 23;
 
 #pragma mark - Stream
 

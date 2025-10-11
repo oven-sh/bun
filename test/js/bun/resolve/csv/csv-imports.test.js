@@ -59,6 +59,16 @@ it("csv via dynamic import with type attribute", async () => {
   checkWithHeader(result);
 });
 
+it("csv via dynamic import with query parameter", async () => {
+  const { default: table, data, rows, columns, errors, comments } = await import("./test_files/base.csv?header=false");
+  checkWithHeader(table);
+  checkWithHeader(data);
+  expect(rows).toBe(3);
+  expect(columns).toBe(2);
+  expect(errors).toBeUndefined();
+  expect(comments).toBeUndefined();
+});
+
 it("csv empty via import statement", () => {
   expect(empty_csv).toEqual([]);
   expect(empty_csv_data).toEqual([]);
@@ -75,15 +85,26 @@ it("csv named imports", async () => {
   expect(comments).toBeUndefined();
 });
 
-// MARK: - CSV no header
-it("csv_no_header via dynamic import", async () => {
+it("csv_no_header via dynamic import with type attribute", async () => {
   const result = (await import("./test_files/base_no_header.csv", { with: { type: "csv_no_header" } })).default;
   checkWithoutHeader(result);
 });
 
-it("csv_no_header via dynamic import with type attribute", async () => {
-  const result = (await import("./test_files/base_no_header.csv", { with: { type: "csv_no_header" } })).default;
-  checkWithoutHeader(result);
+it("csv_no_header via dynamic import with query parameter", async () => {
+  const {
+    default: table,
+    data,
+    rows,
+    columns,
+    errors,
+    comments,
+  } = await import("./test_files/base_no_header.csv?header=false", { with: { type: "csv_no_header" } });
+  checkWithoutHeader(table);
+  checkWithoutHeader(data);
+  expect(rows).toBe(4);
+  expect(columns).toBe(2);
+  expect(errors).toBeUndefined();
+  expect(comments).toBeUndefined();
 });
 
 // MARK: - TSV
@@ -95,6 +116,16 @@ it("tsv via dynamic import", async () => {
 it("tsv via dynamic import with type attribute", async () => {
   const result = (await import("./test_files/base.tsv", { with: { type: "tsv" } })).default;
   checkWithHeader(result, "\t");
+});
+
+it("tsv via dynamic import with query parameter", async () => {
+  const { default: table, data, rows, columns, errors, comments } = await import("./test_files/base.tsv?header=false");
+  checkWithHeader(table, "\t");
+  checkWithHeader(data, "\t");
+  expect(rows).toBe(3);
+  expect(columns).toBe(2);
+  expect(errors).toBeUndefined();
+  expect(comments).toBeUndefined();
 });
 
 it("tsv empty via import statement", () => {
@@ -122,4 +153,21 @@ it("tsv_no_header via dynamic import", async () => {
 it("tsv_no_header via dynamic import with type attribute", async () => {
   const result = (await import("./test_files/base_no_header.tsv", { with: { type: "tsv_no_header" } })).default;
   checkWithoutHeader(result, "\t");
+});
+
+it("tsv_no_header via dynamic import with query parameter", async () => {
+  const {
+    default: table,
+    data,
+    rows,
+    columns,
+    errors,
+    comments,
+  } = await import("./test_files/base_no_header.tsv?header=false", { with: { type: "tsv_no_header" } });
+  checkWithoutHeader(table, "\t");
+  checkWithoutHeader(data, "\t");
+  expect(rows).toBe(4);
+  expect(columns).toBe(2);
+  expect(errors).toBeUndefined();
+  expect(comments).toBeUndefined();
 });

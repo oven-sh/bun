@@ -269,13 +269,21 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeTOML;
                 } else if (loaderString == "yaml"_s) {
                     loader = BunLoaderTypeYAML;
+                } else if (loaderString == "csv"_s) {
+                    loader = BunLoaderTypeCSV;
+                } else if (loaderString == "csv_no_header"_s) {
+                    loader = BunLoaderTypeCSVNoHeader;
+                } else if (loaderString == "tsv"_s) {
+                    loader = BunLoaderTypeTSV;
+                } else if (loaderString == "tsv_no_header"_s) {
+                    loader = BunLoaderTypeTSVNoHeader;
                 }
             }
         }
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", or \"json\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", \"json\", \"csv\", \"csv_no_header\", \"tsv\", or \"tsv_no_header\""_s));
         result.value.error = scope.exception();
         scope.clearException();
         return result;

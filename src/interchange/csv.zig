@@ -23,6 +23,7 @@ const OptionsError = error{
     EmptyQuote,
     EmptyCommentChar,
     InvalidPreview,
+    QuoteEqualsDelimiter,
 } || std.mem.Allocator.Error;
 
 const ParserOptions = struct {
@@ -72,6 +73,11 @@ fn normalizeOptions(opts: CSVParserOptions, source: *const logger.Source, log: *
         }
     }
 
+    if (std.mem.eql(u8, opts.quote, opts.delimiter)) {
+        try log.addError(source, locModuleScope, "CSV quote string cannot be the same as delimiter");
+        return error.QuoteEqualsDelimiter;
+    }
+
     return ParserOptions{
         .header = opts.header,
         .delimiter = opts.delimiter,
@@ -94,6 +100,7 @@ pub const CSV = struct {
     line_number: usize,
     options: ParserOptions,
     iterator: strings.CodepointIterator,
+    cursor: strings.CodepointIterator.Cursor,
 
     result: ParseResult,
 
@@ -107,6 +114,7 @@ pub const CSV = struct {
             .line_number = 1,
             .options = opts,
             .iterator = strings.CodepointIterator.init(source.contents),
+            .cursor = .{},
             .result = ParseResult{
                 .root = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
                 .diagnostics = ParseDiagnostics{
@@ -179,48 +187,45 @@ pub const CSV = struct {
         return parser.result;
     }
 
-    fn peekCodepoint(p: *CSV) ?u21 {
-        if (p.index >= p.contents.len) {
-            return null;
-        }
-        const slice = p.nextCodepointSlice();
-        const code_point = switch (slice.len) {
-            0 => null,
-            1 => @as(u21, slice[0]),
-            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), u21, strings.unicode_replacement),
-        };
-        return code_point;
+    fn resetCursor(p: *CSV, index: usize) void {
+        p.cursor = .{ .i = @intCast(index), .width = 0 };
+        p.index = index;
     }
 
-    fn nextCodepointSlice(p: *CSV) []const u8 {
-        if (p.index >= p.contents.len) {
-            return "";
+    fn advanceBytes(p: *CSV, count: usize) void {
+        const remaining = p.contents.len - p.index;
+        const advance = if (count > remaining) remaining else count;
+        const new_index = p.index + advance;
+        p.resetCursor(new_index);
+    }
+
+    inline fn cursorToCodePoint(cursor: strings.CodepointIterator.Cursor) u21 {
+        const value: strings.CodePoint = cursor.c;
+        return if (value < 0)
+            strings.unicode_replacement
+        else
+            @as(u21, @intCast(value));
+    }
+
+    fn peekCodepoint(p: *CSV) ?u21 {
+        var lookahead = p.cursor;
+        if (!p.iterator.next(&lookahead)) {
+            return null;
         }
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[p.index]);
-        return if (!(cp_len + p.index > p.contents.len)) p.contents[p.index .. cp_len + p.index] else "";
+        return cursorToCodePoint(lookahead);
     }
 
     fn nextCodepoint(p: *CSV) ?u21 {
-        if (p.index >= p.contents.len) {
+        if (!p.iterator.next(&p.cursor)) {
             return null;
         }
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[p.index]);
-        const slice = if (!(cp_len + p.index > p.contents.len)) p.contents[p.index .. cp_len + p.index] else "";
 
-        const code_point = switch (slice.len) {
-            0 => null,
-            1 => @as(u21, slice[0]),
-            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), u21, strings.unicode_replacement),
-        };
+        const start = @as(usize, @intCast(p.cursor.i));
+        const width = @as(usize, @intCast(p.cursor.width));
+        const new_index = start + width;
+        p.index = if (new_index > p.contents.len) p.contents.len else new_index;
 
-        p.index += if (code_point != strings.unicode_replacement and code_point != null)
-            cp_len
-        else if (slice.len > 0)
-            1
-        else
-            0;
-
-        return code_point;
+        return cursorToCodePoint(p.cursor);
     }
 
     fn consumeCodepoint(p: *CSV, expected: u21) bool {
@@ -238,11 +243,19 @@ pub const CSV = struct {
 
         // Optimize for single character quotes
         if (quote.len == 1) {
-            if (p.index < p.contents.len and p.contents[p.index] == quote[0]) {
-                p.index += 1;
-                return true;
+            var lookahead = p.cursor;
+            if (!p.iterator.next(&lookahead)) {
+                return false;
             }
-            return false;
+            if (cursorToCodePoint(lookahead) != quote[0]) {
+                return false;
+            }
+            p.cursor = lookahead;
+            const start = @as(usize, @intCast(lookahead.i));
+            const width = @as(usize, @intCast(lookahead.width));
+            const new_index = start + width;
+            p.index = if (new_index > p.contents.len) p.contents.len else new_index;
+            return true;
         }
 
         // If we don't have enough characters left to match the quote, it can't match
@@ -252,7 +265,7 @@ pub const CSV = struct {
 
         // Check if the next characters match the quote
         if (std.mem.eql(u8, p.contents[p.index .. p.index + quote.len], quote)) {
-            p.index += quote.len;
+            p.advanceBytes(quote.len);
             return true;
         }
 
@@ -264,7 +277,11 @@ pub const CSV = struct {
 
         // Optimize for single character quotes
         if (quote.len == 1) {
-            return p.index < p.contents.len and p.contents[p.index] == quote[0];
+            var lookahead = p.cursor;
+            if (!p.iterator.next(&lookahead)) {
+                return false;
+            }
+            return cursorToCodePoint(lookahead) == quote[0];
         }
 
         // If we don't have enough characters left to match the quote, it can't match
@@ -281,11 +298,19 @@ pub const CSV = struct {
 
         // Optimize for single character delimiters
         if (delimiter.len == 1) {
-            if (p.index < p.contents.len and p.contents[p.index] == delimiter[0]) {
-                p.index += 1;
-                return true;
+            var lookahead = p.cursor;
+            if (!p.iterator.next(&lookahead)) {
+                return false;
             }
-            return false;
+            if (cursorToCodePoint(lookahead) != delimiter[0]) {
+                return false;
+            }
+            p.cursor = lookahead;
+            const start = @as(usize, @intCast(lookahead.i));
+            const width = @as(usize, @intCast(lookahead.width));
+            const new_index = start + width;
+            p.index = if (new_index > p.contents.len) p.contents.len else new_index;
+            return true;
         }
 
         // If we don't have enough characters left to match the delimiter, it can't match
@@ -295,7 +320,7 @@ pub const CSV = struct {
 
         // Check if the next characters match the delimiter
         if (std.mem.eql(u8, p.contents[p.index .. p.index + delimiter.len], delimiter)) {
-            p.index += delimiter.len;
+            p.advanceBytes(delimiter.len);
             return true;
         }
 
@@ -307,7 +332,11 @@ pub const CSV = struct {
 
         // Optimize for single character delimiters
         if (delimiter.len == 1) {
-            return p.index < p.contents.len and p.contents[p.index] == delimiter[0];
+            var lookahead = p.cursor;
+            if (!p.iterator.next(&lookahead)) {
+                return false;
+            }
+            return cursorToCodePoint(lookahead) == delimiter[0];
         }
 
         // If we don't have enough characters left to match the delimiter, it can't match
@@ -382,218 +411,107 @@ pub const CSV = struct {
 
         const quote = p.options.quote;
 
-        // Check if field is quoted
         const is_quoted = p.consumeQuote();
 
         if (is_quoted) {
-            // Parse quoted field
             while (true) {
-                // Check for quote character sequence
                 if (p.checkQuote()) {
-                    // Consume the quote first
                     _ = p.consumeQuote();
 
-                    // Check if it's an escaped quote (two quote sequences in a row)
                     if (p.checkQuote()) {
-                        _ = p.consumeQuote(); // Consume the second quote
+                        _ = p.consumeQuote();
                         try field.appendSlice(quote);
                     } else {
-                        // End of quoted field
                         break;
                     }
                 } else {
-                    // Get the next character
                     const c = p.nextCodepoint() orelse {
-                        // Unexpected end of file inside quoted field
                         try p.log.addErrorFmt(&p.source, logger.Loc{ .start = @intCast(start_index) }, p.allocator, "Unexpected end of file inside quoted field", .{});
                         return error.UnexpectedEndOfFile;
                     };
 
-                    // In quoted fields, we can have linebreaks according to the grammar
-                    // Encode the Unicode codepoint to UTF-8 and append it
                     var buf: [4]u8 = undefined;
                     const len = strings.encodeWTF8RuneT(&buf, u21, c);
                     try field.appendSlice(buf[0..len]);
                 }
             }
-        } else {
-            // Non-quoted field - try to optimize with direct slicing when possible
+        } else if (!p.options.trim_whitespace) {
             const field_start_index = p.index;
 
-            // If no trimming needed, we can try to use direct slicing
-            if (!p.options.trim_whitespace) {
-                // Find the end of the field using slice operations for better performance
-                var field_end_index = p.index;
-                const delimiter = p.options.delimiter;
-
-                // Use optimized search for single-character delimiters
-                if (delimiter.len == 1) {
-                    const delimiter_char = delimiter[0];
-
-                    while (field_end_index < p.contents.len) {
-                        const c = p.contents[field_end_index];
-
-                        // Check for delimiter
-                        if (c == delimiter_char) {
-                            break;
-                        }
-
-                        // Check for line breaks - need to check codepoints for Unicode line breaks
-                        // Save current position and check if we're at a line break
-                        const saved_index = p.index;
-                        p.index = field_end_index;
-                        const at_line_break = p.isEndOfLine();
-                        p.index = saved_index;
-
-                        if (at_line_break) {
-                            break;
-                        }
-
-                        // Check for comment character if enabled
-                        if (p.options.comments and p.options.comment_char.len == 1 and c == p.options.comment_char[0]) {
-                            break;
-                        }
-
-                        // Move to next codepoint (not just next byte) to properly handle UTF-8
-                        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[field_end_index]);
-                        field_end_index += cp_len;
-                    }
-
-                    // Update parser position
-                    p.index = field_end_index;
-
-                    // Consume any whitespace between the end of the field and the delimiter
-                    while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
-                        _ = p.nextCodepoint();
-                    }
-
-                    // Return direct slice - no allocation needed!
-                    return .{
-                        .value = p.contents[field_start_index..field_end_index],
-                        .was_quoted = false,
-                    };
-                } else {
-                    // Multi-character delimiter - use indexOf for efficiency
-                    const search_start = p.index;
-                    while (search_start < p.contents.len) {
-                        // Look for delimiter
-                        if (std.mem.indexOf(u8, p.contents[search_start..], delimiter)) |delimiter_pos| {
-                            field_end_index = search_start + delimiter_pos;
-                        } else {
-                            field_end_index = p.contents.len;
-                        }
-
-                        // Look for line breaks before the delimiter
-                        var line_break_pos = search_start;
-                        while (line_break_pos < field_end_index) {
-                            // Check if we're at a line break using proper codepoint detection
-                            const saved_index = p.index;
-                            p.index = line_break_pos;
-                            const at_line_break = p.isEndOfLine();
-                            p.index = saved_index;
-
-                            if (at_line_break) {
-                                field_end_index = line_break_pos;
-                                break;
-                            }
-
-                            // Move to next codepoint (not just next byte) to properly handle UTF-8
-                            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[line_break_pos]);
-                            line_break_pos += cp_len;
-                        }
-
-                        // Check for comment character if enabled
-                        if (p.options.comments) {
-                            if (std.mem.indexOf(u8, p.contents[search_start..field_end_index], p.options.comment_char)) |comment_pos| {
-                                field_end_index = search_start + comment_pos;
-                            }
-                        }
-
-                        break;
-                    }
-
-                    // Update parser position
-                    p.index = field_end_index;
-
-                    // Consume any whitespace between the end of the field and the delimiter
-                    while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
-                        _ = p.nextCodepoint();
-                    }
-
-                    // Return direct slice - no allocation needed!
-                    return .{
-                        .value = p.contents[field_start_index..field_end_index],
-                        .was_quoted = false,
-                    };
+            while (true) {
+                if (p.checkDelimiter() or p.isEndOfLine() or p.isCommentLine()) {
+                    break;
                 }
-            } else {
-                // Trimming is enabled, so we need to process character by character
-                var has_content = false;
-                var last_non_whitespace_index = field.items.len;
 
-                // Parse non-quoted field
-                while (true) {
-                    const c = p.peekCodepoint() orelse break;
+                if (p.nextCodepoint() == null) {
+                    break;
+                }
+            }
 
-                    if (p.isEndOfLine()) {
-                        break;
-                    }
+            const field_end_index = p.index;
 
-                    // Check for delimiter
-                    if (p.checkDelimiter()) {
-                        break;
-                    }
+            while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
+                if (p.nextCodepoint() == null) break;
+            }
 
-                    // Check for comment character (end of field)
-                    if (p.options.comments and p.isCommentLine()) {
-                        break;
-                    }
+            return .{
+                .value = p.contents[field_start_index..field_end_index],
+                .was_quoted = false,
+            };
+        } else {
+            var has_content = false;
+            var last_non_whitespace_index = field.items.len;
 
-                    // Accept any character in non-escaped fields except separators and line endings
-                    _ = p.nextCodepoint();
+            while (true) {
+                const c = p.peekCodepoint() orelse break;
 
-                    // Determine if we should append the character or skip it for trimming
-                    const should_append = !p.options.trim_whitespace or !isUnicodeWhitespace(c) or has_content;
+                if (p.isEndOfLine()) {
+                    break;
+                }
 
-                    // If this is leading whitespace and we're trimming, skip it
-                    if (p.options.trim_whitespace and isUnicodeWhitespace(c) and !has_content) {
-                        continue;
-                    }
+                if (p.checkDelimiter()) {
+                    break;
+                }
 
-                    // Mark that we've seen non-whitespace content
+                if (p.options.comments and p.isCommentLine()) {
+                    break;
+                }
+
+                _ = p.nextCodepoint();
+
+                const should_append = !isUnicodeWhitespace(c) or has_content;
+
+                if (isUnicodeWhitespace(c) and !has_content) {
+                    continue;
+                }
+
+                if (!isUnicodeWhitespace(c)) {
+                    has_content = true;
+                    last_non_whitespace_index = field.items.len;
+                }
+
+                if (should_append) {
+                    var buf: [4]u8 = undefined;
+                    const len = strings.encodeWTF8RuneT(&buf, u21, c);
+                    try field.appendSlice(buf[0..len]);
+
                     if (!isUnicodeWhitespace(c)) {
-                        has_content = true;
                         last_non_whitespace_index = field.items.len;
                     }
-
-                    // Encode the Unicode codepoint to UTF-8 and append it
-                    if (should_append) {
-                        var buf: [4]u8 = undefined;
-                        const len = strings.encodeWTF8RuneT(&buf, u21, c);
-                        try field.appendSlice(buf[0..len]);
-
-                        // Update last non-whitespace position if this isn't whitespace
-                        if (!isUnicodeWhitespace(c)) {
-                            last_non_whitespace_index = field.items.len;
-                        }
-                    }
                 }
+            }
 
-                // Trim trailing whitespace if option is enabled
-                if (p.options.trim_whitespace and field.items.len > 0) {
-                    field.shrinkRetainingCapacity(last_non_whitespace_index);
-                }
+            if (field.items.len > 0) {
+                field.shrinkRetainingCapacity(last_non_whitespace_index);
             }
         }
 
-        // Consume any whitespace between the end of the field and the delimiter
         while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
-            _ = p.nextCodepoint();
+            if (p.nextCodepoint() == null) break;
         }
 
         const field_value = try field.toOwnedSlice();
 
-        // Apply trimming if enabled and field wasn't quoted
         const final_value = if (p.options.trim_whitespace and !is_quoted)
             strings.trim(field_value, " \t\n\r")
         else
@@ -606,12 +524,14 @@ pub const CSV = struct {
     }
     pub fn parseField(p: *CSV, row_index: usize) !Expr {
         const field_result = try p._parseField();
-        errdefer p.allocator.free(field_result.value); // _parseField allocates
-
         const loc = logger.Loc{ .start = @intCast(row_index) };
-
         if (p.options.dynamic_typing and !field_result.was_quoted) {
-            return try p.parseValueWithDynamicTyping(field_result.value, loc);
+            const expr = try p.parseValueWithDynamicTyping(field_result.value, loc);
+            if (expr.data != .e_string) {
+                // value not used as a string; release buffer allocated by _parseField
+                p.allocator.free(field_result.value);
+            }
+            return expr;
         } else {
             return p.e(E.String{ .data = field_result.value }, loc);
         }
@@ -619,7 +539,16 @@ pub const CSV = struct {
 
     fn parseHeaderField(p: *CSV) ![]const u8 {
         const field_result = try p._parseField();
-        return field_result.value;
+        defer {
+            // If _parseField allocated (quoted/trim path), free the temporary buffer after we dupe.
+            // For direct slices, this is a no-op because we only dup the slice.
+            // Heuristic: when quoted, _parseField always allocates; otherwise it may not.
+            if (field_result.was_quoted or p.options.trim_whitespace) {
+                p.allocator.free(field_result.value);
+            }
+        }
+        // Return an owned copy so cleanupHeaderFields can always free safely.
+        return try p.allocator.dupe(u8, field_result.value);
     }
 
     fn parseRecord(p: *CSV, row_index: usize) !std.ArrayList(Expr) {
@@ -922,7 +851,7 @@ pub const CSV = struct {
         errdefer comment.deinit();
 
         // Skip the comment character
-        p.index += comment_char.len;
+        p.advanceBytes(comment_char.len);
 
         // Read until end of line
         while (true) {
@@ -981,6 +910,80 @@ pub const CSV = struct {
         try p.result.diagnostics.errors.data.e_array.push(p.allocator, error_obj);
     }
 
+    /// Check if a string is a valid decimal literal (not hex/octal/binary)
+    fn isDecimalLiteral(str: []const u8) bool {
+        if (str.len == 0) return false;
+
+        var i: usize = 0;
+
+        // Skip optional sign
+        if (str[i] == '+' or str[i] == '-') {
+            i += 1;
+            if (i >= str.len) return false;
+        }
+
+        // Check for hex (0x/0X), octal (0o/0O), or binary (0b/0B) prefix
+        if (str[i] == '0' and i + 1 < str.len) {
+            const next_char = str[i + 1];
+            if (next_char == 'x' or next_char == 'X' or
+                next_char == 'o' or next_char == 'O' or
+                next_char == 'b' or next_char == 'B')
+            {
+                return false;
+            }
+        }
+
+        // Must have at least one digit
+        var has_digit = false;
+        var has_dot = false;
+        var has_exp = false;
+
+        while (i < str.len) {
+            const c = str[i];
+
+            if (c >= '0' and c <= '9') {
+                has_digit = true;
+                i += 1;
+            } else if (c == '.') {
+                // Can't have two dots or dot after exponent
+                if (has_dot or has_exp) return false;
+                has_dot = true;
+                i += 1;
+            } else if (c == 'e' or c == 'E') {
+                // Must have digit before exponent, can't have two exponents
+                if (!has_digit or has_exp) return false;
+                has_exp = true;
+                i += 1;
+
+                // Optional sign after exponent
+                if (i < str.len and (str[i] == '+' or str[i] == '-')) {
+                    i += 1;
+                }
+
+                // Must have at least one digit after exponent
+                if (i >= str.len or str[i] < '0' or str[i] > '9') {
+                    return false;
+                }
+
+                // Continue parsing digits after exponent
+                while (i < str.len and str[i] >= '0' and str[i] <= '9') {
+                    i += 1;
+                }
+
+                // No more characters allowed after exponent digits
+                break;
+            } else if (c == 'n') {
+                // BigInt suffix - not a decimal literal
+                return false;
+            } else {
+                // Invalid character
+                return false;
+            }
+        }
+
+        return has_digit;
+    }
+
     /// Parse a string value with dynamic typing enabled
     /// Returns an Expr with the appropriate type: boolean, number, bigint, or string
     fn parseValueWithDynamicTyping(p: *CSV, value: []const u8, loc: logger.Loc) !Expr {
@@ -1015,31 +1018,37 @@ pub const CSV = struct {
             return p.e(E.String{ .data = trimmed_value }, loc);
         }
 
-        // Try to parse as number
-        if (std.fmt.parseFloat(f64, trimmed_value)) |parsed_number| {
-            // Check if the parsed number is finite
-            if (!std.math.isFinite(parsed_number)) {
-                // Non-finite numbers (NaN, Infinity, -Infinity) should be strings
-                return p.e(E.String{ .data = trimmed_value }, loc);
-            }
+        // Only try to parse as number if it's a valid decimal literal
+        if (isDecimalLiteral(trimmed_value)) {
+            if (std.fmt.parseFloat(f64, trimmed_value)) |parsed_number| {
+                // Check if the parsed number is finite
+                if (!std.math.isFinite(parsed_number)) {
+                    // Non-finite numbers (NaN, Infinity, -Infinity) should be strings
+                    return p.e(E.String{ .data = trimmed_value }, loc);
+                }
 
-            // Check if the number is within safe integer range
-            if (@abs(parsed_number) <= @as(f64, @floatFromInt(JSC.MAX_SAFE_INTEGER)) and @trunc(parsed_number) == parsed_number) {
-                // It's a safe integer, use as number
-                return p.e(E.Number{ .value = parsed_number }, loc);
-            } else if (@trunc(parsed_number) == parsed_number) {
-                // We return BigInts as strings to align with other CSV JS parsers
-                // TODO: add an option to parse when BigInt.toJS is implemented
-                // return p.e(E.BigInt{ .value = trimmed_value }, loc);
+                // Check if the number is within safe integer range
+                if (@abs(parsed_number) <= @as(f64, @floatFromInt(JSC.MAX_SAFE_INTEGER)) and @trunc(parsed_number) == parsed_number) {
+                    // It's a safe integer, use as number
+                    return p.e(E.Number{ .value = parsed_number }, loc);
+                } else if (@trunc(parsed_number) == parsed_number) {
+                    // We return BigInts as strings to align with other CSV JS parsers
+                    // TODO: add an option to parse when BigInt.toJS is implemented
+                    // return p.e(E.BigInt{ .value = trimmed_value }, loc);
+                    return p.e(E.String{ .data = trimmed_value }, loc);
+                } else {
+                    // It's a floating point number
+                    return p.e(E.Number{ .value = parsed_number }, loc);
+                }
+            } else |_| {
+                // parseFloat failed despite being a decimal literal format
+                // This shouldn't happen, but keep as string to be safe
                 return p.e(E.String{ .data = trimmed_value }, loc);
-            } else {
-                // It's a floating point number
-                return p.e(E.Number{ .value = parsed_number }, loc);
             }
-        } else |_| {
-            // Not a valid number, keep as string
-            return p.e(E.String{ .data = trimmed_value }, loc);
         }
+
+        // Not a decimal literal, keep as string
+        return p.e(E.String{ .data = trimmed_value }, loc);
     }
 };
 

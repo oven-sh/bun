@@ -363,9 +363,25 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const source = all_sources[source_index];
                 const default_export_value = blk: {
                     // For CSV files, export the .data property as default instead of the entire object
-                    if (bun.strings.endsWithComptime(source.path.pretty, ".csv") or
-                        bun.strings.endsWithComptime(source.path.pretty, ".tsv"))
-                    {
+                    // First check the loader, then fall back to file extension detection
+                    const loader = this.parse_graph.input_files.items(.loader)[source_index];
+                    const is_csv_or_tsv = switch (loader) {
+                        .csv, .csv_no_header, .tsv, .tsv_no_header => true,
+                        else => blk2: {
+                            // Strip query strings and fragments before checking extension
+                            var path_without_query = source.path.pretty;
+                            if (bun.strings.indexOfChar(path_without_query, '?')) |i| {
+                                path_without_query = path_without_query[0..i];
+                            }
+                            if (bun.strings.indexOfChar(path_without_query, '#')) |i| {
+                                path_without_query = path_without_query[0..i];
+                            }
+                            break :blk2 bun.strings.endsWithComptime(path_without_query, ".csv") or
+                                bun.strings.endsWithComptime(path_without_query, ".tsv");
+                        },
+                    };
+
+                    if (is_csv_or_tsv) {
                         if (expr.data == .e_object) {
                             // Find the 'data' property in the CSV object
                             for (expr.data.e_object.properties.slice()) |property| {

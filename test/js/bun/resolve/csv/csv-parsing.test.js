@@ -109,17 +109,14 @@ value1,value2`,
       ]);
     });
 
-    it("should warn on duplicate headers", () => {
-      try {
-        const parsed = CSV.parse(
-          `a,b,b
+    it("should suffix duplicate headers instead of throwing", () => {
+      const parsed = CSV.parse(
+        `a,b,b
 1,2,3
 `,
-          { header: true },
-        );
-      } catch (e) {
-        expect(e.message).toMatch(/Duplicate header/gi);
-      }
+        { header: true },
+      );
+      expect(parsed.data).toEqual([{ a: "1", b: "2", b_1: "3" }]);
     });
 
     it("should handle file with only header", () => {
@@ -184,7 +181,7 @@ value4;value5;value6`,
       expect(parsed.data).toEqual([{ col1: "value1", col2: "value2" }]);
     });
 
-    it("should parse CSV with multibyte custom delimiter", () => {
+    it("should parse CSV with single code point delimiter", () => {
       const parsed = CSV.parse(
         `col1🦔col2
 value1🦔value2
@@ -198,14 +195,16 @@ value3🦔value4`,
       ]);
     });
 
-    it("should support multi-character delimiter", () => {
-      const parsed = CSV.parse(`col1<=>col2\nvalue1<=>value2`, { delimiter: "<=>" });
-      expect(parsed.data).toEqual([{ col1: "value1", col2: "value2" }]);
+    it("should throw on multiple code points delimiter", () => {
+      expect(() => CSV.parse(`col1🦔🦔col2\nvalue1🦔🦔value2`, { delimiter: "🦔🦔" })).toThrow(
+        /delimiter must be a single character/i,
+      );
     });
 
-    it("should handle quoted fields with multi-character delimiter", () => {
-      const parsed = CSV.parse(`col1<=>col2\n"value with<=>delimiter"<=>value2`, { delimiter: "<=>" });
-      expect(parsed.data).toEqual([{ col1: "value with<=>delimiter", col2: "value2" }]);
+    it("should throw on multi-character delimiter", () => {
+      expect(() => CSV.parse(`col1<=>col2\nvalue1<=>value2`, { delimiter: "<=>" })).toThrow(
+        /delimiter must be a single character/i,
+      );
     });
 
     it("should support ASCII record separator (0x1E) as delimiter", () => {
@@ -708,11 +707,9 @@ a,#foo`,
     });
 
     it("should ignore all rows if preview is 0", () => {
-      try {
-        const parsed = CSV.parse(`a,b,c\n1,2,3\n4,5,6\n7,8,9`, { preview: 0 });
-      } catch (error) {
-        expect(error.message).toMatch(/Preview value must be greater than 0/);
-      }
+      expect(() => CSV.parse(`a,b,c\n1,2,3\n4,5,6\n7,8,9`, { preview: 0 })).toThrow(
+        /Preview value must be a positive integer/i,
+      );
     });
 
     it("should count rows, not lines for preview with multiline fields", () => {
@@ -896,14 +893,14 @@ row4col1,row4col2,row4col3,row4col4`,
   });
 
   describe("Advanced Quote Edge Cases", () => {
-    it("should handle multi-character quote strings", () => {
-      const parsed = CSV.parse(`a,b\n|||value|||,normal`, { quote: "|||" });
-      expect(parsed.data[0]).toEqual({ a: "value", b: "normal" });
+    it("should throw on multi-character quote strings", () => {
+      expect(() => CSV.parse(`a,b\n|||value|||,normal`, { quote: "|||" })).toThrow(/quote must be a single character/i);
     });
 
-    it("should handle quote characters that contain delimiters", () => {
-      const parsed = CSV.parse(`a,b\n",value,",normal`, { quote: ",", delimiter: "," });
-      // This is a tricky edge case - how should this be handled?
+    it("should throw when quote and delimiter are the same", () => {
+      expect(() => {
+        CSV.parse(`a,b\n",value,",normal`, { quote: ",", delimiter: "," });
+      }).toThrow(/quote string cannot be the same as delimiter/);
     });
 
     it("should handle quotes at field boundaries", () => {
@@ -929,16 +926,28 @@ row4col1,row4col2,row4col3,row4col4`,
         expect(parsed.data[1].num).toEqual(-4.56e-7);
       });
 
-      it("should handle hexadecimal numbers", () => {
+      it("should handle hexadecimal numbers as strings", () => {
         const parsed = CSV.parse(`hex\n0xFF\n0x123ABC`, { dynamicTyping: true });
         // Should these be parsed as numbers or strings?
 
         expect(parsed).toEqual({
-          data: [{ hex: 255 }, { hex: 1194684 }],
+          data: [{ hex: "0xFF" }, { hex: "0x123ABC" }],
           rows: 2,
           columns: 1,
         });
       });
+
+      // TODO: if we decide to add hex parsing back, we can use this test
+      // it("should handle hexadecimal numbers", () => {
+      //   const parsed = CSV.parse(`hex\n0xFF\n0x123ABC`, { dynamicTyping: true });
+      //   // Should these be parsed as numbers or strings?
+
+      //   expect(parsed).toEqual({
+      //     data: [{ hex: 255 }, { hex: 1194684 }],
+      //     rows: 2,
+      //     columns: 1,
+      //   });
+      // });
 
       it("should handle numbers with leading zeros", () => {
         const parsed = CSV.parse(`val\n007\n000123`, { dynamicTyping: true });
@@ -1061,23 +1070,6 @@ a,b,c`);
         rows: 1,
         columns: 3,
       });
-    });
-  });
-
-  describe("Multi-Character Delimiters", () => {
-    it("should handle delimiter that is substring of another", () => {
-      const parsed = CSV.parse(`a<>b<><>c`, { delimiter: "<>", header: false });
-      expect(parsed.data[0]).toEqual(["a", "b", "", "c"]);
-    });
-
-    it("should handle overlapping potential delimiters", () => {
-      const parsed = CSV.parse(`a<<<>>>b`, { delimiter: "<<>>", header: false });
-      // How should this ambiguous case be resolved?
-    });
-
-    it("should handle delimiter that contains quote characters", () => {
-      const parsed = CSV.parse(`a,"b",c<">d`, { delimiter: `<">`, header: false });
-      // Complex interaction between quotes and delimiters
     });
   });
 

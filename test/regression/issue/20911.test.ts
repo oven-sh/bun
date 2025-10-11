@@ -156,9 +156,10 @@ setInterval(() => {}, 1000)
   ]);
 
   // The sync handler should display ErrorEvent (even though there's a crash after)
-  if (result.type === "errorEvent") {
-    expect(result.hasError).toBe(true);
+  if (result.type === "exited") {
+    throw new Error(`Expected ErrorEvent before exit (code ${result.code})`);
   }
+  expect(result.hasError).toBe(true);
 
   // Terminate the process
   proc.kill();

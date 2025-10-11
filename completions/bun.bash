@@ -276,7 +276,17 @@ _bun_completions() {
             done
 
             local pre_pre_word="${COMP_WORDS[COMP_CWORD - 2]}"
-            local global_options_with_arg="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader"
+            local global_options_with_arg=(
+							--bunfile
+							--server-bunfile
+							--config
+							--port
+							--cwd
+							--public-dir
+							--jsx-runtime
+							--platform
+							--loader
+						)
 
             for opt in "${global_options_with_arg[@]}"; do
                 [[ ${pre_pre_word} == "${opt}" ]] && return # b.

@@ -1946,7 +1946,7 @@ pub const BundleV2 = struct {
                         break :brk i;
                     }
                 }
-                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+                return bun.StandaloneModuleGraph.CompileResult.fail(.no_entry_point);
             };
 
             const output_file = &output_files.items[entry_point_index];
@@ -2139,7 +2139,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.err.slice()))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }

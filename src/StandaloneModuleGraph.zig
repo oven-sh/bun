@@ -525,19 +525,48 @@ pub const StandaloneModuleGraph = struct {
 
     pub const CompileResult = union(enum) {
         success: void,
-        error_message: []const u8,
 
-        pub fn fail(msg: []const u8) CompileResult {
-            return .{ .error_message = bun.handleOom(bun.default_allocator.dupe(u8, msg)) };
+        err: Error,
+
+        const Error = union(enum) {
+            message: []const u8,
+            reason: Reason,
+
+            pub const Reason = enum {
+                no_entry_point,
+                no_output_files,
+
+                pub fn message(this: Reason) []const u8 {
+                    return switch (this) {
+                        .no_entry_point => "No entry point found for compilation",
+                        .no_output_files => "No output files to bundle",
+                    };
+                }
+            };
+
+            pub fn slice(this: *const Error) []const u8 {
+                return switch (this.*) {
+                    .message => this.message,
+                    .reason => this.reason.message(),
+                };
+            }
+        };
+
+        pub fn fail(reason: Error.Reason) CompileResult {
+            return .{ .err = .{ .reason = reason } };
         }
 
         pub fn failFmt(comptime fmt: []const u8, args: anytype) CompileResult {
-            return .{ .error_message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args)) };
+            return .{ .err = .{ .message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args)) } };
         }
 
         pub fn deinit(this: *const @This()) void {
-            if (this.* == .error_message) {
-                bun.default_allocator.free(this.error_message);
+            switch (this.*) {
+                .success => {},
+                .err => switch (this.err) {
+                    .message => bun.default_allocator.free(this.err.message),
+                    .reason => {},
+                },
             }
         }
     };
@@ -957,7 +986,7 @@ pub const StandaloneModuleGraph = struct {
         const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
-        if (bytes.len == 0) return CompileResult.fail("no output files to bundle");
+        if (bytes.len == 0) return CompileResult.fail(.no_output_files);
         defer allocator.free(bytes);
 
         var free_self_exe = false;
@@ -970,10 +999,9 @@ pub const StandaloneModuleGraph = struct {
             }
         else blk: {
             var exe_path_buf: bun.PathBuffer = undefined;
-            var version_str_buf: [1024]u8 = undefined;
-            const version_str = std.fmt.bufPrintZ(&version_str_buf, "{}", .{target}) catch {
-                return CompileResult.fail("failed to format target version string");
-            };
+            const version_str = bun.handleOom(std.fmt.allocPrintZ(allocator, "{}", .{target}));
+            defer allocator.free(version_str);
+
             var needs_download: bool = true;
             const dest_z = target.exePath(&exe_path_buf, version_str, env, &needs_download);
 

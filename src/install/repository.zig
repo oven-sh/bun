@@ -16,13 +16,10 @@ const SloppyGlobalGitConfig = struct {
     }
 
     pub fn loadAndParse() void {
+        // TODO(markovejnovic): This could use os.queryHomeDir()...
         const home_dir_path = brk: {
-            if (comptime Environment.isWindows) {
-                if (bun.getenvZ("USERPROFILE")) |env|
-                    break :brk env;
-            } else {
-                if (bun.getenvZ("HOME")) |env|
-                    break :brk env;
+            if (bun.EnvVar.home.get()) |env| {
+                break :brk env;
             }
 
             // won't find anything

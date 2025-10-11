@@ -401,6 +401,12 @@ pub fn indexOfSigned(self: string, str: string) i32 {
     return @as(i32, @intCast(i));
 }
 
+/// Returns last index of `char` before a character `before`.
+pub fn lastIndexBeforeChar(in: []const u8, char: u8, before: u8) ?usize {
+    const before_pos = indexOfChar(in, before) orelse in.len;
+    return lastIndexOfChar(in[0..before_pos], char);
+}
+
 pub fn lastIndexOfChar(self: []const u8, char: u8) callconv(bun.callconv_inline) ?usize {
     if (comptime Environment.isLinux) {
         if (@inComptime()) {
@@ -452,6 +458,12 @@ pub fn indexOf(self: string, str: string) ?usize {
 pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
     if (T == u8) return indexOf(haystack, needle);
     return std.mem.indexOf(T, haystack, needle);
+}
+
+/// Bounds-checked access to a character in a string.
+pub fn charAtT(comptime T: type, haystack: []const T, idx: usize) ?T {
+    if (idx >= haystack.len) return null;
+    return haystack[idx];
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -885,6 +897,23 @@ pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: an
     return self.len >= alt.len and eqlComptimeCheckLenWithType(T, self[0..rhs.len], rhs, false);
 }
 
+pub fn hasSuffixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    const rhs = comptime switch (T) {
+        u8 => alt,
+        u16 => switch (bun.meta.Item(@TypeOf(alt))) {
+            u16 => alt,
+            else => w(alt),
+        },
+        else => @compileError("Unsupported type given to hasSuffixComptimeType"),
+    };
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(
+        T,
+        self[self.len - rhs.len ..],
+        rhs,
+        false,
+    );
+}
+
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
@@ -998,6 +1027,15 @@ pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []con
 
 pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
     return hasPrefixCaseInsensitiveT(u8, str, prefix);
+}
+
+pub fn endsWithCaseInsensitiveT(comptime T: type, str: []const T, suffix: []const u8) bool {
+    if (str.len < suffix.len) return false;
+    return eqlCaseInsensitiveT(T, str[str.len - suffix.len ..], suffix);
+}
+
+pub fn endsWithCaseInsensitive(str: []const u8, suffix: []const u8) bool {
+    return endsWithCaseInsensitiveT(u8, str, suffix);
 }
 
 pub fn eqlLongT(comptime T: type, a_str: []const T, b_str: []const T, comptime check_len: bool) bool {
@@ -1117,6 +1155,12 @@ pub fn index(self: string, str: string) i32 {
     } else {
         return -1;
     }
+}
+
+/// Returns a substring starting at `start` up to the end of the string.
+/// If `start` is greater than the string's length, returns an empty string.
+pub fn drop(self: anytype, start: usize) @TypeOf(self) {
+    return self[@min(start, self.len)..];
 }
 
 pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
@@ -1515,6 +1559,21 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
+/// Count leading consecutive occurrences of a character.
+/// Returns the count of consecutive characters from the start of the slice.
+/// ```zig
+/// countLeadingChar("///foo", '/') -> 3
+/// countLeadingChar("foo", '/') -> 0
+/// ```
+pub fn countLeadingChar(slice: []const u8, char: u8) usize {
+    var count: usize = 0;
+    for (slice) |c| {
+        if (c != char) break;
+        count += 1;
+    }
+    return count;
+}
+
 /// Trim leading pattern of 2 bytes
 ///
 /// e.g.
@@ -1536,6 +1595,14 @@ pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte
 pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: anytype) []const T {
     return if (hasPrefixComptimeType(T, buffer, prefix))
         buffer[prefix.len..]
+    else
+        buffer;
+}
+
+/// suffix is of type []const u8 or []const u16
+pub fn trimSuffixComptime(comptime T: type, buffer: []const T, comptime suffix: anytype) []const T {
+    return if (hasSuffixComptimeType(T, buffer, suffix))
+        buffer[0 .. buffer.len - suffix.len]
     else
         buffer;
 }
@@ -1746,10 +1813,22 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub fn trimSpaces(slice: anytype) @TypeOf(slice) {
+    return trim(slice, &whitespace_chars);
+}
+
 pub fn isAllWhitespace(slice: []const u8) bool {
     var begin: usize = 0;
     while (begin < slice.len and std.mem.indexOfScalar(u8, &whitespace_chars, slice[begin]) != null) : (begin += 1) {}
     return begin == slice.len;
+}
+
+// TODO(markovejnovic): Could be SIMD
+pub fn isAllLowercaseASCII(slice: []const u8) bool {
+    for (slice) |c| {
+        if (c >= 'A' and c <= 'Z') return false;
+    }
+    return true;
 }
 
 pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
@@ -2007,7 +2086,7 @@ pub fn concatWithLength(
     allocator: std.mem.Allocator,
     args: []const string,
     length: usize,
-) ![]u8 {
+) bun.OOM![]u8 {
     const out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
@@ -2021,7 +2100,7 @@ pub fn concatWithLength(
 pub fn concat(
     allocator: std.mem.Allocator,
     args: []const string,
-) ![]u8 {
+) bun.OOM![]u8 {
     var length: usize = 0;
     for (args) |arg| {
         length += arg.len;
@@ -2121,6 +2200,44 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         }
     };
 }
+
+/// Manages a slice of an owned buffer, useful for avoiding re-allocations when only a portion of
+/// an allocated buffer is needed.
+///
+/// Example: Parsing "123 Main St" where only "Main St" is needed but the entire
+/// string was allocated. SlicedBuffer owns the full buffer while exposing only
+/// the relevant slice.
+pub const SlicedBuffer = struct {
+    /// The full allocated buffer
+    buf: []const u8,
+    /// The slice of interest within buf
+    slice: []const u8,
+    /// Allocator used to free buf
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, buf: []const u8, slice: []const u8) SlicedBuffer {
+        bun.assert(@intFromPtr(slice.ptr) >= @intFromPtr(buf.ptr) and
+            @intFromPtr(slice.ptr) + slice.len <= @intFromPtr(buf.ptr) + buf.len);
+        return .{
+            .buf = buf,
+            .slice = slice,
+            .allocator = allocator,
+        };
+    }
+
+    /// Creates a SlicedBuffer where the slice is the entire buffer (no slicing).
+    pub fn initUnsliced(allocator: std.mem.Allocator, buf: []const u8) SlicedBuffer {
+        return .{
+            .buf = buf,
+            .slice = buf,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *const SlicedBuffer) void {
+        self.allocator.free(self.buf);
+    }
+};
 
 /// Generic. Works on []const u8, []const u16, etc
 pub fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) callconv(bun.callconv_inline) ?usize {

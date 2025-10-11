@@ -299,6 +299,17 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
             return null;
         }
+
+        /// Lookup the string key for a given value.
+        ///
+        /// Linear search.
+        pub fn getKey(value: V) ?[]const KeyType {
+            inline for (kvs) |kv| {
+                if (kv.value == value) return kv.key;
+            }
+
+            return null;
+        }
     };
 }
 

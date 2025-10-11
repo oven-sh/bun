@@ -240,7 +240,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.EnvVar.home.get()) |data_dir| {
         var paths = [_]string{".bunfig.toml"};
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
     }

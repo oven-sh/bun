@@ -963,6 +963,44 @@ pub fn Path(comptime opts: Options) type {
     };
 }
 
+/// Given a path, normalize it to use POSIX-style separators. Mutates the given string.
+///
+/// You may pass the `.only_on_windows` option to skip normalization on non-Windows platforms,
+/// saving a couple of cycles.
+pub fn normalizeSeparatorsMut(input_path: []u8, comptime options: []enum { only_on_windows }) void {
+    comptime {
+        for (options) |opt| {
+            if (opt == .only_on_windows and !bun.Environment.isWindows) {
+                return;
+            }
+        }
+    }
+
+    // TODO(markovejnovic): Could be SIMD
+    for (input_path) |*c| {
+        if (c.* == '\\') c.* = '/';
+    }
+}
+
+/// Heuristic which checks whether the given path looks like it starts with a windows drive letter.
+pub fn startsWithWindowsLetter(
+    input_path: []const u8,
+    comptime options: []enum { only_on_windows },
+) bool {
+    comptime {
+        for (options) |opt| {
+            if (opt == .only_on_windows and !bun.Environment.isWindows) {
+                return;
+            }
+        }
+    }
+
+    if (input_path.len < 2) return false;
+    const first = input_path[0];
+    const second = input_path[1];
+    return second != ':' and ('a' <= first and first <= 'z') or ('A' <= first and first <= 'Z');
+}
+
 const std = @import("std");
 
 const bun = @import("bun");

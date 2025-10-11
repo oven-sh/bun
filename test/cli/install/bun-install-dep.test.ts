@@ -1,5 +1,7 @@
-import { npa } from "bun:internal-for-testing";
+import { Npa } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+
+const npa = Npa.npa;
 
 const bitbucket = [
   "bitbucket:dylan-conway/public-install-test",

@@ -229,7 +229,17 @@ pub const Group = struct {
     pub const FlagsBitSet = bun.bit_set.IntegerBitSet(3);
 
     pub fn isExact(this: *const Group) bool {
-        return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
+        const range = this.head.head.range;
+        return range.left.op == .eql and
+            range.right.op == .unset and
+            this.head.head.next == null and
+            this.head.tail == null and
+            this.head.next == null and
+            this.tail == null;
+    }
+
+    pub fn isEmpty(this: *const Group) bool {
+        return !this.head.head.range.hasLeft() and !this.head.head.range.hasRight();
     }
 
     pub fn @"is *"(this: *const Group) bool {

@@ -441,7 +441,7 @@ _bun_completions() {
         # b. part of the allowed completion, or
         # c. an argument to the second-to-previous option, or
         # d. the script name
-        # FIXME: Is c. a valid case here?
+        # FIXME: Is d. a valid case here?
         [[ -z ${cur_word} ]] && {
             [[ ${pre_word} == 'bun' ]] && return # a.
 

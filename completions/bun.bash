@@ -414,7 +414,7 @@ _bun_completions() {
         return
         ;;
     pm)
-        _bun_scripts_completions \
+        _bun_long_short_completions \
             "${PM_OPTIONS_LONG[*]}" \
             "${PM_OPTIONS_SHORT[*]}" \
             "${cur_word}"
@@ -431,7 +431,7 @@ _bun_completions() {
         return
         ;;
     *)
-        _bun_scripts_completions \
+        _bun_long_short_completions \
             "${GLOBAL_OPTIONS_LONG[*]}" \
             "${GLOBAL_OPTIONS_SHORT[*]}" \
             "${cur_word}"

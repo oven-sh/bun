@@ -93,8 +93,11 @@ _long_short_completion() {
     fi
 }
 
-# loads the scripts block in package.json
-_read_scripts_in_package_json() {
+
+# appends the script names from package.json inside the current directory, if any, to the list of completions
+# @param `$1`: string - word imidiatelly before the cursor
+# @param `$2`: string - word before $1`
+_bun_scripts_completions() {
     local cur_word="${1}"
     local pre_word="${2}"
 
@@ -131,20 +134,44 @@ _read_scripts_in_package_json() {
     return 0
 }
 
-_subcommand_comp_reply() {
-    local sub_commands="${1}"
-    local cur_word="${2}"
-    local pre_word="${3}"
 
-    local regexp_subcommand="^[dbcriauh]"
+# appends subcommands to the list of completions
+# @param `$1`: string - word imidiatelly before the cursor
+# @param `$2`: string - word before $1`
+_bun_subcommand_completions() {
+    local cur_word="${1}"
+    local pre_word="${2}"
 
-    [[ ${pre_word} =~ ${regexp_subcommand} ]] && {
+    local subcommands=(
+			dev
+			create
+			run
+			install
+			add
+			remove
+			upgrade
+			completions
+			discord
+			help
+			init
+			pm
+			x
+			test
+			repl
+			update
+			outdated
+			link
+			unlink
+			build
+		)
+
+    [[ ${pre_word} == 'bun' ]] && {
         if [[ -z ${cur_word} ]]; then
-            # shellcheck disable=SC2207 # `sub_commands` is constant and has no whitespace characters in each subcommand
-            COMPREPLY+=($(compgen -W "${sub_commands}"))
+            # shellcheck disable=SC2207 # `sub_commands` is constant space dilimited list
+            COMPREPLY+=($(compgen -W "${subcommands[*]}"))
         else
             # shellcheck disable=SC2207 # idem.
-            COMPREPLY+=($(compgen -W "${sub_commands}" -- "${cur_word}"))
+            COMPREPLY+=($(compgen -W "${subcommands[*]}" -- "${cur_word}"))
         fi
     }
 }
@@ -259,8 +286,8 @@ _bun_completions() {
             "${GLOBAL_OPTIONS[SHORT_OPTIONS]}" \
             "${cur_word}"
         local pre_is_script=0
-        _read_scripts_in_package_json "${cur_word}" "${pre_word}" || pre_is_script=1
-        _subcommand_comp_reply "${SUBCOMMANDS}" "${cur_word}" "${pre_word}"
+        _bun_scripts_completions "${cur_word}" "${pre_word}" || pre_is_script=1
+        _bun_subcommand_completions "${cur_word}" "${pre_word}"
 
         # determine if completion should be continued when
         # the current word is an empty string and either:

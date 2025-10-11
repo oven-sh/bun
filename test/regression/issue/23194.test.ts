@@ -3,11 +3,12 @@
 // after the script execution context is destroyed
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 test("comlink worker communication doesn't segfault", async () => {
   using testDir = tempDir("comlink-test", {
     "worker.js": `
-import * as Comlink from 'comlink/dist/esm/comlink.js';
+import * as Comlink from './comlink.js';
 
 Comlink.expose({
   async start(start, main) {
@@ -24,7 +25,7 @@ Comlink.expose({
 });
 `,
     "main.js": `
-import * as Comlink from 'comlink/dist/esm/comlink.js';
+import * as Comlink from './comlink.js';
 
 let mainloop = true;
 const
@@ -46,24 +47,10 @@ const
   console.log("SUCCESS");
 })();
 `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        comlink: "^4.4.2",
-      },
-      type: "module",
-    }),
   });
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(testDir),
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  await installProc.exited;
-  expect(installProc.exitCode).toBe(0);
+  // Copy vendored comlink
+  await Bun.write(join(String(testDir), "comlink.js"), Bun.file(join(import.meta.dir, "23194", "comlink.js")));
 
   // Run the test
   await using proc = Bun.spawn({

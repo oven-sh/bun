@@ -36,21 +36,43 @@ setInterval(() => {}, 1000)
   });
 
   // Race: either the process exits (crashes) or we see the ErrorEvent output
+  // Read stderr incrementally to detect ErrorEvent without waiting for process exit
   const errorEventPromise = (async () => {
-    const stderr = await proc.stderr.text();
-    return stderr.includes("ErrorEvent");
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        if (buffer.includes("ErrorEvent")) {
+          return true;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return false;
   })();
 
   const result = await Promise.race([
     proc.exited.then(code => ({ type: "exited" as const, code })),
-    errorEventPromise.then(() => ({ type: "errorEvent" as const })),
-    Bun.sleep(2000).then(() => ({ type: "timeout" as const })),
+    errorEventPromise.then(hasError => ({
+      type: "errorEvent" as const,
+      hasError,
+    })),
   ]);
 
-  // If process exited before we saw ErrorEvent, it crashed
+  // If process exited early, check if it crashed
   if (result.type === "exited") {
     expect(result.code).not.toBe(134); // 134 = SIGABRT (abort/crash)
     expect(result.code).not.toBe(139); // 139 = SIGSEGV (segfault)
+  } else {
+    // We saw the ErrorEvent, process is still alive - good!
+    expect(result.hasError).toBe(true);
   }
 
   // Terminate the process if it's still running

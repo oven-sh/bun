@@ -14,14 +14,23 @@ const blob = new Blob(
 )
 const url = URL.createObjectURL(blob)
 const worker = new Worker(url)
-worker.onerror = (error) => console.error(error)
+worker.onerror = (error) => {
+  console.error(error)
+}
 worker.postMessage('ping')
 
-// Emit sentinel after error is handled to signal the test
-setTimeout(() => console.log("WORKER_ERROR_HANDLED"), 50)
-
-// keep alive
-setInterval(() => {}, 1000)
+// Emit sentinel after allowing time for the crash to occur
+// The bug (issue #20911) causes a crash during promise cleanup ~10-30ms after ErrorEvent
+// We use setInterval ticks as a condition: after 3 event loop turns (~30ms), the
+// sentinel indicates the critical crash window has passed without crashing
+let ticks = 0
+const interval = setInterval(() => {
+  ticks++
+  if (ticks >= 3) {
+    console.log("WORKER_ERROR_HANDLED")
+    clearInterval(interval)
+  }
+}, 10)
 `,
     ],
     env: bunEnv,

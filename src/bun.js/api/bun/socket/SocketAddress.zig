@@ -116,7 +116,7 @@ pub fn parse(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError
     };
     defer url_str.deref();
 
-    const url = jsc.URL.fromString(url_str) orelse return .js_undefined;
+    const url = jsc.URL.fromString(url_str) catch return .js_undefined;
     defer url.deinit();
     const host = url.host();
     const port_: u16 = blk: {

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
-_escape_bash_specials() {
+
+# escapes characters having special meaning in bash
+# @param `$1`: string - string/word to escape characters in
+# @param `$2`: enum<int> - 0 escape all specials except " (quote) and \ (backslash), 1 escape all
+_bun_escape_bash_specials() {
     local word="${1}"
     local escape_all="${2}"
 
@@ -66,12 +70,16 @@ _bun_is_exist_and_gnu() {
     [[ $version_string == *GNU* ]] && return 0 || return 1
 }
 
-_file_arguments() {
-    local extensions="${1}"
+
+# appends filenames to the the list of completions, considers only files inside current working directory
+# @param `$1`: string - extended-regex aka ERE, white list of file extensions
+# @param `$2`: string - word imidiatelly before the cursor
+_bun_files_completions() {
+    if _bun_is_exist_and_gnu find && _bun_is_exist_and_gnu sed; then
     local cur_word="${2}"
 
     local -a candidates
-    if _is_exist_and_gnu find && _is_exist_and_gnu sed; then
+    if _bun_is_exist_and_gnu find && _bun_is_exist_and_gnu sed; then
         readarray -t -d '' candidates < <(
             find . -regextype posix-extended \
                 -maxdepth 1 -xtype f -regex "${extensions}" \
@@ -95,11 +103,16 @@ _file_arguments() {
 
     for cnd in "${candidates[@]}"; do
         [[ -f ${cnd} && ${cnd} =~ ${extensions} ]] &&
-            COMPREPLY+=("$(_escape_bash_specials "${cnd##*/}" 1)")
+            COMPREPLY+=("$(_bun_escape_bash_specials "${cnd##*/}" 1)")
     done
 }
 
-_long_short_completion() {
+
+# appends list of long and short options to the list of completions
+# @param `$1`: string - space-separated list of long options
+# @param `$2`: string - space-separated list of short options
+# @param `$3`: string - word imidiatelly before the cursor
+_bun_long_short_completions() {
     local long_opts="${1}"
     local short_opts="${2}"
     local cur_word="${3}"
@@ -142,7 +155,7 @@ _bun_scripts_completions() {
 
         while [[ ${scripts} =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script
-            script="$(_escape_bash_specials "${BASH_REMATCH[1]}" 0)"
+            script="$(_bun_escape_bash_specials "${BASH_REMATCH[1]}" 0)"
 
             # when a script is passed as an option, do not show other scripts as part of the completion anymore
             [[ ${script} == "${pre_word}" ]] && return 1
@@ -200,6 +213,8 @@ _bun_subcommand_completions() {
     }
 }
 
+
+# bun completions entry point function
 _bun_completions() {
     GLOBAL_OPTIONS_LONG=(
 			--use
@@ -294,9 +309,9 @@ _bun_completions() {
 
     case "${pre_word}" in
     help | --help | -h | -v | --version) return ;;
-    -c | --config) _file_arguments '.+\.toml$' "${cur_word}" && return ;;
-    --bunfile) _file_arguments '.+\.bun$' "${cur_word}" && return ;;
-    --server-bunfile) _file_arguments '.+\.server\.bun$' "${cur_word}" && return ;;
+    -c | --config) _bun_files_completions '.+\.toml$' "${cur_word}" && return ;;
+    --bunfile) _bun_files_completions '.+\.bun$' "${cur_word}" && return ;;
+    --server-bunfile) _bun_files_completions '.+\.server\.bun$' "${cur_word}" && return ;;
     --backend)
         case "${fst_word}" in
         a | add | remove | rm | install | i)
@@ -469,5 +484,6 @@ _bun_completions() {
         ;;
     esac
 }
+
 
 complete -F _bun_completions bun

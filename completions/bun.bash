@@ -345,7 +345,7 @@ _bun_completions() {
                 css
             )
             readarray -t COMPREPLY <<< "$(
-                compgen -W "${loader_args[@]/#/${cur_word_wo_suffix}:}" -- "${cur_word}"
+                compgen -W "${loader_args[*]/#/${cur_word_wo_suffix}:}" -- "${cur_word}"
             )"
         }
         return

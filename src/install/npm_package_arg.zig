@@ -225,21 +225,59 @@ pub const NpaSpec = struct {
         return object;
     }
 
-    /// Allocates the raw field based on raw_arg, name, and spec.
-    /// This is the single source of truth for computing the raw field.
-    fn allocateRaw(
-        allocator: std.mem.Allocator,
-        raw_arg: ?[]const u8,
-        name: ?[]const u8,
-        spec: []const u8,
-    ) ![]u8 {
+    /// Calculate size needed for raw field
+    fn rawFieldLength(raw_arg: ?[]const u8, name: ?[]const u8, raw_spec: []const u8) usize {
         return if (raw_arg) |arg|
-            try allocator.dupe(u8, arg)
+            arg.len
         else if (name) |n|
-            try std.fmt.allocPrint(allocator, "{s}@{s}", .{ n, spec })
+            n.len + 1 + raw_spec.len
         else
-            try allocator.dupe(u8, spec);
+            raw_spec.len;
     }
+
+    const StringArena = struct {
+        buffer: []u8,
+        offset: usize,
+
+        fn init(buffer: []u8) StringArena {
+            return .{ .buffer = buffer, .offset = 0 };
+        }
+
+        fn copyString(self: *StringArena, str: []const u8) []const u8 {
+            @memcpy(self.buffer[self.offset..][0..str.len], str);
+            const slice = self.buffer[self.offset..][0..str.len];
+            self.offset += str.len;
+            return slice;
+        }
+
+        fn copyName(self: *StringArena, name: ?[]const u8) ?[]const u8 {
+            return if (name) |n| self.copyString(n) else null;
+        }
+
+        fn copyRawField(
+            self: *StringArena,
+            raw_arg: ?[]const u8,
+            name: ?[]const u8,
+            raw_spec: []const u8,
+        ) []const u8 {
+            const start = self.offset;
+            if (raw_arg) |arg| {
+                _ = self.copyString(arg);
+            } else if (name) |n| {
+                _ = self.copyString(n);
+                self.buffer[self.offset] = '@';
+                self.offset += 1;
+                _ = self.copyString(raw_spec);
+            } else {
+                _ = self.copyString(raw_spec);
+            }
+            return self.buffer[start..self.offset];
+        }
+
+        fn assertFull(self: StringArena) void {
+            bun.assert(self.offset == self.buffer.len);
+        }
+    };
 
     /// Given a URL-like spec, parses it into an NpaSpec.
     fn fromUrl(
@@ -259,49 +297,23 @@ pub const NpaSpec = struct {
             // Filter out port number patterns: :[0-9]+(/|$)
             // If it doesn't contain a port number, it's SCP-style
             if (!SpecStrUtils.containsPortNumber(scp_result.fragment)) {
-                // PASS 1: Compute strings temporarily
-                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                defer allocator.free(raw_temp);
+                // Calculate arena size
+                var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+                arena_size += raw_spec.len + scp_result.fragment.len;
+                if (name) |n| arena_size += n.len;
 
-                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-                defer if (name_temp) |n| allocator.free(n);
+                // Allocate arena
+                const buffer = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(buffer);
 
-                const fetch_spec_temp = try allocator.dupe(u8, scp_result.fragment);
-                defer allocator.free(fetch_spec_temp);
+                var arena = StringArena.init(buffer);
 
-                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-                defer allocator.free(raw_spec_temp);
+                const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+                const name_slice = arena.copyName(name);
+                const raw_spec_slice = arena.copyString(raw_spec);
+                const fetch_spec_slice = arena.copyString(scp_result.fragment);
 
-                // PASS 2: Calculate arena size
-                var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len;
-                if (name_temp) |n| arena_size += n.len;
-
-                // PASS 3: Allocate arena and copy
-                const arena = try allocator.alloc(u8, arena_size);
-                errdefer allocator.free(arena);
-
-                var offset: usize = 0;
-
-                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-                const raw_slice = arena[offset..][0..raw_temp.len];
-                offset += raw_temp.len;
-
-                const name_slice = if (name_temp) |n| blk: {
-                    @memcpy(arena[offset..][0..n.len], n);
-                    const slice = arena[offset..][0..n.len];
-                    offset += n.len;
-                    break :blk slice;
-                } else null;
-
-                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-                offset += raw_spec_temp.len;
-
-                @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
-                const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
-                offset += fetch_spec_temp.len;
-
-                bun.assert(offset == arena_size);
+                arena.assertFull();
 
                 // Parse the committish for special syntax like semver:, path:
                 var git_attrs = if (scp_result.committish) |c|
@@ -314,7 +326,7 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    ._arena_buffer = arena,
+                    ._arena_buffer = arena.buffer,
                     ._fetch_spec_slice = fetch_spec_slice,
                     .save_spec = raw_spec_slice, // Alias to raw_spec
                     .type = .{
@@ -368,47 +380,27 @@ pub const NpaSpec = struct {
 
         switch (protocol_type) {
             .http, .https => {
-                // PASS 1: Compute strings temporarily
-                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                defer allocator.free(raw_temp);
+                // Calculate arena size
+                var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+                arena_size += raw_spec.len;
+                if (name) |n| arena_size += n.len;
 
-                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-                defer if (name_temp) |n| allocator.free(n);
+                // Allocate arena
+                const buffer = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(buffer);
 
-                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-                defer allocator.free(raw_spec_temp);
+                var arena = StringArena.init(buffer);
 
-                // PASS 2: Calculate arena size
-                var arena_size: usize = raw_temp.len + raw_spec_temp.len;
-                if (name_temp) |n| arena_size += n.len;
+                const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+                const name_slice = arena.copyName(name);
+                const raw_spec_slice = arena.copyString(raw_spec);
 
-                // PASS 3: Allocate arena and copy
-                const arena = try allocator.alloc(u8, arena_size);
-                errdefer allocator.free(arena);
-
-                var offset: usize = 0;
-
-                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-                const raw_slice = arena[offset..][0..raw_temp.len];
-                offset += raw_temp.len;
-
-                const name_slice = if (name_temp) |n| blk: {
-                    @memcpy(arena[offset..][0..n.len], n);
-                    const slice = arena[offset..][0..n.len];
-                    offset += n.len;
-                    break :blk slice;
-                } else null;
-
-                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-                offset += raw_spec_temp.len;
-
-                bun.assert(offset == arena_size);
+                arena.assertFull();
 
                 spec.raw = raw_slice;
                 spec.name = name_slice;
                 spec.raw_spec = raw_spec_slice;
-                spec._arena_buffer = arena;
+                spec._arena_buffer = arena.buffer;
                 spec._fetch_spec_slice = null; // For remote type, fetchSpec() returns raw_spec
                 spec.save_spec = raw_spec_slice; // Alias to raw_spec
                 spec.type = .remote;
@@ -454,46 +446,23 @@ pub const NpaSpec = struct {
                 const has_git_plus = bun.strings.hasPrefixComptime(fetch_spec_temp, "git+");
                 const fetch_spec_stripped = if (has_git_plus) fetch_spec_temp[4..] else fetch_spec_temp;
 
-                const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-                defer allocator.free(raw_temp);
+                // Calculate arena size
+                var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+                arena_size += raw_spec.len + fetch_spec_stripped.len;
+                if (name) |n| arena_size += n.len;
 
-                const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-                defer if (name_temp) |n| allocator.free(n);
+                // Allocate arena
+                const buffer = try allocator.alloc(u8, arena_size);
+                errdefer allocator.free(buffer);
 
-                const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-                defer allocator.free(raw_spec_temp);
+                var arena = StringArena.init(buffer);
 
-                // PASS 2: Calculate arena size
-                var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_stripped.len;
-                if (name_temp) |n| arena_size += n.len;
+                const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+                const name_slice = arena.copyName(name);
+                const raw_spec_slice = arena.copyString(raw_spec);
+                const fetch_spec_slice = arena.copyString(fetch_spec_stripped);
 
-                // PASS 3: Allocate arena and copy
-                const arena = try allocator.alloc(u8, arena_size);
-                errdefer allocator.free(arena);
-
-                var offset: usize = 0;
-
-                @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-                const raw_slice = arena[offset..][0..raw_temp.len];
-                offset += raw_temp.len;
-
-                const name_slice = if (name_temp) |n| blk: {
-                    @memcpy(arena[offset..][0..n.len], n);
-                    const slice = arena[offset..][0..n.len];
-                    offset += n.len;
-                    break :blk slice;
-                } else null;
-
-                @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-                const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-                offset += raw_spec_temp.len;
-
-                // Copy stripped fetch_spec
-                @memcpy(arena[offset..][0..fetch_spec_stripped.len], fetch_spec_stripped);
-                const fetch_spec_slice = arena[offset..][0..fetch_spec_stripped.len];
-                offset += fetch_spec_stripped.len;
-
-                bun.assert(offset == arena_size);
+                arena.assertFull();
 
                 var git_attrs = try GitAttrs.fromUrl(allocator, parsed_url);
                 errdefer if (git_attrs) |*a| a.deinit();
@@ -501,7 +470,7 @@ pub const NpaSpec = struct {
                 spec.raw = raw_slice;
                 spec.name = name_slice;
                 spec.raw_spec = raw_spec_slice;
-                spec._arena_buffer = arena;
+                spec._arena_buffer = arena.buffer;
                 spec._fetch_spec_slice = fetch_spec_slice;
                 spec.save_spec = raw_spec_slice; // Alias to raw_spec
                 spec.type = .{
@@ -533,59 +502,29 @@ pub const NpaSpec = struct {
     ) !NpaSpec {
         const trimmed = bun.strings.trimSpaces(raw_spec);
 
-        // PASS 1: Compute all strings temporarily
-        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        defer allocator.free(raw_temp);
+        // Calculate arena size
+        var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+        arena_size += raw_spec.len + trimmed.len;
+        if (name) |n| arena_size += n.len;
 
-        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-        defer if (name_temp) |n| allocator.free(n);
+        // Allocate arena
+        const buffer = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(buffer);
 
-        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-        defer allocator.free(raw_spec_temp);
+        var arena = StringArena.init(buffer);
 
-        const fetch_spec_temp = try allocator.dupe(u8, trimmed);
-        defer allocator.free(fetch_spec_temp);
+        const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+        const name_slice = arena.copyName(name);
+        const raw_spec_slice = arena.copyString(raw_spec);
+        const fetch_spec_slice = arena.copyString(trimmed);
 
-        // PASS 2: Calculate arena size
-        var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len;
-        if (name_temp) |n| arena_size += n.len;
-
-        // PASS 3: Allocate arena and copy all strings
-        const arena = try allocator.alloc(u8, arena_size);
-        errdefer allocator.free(arena);
-
-        var offset: usize = 0;
-
-        // Copy raw
-        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-        const raw_slice = arena[offset..][0..raw_temp.len];
-        offset += raw_temp.len;
-
-        // Copy name (if present)
-        const name_slice = if (name_temp) |n| blk: {
-            @memcpy(arena[offset..][0..n.len], n);
-            const slice = arena[offset..][0..n.len];
-            offset += n.len;
-            break :blk slice;
-        } else null;
-
-        // Copy raw_spec
-        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-        offset += raw_spec_temp.len;
-
-        // Copy fetch_spec
-        @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
-        const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
-        offset += fetch_spec_temp.len;
-
-        bun.assert(offset == arena_size);
+        arena.assertFull();
 
         var res: NpaSpec = .{
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            ._arena_buffer = arena,
+            ._arena_buffer = arena.buffer,
             ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = null,
             .type = undefined,
@@ -648,51 +587,28 @@ pub const NpaSpec = struct {
         errdefer allocator.destroy(sub_spec_ptr);
         sub_spec_ptr.* = sub_spec;
 
-        // PASS 1: Compute all strings temporarily
-        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        defer allocator.free(raw_temp);
+        // Calculate arena size
+        var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+        arena_size += raw_spec.len;
+        if (name) |n| arena_size += n.len;
 
-        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-        defer if (name_temp) |n| allocator.free(n);
+        // Allocate arena
+        const buffer = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(buffer);
 
-        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-        defer allocator.free(raw_spec_temp);
+        var arena = StringArena.init(buffer);
 
-        // PASS 2: Calculate arena size
-        var arena_size: usize = raw_temp.len + raw_spec_temp.len;
-        if (name_temp) |n| arena_size += n.len;
+        const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+        const name_slice = arena.copyName(name);
+        const raw_spec_slice = arena.copyString(raw_spec);
 
-        // PASS 3: Allocate arena and copy all strings
-        const arena = try allocator.alloc(u8, arena_size);
-        errdefer allocator.free(arena);
-
-        var offset: usize = 0;
-
-        // Copy raw
-        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-        const raw_slice = arena[offset..][0..raw_temp.len];
-        offset += raw_temp.len;
-
-        // Copy name (if present)
-        const name_slice = if (name_temp) |n| blk: {
-            @memcpy(arena[offset..][0..n.len], n);
-            const slice = arena[offset..][0..n.len];
-            offset += n.len;
-            break :blk slice;
-        } else null;
-
-        // Copy raw_spec
-        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-        offset += raw_spec_temp.len;
-
-        bun.assert(offset == arena_size);
+        arena.assertFull();
 
         return .{
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            ._arena_buffer = arena,
+            ._arena_buffer = arena.buffer,
             ._fetch_spec_slice = null,
             .save_spec = null,
             .type = .{
@@ -758,50 +674,28 @@ pub const NpaSpec = struct {
         };
         defer if (fetch_spec_temp) |f| allocator.free(f);
 
-        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        defer allocator.free(raw_temp);
-
-        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-        defer if (name_temp) |n| allocator.free(n);
-
-        // PASS 2: Calculate arena size
-        var arena_size: usize = raw_temp.len + mut_spec_str.len + save_spec_temp.len;
-        if (name_temp) |n| arena_size += n.len;
+        // Calculate arena size
+        var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+        arena_size += mut_spec_str.len + save_spec_temp.len;
+        if (name) |n| arena_size += n.len;
         if (fetch_spec_temp) |f| arena_size += f.len;
 
-        // PASS 3: Allocate arena and copy
-        const arena = try allocator.alloc(u8, arena_size);
-        errdefer allocator.free(arena);
+        // Allocate arena
+        const buffer = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(buffer);
 
-        var offset: usize = 0;
+        var arena = StringArena.init(buffer);
 
-        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-        const raw_slice = arena[offset..][0..raw_temp.len];
-        offset += raw_temp.len;
+        const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+        const name_slice = arena.copyName(name);
+        const raw_spec_slice = arena.copyString(mut_spec_str);
+        const save_spec_slice = arena.copyString(save_spec_temp);
+        const fetch_spec_slice = if (fetch_spec_temp) |f|
+            arena.copyString(f)
+        else
+            null;
 
-        const name_slice = if (name_temp) |n| blk: {
-            @memcpy(arena[offset..][0..n.len], n);
-            const slice = arena[offset..][0..n.len];
-            offset += n.len;
-            break :blk slice;
-        } else null;
-
-        @memcpy(arena[offset..][0..mut_spec_str.len], mut_spec_str);
-        const raw_spec_slice = arena[offset..][0..mut_spec_str.len];
-        offset += mut_spec_str.len;
-
-        @memcpy(arena[offset..][0..save_spec_temp.len], save_spec_temp);
-        const save_spec_slice = arena[offset..][0..save_spec_temp.len];
-        offset += save_spec_temp.len;
-
-        const fetch_spec_slice = if (fetch_spec_temp) |f| blk: {
-            @memcpy(arena[offset..][0..f.len], f);
-            const slice = arena[offset..][0..f.len];
-            offset += f.len;
-            break :blk slice;
-        } else null;
-
-        bun.assert(offset == arena_size);
+        arena.assertFull();
 
         // Free mut_spec_str since we copied it into arena
         allocator.free(mut_spec_str);
@@ -810,7 +704,7 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            ._arena_buffer = arena,
+            ._arena_buffer = arena.buffer,
             ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = .{
@@ -944,56 +838,31 @@ pub const NpaSpec = struct {
             }
         }
 
-        const raw_temp = try allocateRaw(allocator, raw_arg, name, raw_spec);
-        defer allocator.free(raw_temp);
+        // Calculate arena size
+        var arena_size: usize = rawFieldLength(raw_arg, name, raw_spec);
+        arena_size += raw_spec.len + fetch_spec_temp.len + save_spec_temp.len;
+        if (name) |n| arena_size += n.len;
 
-        const name_temp = if (name) |n| try allocator.dupe(u8, n) else null;
-        defer if (name_temp) |n| allocator.free(n);
+        // Allocate arena
+        const buffer = try allocator.alloc(u8, arena_size);
+        errdefer allocator.free(buffer);
 
-        const raw_spec_temp = try allocator.dupe(u8, raw_spec);
-        defer allocator.free(raw_spec_temp);
+        var arena = StringArena.init(buffer);
 
-        // PASS 2: Calculate arena size
-        var arena_size: usize = raw_temp.len + raw_spec_temp.len + fetch_spec_temp.len + save_spec_temp.len;
-        if (name_temp) |n| arena_size += n.len;
+        const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
+        const name_slice = arena.copyName(name);
+        const raw_spec_slice = arena.copyString(raw_spec);
+        const fetch_spec_slice = arena.copyString(fetch_spec_temp);
+        const save_spec_slice = arena.copyString(save_spec_temp);
 
-        // PASS 3: Allocate arena and copy
-        const arena = try allocator.alloc(u8, arena_size);
-        errdefer allocator.free(arena);
-
-        var offset: usize = 0;
-
-        @memcpy(arena[offset..][0..raw_temp.len], raw_temp);
-        const raw_slice = arena[offset..][0..raw_temp.len];
-        offset += raw_temp.len;
-
-        const name_slice = if (name_temp) |n| blk: {
-            @memcpy(arena[offset..][0..n.len], n);
-            const slice = arena[offset..][0..n.len];
-            offset += n.len;
-            break :blk slice;
-        } else null;
-
-        @memcpy(arena[offset..][0..raw_spec_temp.len], raw_spec_temp);
-        const raw_spec_slice = arena[offset..][0..raw_spec_temp.len];
-        offset += raw_spec_temp.len;
-
-        @memcpy(arena[offset..][0..fetch_spec_temp.len], fetch_spec_temp);
-        const fetch_spec_slice = arena[offset..][0..fetch_spec_temp.len];
-        offset += fetch_spec_temp.len;
-
-        @memcpy(arena[offset..][0..save_spec_temp.len], save_spec_temp);
-        const save_spec_slice = arena[offset..][0..save_spec_temp.len];
-        offset += save_spec_temp.len;
-
-        bun.assert(offset == arena_size);
+        arena.assertFull();
 
         // Determine type: file or directory based on extension
         return .{
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            ._arena_buffer = arena,
+            ._arena_buffer = arena.buffer,
             ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = Self.Type.fromInodePath(raw_spec),

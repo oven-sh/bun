@@ -32,7 +32,7 @@ _bun_escape_bash_specials() {
     if ((has_patsub)); then
         echo "${word//${re_exp}/\\&}"
     else
-        # shellcheck disable=SC2001 # substitution insidde parameter expansion can be used if 'patsub_replacement' option is available
+        # shellcheck disable=SC2001 # substitution can only be used if 'patsub_replacement' option is available
         sed "s/${re_sed}/\\\\&/g" <<< "${word}"
     fi
 }
@@ -75,7 +75,7 @@ _bun_is_exist_and_gnu() {
 # @param `$1`: string - extended-regex aka ERE, white list of file extensions
 # @param `$2`: string - word imidiatelly before the cursor
 _bun_files_completions() {
-    if _bun_is_exist_and_gnu find && _bun_is_exist_and_gnu sed; then
+    local extensions="${1}" # FIXME: the list of candidates is filtred twice against `extensions`
     local cur_word="${2}"
 
     local -a candidates
@@ -118,7 +118,7 @@ _bun_long_short_completions() {
     local cur_word="${3}"
 
     if [[ -z ${cur_word} ]]; then
-        # shellcheck disable=SC2207 # the `wordlist` is constant and has no whitespace characters inside each word
+        # shellcheck disable=SC2207 # the `long_opts` and `short_opts` are constant space delimited lists
         COMPREPLY+=($(compgen -W "${long_opts} ${short_opts}"))
     elif [[ ${cur_word} == --* ]]; then
         # shellcheck disable=SC2207 # idem.
@@ -448,9 +448,9 @@ _bun_completions() {
 
         # determine if completion should be continued when
         # the current word is an empty string and either:
-        # a. the previous word is part of the allowed completion
-        # b. the previous word is an argument to second-to-previous option
-        # c. the previouos word is the script name
+        # a. the previous word is part of the allowed completion, or
+        # b. the previous word is an argument to second-to-previous option, or
+        # c. the previouos word is the script name is true
         # FIXME: Is c. a valid case here?
         [[ -z ${cur_word} ]] && {
             for comp in "${COMPREPLY[@]}"; do

@@ -72,14 +72,13 @@ _bun_is_exist_and_gnu() {
 # @param `$1`: string - extended-regex aka ERE, white list of file extensions
 # @param `$2`: string - word immediately before the cursor
 _bun_files_completions() {
-    local extensions="${1}" # FIXME: the list of candidates is filtred twice against `extensions`
+    local extensions="${1}"
     local cur_word="${2}"
 
     local -a candidates
     if _bun_is_exist_and_gnu find && _bun_is_exist_and_gnu sed; then
         readarray -t -d '' candidates < <(
-            find . -regextype posix-extended \
-                -maxdepth 1 -xtype f -regex "${extensions}" \
+            find . -maxdepth 1 -xtype f \
                 -name "$(_bun_escape_glob_specials "${cur_word}")*" \
                 -printf '%f\0' | sed -z "s/\n/\$'n'/g"
         )

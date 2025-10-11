@@ -833,7 +833,6 @@ const OnBeforeParsePlugin = struct {
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
                 if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
-                null,
             );
             var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {

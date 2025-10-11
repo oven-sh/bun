@@ -3175,17 +3175,21 @@ pub const BundleV2 = struct {
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                    import_record.path.namespace = "bun";
-                    import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
+                    // Validate and strip the bun: prefix for builtin modules.
+                    // Invalid modules are left unchanged for better error messages.
+                    if (jsc.ModuleLoader.HardcodedModule.map.has(import_record.path.text)) {
+                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                        import_record.path.namespace = "bun";
+                        import_record.source_index = Index.invalid;
+                        import_record.is_external_without_side_effects = true;
 
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
+                        if (strings.eqlComptime(import_record.path.text, "test")) {
+                            import_record.tag = .bun_test;
+                        }
+
+                        // don't link bun
+                        continue;
                     }
-
-                    // don't link bun
-                    continue;
                 }
             }
 

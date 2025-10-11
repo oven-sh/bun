@@ -1,9 +1,9 @@
-pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalObject, 1);
     object.put(
         globalObject,
         ZigString.static("parse"),
-        JSC.createCallback(
+        jsc.createCallback(
             globalObject,
             ZigString.static("parse"),
             2,
@@ -15,9 +15,9 @@ pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn parse(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    callFrame: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(globalObject.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
@@ -25,7 +25,7 @@ pub fn parse(
     var log = logger.Log.init(default_allocator);
     defer log.deinit();
 
-    const arguments = callframe.arguments();
+    const arguments = callFrame.arguments();
     if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
         return globalObject.throwInvalidArguments("Expected a string to parse", .{});
     }
@@ -49,9 +49,6 @@ pub fn parse(
             if (dv.isString()) {
                 const dv_ = try dv.toSlice(globalObject, allocator);
                 defer dv_.deinit();
-                if (!isSingleGrapheme(dv_.slice())) {
-                    return globalObject.throwInvalidArguments("delimiter must be a single character", .{});
-                }
                 parser_options.delimiter = allocator.dupe(u8, dv_.slice()) catch return bun.outOfMemory();
             }
         }
@@ -64,10 +61,6 @@ pub fn parse(
 
         if (try options.get(globalObject, "commentChar")) |comment_char_value| {
             if (comment_char_value.isString()) {
-                const js_string = comment_char_value.asString();
-                if (js_string.length() != 1) {
-                    return globalObject.throwInvalidArguments("commentChar must be a single character", .{});
-                }
                 const comment_char_value_ = try comment_char_value.toSlice(globalObject, allocator);
                 defer comment_char_value_.deinit();
                 parser_options.comment_char = allocator.dupe(u8, comment_char_value_.slice()) catch return bun.outOfMemory();
@@ -90,9 +83,6 @@ pub fn parse(
             if (quote_value.isString()) {
                 const quote_value_ = try quote_value.toSlice(globalObject, allocator);
                 defer quote_value_.deinit();
-                if (!isSingleGrapheme(quote_value_.slice())) {
-                    return globalObject.throwInvalidArguments("quote must be a single character", .{});
-                }
                 parser_options.quote = allocator.dupe(u8, quote_value_.slice()) catch return bun.outOfMemory();
             }
         }
@@ -150,20 +140,22 @@ pub fn parse(
     return js_val;
 }
 
-fn isSingleGrapheme(str: []const u8) bool {
-    const count = std.unicode.utf8CountCodepoints(str) catch 0;
-    return count == 1;
-}
-
-const CSVObject = @This();
-const JSC = bun.jsc;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const std = @import("std");
-const ZigString = JSC.ZigString;
-const logger = bun.logger;
+
 const bun = @import("bun");
-const js_printer = bun.js_printer;
+const Environment = bun.Environment;
+const JSError = bun.JSError;
+const String = bun.String;
 const default_allocator = bun.default_allocator;
+const logger = bun.logger;
 const CSV = bun.interchange.csv;
+
+const ast = bun.ast;
+const Expr = ast.Expr;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
+const ZigString = jsc.ZigString;
+const wtf = bun.jsc.wtf;

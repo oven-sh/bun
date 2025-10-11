@@ -713,7 +713,7 @@ declare module "bun" {
       delimiter?: string;
       /**
        * Instructs the parser to ignore lines representing comments in a CSV file.
-       * @default true
+       * @default false
        */
       comments?: boolean;
       /**
@@ -795,6 +795,33 @@ declare module "bun" {
     type Prettify<T> = {
       [K in keyof T]: T[K];
     } & {};
+
+    /**
+     * Parse a CSV string and return a CSVParserResult.
+     * Overload for options with header: false (returns string[][]).
+     *
+     * @category Utilities
+     *
+     * @param input The CSV string to parse
+     * @param options Parsing options with header: false
+     * @returns Array of string arrays (rows without headers)
+     */
+    export function parse(data: string, options: CSVParserOptions & { header: false }): CSVParserResult<string[][]>;
+
+    /**
+     * Parse a CSV string and return a CSVParserResult.
+     * Overload for options with dynamicTyping: true (returns values with dynamic types).
+     *
+     * @category Utilities
+     *
+     * @param input The CSV string to parse
+     * @param options Parsing options with dynamicTyping: true
+     * @returns Array of records with string keys and dynamically-typed values
+     */
+    export function parse(
+      data: string,
+      options: CSVParserOptions & { dynamicTyping: true },
+    ): CSVParserResult<Record<string, string | number | boolean>[]>;
 
     /**
      * Parse a CSV string and return a CSVParserResult.

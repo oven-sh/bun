@@ -195,16 +195,32 @@ value3🦔value4`,
       ]);
     });
 
-    it("should throw on multiple code points delimiter", () => {
-      expect(() => CSV.parse(`col1🦔🦔col2\nvalue1🦔🦔value2`, { delimiter: "🦔🦔" })).toThrow(
-        /delimiter must be a single character/i,
+    it("should parse CSV with multi-character delimiter", () => {
+      const parsed = CSV.parse(
+        `col1<=>col2
+value1<=>value2
+value3<=>value4`,
+        { delimiter: "<=>" },
       );
+
+      expect(parsed.data).toEqual([
+        { col1: "value1", col2: "value2" },
+        { col1: "value3", col2: "value4" },
+      ]);
     });
 
-    it("should throw on multi-character delimiter", () => {
-      expect(() => CSV.parse(`col1<=>col2\nvalue1<=>value2`, { delimiter: "<=>" })).toThrow(
-        /delimiter must be a single character/i,
+    it("should parse CSV with multiple emoji delimiter", () => {
+      const parsed = CSV.parse(
+        `col1🦔🦔col2
+value1🦔🦔value2
+value3🦔🦔value4`,
+        { delimiter: "🦔🦔" },
       );
+
+      expect(parsed.data).toEqual([
+        { col1: "value1", col2: "value2" },
+        { col1: "value3", col2: "value4" },
+      ]);
     });
 
     it("should support ASCII record separator (0x1E) as delimiter", () => {
@@ -631,6 +647,48 @@ a,b
       ]);
     });
 
+    it("should handle multi-character comment chars", () => {
+      const parsed = CSV.parse(
+        `col1,col2
+// comment line 1
+a,b
+// comment line 2
+1,2`,
+        { comments: true, commentChar: "//" },
+      );
+
+      expect(parsed.data).toEqual([
+        { col1: "a", col2: "b" },
+        { col1: "1", col2: "2" },
+      ]);
+
+      expect(parsed.comments).toEqual([
+        { line: 2, text: "comment line 1" },
+        { line: 4, text: "comment line 2" },
+      ]);
+    });
+
+    it("should handle emoji comment chars", () => {
+      const parsed = CSV.parse(
+        `col1,col2
+💬 this is a comment
+a,b
+💬 another comment
+1,2`,
+        { comments: true, commentChar: "💬" },
+      );
+
+      expect(parsed.data).toEqual([
+        { col1: "a", col2: "b" },
+        { col1: "1", col2: "2" },
+      ]);
+
+      expect(parsed.comments).toEqual([
+        { line: 2, text: "this is a comment" },
+        { line: 4, text: "another comment" },
+      ]);
+    });
+
     it("treats comments as values when comments option is disabled", () => {
       const parsed = CSV.parse(
         `col1,col2
@@ -893,8 +951,23 @@ row4col1,row4col2,row4col3,row4col4`,
   });
 
   describe("Advanced Quote Edge Cases", () => {
-    it("should throw on multi-character quote strings", () => {
-      expect(() => CSV.parse(`a,b\n|||value|||,normal`, { quote: "|||" })).toThrow(/quote must be a single character/i);
+    it("should handle multi-character quote strings", () => {
+      const parsed = CSV.parse(
+        `col1,col2
+|||value, with comma|||,normal`,
+        { quote: "|||" },
+      );
+
+      expect(parsed.data).toEqual([{ col1: "value, with comma", col2: "normal" }]);
+    });
+
+    it("should handle escaped multi-character quotes", () => {
+      const quote = "|||";
+      const parsed = CSV.parse(`col1,col2\n${quote}value ${quote}${quote}inside${quote}${quote}${quote},normal`, {
+        quote,
+      });
+
+      expect(parsed.data).toEqual([{ col1: "value |||inside|||", col2: "normal" }]);
     });
 
     it("should throw when quote and delimiter are the same", () => {
@@ -1052,9 +1125,12 @@ a,b,c`);
     });
 
     it("should handle duplicate headers with numeric suffixes", () => {
-      // Some parsers append _1, _2, etc. to duplicate headers
       const parsed = CSV.parse(`name,name,name\nJohn,Jane,Bob`);
-      // How should your parser handle this?
+      expect(parsed).toEqual({
+        data: [{ name: "John", name_1: "Jane", name_2: "Bob" }],
+        rows: 1,
+        columns: 3,
+      });
     });
 
     it("should handle empty string headers", () => {

@@ -20,13 +20,13 @@ typedef enum {
   BUN_LOADER_TEXT = 12,
   BUN_LOADER_HTML = 17,
   BUN_LOADER_YAML = 18,
-  BUN_LOADER_CSV = 20,
-  BUN_LOADER_CSV_NO_HEADER = 21,
-  BUN_LOADER_TSV = 22,
-  BUN_LOADER_TSV_NO_HEADER = 23,
+  BUN_LOADER_CSV = 19,
+  BUN_LOADER_CSV_NO_HEADER = 20,
+  BUN_LOADER_TSV = 21,
+  BUN_LOADER_TSV_NO_HEADER = 22,
 } BunLoader;
 
-const BunLoader BUN_LOADER_MAX = BUN_LOADER_YAML;
+const BunLoader BUN_LOADER_MAX = BUN_LOADER_TSV_NO_HEADER;
 
 typedef struct BunLogOptions {
   size_t __struct_size;

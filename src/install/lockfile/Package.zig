@@ -1771,8 +1771,10 @@ pub fn Package(comptime SemverIntType: type) type {
                     defer seen_workspace_names.deinit(allocator);
                     for (workspace_names.values(), workspace_names.keys()) |entry, path| {
 
-                        // workspace names from their package jsons. duplicates not allowed
-                        const gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
+                        // workspace names from their package jsons
+                        // Use path as cache key since each workspace path must be unique
+                        // This allows multiple workspaces with the same name but different versions (like pnpm)
+                        const gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(path)));
                         if (gop.found_existing) {
                             // this path does alot of extra work to format the error message
                             // but this is ok because the install is going to fail anyways, so this

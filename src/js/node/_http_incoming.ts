@@ -148,6 +148,11 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
       if (!assignHeaders(this, req)) {
         this[fakeSocketSymbol] = req;
       }
+
+      // For fetch responses, set URL to empty string to match Node.js behavior
+      if (type === NodeHTTPIncomingRequestType.FetchResponse) {
+        this.url = "";
+      }
     } else {
       // Node defaults url and method to null.
       this.url = "";

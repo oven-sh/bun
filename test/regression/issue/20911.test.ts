@@ -37,7 +37,9 @@ setInterval(() => {}, 1000)
 
   // Race: either the process exits (crashes) or we see the ErrorEvent output
   // Read stderr incrementally to detect ErrorEvent without waiting for process exit
-  const errorEventPromise = (async () => {
+  const { promise: errorEventPromise, resolve: resolveError } = Promise.withResolvers<boolean>();
+
+  (async () => {
     const reader = proc.stderr.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -49,13 +51,14 @@ setInterval(() => {}, 1000)
 
         buffer += decoder.decode(value, { stream: true });
         if (buffer.includes("ErrorEvent")) {
-          return true;
+          resolveError(true);
+          return;
         }
       }
+      resolveError(false);
     } finally {
       reader.releaseLock();
     }
-    return false;
   })();
 
   const result = await Promise.race([
@@ -120,7 +123,9 @@ setInterval(() => {}, 1000)
   });
 
   // Read stderr incrementally to detect ErrorEvent
-  const errorEventPromise = (async () => {
+  const { promise: errorEventPromise, resolve: resolveError } = Promise.withResolvers<boolean>();
+
+  (async () => {
     const reader = proc.stderr.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -132,13 +137,14 @@ setInterval(() => {}, 1000)
 
         buffer += decoder.decode(value, { stream: true });
         if (buffer.includes("ErrorEvent")) {
-          return true;
+          resolveError(true);
+          return;
         }
       }
+      resolveError(false);
     } finally {
       reader.releaseLock();
     }
-    return false;
   })();
 
   const result = await Promise.race([

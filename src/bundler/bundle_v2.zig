@@ -2869,7 +2869,7 @@ pub const BundleV2 = struct {
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
             },
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+            .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
         };
 
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
@@ -2887,7 +2887,7 @@ pub const BundleV2 = struct {
                         .asts = try this.allocator().alloc(bun.css.BundlerStyleSheet, order.len),
                     },
                 },
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             };
         }
 
@@ -2900,7 +2900,7 @@ pub const BundleV2 = struct {
                     .is_entry_point = false,
                 },
                 .content = .html,
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             };
         }
 
@@ -4285,7 +4285,7 @@ pub const CompileResult = union(enum) {
     css: struct {
         result: bun.Maybe([]const u8, anyerror),
         source_index: Index.Int,
-        source_map: ?bun.sourcemap.Chunk = null,
+        source_map: ?bun.SourceMap.Chunk = null,
     },
     html: struct {
         source_index: Index.Int,
@@ -4316,7 +4316,7 @@ pub const CompileResult = union(enum) {
         };
     }
 
-    pub fn sourceMapChunk(this: *const CompileResult) ?sourcemap.Chunk {
+    pub fn sourceMapChunk(this: *const CompileResult) ?SourceMap.Chunk {
         return switch (this.*) {
             .javascript => |r| switch (r.result) {
                 .result => |r2| r2.source_map,
@@ -4335,8 +4335,8 @@ pub const CompileResult = union(enum) {
 };
 
 pub const CompileResultForSourceMap = struct {
-    source_map_chunk: sourcemap.Chunk,
-    generated_offset: sourcemap.LineColumnOffset,
+    source_map_chunk: SourceMap.Chunk,
+    generated_offset: SourceMap.LineColumnOffset,
     source_index: u32,
 };
 
@@ -4524,7 +4524,7 @@ pub const Part = js_ast.Part;
 pub const js_printer = @import("../js_printer.zig");
 pub const js_ast = bun.ast;
 pub const linker = @import("../linker.zig");
-pub const sourcemap = bun.sourcemap;
+pub const SourceMap = bun.SourceMap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = bun.ast.Ref;

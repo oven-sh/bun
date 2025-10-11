@@ -4669,7 +4669,7 @@ fn extractPathnameFromUrl(url: []const u8) []const u8 {
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;

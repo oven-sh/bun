@@ -546,7 +546,7 @@ pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: A
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const assert = bun.assert;
 const bake = bun.bake;

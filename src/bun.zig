@@ -1499,8 +1499,8 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
 }
 
 pub const renamer = @import("./renamer.zig");
-// TODO: Rename to SourceMap as this is a struct.
-pub const sourcemap = @import("./sourcemap/sourcemap.zig");
+
+pub const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {

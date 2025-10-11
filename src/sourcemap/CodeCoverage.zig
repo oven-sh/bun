@@ -726,7 +726,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const LineOffsetTable = bun.sourcemap.LineOffsetTable;
+const LineOffsetTable = bun.SourceMap.LineOffsetTable;
 
 const Output = bun.Output;
 const prettyFmt = Output.prettyFmt;

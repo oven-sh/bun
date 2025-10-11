@@ -62,7 +62,7 @@ setInterval(() => {}, 1000)
 
   // The test passes only if ErrorEvent is detected before the process exits
   if (result.type === "exited") {
-    throw new Error(`Expected ErrorEvent before exit (code ${result.code})`);
+    throw new Error(`${description}: Expected ErrorEvent before exit (code ${result.code})`);
   }
   expect(result.hasError).toBe(true);
 

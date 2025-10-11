@@ -11,31 +11,30 @@ const PropertyCategory = css.PropertyCategory;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
-pub const BorderTop = GenericBorder(LineStyle, 0);
+pub const BorderTop = GenericBorder(LineStyle);
 /// A value for the [border-right](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-right) shorthand property.
-pub const BorderRight = GenericBorder(LineStyle, 1);
+pub const BorderRight = GenericBorder(LineStyle);
 /// A value for the [border-bottom](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-bottom) shorthand property.
-pub const BorderBottom = GenericBorder(LineStyle, 2);
+pub const BorderBottom = GenericBorder(LineStyle);
 /// A value for the [border-left](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-left) shorthand property.
-pub const BorderLeft = GenericBorder(LineStyle, 3);
+pub const BorderLeft = GenericBorder(LineStyle);
 /// A value for the [border-block-start](https://drafts.csswg.org/css-logical/#propdef-border-block-start) shorthand property.
-pub const BorderBlockStart = GenericBorder(LineStyle, 4);
+pub const BorderBlockStart = GenericBorder(LineStyle);
 /// A value for the [border-block-end](https://drafts.csswg.org/css-logical/#propdef-border-block-end) shorthand property.
-pub const BorderBlockEnd = GenericBorder(LineStyle, 5);
+pub const BorderBlockEnd = GenericBorder(LineStyle);
 /// A value for the [border-inline-start](https://drafts.csswg.org/css-logical/#propdef-border-inline-start) shorthand property.
-pub const BorderInlineStart = GenericBorder(LineStyle, 6);
+pub const BorderInlineStart = GenericBorder(LineStyle);
 /// A value for the [border-inline-end](https://drafts.csswg.org/css-logical/#propdef-border-inline-end) shorthand property.
-pub const BorderInlineEnd = GenericBorder(LineStyle, 7);
+pub const BorderInlineEnd = GenericBorder(LineStyle);
 /// A value for the [border-block](https://drafts.csswg.org/css-logical/#propdef-border-block) shorthand property.
-pub const BorderBlock = GenericBorder(LineStyle, 8);
+pub const BorderBlock = GenericBorder(LineStyle);
 /// A value for the [border-inline](https://drafts.csswg.org/css-logical/#propdef-border-inline) shorthand property.
-pub const BorderInline = GenericBorder(LineStyle, 9);
+pub const BorderInline = GenericBorder(LineStyle);
 /// A value for the [border](https://www.w3.org/TR/css-backgrounds-3/#propdef-border) shorthand property.
-pub const Border = GenericBorder(LineStyle, 10);
+pub const Border = GenericBorder(LineStyle);
 
 /// A generic type that represents the `border` and `outline` shorthand properties.
-pub fn GenericBorder(comptime S: type, comptime P: u8) type {
-    _ = P; // autofix
+pub fn GenericBorder(comptime S: type) type {
     return struct {
         /// The width of the border.
         width: BorderSideWidth,

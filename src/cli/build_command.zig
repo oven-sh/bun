@@ -435,7 +435,7 @@ pub const BuildCommand = struct {
                 };
 
                 if (result != .success) {
-                    Output.printErrorln("{s}", .{result.error_message});
+                    Output.printErrorln("{s}", .{result.err.slice()});
                     Global.exit(1);
                 }
 

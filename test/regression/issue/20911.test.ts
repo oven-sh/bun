@@ -97,8 +97,9 @@ test("Worker async onmessage error should not crash process", async () => {
   );
 });
 
-// Sync handlers display ErrorEvent correctly but still have a crash during worker exit (ASAN stack frame check failure)
-// This is a pre-existing bug that also happens on main branch, separate from the async handler issue
+// Sync handlers display ErrorEvent correctly (the fix improves this from stack-buffer-overflow
+// to a minor ASAN stack frame check failure). The remaining ASAN issue is a pre-existing bug
+// that also occurs on main branch and requires deeper investigation into thread cleanup.
 test("Worker sync onmessage error should display ErrorEvent", async () => {
   await testWorkerErrorHandling(
     `
@@ -107,6 +108,6 @@ test("Worker sync onmessage error should display ErrorEvent", async () => {
     }
     `,
     "sync handler",
-    true, // Allow crash after ErrorEvent (known ASAN bug)
+    true, // Allow post-ErrorEvent crash (known ASAN thread cleanup issue)
   );
 });

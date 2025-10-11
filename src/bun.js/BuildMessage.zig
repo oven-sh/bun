@@ -147,7 +147,7 @@ pub const BuildMessage = struct {
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
     pub fn getColumn(this: *BuildMessage, _: *jsc.JSGlobalObject) jsc.JSValue {
         if (this.msg.data.location) |location| {
-            return jsc.JSValue.jsNumber(@max(location.column - 1, 0));
+            return jsc.JSValue.jsNumber(@max(location.column.zeroBased() - 1, 0));
         }
 
         return jsc.JSValue.jsNumber(@as(i32, 0));
@@ -155,7 +155,7 @@ pub const BuildMessage = struct {
 
     pub fn getLine(this: *BuildMessage, _: *jsc.JSGlobalObject) jsc.JSValue {
         if (this.msg.data.location) |location| {
-            return jsc.JSValue.jsNumber(@max(location.line - 1, 0));
+            return jsc.JSValue.jsNumber(@max(location.line.oneBased() - 1, 0));
         }
 
         return jsc.JSValue.jsNumber(@as(i32, 0));

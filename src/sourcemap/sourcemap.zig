@@ -849,8 +849,8 @@ pub const ParseResult = union(enum) {
                     .file = path,
                     .offset = this.loc.toUsize(),
                     // TODO: populate correct line and column information
-                    .line = -1,
-                    .column = -1,
+                    .line = .fromOneBased(-1),
+                    .column = .fromZeroBased(-1),
                 },
                 .text = this.msg,
             };

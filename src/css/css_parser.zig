@@ -232,8 +232,8 @@ pub const SourceLocation = struct {
     pub fn toLoggerLocation(this: SourceLocation, file: []const u8) bun.logger.Location {
         return bun.logger.Location{
             .file = file,
-            .line = @intCast(this.line),
-            .column = @intCast(this.column),
+            .line = .fromOneBased(@intCast(this.line)),
+            .column = .fromZeroBased(@intCast(this.column)),
         };
     }
 

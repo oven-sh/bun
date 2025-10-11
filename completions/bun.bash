@@ -92,7 +92,7 @@ _bun_files_completions() {
             readarray -t candidates <<< "$(compgen -f -- "${cur_word}")"
         fi
         # if pathname expansion above produces no matching files, then
-        # `compgen` output single newline character `\n`, resulting in
+        # `compgen` outputs single newline character `\n`, resulting in
         # singleton `candidates` with empty string, let us mitigate this
         [[ -z ${candidates[0]} ]] && candidates=()
     fi

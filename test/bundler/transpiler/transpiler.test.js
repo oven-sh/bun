@@ -3470,6 +3470,8 @@ describe("await can only be used inside an async function message", () => {
       }
       if (e instanceof AggregateError) {
         handle(e.errors[0]);
+      } else if (e instanceof BuildMessage) {
+        handle(e);
       } else {
         expect.unreachable();
       }
@@ -3544,7 +3546,17 @@ describe("malformed function definition does not crash due to invalid scope init
     for (const code of tests) {
       for (const loader of ["js", "ts"]) {
         const transpiler = new Bun.Transpiler({ loader });
-        expect(() => transpiler.transformSync(code)).toThrow("Parse error");
+        expect(() => transpiler.transformSync(code)).toThrow('Expected identifier but found ":"');
+      }
+    }
+  });
+
+  it("handles invalid async generator functions", async () => {
+    const tests = ["async function* =,(){}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow('Expected identifier but found "="');
       }
     }
   });

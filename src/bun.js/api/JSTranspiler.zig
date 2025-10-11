@@ -70,7 +70,7 @@ pub const Config = struct {
                 defer define_iter.deinit();
 
                 // cannot be a temporary because it may be loaded on different threads.
-                var map_entries = allocator.alloc([]u8, define_iter.len * 2) catch unreachable;
+                var map_entries = try allocator.alloc([]u8, define_iter.len * 2);
                 var names = map_entries[0..define_iter.len];
 
                 var values = map_entries[define_iter.len..];
@@ -83,13 +83,13 @@ pub const Config = struct {
                         return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                     }
 
-                    names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
+                    names[define_iter.i] = try prop.toOwnedSlice(allocator);
                     var val = jsc.ZigString.init("");
                     try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{}", .{val}) catch unreachable;
+                    values[define_iter.i] = try std.fmt.allocPrint(allocator, "{}", .{val});
                 }
 
                 this.transform.define = api.StringMap{
@@ -108,14 +108,14 @@ pub const Config = struct {
                     var zig_str = jsc.ZigString.init("");
                     try external.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) break :external;
-                    var single_external = allocator.alloc(string, 1) catch unreachable;
-                    single_external[0] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                    var single_external = try allocator.alloc(string, 1);
+                    single_external[0] = try std.fmt.allocPrint(allocator, "{}", .{zig_str});
                     this.transform.external = single_external;
                 } else if (toplevel_type.isArray()) {
                     const count = try external.getLength(globalThis);
                     if (count == 0) break :external;
 
-                    var externals = allocator.alloc(string, count) catch unreachable;
+                    var externals = try allocator.alloc(string, count);
                     var iter = try external.arrayIterator(globalThis);
                     var i: usize = 0;
                     while (try iter.next()) |entry| {
@@ -126,7 +126,7 @@ pub const Config = struct {
                         var zig_str = jsc.ZigString.init("");
                         try entry.toZigString(&zig_str, globalThis);
                         if (zig_str.len == 0) continue;
-                        externals[i] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                        externals[i] = try std.fmt.allocPrint(allocator, "{}", .{zig_str});
                         i += 1;
                     }
 
@@ -451,7 +451,6 @@ pub const TransformTask = struct {
     pub const new = bun.TrivialNew(@This());
 
     pub const AsyncTransformTask = jsc.ConcurrentPromiseTask(TransformTask);
-    pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
     pub fn create(transpiler: *JSTranspiler, input_code: bun.jsc.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) !*AsyncTransformTask {
         var transform_task = TransformTask.new(.{
@@ -479,89 +478,94 @@ pub const TransformTask = struct {
     }
 
     pub fn run(this: *TransformTask) void {
-        const name = this.loader.stdinName();
-        const source = logger.Source.initPathString(name, this.input_code.slice());
+        const Run = struct {
+            // TODO: use this error set when js_printer.Error is defined.
+            // const RunError = bun.OOM || error{
+            //     ParseError,
+            // };
+            pub fn run(task: *TransformTask) !void {
+                const name = task.loader.stdinName();
+                const source = logger.Source.initPathString(name, task.input_code.slice());
 
-        var arena = MimallocArena.init();
-        defer arena.deinit();
+                var arena = MimallocArena.init();
+                defer arena.deinit();
 
-        const allocator = arena.allocator();
-        var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
-        var ast_scope = ast_memory_allocator.enter(allocator);
-        defer ast_scope.exit();
+                const allocator = arena.allocator();
+                var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
+                var ast_scope = ast_memory_allocator.enter(allocator);
+                defer ast_scope.exit();
 
-        this.transpiler.setAllocator(allocator);
-        this.transpiler.setLog(&this.log);
-        this.log.msgs.allocator = bun.default_allocator;
+                task.transpiler.setAllocator(allocator);
+                task.transpiler.setLog(&task.log);
+                task.log.msgs.allocator = bun.default_allocator;
 
-        const jsx = if (this.tsconfig != null)
-            this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
-        else
-            this.transpiler.options.jsx;
+                const jsx = if (task.tsconfig != null)
+                    task.tsconfig.?.mergeJSX(task.transpiler.options.jsx)
+                else
+                    task.transpiler.options.jsx;
 
-        const parse_options = Transpiler.Transpiler.ParseOptions{
-            .allocator = allocator,
-            .macro_remappings = this.macro_map,
-            .dirname_fd = .invalid,
-            .file_descriptor = null,
-            .loader = this.loader,
-            .jsx = jsx,
-            .path = source.path,
-            .virtual_source = &source,
-            .replace_exports = this.replace_exports,
+                const parse_options = Transpiler.Transpiler.ParseOptions{
+                    .allocator = allocator,
+                    .macro_remappings = task.macro_map,
+                    .dirname_fd = .invalid,
+                    .file_descriptor = null,
+                    .loader = task.loader,
+                    .jsx = jsx,
+                    .path = source.path,
+                    .virtual_source = &source,
+                    .replace_exports = task.replace_exports,
+                };
+
+                const parse_result = task.transpiler.parse(parse_options, null) orelse {
+                    return error.ParseError;
+                };
+
+                if (parse_result.empty) {
+                    task.output_code = bun.String.empty;
+                    return;
+                }
+
+                var buffer_writer = JSPrinter.BufferWriter.init(allocator);
+                try buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512);
+                buffer_writer.reset();
+
+                var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+                const printed = try task.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii);
+
+                if (printed > 0) {
+                    buffer_writer = printer.ctx;
+                    buffer_writer.buffer.list.items = buffer_writer.written;
+                    task.output_code = bun.String.cloneUTF8(buffer_writer.written);
+                } else {
+                    task.output_code = bun.String.empty;
+                }
+            }
         };
 
-        const parse_result = this.transpiler.parse(parse_options, null) orelse {
-            this.err = error.ParseError;
-            return;
-        };
-
-        if (parse_result.empty) {
-            this.output_code = bun.String.empty;
-            return;
-        }
-
-        var buffer_writer = JSPrinter.BufferWriter.init(allocator);
-        buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512) catch unreachable;
-        buffer_writer.reset();
-
-        var printer = JSPrinter.BufferPrinter.init(buffer_writer);
-        const printed = this.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
+        Run.run(this) catch |err| {
             this.err = err;
-            return;
         };
-
-        if (printed > 0) {
-            buffer_writer = printer.ctx;
-            buffer_writer.buffer.list.items = buffer_writer.written;
-            this.output_code = bun.String.cloneUTF8(buffer_writer.written);
-        } else {
-            this.output_code = bun.String.empty;
-        }
     }
 
     pub fn then(this: *TransformTask, promise: *jsc.JSPromise) void {
         defer this.deinit();
 
-        if (this.log.hasAny() or this.err != null) {
-            const error_value: bun.OOM!JSValue = brk: {
-                if (this.err) |err| {
-                    if (!this.log.hasAny()) {
-                        break :brk bun.api.BuildMessage.create(
-                            this.global,
-                            bun.default_allocator,
-                            logger.Msg{
-                                .data = logger.Data{ .text = bun.asByteSlice(@errorName(err)) },
-                            },
-                        );
-                    }
-                }
+        if (this.log.hasAny()) {
+            return promise.reject(this.global, this.log.toJS(this.global, bun.default_allocator, "Parse error"));
+        }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
+        if (this.err) |err| {
+            return switch (err) {
+                error.OutOfMemory, error.JSError => |e| {
+                    promise.reject(this.global, e);
+                },
+                error.StackOverflow => {
+                    promise.reject(this.global, this.global.throwStackOverflow());
+                },
+                else => {
+                    promise.reject(this.global, this.global.createSyntaxErrorInstance("Parse error: Unable to parse input string due to {s}", .{@errorName(err)}));
+                },
             };
-
-            promise.reject(this.global, error_value);
-            return;
         }
 
         finish(this, promise);
@@ -953,28 +957,27 @@ pub fn transformSync(
     defer {
         this.transpiler = prev_bundler;
     }
-    const parse_result = getParseResult(
+    const maybe_parse_result = getParseResult(
         this,
         allocator,
         code,
         loader,
         js_ctx_value,
-    ) orelse {
-        if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-            return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
-        }
+    );
 
-        return globalThis.throw("Failed to parse code", .{});
-    };
-
-    if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-        return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
+    if (maybe_parse_result == null or this.transpiler.log.msgs.items.len > 0) {
+        return switch (this.transpiler.log.msgs.items.len) {
+            0 => globalThis.throwSyntaxError("Parse error: Failed to parse code", .{}),
+            else => globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error")),
+        };
     }
+
+    const parse_result = maybe_parse_result.?;
 
     var buffer_writer = this.buffer_writer orelse brk: {
         var writer = JSPrinter.BufferWriter.init(arena.backingAllocator());
 
-        writer.buffer.growIfNeeded(code.len) catch unreachable;
+        try writer.buffer.growIfNeeded(code.len);
         writer.buffer.list.expandToCapacity();
         break :brk writer;
     };
@@ -1004,10 +1007,10 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     var named_exports_iter = named_exports.iterator();
     var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, bun.default_allocator);
     var allocator = stack_fallback.get();
-    var names = allocator.alloc(
+    var names = try allocator.alloc(
         bun.String,
         named_exports.count(),
-    ) catch unreachable;
+    );
     defer allocator.free(names);
     named_exports.sort(strings.StringArrayByIndexSorter{
         .keys = named_exports.keys(),

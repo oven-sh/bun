@@ -447,18 +447,6 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
               "message": "Expected ")" but found "{"",
               "notes": [],
             },
-            {
-              "kind": "bundler",
-              "level": 0,
-              "location": {
-                "column": 7,
-                "length": 1,
-                "line": 5,
-                "lineText": "      }",
-              },
-              "message": "Unexpected }",
-              "notes": [],
-            },
           ],
           "owner": 123,
         },

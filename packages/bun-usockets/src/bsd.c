@@ -1467,10 +1467,37 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options, struct sockaddr_storage *local_addr) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
+    }
+
+    // Bind to local address if specified
+    if (local_addr != NULL) {
+        socklen_t addr_len;
+        if (local_addr->ss_family == AF_INET) {
+            addr_len = sizeof(struct sockaddr_in);
+        } else if (local_addr->ss_family == AF_INET6) {
+            addr_len = sizeof(struct sockaddr_in6);
+        } else {
+            bsd_close_socket(fd);
+#ifdef _WIN32
+            WSASetLastError(WSAEAFNOSUPPORT);
+#endif
+            errno = EAFNOSUPPORT;
+            return LIBUS_SOCKET_ERROR;
+        }
+
+        int bind_result;
+        do {
+            bind_result = bind(fd, (struct sockaddr *)local_addr, addr_len);
+        } while (IS_EINTR(bind_result));
+
+        if (bind_result != 0) {
+            bsd_close_socket(fd);
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef _WIN32

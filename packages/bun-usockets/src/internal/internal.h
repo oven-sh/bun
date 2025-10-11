@@ -202,6 +202,9 @@ struct us_connecting_socket_t {
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;
+    // local address binding
+    const char *local_host;
+    unsigned short local_port;
 };
 
 struct us_wrapped_socket_context_t {
@@ -410,7 +413,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
-    int port, int options, int socket_ext_size, int* is_resolved);
+    int port, const char *local_host, unsigned short local_port, int options, int socket_ext_size, int* is_resolved);
 
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,

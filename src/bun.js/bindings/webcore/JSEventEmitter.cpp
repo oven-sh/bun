@@ -151,7 +151,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     }
     Structure* structure = JSEventEmitter::createStructure(vm, lexicalGlobalObject, jsValue);
     JSEventEmitter* instance
-        = JSEventEmitter::create(structure, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), object.copyRef());
+        = JSEventEmitter::create(structure, static_cast<Zig::GlobalObject*>(lexicalGlobalObject), object.copyRef());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(instance));
 }

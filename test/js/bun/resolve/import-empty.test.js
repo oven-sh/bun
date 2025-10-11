@@ -100,3 +100,13 @@ it("importing empty sqlite files returns database object", async () => {
     expect(empty_file_module.db).toBeInstanceOf(Database);
   }
 });
+
+// MARK: - CSV like
+
+it("importing empty csv-like files returns empty array as default export", async () => {
+  for (const type of ["csv", "csv_no_header", "tsv", "tsv_no_header"]) {
+    delete require.cache[require.resolve(`./empty-file`)];
+    const mod = await import("./empty-file", { with: { type } });
+    expect(mod.default).toEqual([]);
+  }
+});

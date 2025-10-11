@@ -24,6 +24,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Cmd,
     If,
     CondExpr,
+    Subshell,
 });
 
 pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -99,6 +100,21 @@ pub fn next(this: *Async) Yield {
                         CondExpr.ParentPtr.init(this),
                         this.io.copy(),
                     )),
+                    .subshell => switch (Subshell.initDupeShellState(
+                        this.base.interpreter,
+                        this.base.shell,
+                        this.node.subshell,
+                        Subshell.ParentPtr.init(this),
+                        this.io.copy(),
+                    )) {
+                        .result => |subshell| break :brk ChildPtr.init(subshell),
+                        .err => |e| {
+                            this.base.throw(&bun.shell.ShellErr.newSys(e));
+                            this.state = .{ .done = 1 };
+                            this.enqueueSelf();
+                            return .suspended;
+                        },
+                    },
                     else => {
                         @panic("Encountered an unexpected child of an async command, this indicates a bug in Bun. Please open a GitHub issue.");
                     },
@@ -175,6 +191,7 @@ const Pipeline = bun.shell.Interpreter.Pipeline;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const log = bun.shell.interpret.log;

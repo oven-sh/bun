@@ -21,6 +21,7 @@ pub const ParentPtr = StatePtrUnion(.{
     Pipeline,
     Binary,
     Stmt,
+    Async,
 });
 
 pub const ChildPtr = StatePtrUnion(.{
@@ -199,6 +200,7 @@ const Yield = bun.shell.Yield;
 const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
+const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
 const Expansion = bun.shell.Interpreter.Expansion;
 const IO = bun.shell.Interpreter.IO;

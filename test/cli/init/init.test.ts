@@ -243,7 +243,7 @@ import path from "path";
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
@@ -267,7 +267,7 @@ import path from "path";
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
@@ -291,7 +291,7 @@ import path from "path";
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);

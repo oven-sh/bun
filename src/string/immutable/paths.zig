@@ -39,7 +39,7 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
     const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], to_copy);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
@@ -288,24 +288,6 @@ fn isUNCPath(comptime T: type, path: []const T) bool {
         !bun.path.Platform.windows.isSeparatorT(T, path[2]) and
         path[2] != '.';
 }
-pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
-    if (Environment.allow_assert and Environment.isWindows) {
-        if (bun.path.Platform.windows.isAbsoluteT(T, path) and
-            isWindowsAbsolutePathMissingDriveLetter(T, path) and
-            // is it a null device path? that's not an error. it's just a weird file path.
-            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL") and !isUNCPath(T, path))
-        {
-            std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
-                if (T == u8) path else bun.fmt.utf16(path),
-            });
-        }
-        if (hasPrefixComptimeType(T, path, ":/") and Environment.isDebug) {
-            std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
-                if (T == u8) path else bun.fmt.utf16(path),
-            });
-        }
-    }
-}
 
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
@@ -518,7 +500,6 @@ const assert = bun.assert;
 
 const strings = bun.strings;
 const copyUTF16IntoUTF8 = strings.copyUTF16IntoUTF8;
-const eqlComptimeT = strings.eqlComptimeT;
 const hasPrefixComptime = strings.hasPrefixComptime;
 const hasPrefixComptimeType = strings.hasPrefixComptimeType;
 const hasPrefixComptimeUTF16 = strings.hasPrefixComptimeUTF16;

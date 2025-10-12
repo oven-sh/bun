@@ -7,8 +7,15 @@ const CurrentFile = struct {
     } = .{},
     has_printed_filename: bool = false,
 
-    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
-        if (Output.isAIAgent()) {
+    pub fn set(
+        this: *CurrentFile,
+        title: string,
+        prefix: string,
+        repeat_count: u32,
+        repeat_index: u32,
+        reporter: *CommandLineReporter,
+    ) void {
+        if (Output.isAIAgent() or reporter.reporters.dots) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
             this.prefix = bun.handleOom(bun.default_allocator.dupe(u8, prefix));
@@ -28,14 +35,19 @@ const CurrentFile = struct {
     }
 
     fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        const enable_buffering = Output.enableBufferingScope();
+        defer enable_buffering.deinit();
+
+        Output.prettyError("<r>\n", .{});
+
         if (repeat_count > 0) {
             if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+                Output.prettyErrorln("{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
             } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+                Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
             }
         } else {
-            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
         }
 
         Output.flush();
@@ -44,6 +56,7 @@ const CurrentFile = struct {
     pub fn printIfNeeded(this: *CurrentFile) void {
         if (this.has_printed_filename) return;
         this.has_printed_filename = true;
+
         print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
     }
 };
@@ -55,8 +68,11 @@ pub const TestRunner = struct {
     only: bool = false,
     run_todo: bool = false,
     concurrent: bool = false,
+    randomize: ?std.Random = null,
+    concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
+    max_concurrency: u32,
 
     allocator: std.mem.Allocator,
 
@@ -97,6 +113,25 @@ pub const TestRunner = struct {
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
+    }
+
+    pub fn shouldFileRunConcurrently(this: *const TestRunner, file_id: File.ID) bool {
+        // Check if global concurrent flag is set
+        if (this.concurrent) return true;
+
+        // If no glob patterns are set, don't run concurrently
+        const glob_patterns = this.concurrent_test_glob orelse return false;
+
+        // Get the file path from the file_id
+        if (file_id >= this.files.len) return false;
+        const file_path = this.files.items(.source)[file_id].path.text;
+
+        // Check if the file path matches any of the glob patterns
+        for (glob_patterns) |pattern| {
+            const result = bun.glob.match(pattern, file_path);
+            if (result == .match) return true;
+        }
+        return false;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
@@ -361,9 +396,17 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 const var_path = label[var_start..var_end];
                 const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
                 if (!value.isEmptyOrUndefinedOrNull()) {
-                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                    defer formatter.deinit();
-                    bun.handleOom(list.writer().print("{}", .{value.toFmt(&formatter)}));
+                    // For primitive strings, use toString() to avoid adding quotes
+                    // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
+                    if (value.isString()) {
+                        const owned_slice = try value.toSliceOrNull(globalThis);
+                        defer owned_slice.deinit();
+                        bun.handleOom(list.appendSlice(owned_slice.slice()));
+                    } else {
+                        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                        defer formatter.deinit();
+                        bun.handleOom(list.writer().print("{}", .{value.toFmt(&formatter)}));
+                    }
                     idx = var_end;
                     continue;
                 }
@@ -433,11 +476,17 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
 
 pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.test_options.reporters.junit) {
             return bun.cpp.Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }
     return 0;
+}
+
+pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
+    if (bun.detectCI()) |_| {
+        return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
+    }
 }
 
 const string = []const u8;
@@ -445,6 +494,7 @@ const string = []const u8;
 pub const bun_test = @import("./bun_test.zig");
 
 const std = @import("std");
+const CommandLineReporter = @import("../../cli/test_command.zig").CommandLineReporter;
 const Snapshots = @import("./snapshot.zig").Snapshots;
 
 const expect = @import("./expect.zig");

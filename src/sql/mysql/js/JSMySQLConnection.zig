@@ -478,7 +478,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             });
         } else {
             ptr.#connection.setSocket(.{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false, null, 0) catch |err| {
                     ptr.deref();
                     return globalObject.throwError(err, "failed to connect to mysql");
                 },
@@ -667,7 +667,7 @@ pub fn onConnectionEstabilished(this: *@This()) void {
 pub fn onQueryResult(this: *@This(), request: *JSMySQLQuery, result: MySQLQueryResult) void {
     request.resolve(this.getQueriesArray(), result);
 }
-pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) error{ShortRead}!void {
+pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) (error{ ShortRead, JSError })!void {
     const result_mode = request.getResultMode();
     var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -700,7 +700,7 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
     };
     const pending_value = request.getPendingValue() orelse .js_undefined;
     // Process row data
-    const row_value = row.toJS(
+    const row_value = try row.toJS(
         this.#globalObject,
         pending_value,
         structure,

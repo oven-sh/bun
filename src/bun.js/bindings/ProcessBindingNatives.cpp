@@ -21,6 +21,7 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     return jsUndefined();
 }
 
+// TODO: generate this table
 /* Source for ProcessBindingNatives.lut.h
 @begin processBindingNativesTable
     _http_agent              processBindingNativesGetter      PropertyCallback
@@ -94,6 +95,72 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     worker_threads           processBindingNativesGetter      PropertyCallback
     zlib                     processBindingNativesGetter      PropertyCallback
     configs                  processBindingNativesReturnUndefined      PropertyCallback
+    internal/abort_listener                     processBindingNativesGetter     PropertyCallback
+    internal/assert/assertion_error             processBindingNativesGetter     PropertyCallback
+    internal/assert/calltracker                 processBindingNativesGetter     PropertyCallback
+    internal/assert/myers_diff                  processBindingNativesGetter     PropertyCallback
+    internal/assert/utils                       processBindingNativesGetter     PropertyCallback
+    internal/buffer                             processBindingNativesGetter     PropertyCallback
+    internal/cluster/child                      processBindingNativesGetter     PropertyCallback
+    internal/cluster/isPrimary                  processBindingNativesGetter     PropertyCallback
+    internal/cluster/primary                    processBindingNativesGetter     PropertyCallback
+    internal/cluster/RoundRobinHandle           processBindingNativesGetter     PropertyCallback
+    internal/cluster/Worker                     processBindingNativesGetter     PropertyCallback
+    internal/crypto/x509                        processBindingNativesGetter     PropertyCallback
+    internal/debugger                           processBindingNativesGetter     PropertyCallback
+    internal/errors                             processBindingNativesGetter     PropertyCallback
+    internal/fifo                               processBindingNativesGetter     PropertyCallback
+    internal/fixed_queue                        processBindingNativesGetter     PropertyCallback
+    internal/freelist                           processBindingNativesGetter     PropertyCallback
+    internal/fs/cp-sync                         processBindingNativesGetter     PropertyCallback
+    internal/fs/cp                              processBindingNativesGetter     PropertyCallback
+    internal/fs/glob                            processBindingNativesGetter     PropertyCallback
+    internal/fs/streams                         processBindingNativesGetter     PropertyCallback
+    internal/html                               processBindingNativesGetter     PropertyCallback
+    internal/http                               processBindingNativesGetter     PropertyCallback
+    internal/http/FakeSocket                    processBindingNativesGetter     PropertyCallback
+    internal/linkedlist                         processBindingNativesGetter     PropertyCallback
+    internal/perf_hooks/monitorEventLoopDelay   processBindingNativesGetter     PropertyCallback
+    internal/primordials.js                     processBindingNativesGetter     PropertyCallback
+    internal/promisify                          processBindingNativesGetter     PropertyCallback
+    internal/shared                             processBindingNativesGetter     PropertyCallback
+    internal/sql/errors                         processBindingNativesGetter     PropertyCallback
+    internal/sql/mysql                          processBindingNativesGetter     PropertyCallback
+    internal/sql/postgres                       processBindingNativesGetter     PropertyCallback
+    internal/sql/query                          processBindingNativesGetter     PropertyCallback
+    internal/sql/shared                         processBindingNativesGetter     PropertyCallback
+    internal/sql/sqlite                         processBindingNativesGetter     PropertyCallback
+    internal/stream.promises                    processBindingNativesGetter     PropertyCallback
+    internal/stream                             processBindingNativesGetter     PropertyCallback
+    internal/streams/add-abort-signal           processBindingNativesGetter     PropertyCallback
+    internal/streams/compose                    processBindingNativesGetter     PropertyCallback
+    internal/streams/destroy                    processBindingNativesGetter     PropertyCallback
+    internal/streams/duplex                     processBindingNativesGetter     PropertyCallback
+    internal/streams/duplexify                  processBindingNativesGetter     PropertyCallback
+    internal/streams/duplexpair                 processBindingNativesGetter     PropertyCallback
+    internal/streams/end-of-stream              processBindingNativesGetter     PropertyCallback
+    internal/streams/from                       processBindingNativesGetter     PropertyCallback
+    internal/streams/lazy_transform             processBindingNativesGetter     PropertyCallback
+    internal/streams/legacy                     processBindingNativesGetter     PropertyCallback
+    internal/streams/native-readable            processBindingNativesGetter     PropertyCallback
+    internal/streams/operators                  processBindingNativesGetter     PropertyCallback
+    internal/streams/passthrough                processBindingNativesGetter     PropertyCallback
+    internal/streams/pipeline                   processBindingNativesGetter     PropertyCallback
+    internal/streams/readable                   processBindingNativesGetter     PropertyCallback
+    internal/streams/state                      processBindingNativesGetter     PropertyCallback
+    internal/streams/transform                  processBindingNativesGetter     PropertyCallback
+    internal/streams/utils                      processBindingNativesGetter     PropertyCallback
+    internal/streams/writable                   processBindingNativesGetter     PropertyCallback
+    internal/timers                             processBindingNativesGetter     PropertyCallback
+    internal/tls                                processBindingNativesGetter     PropertyCallback
+    internal/tty                                processBindingNativesGetter     PropertyCallback
+    internal/url                                processBindingNativesGetter     PropertyCallback
+    internal/util/colors                        processBindingNativesGetter     PropertyCallback
+    internal/util/deprecate                     processBindingNativesGetter     PropertyCallback
+    internal/util/inspect                       processBindingNativesGetter     PropertyCallback
+    internal/util/mime                          processBindingNativesGetter     PropertyCallback
+    internal/validators                         processBindingNativesGetter     PropertyCallback
+    internal/webstreams_adapters                processBindingNativesGetter     PropertyCallback
 @end
 */
 #include "ProcessBindingNatives.lut.h"

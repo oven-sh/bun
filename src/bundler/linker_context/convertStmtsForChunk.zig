@@ -87,7 +87,7 @@ pub fn convertStmtsForChunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if (shouldExtractESMStmtsForWrap) {
-                        try stmts.outside_wrapper_prefix.append(stmt);
+                        try stmts.append(.outside_wrapper_prefix, stmt);
                         continue;
                     }
                 },
@@ -120,7 +120,7 @@ pub fn convertStmtsForChunk(
 
                         // Make sure these don't end up in the wrapper closure
                         if (shouldExtractESMStmtsForWrap) {
-                            try stmts.outside_wrapper_prefix.append(stmt);
+                            try stmts.append(.outside_wrapper_prefix, stmt);
                             continue;
                         }
 
@@ -172,7 +172,7 @@ pub fn convertStmtsForChunk(
                                 args[3] = mod;
                             }
 
-                            try stmts.inside_wrapper_prefix.append(
+                            try stmts.inside_wrapper_prefix.appendNonDependency(
                                 Stmt.alloc(
                                     S.SExpr,
                                     S.SExpr{
@@ -199,7 +199,7 @@ pub fn convertStmtsForChunk(
 
                             // Make sure these don't end up in the wrapper closure
                             if (shouldExtractESMStmtsForWrap) {
-                                try stmts.outside_wrapper_prefix.append(stmt);
+                                try stmts.append(.outside_wrapper_prefix, stmt);
                                 continue;
                             }
                         }
@@ -208,7 +208,7 @@ pub fn convertStmtsForChunk(
                             const flag = flags[record.source_index.get()];
                             const wrapper_ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()];
                             if (flag.wrap == .esm and wrapper_ref.isValid()) {
-                                try stmts.inside_wrapper_prefix.append(
+                                try stmts.inside_wrapper_prefix.appendNonDependency(
                                     Stmt.alloc(S.SExpr, .{
                                         .value = Expr.init(E.Call, .{
                                             .target = Expr.init(
@@ -258,7 +258,7 @@ pub fn convertStmtsForChunk(
                                 args[2] = mod;
                             }
 
-                            try stmts.inside_wrapper_prefix.append(
+                            try stmts.inside_wrapper_prefix.appendNonDependency(
                                 Stmt.alloc(
                                     S.SExpr,
                                     S.SExpr{
@@ -326,7 +326,7 @@ pub fn convertStmtsForChunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if (shouldExtractESMStmtsForWrap) {
-                        try stmts.outside_wrapper_prefix.append(stmt);
+                        try stmts.append(.outside_wrapper_prefix, stmt);
                         continue;
                     }
                 },
@@ -341,7 +341,7 @@ pub fn convertStmtsForChunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if (shouldExtractESMStmtsForWrap) {
-                        try stmts.outside_wrapper_prefix.append(stmt);
+                        try stmts.append(.outside_wrapper_prefix, stmt);
                         continue;
                     }
                 },
@@ -519,7 +519,7 @@ pub fn convertStmtsForChunk(
             }
         }
 
-        try stmts.inside_wrapper_suffix.append(stmt);
+        try stmts.append(.inside_wrapper_suffix, stmt);
     }
 }
 

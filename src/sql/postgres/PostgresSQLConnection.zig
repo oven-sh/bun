@@ -750,7 +750,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             };
         } else {
             ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false, null, 0) catch |err| {
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
@@ -1429,7 +1429,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             };
             const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
             pending_value.ensureStillAlive();
-            const result = putter.toJS(
+            const result = try putter.toJS(
                 this.globalObject,
                 pending_value,
                 structure,

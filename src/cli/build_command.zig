@@ -96,12 +96,6 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.outdir.len > 0) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
                 Global.exit(1);
@@ -441,7 +435,7 @@ pub const BuildCommand = struct {
                 };
 
                 if (result != .success) {
-                    Output.printErrorln("{s}", .{result.error_message});
+                    Output.printErrorln("{s}", .{result.err.slice()});
                     Global.exit(1);
                 }
 

@@ -307,7 +307,6 @@ pub fn Package(comptime SemverIntType: type) type {
             manifest: *const Npm.PackageManifest,
             version: Semver.Version,
             package_version_ptr: *const Npm.PackageVersion,
-            string_buf: []const u8,
             comptime features: Features,
         ) !@This() {
             var package = @This(){};
@@ -353,7 +352,7 @@ pub fn Package(comptime SemverIntType: type) type {
             // --- Counting
             {
                 string_builder.count(manifest.name());
-                version.count(string_buf, @TypeOf(&string_builder), &string_builder);
+                version.count(manifest.string_buf, @TypeOf(&string_builder), &string_builder);
 
                 inline for (dependency_groups) |group| {
                     const map: ExternalStringMap = @field(package_version, group.field);
@@ -364,12 +363,12 @@ pub fn Package(comptime SemverIntType: type) type {
                     if (comptime Environment.isDebug) assert(keys.len == version_strings.len);
 
                     for (keys, version_strings) |key, ver| {
-                        string_builder.count(key.slice(string_buf));
-                        string_builder.count(ver.slice(string_buf));
+                        string_builder.count(key.slice(manifest.string_buf));
+                        string_builder.count(ver.slice(manifest.string_buf));
                     }
                 }
 
-                bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
+                bin_extern_strings_count = package_version.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
             }
 
             string_builder.count(manifest.str(&package_version_ptr.tarball_url));
@@ -436,8 +435,8 @@ pub fn Package(comptime SemverIntType: type) type {
                             }
                         }
 
-                        const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(string_buf), key.hash);
-                        const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
+                        const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(manifest.string_buf), key.hash);
+                        const dep_version = string_builder.appendWithHash(String, version_string_.slice(manifest.string_buf), version_string_.hash);
                         const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
                         var behavior = group.behavior;
@@ -488,7 +487,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 }
 
-                package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
+                package.bin = package_version.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
@@ -2047,7 +2046,15 @@ pub fn Package(comptime SemverIntType: type) type {
                         }
                     }
                     comptime assertNoUninitializedPadding(@TypeOf(value));
-                    try writer.writeAll(std.mem.sliceAsBytes(value));
+                    if (comptime strings.eqlComptime(field.name, "resolution")) {
+                        // copy each resolution to make sure the union is zero initialized
+                        for (value) |val| {
+                            const copy = val.copy();
+                            try writer.writeAll(std.mem.asBytes(&copy));
+                        }
+                    } else {
+                        try writer.writeAll(std.mem.sliceAsBytes(value));
+                    }
                 }
 
                 const really_end_at = try stream.getPos();
@@ -2111,7 +2118,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     try list_for_migrating_from_v2.ensureTotalCapacity(allocator, list_len);
                     list_for_migrating_from_v2.len = list_len;
 
-                    try loadFields(stream, OldPackageV2.List, &list_for_migrating_from_v2, &needs_update);
+                    try loadFields(stream, end_at, OldPackageV2.List, &list_for_migrating_from_v2, &needs_update);
 
                     for (0..list_for_migrating_from_v2.len) |_pkg_id| {
                         const pkg_id: PackageID = @intCast(_pkg_id);
@@ -2144,7 +2151,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 } else {
                     list.len = list_len;
-                    try loadFields(stream, List, &list, &needs_update);
+                    try loadFields(stream, end_at, List, &list, &needs_update);
                 }
 
                 return .{
@@ -2153,7 +2160,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 };
             }
 
-            fn loadFields(stream: *Stream, comptime ListType: type, list: *ListType, needs_update: *bool) !void {
+            fn loadFields(stream: *Stream, end_at: u64, comptime ListType: type, list: *ListType, needs_update: *bool) !void {
                 var sliced = list.slice();
 
                 inline for (FieldsEnum.fields) |field| {
@@ -2162,7 +2169,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     comptime assertNoUninitializedPadding(@TypeOf(value));
                     const bytes = std.mem.sliceAsBytes(value);
                     const end_pos = stream.pos + bytes.len;
-                    if (end_pos <= end_pos) {
+                    if (end_pos <= end_at) {
                         @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                         stream.pos = end_pos;
                         if (comptime strings.eqlComptime(field.name, "meta")) {

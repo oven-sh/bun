@@ -27,14 +27,16 @@ pub fn toContainAnyKeys(
 
     const count = try expected.getLength(globalThis);
 
-    var i: u32 = 0;
+    if (value.isObject()) {
+        var i: u32 = 0;
 
-    while (i < count) : (i += 1) {
-        const key = try expected.getIndex(globalThis, i);
+        while (i < count) : (i += 1) {
+            const key = try expected.getIndex(globalThis, i);
 
-        if (try value.hasOwnPropertyValue(globalThis, key)) {
-            pass = true;
-            break;
+            if (try value.hasOwnPropertyValue(globalThis, key)) {
+                pass = true;
+                break;
+            }
         }
     }
 

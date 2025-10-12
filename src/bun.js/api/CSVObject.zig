@@ -49,6 +49,9 @@ pub fn parse(
             if (dv.isString()) {
                 const dv_ = try dv.toSlice(globalObject, allocator);
                 defer dv_.deinit();
+                if (dv_.slice().len == 0) {
+                    return globalObject.throwInvalidArguments("Delimiter cannot be empty", .{});
+                }
                 parser_options.delimiter = allocator.dupe(u8, dv_.slice()) catch return bun.outOfMemory();
             }
         }
@@ -63,6 +66,9 @@ pub fn parse(
             if (comment_char_value.isString()) {
                 const comment_char_value_ = try comment_char_value.toSlice(globalObject, allocator);
                 defer comment_char_value_.deinit();
+                if (comment_char_value_.slice().len == 0) {
+                    return globalObject.throwInvalidArguments("Comment character cannot be empty", .{});
+                }
                 parser_options.comment_char = allocator.dupe(u8, comment_char_value_.slice()) catch return bun.outOfMemory();
             }
         }
@@ -83,6 +89,9 @@ pub fn parse(
             if (quote_value.isString()) {
                 const quote_value_ = try quote_value.toSlice(globalObject, allocator);
                 defer quote_value_.deinit();
+                if (quote_value_.slice().len == 0) {
+                    return globalObject.throwInvalidArguments("Quote character cannot be empty", .{});
+                }
                 parser_options.quote = allocator.dupe(u8, quote_value_.slice()) catch return bun.outOfMemory();
             }
         }

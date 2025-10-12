@@ -77,10 +77,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.ts")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -121,10 +122,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -164,10 +166,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -212,10 +215,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -262,10 +266,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -307,10 +312,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail (no fallback for bare imports)
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "entry.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }
@@ -351,10 +357,11 @@ describe("resolver cache invalidation", () => {
     // Build 2: Should fail
     let build2Failed = false;
     try {
-      await Bun.build({
+      const result2 = await Bun.build({
         entrypoints: [path.join(String(dir), "src", "index.js")],
         outdir: path.join(String(dir), "out2"),
       });
+      build2Failed = !result2.success;
     } catch (e) {
       build2Failed = true;
     }

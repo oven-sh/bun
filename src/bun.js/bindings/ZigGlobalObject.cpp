@@ -74,6 +74,8 @@
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
+#include "JSBuildMessage.h"
+#include "JSResolveMessage.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
@@ -770,24 +772,83 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
-{
+// Zig functions to extract location from BunErrorData and create synthetic stack frames
+extern "C" void* Bun__getBuildMessage(void* bunErrorData);
+extern "C" void* Bun__getResolveMessage(void* bunErrorData);
+extern "C" void BuildMessage__createSyntheticStackFrame(void* buildMessage, ZigStackFrame* frame);
+extern "C" void ResolveMessage__createSyntheticStackFrame(void* resolveMessage, ZigStackFrame* frame);
 
+static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, void* bunErrorData = nullptr)
+{
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
+
+    // If this is a BuildMessage or ResolveMessage, replace any existing stack with synthetic location
+    // The captured stack will be from bundler internals, not user code
+    if (bunErrorData != nullptr) {
+        void* buildMessage = Bun__getBuildMessage(bunErrorData);
+        void* resolveMessage = Bun__getResolveMessage(bunErrorData);
+
+        if (buildMessage != nullptr || resolveMessage != nullptr) {
+            ZigStackFrame syntheticFrame = {};
+            if (buildMessage) {
+                BuildMessage__createSyntheticStackFrame(buildMessage, &syntheticFrame);
+            } else {
+                ResolveMessage__createSyntheticStackFrame(resolveMessage, &syntheticFrame);
+            }
+
+            if (!syntheticFrame.source_url.isEmpty()) {
+                sourceURL = syntheticFrame.source_url.toWTFString();
+                // ZigStackFrame position fields are stored as zero-based, convert to one-based
+                line = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.line_zero_based + 1);
+                column = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.column_zero_based + 1);
+                syntheticFrame.source_url.deref();
+            }
+        }
+    }
 
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
 }
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
-    UNUSED_PARAM(bunErrorData);
-
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
     lexicalGlobalObject = errorInstance->globalObject();
     globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // If this is a BuildMessage or ResolveMessage, replace any existing stack with synthetic location
+    // The captured stack will be from bundler internals, not user code
+    if (bunErrorData != nullptr) {
+        void* buildMessage = Bun__getBuildMessage(bunErrorData);
+        void* resolveMessage = Bun__getResolveMessage(bunErrorData);
+
+        if (buildMessage != nullptr || resolveMessage != nullptr) {
+            // Create a synthetic ZigStackFrame with the correct source location
+            ZigStackFrame syntheticFrame = {};
+            if (buildMessage) {
+                BuildMessage__createSyntheticStackFrame(buildMessage, &syntheticFrame);
+            } else {
+                ResolveMessage__createSyntheticStackFrame(resolveMessage, &syntheticFrame);
+            }
+
+            // Only add the frame if it has valid location data
+            if (!syntheticFrame.source_url.isEmpty()) {
+                // Create a JSC StackFrame from the synthetic frame
+                // We need to create a minimal StackFrame that will be formatted correctly
+                // For now, just update the sourceURL and line/column parameters
+                // which will be used by formatStackTrace
+                sourceURL = syntheticFrame.source_url.toWTFString();
+                // ZigStackFrame position fields are stored as zero-based, convert to one-based
+                line = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.line_zero_based + 1);
+                column = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.column_zero_based + 1);
+
+                // Clean up the synthetic frame
+                syntheticFrame.source_url.deref();
+            }
+        }
+    }
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
     if (!globalObject) {
@@ -831,13 +892,11 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 
 static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
-    UNUSED_PARAM(bunErrorData);
-
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL, bunErrorData);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
@@ -2947,6 +3006,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 createMemoryFootprintStructure(
                     init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSBuildMessageClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSBuildMessageClassStructure(init);
+        });
+
+    m_JSResolveMessageClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSResolveMessageClassStructure(init);
         });
 
     m_errorConstructorPrepareStackTraceInternalValue.initLater(

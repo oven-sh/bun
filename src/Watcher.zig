@@ -4,7 +4,6 @@ const Watcher = @This();
 
 const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
-const WatcherTrace = @import("./watcher/WatcherTrace.zig");
 
 // This will always be [max_count]WatchEvent,
 // We avoid statically allocating because it increases the binary size.
@@ -689,6 +688,7 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
 
 const string = []const u8;
 
+const WatcherTrace = @import("./watcher/WatcherTrace.zig");
 const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
 const std = @import("std");

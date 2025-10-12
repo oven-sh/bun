@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("../bun.zig");
-const Watcher = @import("../Watcher.zig");
-
 /// Optional trace file for debugging watcher events
 var trace_file: ?bun.FileDescriptor = null;
 
@@ -106,3 +102,7 @@ pub fn deinit() void {
         trace_file = null;
     }
 }
+
+const Watcher = @import("../Watcher.zig");
+const bun = @import("../bun.zig");
+const std = @import("std");

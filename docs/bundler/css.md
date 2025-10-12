@@ -29,7 +29,7 @@ By default, Bun's CSS bundler targets the following browsers:
 
 The CSS Nesting specification allows you to write more concise and intuitive stylesheets by nesting selectors inside one another. Instead of repeating parent selectors across your CSS file, you can write child styles directly within their parent blocks.
 
-```css
+```scss
 /* With nesting */
 .card {
   background: white;
@@ -67,7 +67,7 @@ Bun's CSS bundler automatically converts this nested syntax into traditional fla
 
 You can also nest media queries and other at-rules inside selectors, eliminating the need to repeat selector patterns:
 
-```css
+```scss
 .responsive-element {
   display: block;
 
@@ -95,7 +95,7 @@ This compiles to:
 
 The `color-mix()` function gives you an easy way to blend two colors together according to a specified ratio in a chosen color space. This powerful feature lets you create color variations without manually calculating the resulting values.
 
-```css
+```scss
 .button {
   /* Mix blue and red in the RGB color space with a 30/70 proportion */
   background-color: color-mix(in srgb, blue 30%, red);

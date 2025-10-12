@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("../bun.zig");
+const bun = @import("bun");
 const Watcher = @import("../Watcher.zig");
 
 /// Optional trace file for debugging watcher events
@@ -33,7 +33,9 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
     const file = trace_file orelse return;
 
     var buffered = std.io.bufferedWriter(file.writer());
-    defer buffered.flush() catch {};
+    defer buffered.flush() catch |err| {
+        bun.Output.err(err, "Failed to flush watcher trace file", .{});
+    };
     const writer = buffered.writer();
 
     // Get current timestamp

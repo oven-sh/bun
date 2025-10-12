@@ -1479,4 +1479,39 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("@esbuild/linux-arm64");
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
   });
+
+  test("yarn.lock v4 (berry) basic migration", async () => {
+    const yarnV4Lock = fs.readFileSync(join(__dirname, "yarn-v4/yarn.lock"), "utf8");
+    const packageJson = fs.readFileSync(join(__dirname, "yarn-v4/package.json"), "utf8");
+
+    const tempDir = tempDirWithFiles("yarn-v4-migration", {
+      "package.json": packageJson,
+      "yarn.lock": yarnV4Lock,
+    });
+
+    // Run bun pm migrate
+    const migrateResult = await Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tempDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(migrateResult.stdout).text(),
+      new Response(migrateResult.stderr).text(),
+      migrateResult.exited,
+    ]);
+
+    console.log("stdout:", stdout);
+    console.log("stderr:", stderr);
+
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+
+    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    expect(bunLockContent).toMatchSnapshot("yarn-v4-migration");
+  });
 });

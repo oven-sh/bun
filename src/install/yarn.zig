@@ -557,7 +557,15 @@ pub fn migrateYarnLockfile(
     data: string,
     dir: bun.FD,
 ) !LoadResult {
-    // todo yarn v2+ support
+    // Check if this is a Yarn v4/berry lockfile (YAML format)
+    if (strings.containsComptime(data, "__metadata:") and
+        strings.containsComptime(data, "version:") and
+        strings.containsComptime(data, "cacheKey:"))
+    {
+        return @import("./yarn.lock.berry.zig").migrateYarnBerryLockfile(this, manager, allocator, log, data, dir);
+    }
+
+    // Check for yarn v1
     if (!strings.containsComptime(data, "# yarn lockfile v1")) {
         return error.UnsupportedYarnLockfileVersion;
     }

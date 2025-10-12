@@ -267,65 +267,65 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
-    std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-    WTF::initializeMainThread();
+        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)
-    {
-        JSC::Options::AllowUnfinalizedAccessScope scope;
+        {
+            JSC::Options::AllowUnfinalizedAccessScope scope;
 
-        // ASAN interferes with JSC's signal handlers
-        JSC::Options::useWasmFaultSignalHandler() = false;
-        JSC::Options::useWasmFastMemory() = false;
-    }
+            // ASAN interferes with JSC's signal handlers
+            JSC::Options::useWasmFaultSignalHandler() = false;
+            JSC::Options::useWasmFastMemory() = false;
+        }
 #endif
 
-    JSC::initialize();
-    {
+        JSC::initialize();
+        {
 
-        JSC::Options::AllowUnfinalizedAccessScope scope;
+            JSC::Options::AllowUnfinalizedAccessScope scope;
 
-        JSC::Options::useConcurrentJIT() = true;
-        // JSC::Options::useSigillCrashAnalyzer() = true;
-        JSC::Options::useWasm() = true;
-        JSC::Options::useSourceProviderCache() = true;
-        // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-        JSC::Options::exposeInternalModuleLoader() = true;
-        JSC::Options::useSharedArrayBuffer() = true;
-        JSC::Options::useJIT() = true;
-        JSC::Options::useBBQJIT() = true;
-        JSC::Options::useJITCage() = false;
-        JSC::Options::useShadowRealm() = true;
-        JSC::Options::useV8DateParser() = true;
-        JSC::Options::useMathSumPreciseMethod() = true;
-        JSC::Options::evalMode() = evalMode;
-        JSC::Options::heapGrowthSteepnessFactor() = 1.0;
-        JSC::Options::heapGrowthMaxIncrease() = 2.0;
-        JSC::Options::useAsyncStackTrace() = true;
-        JSC::Options::useExplicitResourceManagement() = true;
-        JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
+            JSC::Options::useConcurrentJIT() = true;
+            // JSC::Options::useSigillCrashAnalyzer() = true;
+            JSC::Options::useWasm() = true;
+            JSC::Options::useSourceProviderCache() = true;
+            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+            JSC::Options::exposeInternalModuleLoader() = true;
+            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::useJIT() = true;
+            JSC::Options::useBBQJIT() = true;
+            JSC::Options::useJITCage() = false;
+            JSC::Options::useShadowRealm() = true;
+            JSC::Options::useV8DateParser() = true;
+            JSC::Options::useMathSumPreciseMethod() = true;
+            JSC::Options::evalMode() = evalMode;
+            JSC::Options::heapGrowthSteepnessFactor() = 1.0;
+            JSC::Options::heapGrowthMaxIncrease() = 2.0;
+            JSC::Options::useAsyncStackTrace() = true;
+            JSC::Options::useExplicitResourceManagement() = true;
+            JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
-        JSC::Options::showPrivateScriptsInStackTraces() = true;
+            JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
 
-        if (envc > 0) [[likely]] {
-            auto envc_copy = envc;
-            while (envc_copy--) {
-                const char* env = (const char*)envp[envc_copy];
-                // need to check for \0 so we might as well make this single pass
-                // strlen would check the end of the string
-                if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
-                    continue;
-                }
+            if (envc > 0) [[likely]] {
+                auto envc_copy = envc;
+                while (envc_copy--) {
+                    const char* env = (const char*)envp[envc_copy];
+                    // need to check for \0 so we might as well make this single pass
+                    // strlen would check the end of the string
+                    if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
+                        continue;
+                    }
 
-                if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
-                    onCrash(env, strlen(env));
+                    if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
+                        onCrash(env, strlen(env));
+                    }
                 }
             }
+            JSC::Options::assertOptionsAreCoherent();
         }
-        JSC::Options::assertOptionsAreCoherent();
-    }
     }); // end std::call_once lambda
 
     // NOLINTEND

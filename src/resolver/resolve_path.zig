@@ -485,6 +485,10 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
         },
         .windows => {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
+            // Handle root paths like "\foo" - return the root separator
+            if (separator == 0) return str[0..1];
+            // Handle trailing separators like "C:\foo\" - recursively strip them
+            if (separator == str.len - 1) return dirname(str[0 .. str.len - 1], platform);
             return str[0..separator];
         },
         else => @compileError("not implemented"),

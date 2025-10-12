@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 

@@ -774,6 +774,9 @@ pub fn init(
     root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
 
     const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+    if (entries_option.* == .err) {
+        return entries_option.err.canonical_error;
+    }
 
     var env: *DotEnv.Loader = brk: {
         const map = try ctx.allocator.create(DotEnv.Map);

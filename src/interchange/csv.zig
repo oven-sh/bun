@@ -403,11 +403,17 @@ pub const CSV = struct {
         return checkLineBreak(p, true);
     }
 
+    const FieldResult = struct {
+        value: []const u8,
+        owned_allocation: ?[]u8,
+        was_quoted: bool,
+    };
+
     // New internal function
-    fn _parseField(p: *CSV) !struct { value: []const u8, was_quoted: bool } {
+    fn _parseField(p: *CSV) !FieldResult {
         const start_index = p.index;
         var field = std.ArrayList(u8).init(p.allocator);
-        errdefer field.deinit();
+        defer field.deinit();
 
         const quote = p.options.quote;
 
@@ -454,8 +460,9 @@ pub const CSV = struct {
                 if (p.nextCodepoint() == null) break;
             }
 
-            return .{
+            return FieldResult{
                 .value = p.contents[field_start_index..field_end_index],
+                .owned_allocation = null,
                 .was_quoted = false,
             };
         } else {
@@ -512,39 +519,34 @@ pub const CSV = struct {
 
         const field_value = try field.toOwnedSlice();
 
-        const final_value = if (p.options.trim_whitespace and !is_quoted)
-            strings.trim(field_value, " \t\n\r")
-        else
-            field_value;
-
-        return .{
-            .value = final_value,
+        return FieldResult{
+            .value = field_value,
+            .owned_allocation = field_value,
             .was_quoted = is_quoted,
         };
     }
     pub fn parseField(p: *CSV, row_index: usize) !Expr {
-        const field_result = try p._parseField();
+        const initial_field = try p._parseField();
         const loc = logger.Loc{ .start = @intCast(row_index) };
-        if (p.options.dynamic_typing and !field_result.was_quoted) {
-            const expr = try p.parseValueWithDynamicTyping(field_result.value, loc);
+        if (p.options.dynamic_typing and !initial_field.was_quoted) {
+            var field_result = initial_field;
+            const expr = try p.parseValueWithDynamicTyping(&field_result, loc);
             if (expr.data != .e_string) {
-                // value not used as a string; release buffer allocated by _parseField
-                p.allocator.free(field_result.value);
+                if (field_result.owned_allocation) |owned| {
+                    p.allocator.free(owned);
+                }
             }
             return expr;
         } else {
-            return p.e(E.String{ .data = field_result.value }, loc);
+            return p.e(E.String{ .data = initial_field.value }, loc);
         }
     }
 
     fn parseHeaderField(p: *CSV) ![]const u8 {
         const field_result = try p._parseField();
         defer {
-            // If _parseField allocated (quoted/trim path), free the temporary buffer after we dupe.
-            // For direct slices, this is a no-op because we only dup the slice.
-            // Heuristic: when quoted, _parseField always allocates; otherwise it may not.
-            if (field_result.was_quoted or p.options.trim_whitespace) {
-                p.allocator.free(field_result.value);
+            if (field_result.owned_allocation) |owned| {
+                p.allocator.free(owned);
             }
         }
         // Return an owned copy so cleanupHeaderFields can always free safely.
@@ -695,7 +697,7 @@ pub const CSV = struct {
 
     fn runParser(p: *CSV) anyerror!void {
         var all_records = std.ArrayList(std.ArrayList(Expr)).init(p.allocator);
-        errdefer {
+        defer {
             for (all_records.items) |*record| {
                 p.cleanupFields(record);
             }
@@ -703,7 +705,7 @@ pub const CSV = struct {
         }
 
         var header_fields: ?std.ArrayList([]const u8) = null;
-        errdefer if (header_fields) |*h| p.cleanupHeaderFields(h);
+        defer if (header_fields) |*h| p.cleanupHeaderFields(h);
 
         // Parse Header (if applicable)
         if (p.options.header) {
@@ -768,6 +770,8 @@ pub const CSV = struct {
             }
 
             if (p.options.skip_empty_lines and p.isEmptyRecord(record)) {
+                // we have to free the record here because we are not adding it to all_records
+                p.cleanupFields(&record);
                 continue;
             }
 
@@ -845,10 +849,10 @@ pub const CSV = struct {
         return std.mem.eql(u8, p.contents[p.index .. p.index + comment_char.len], comment_char);
     }
 
-    fn parseCommentLine(p: *CSV) ![]const u8 {
+    fn parseCommentLine(p: *CSV) ![]u8 {
         const comment_char = p.options.comment_char;
         var comment = std.ArrayList(u8).init(p.allocator);
-        errdefer comment.deinit();
+        defer comment.deinit();
 
         // Skip the comment character
         p.advanceBytes(comment_char.len);
@@ -870,10 +874,10 @@ pub const CSV = struct {
             try comment.appendSlice(buf[0..len]);
         }
 
-        return comment.toOwnedSlice();
+        return try comment.toOwnedSlice();
     }
 
-    fn addCommentToArray(p: *CSV, comment_text: []const u8) !void {
+    fn addCommentToArray(p: *CSV, comment_text: []u8) !void {
         // currently lines are 0-indexed, check what other parsers do
         const loc = logger.Loc{ .start = @intCast(p.line_number) };
 
@@ -884,9 +888,19 @@ pub const CSV = struct {
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
         });
 
+        const trimmed_view = strings.trim(comment_text, &strings.whitespace_chars);
+        var final_slice: []u8 = comment_text[0..trimmed_view.len];
+
+        if (trimmed_view.len > 0 and trimmed_view.ptr != comment_text.ptr) {
+            std.mem.copyBackwards(u8, comment_text[0..trimmed_view.len], trimmed_view);
+            final_slice = comment_text[0..trimmed_view.len];
+        } else if (trimmed_view.len == 0) {
+            final_slice = comment_text[0..0];
+        }
+
         try comment_obj.data.e_object.properties.append(p.allocator, .{
             .key = p.e(E.String{ .data = "text" }, loc),
-            .value = p.e(E.String{ .data = strings.trim(comment_text, " \t\n\r") }, loc),
+            .value = p.e(E.String{ .data = final_slice }, loc),
         });
 
         try p.result.diagnostics.comments.data.e_array.push(p.allocator, comment_obj);
@@ -984,71 +998,84 @@ pub const CSV = struct {
         return has_digit;
     }
 
-    /// Parse a string value with dynamic typing enabled
-    /// Returns an Expr with the appropriate type: boolean, number, bigint, or string
-    fn parseValueWithDynamicTyping(p: *CSV, value: []const u8, loc: logger.Loc) !Expr {
-        // Apply trimming if enabled
-        const trimmed_value = if (p.options.trim_whitespace)
-            strings.trim(value, " \t\n\r")
-        else
-            value;
+    fn normalizeOwnedField(field: *FieldResult, desired: []const u8) []const u8 {
+        if (field.owned_allocation) |*owned| {
+            var mutable = owned.*;
 
-        // Empty string stays empty string
-        if (trimmed_value.len == 0) {
-            return p.e(E.String{ .data = trimmed_value }, loc);
+            if (desired.len == 0) {
+                owned.* = mutable[0..0];
+                field.value = owned.*;
+                return field.value;
+            }
+
+            if (desired.ptr != mutable.ptr) {
+                std.mem.copyBackwards(u8, mutable[0..desired.len], desired);
+            }
+
+            owned.* = mutable[0..desired.len];
+            field.value = owned.*;
+            return field.value;
         }
 
-        // Try to parse as boolean first
+        field.value = desired;
+        return field.value;
+    }
+
+    /// Parse a string value with dynamic typing enabled
+    /// Returns an Expr with the appropriate type: boolean, number, bigint, or string
+    fn parseValueWithDynamicTyping(p: *CSV, field: *FieldResult, loc: logger.Loc) !Expr {
+        const value = field.value;
+        const trimmed_value = if (p.options.trim_whitespace)
+            value
+        else
+            strings.trim(value, &strings.whitespace_chars);
+
+        if (trimmed_value.len == 0) {
+            const normalized = normalizeOwnedField(field, trimmed_value);
+            return p.e(E.String{ .data = normalized }, loc);
+        }
+
         if (std.ascii.eqlIgnoreCase(trimmed_value, "true")) {
             return p.e(E.Boolean{ .value = true }, loc);
         } else if (std.ascii.eqlIgnoreCase(trimmed_value, "false")) {
             return p.e(E.Boolean{ .value = false }, loc);
         }
 
-        // Check if the value is null
         if (std.ascii.eqlIgnoreCase(trimmed_value, "null")) {
             return p.e(E.Null{}, loc);
         }
 
-        // Check for non-finite numeric values that should remain as strings
         if (std.ascii.eqlIgnoreCase(trimmed_value, "nan") or
             std.ascii.eqlIgnoreCase(trimmed_value, "infinity") or
             std.ascii.eqlIgnoreCase(trimmed_value, "-infinity"))
         {
-            return p.e(E.String{ .data = trimmed_value }, loc);
+            const normalized = normalizeOwnedField(field, trimmed_value);
+            return p.e(E.String{ .data = normalized }, loc);
         }
 
-        // Only try to parse as number if it's a valid decimal literal
         if (isDecimalLiteral(trimmed_value)) {
             if (std.fmt.parseFloat(f64, trimmed_value)) |parsed_number| {
-                // Check if the parsed number is finite
                 if (!std.math.isFinite(parsed_number)) {
-                    // Non-finite numbers (NaN, Infinity, -Infinity) should be strings
-                    return p.e(E.String{ .data = trimmed_value }, loc);
+                    const normalized = normalizeOwnedField(field, trimmed_value);
+                    return p.e(E.String{ .data = normalized }, loc);
                 }
 
-                // Check if the number is within safe integer range
                 if (@abs(parsed_number) <= @as(f64, @floatFromInt(JSC.MAX_SAFE_INTEGER)) and @trunc(parsed_number) == parsed_number) {
-                    // It's a safe integer, use as number
                     return p.e(E.Number{ .value = parsed_number }, loc);
                 } else if (@trunc(parsed_number) == parsed_number) {
-                    // We return BigInts as strings to align with other CSV JS parsers
-                    // TODO: add an option to parse when BigInt.toJS is implemented
-                    // return p.e(E.BigInt{ .value = trimmed_value }, loc);
-                    return p.e(E.String{ .data = trimmed_value }, loc);
+                    const normalized = normalizeOwnedField(field, trimmed_value);
+                    return p.e(E.String{ .data = normalized }, loc);
                 } else {
-                    // It's a floating point number
                     return p.e(E.Number{ .value = parsed_number }, loc);
                 }
             } else |_| {
-                // parseFloat failed despite being a decimal literal format
-                // This shouldn't happen, but keep as string to be safe
-                return p.e(E.String{ .data = trimmed_value }, loc);
+                const normalized = normalizeOwnedField(field, trimmed_value);
+                return p.e(E.String{ .data = normalized }, loc);
             }
         }
 
-        // Not a decimal literal, keep as string
-        return p.e(E.String{ .data = trimmed_value }, loc);
+        const normalized = normalizeOwnedField(field, trimmed_value);
+        return p.e(E.String{ .data = normalized }, loc);
     }
 };
 

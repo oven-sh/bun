@@ -20,11 +20,17 @@ test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
     stdin: "ignore",
   });
 
-  // Wait for first run, then trigger a change
-  for await (const line of proc.stdout) {
-    const str = new TextDecoder().decode(line);
-    if (str.includes("ready")) {
+  const decoder = new TextDecoder();
+  let wroteModification = false;
+  // Wait for the initial run, trigger a change, then wait for the reload
+  for await (const chunk of proc.stdout) {
+    const str = decoder.decode(chunk);
+    if (!wroteModification && str.includes("ready")) {
+      wroteModification = true;
       await Bun.write(join(String(dir), "script.js"), `console.log("modified");`);
+      continue;
+    }
+    if (wroteModification && str.includes("modified")) {
       break;
     }
   }

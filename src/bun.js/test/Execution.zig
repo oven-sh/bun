@@ -89,6 +89,12 @@ pub const ExecutionSequence = struct {
         exact: u32,
     } = .not_set,
     maybe_skip: bool = false,
+    /// Soft assertion errors collected during test execution.
+    soft_errors: std.ArrayListUnmanaged(SoftError) = .{},
+
+    pub const SoftError = struct {
+        message: []const u8,
+    };
 
     pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry) ExecutionSequence {
         return .{
@@ -528,6 +534,21 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
             sequence.result = .fail_because_expected_assertion_count;
         },
     }
+
+    // Check soft errors - if any exist and test would otherwise pass, mark as failed and print them
+    if (sequence.soft_errors.items.len > 0) {
+        if (sequence.result.isPass(.pending_is_pass)) {
+            sequence.result = .fail;
+        }
+
+        // Print all soft assertion errors
+        for (sequence.soft_errors.items) |soft_error| {
+            bun.Output.prettyErrorln("<r><red>", .{});
+            bun.Output.prettyErrorln("{s}", .{soft_error.message});
+            bun.Output.flush();
+        }
+    }
+
     if (sequence.result == .pending) {
         sequence.result = switch (sequence.entryMode()) {
             .failing => .fail_because_failing_test_passed,

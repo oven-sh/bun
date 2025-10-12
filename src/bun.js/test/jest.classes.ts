@@ -169,7 +169,7 @@ export default [
     name: "ExpectStatic",
     construct: false,
     noConstructor: true,
-    call: false,
+    call: true,
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
@@ -205,6 +205,10 @@ export default [
       },
       not: {
         getter: "getNot",
+        this: true,
+      },
+      soft: {
+        getter: "getSoft",
         this: true,
       },
       resolvesTo: {
@@ -272,6 +276,9 @@ export default [
       },
       not: {
         getter: "getStaticNot",
+      },
+      soft: {
+        getter: "getStaticSoft",
       },
       resolvesTo: {
         getter: "getStaticResolvesTo",
@@ -509,6 +516,10 @@ export default [
       },
       not: {
         getter: "getNot",
+        this: true,
+      },
+      soft: {
+        getter: "getSoft",
         this: true,
       },
       resolves: {

@@ -24,6 +24,7 @@ pub const Expect = struct {
     flags: Flags = .{},
     parent: ?*bun.jsc.Jest.bun_test.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
+    is_soft: bool = false,
 
     pub const TestScope = struct {
         test_id: TestRunner.Test.ID,
@@ -133,6 +134,11 @@ pub const Expect = struct {
 
     pub fn getNot(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) JSValue {
         this.flags.not = !this.flags.not;
+        return thisValue;
+    }
+
+    pub fn getSoft(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) JSValue {
+        this.is_soft = true;
         return thisValue;
     }
 
@@ -370,12 +376,54 @@ pub const Expect = struct {
         return expect_js_value;
     }
 
-    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+    fn throwImpl(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         if (this.custom_label.isEmpty()) {
             return globalThis.throwPretty(signature ++ fmt, args);
         } else {
             return globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
         }
+    }
+
+    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        // Handle soft assertions - collect error without throwing
+        if (this.is_soft) {
+            if (this.parent) |parent| {
+                var buntest_strong = parent.bunTest() orelse {
+                    return this.throwImpl(globalThis, signature, fmt, args);
+                };
+                defer buntest_strong.deinit();
+                const buntest = buntest_strong.get();
+
+                if (parent.phase.sequence(buntest)) |sequence| {
+                    // Format the error message
+                    const msg = if (this.custom_label.isEmpty())
+                        std.fmt.allocPrint(buntest.arena, signature ++ fmt, args) catch null
+                    else
+                        std.fmt.allocPrint(buntest.arena, "{}" ++ fmt, .{this.custom_label} ++ args) catch null;
+
+                    if (msg) |m| {
+                        // Store in sequence
+                        sequence.soft_errors.append(buntest.arena, .{
+                            .message = m,
+                        }) catch {
+                            // If append fails, fall through to regular throw
+                        };
+                        if (sequence.soft_errors.items.len > 0 and sequence.soft_errors.items[sequence.soft_errors.items.len - 1].message.ptr == m.ptr) {
+                            // Successfully added the soft error
+                            // Return error.JSError WITHOUT calling globalThis.throw
+                            // This is the key trick: we return an error type but don't actually throw
+                            // The matcher propagates error.JSError up, but since no actual exception
+                            // was set, the test continues running
+                            return error.JSError;
+                        }
+                    }
+                }
+            }
+            // If soft error collection failed, fall through to regular throw
+        }
+
+        // Regular throw
+        return this.throwImpl(globalThis, signature, fmt, args);
     }
 
     pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!*Expect {
@@ -870,6 +918,10 @@ pub const Expect = struct {
         return ExpectStatic.create(globalThis, .{ .not = true });
     }
 
+    pub fn getStaticSoft(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
+        return ExpectStatic.createSoft(globalThis, .{}, true);
+    }
+
     pub fn getStaticResolvesTo(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
         return ExpectStatic.create(globalThis, .{ .promise = .resolves });
     }
@@ -1259,6 +1311,7 @@ pub const ExpectStatic = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     flags: Expect.Flags = .{},
+    is_soft: bool = false,
 
     pub fn finalize(
         this: *ExpectStatic,
@@ -1269,16 +1322,66 @@ pub const ExpectStatic = struct {
     pub fn create(globalThis: *JSGlobalObject, flags: Expect.Flags) bun.JSError!JSValue {
         var expect = try globalThis.bunVM().allocator.create(ExpectStatic);
         expect.flags = flags;
+        expect.is_soft = false;
 
         const value = expect.toJS(globalThis);
         value.ensureStillAlive();
         return value;
     }
 
+    pub fn createSoft(globalThis: *JSGlobalObject, flags: Expect.Flags, is_soft: bool) bun.JSError!JSValue {
+        var expect = try globalThis.bunVM().allocator.create(ExpectStatic);
+        expect.flags = flags;
+        expect.is_soft = is_soft;
+
+        const value = expect.toJS(globalThis);
+        value.ensureStillAlive();
+        return value;
+    }
+
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        // Create an Expect instance with this ExpectStatic's flags and is_soft setting
+        const this_value = callFrame.this();
+        const this = ExpectStatic.fromJS(this_value) orelse {
+            return globalThis.throw("Invalid expect.soft call", .{});
+        };
+        const arguments_ = callFrame.arguments_old(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument", .{});
+        }
+
+        const value = arguments[0];
+        value.ensureStillAlive();
+
+        const active_execution_entry_ref = if (bun.jsc.Jest.bun_test.cloneActiveStrong()) |buntest_strong_| blk: {
+            var buntest_strong = buntest_strong_;
+            defer buntest_strong.deinit();
+            break :blk bun.jsc.Jest.bun_test.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData());
+        } else null;
+
+        var expect = try globalThis.bunVM().allocator.create(Expect);
+        expect.* = Expect{
+            .flags = this.flags,
+            .parent = active_execution_entry_ref,
+            .is_soft = this.is_soft,
+        };
+
+        const expect_js_value = expect.toJS(globalThis);
+        Expect.js.capturedValueSetCached(expect_js_value, globalThis, value);
+        expect.postMatch(globalThis);
+        return expect_js_value;
+    }
+
     pub fn getNot(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         var flags = this.flags;
         flags.not = !this.flags.not;
-        return create(globalThis, flags);
+        return createSoft(globalThis, flags, this.is_soft);
+    }
+
+    pub fn getSoft(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+        return createSoft(globalThis, this.flags, true);
     }
 
     pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {

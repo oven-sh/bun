@@ -64,10 +64,19 @@ test("QUIC server and client integration", async () => {
 
       // Create a stream and send test message
       clientStream = socket.stream({ type: "test" });
-      clientStream.write("Hello from QUIC client!");
+      console.log("clientStream type:", typeof clientStream, "write method:", typeof clientStream.write);
+      console.log("clientStream properties:", Object.keys(clientStream));
+      try {
+        const result = clientStream.write("Hello from QUIC client!");
+        console.log("Write returned:", result);
+      } catch (error) {
+        console.error("Write error:", error);
+      }
     },
     open(stream) {
       console.log("Client: New stream opened:", stream.id);
+      console.log("Are they the same object?", stream === clientStream);
+      console.log("open() stream:", stream, "clientStream:", clientStream);
     },
     data(stream, buffer) {
       console.log("Client received on stream:", buffer.toString());

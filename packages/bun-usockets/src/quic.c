@@ -1421,7 +1421,10 @@ static void on_read(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
 }
 
 int us_quic_stream_write(us_quic_stream_t *s, char *data, int length) {
-    // printf("us_quic_stream_write called: stream=%p, data=%p, length=%d\n", s, data, length);
+    printf("DEBUG: us_quic_stream_write called: stream=%p, data=%p, length=%d\n", s, data, length);
+    if (data && length > 0 && length < 100) {
+        printf("DEBUG: Writing data: '%.*s'\n", length, data);
+    }
     
     if (!s) {
         printf("ERROR: NULL stream in us_quic_stream_write\n");

@@ -582,10 +582,8 @@ pub const QuicSocket = struct {
             data_value = arguments.ptr[0];
         }
 
-        // Trigger lsquic stream creation (async - will call on_new_stream)
-        const stream_id = this.createStreamImpl() catch {
-            return globalThis.throw("Failed to create stream", .{});
-        };
+        // Generate stream ID first (before triggering creation)
+        const stream_id = this.next_stream_id.fetchAdd(1, .monotonic);
 
         // Create the QuicStream object with the optional data
         const quic_stream = QuicStream.init(bun.default_allocator, this, stream_id, data_value) catch {
@@ -594,12 +592,22 @@ pub const QuicSocket = struct {
 
         log("Created QuicStream {*} with ID {} (will be connected when lsquic stream opens)", .{ quic_stream, stream_id });
 
-        // Add to pending streams queue
-        // The lsquic stream creation was triggered in createStreamImpl()
-        // It will call on_new_stream callback asynchronously
+        // CRITICAL: Add to pending queue BEFORE triggering lsquic stream creation
+        // because createStream() can call on_new_stream synchronously!
         this.addPendingStream(quic_stream);
 
-        log("QuicStream added to pending queue, waiting for lsquic on_new_stream callback", .{});
+        log("QuicStream added to pending queue, now triggering lsquic stream creation", .{});
+
+        // Now trigger lsquic stream creation (may call on_new_stream synchronously!)
+        if (this.socket) |socket| {
+            log("Triggering QUIC stream creation with ID {}", .{stream_id});
+            socket.createStream(0); // Triggers on_new_stream callback (possibly synchronously!)
+
+            // Update the global counter for compatibility
+            _ = this.stream_counter.fetchAdd(1, .monotonic);
+
+            log("QUIC stream creation triggered", .{});
+        }
 
         // Return the QuicStream as a JS object
         return quic_stream.toJS(globalThis);
@@ -1053,7 +1061,9 @@ pub const QuicSocket = struct {
         }
 
         // Try to get a pending QuicStream that's waiting to be connected
+        var is_pending_stream = false;
         const quic_stream = if (this.popPendingStream()) |pending_stream| blk: {
+            is_pending_stream = true;
             log("Using pending QuicStream {*} (ID {}) for lsquic stream {*}", .{ pending_stream, pending_stream.stream_id, stream });
 
             // Connect the pending QuicStream to the actual lsquic stream
@@ -1104,19 +1114,26 @@ pub const QuicSocket = struct {
 
         log("Connected QuicStream {*} to lsquic stream {*}", .{ quic_stream, stream });
 
-        // Call JavaScript onStreamOpen handler with the QuicStream object
-        if (js.gc.onStreamOpen.get(this.this_value)) |callback| {
-            const vm = jsc.VirtualMachine.get();
-            const globalObject = vm.global;
+        // IMPORTANT: Only call the onStreamOpen callback for INCOMING streams (not from pending queue)
+        // Streams created via socket.stream() are in the pending queue and shouldn't fire the open callback
+        // because they're already returned to JavaScript. The open callback is for server-initiated/incoming streams.
+        if (!is_pending_stream) {
+            // Call JavaScript onStreamOpen handler with the QuicStream object
+            if (js.gc.onStreamOpen.get(this.this_value)) |callback| {
+                const vm = jsc.VirtualMachine.get();
+                const globalObject = vm.global;
 
-            // Create JavaScript QuicStream object
-            const js_stream = quic_stream.toJS(globalObject);
+                // Create JavaScript QuicStream object
+                const js_stream = quic_stream.toJS(globalObject);
 
-            log("Calling JavaScript onStreamOpen handler with QuicStream", .{});
-            vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{js_stream});
-            log("JavaScript onStreamOpen handler called successfully", .{});
+                log("Calling JavaScript onStreamOpen handler with QuicStream (incoming stream)", .{});
+                vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{js_stream});
+                log("JavaScript onStreamOpen handler called successfully", .{});
+            } else {
+                log("WARNING: No onStreamOpen callback registered on {*}", .{this});
+            }
         } else {
-            log("WARNING: No onStreamOpen callback registered on {*}", .{this});
+            log("Skipping open callback for pending stream (already returned from socket.stream())", .{});
         }
     }
 

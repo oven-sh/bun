@@ -5,7 +5,7 @@ const uws = bun.uws;
 const Environment = bun.Environment;
 const Async = bun.Async;
 
-const log = bun.Output.scoped(.QuicStream, .hidden);
+const log = bun.Output.scoped(.QuicStream, .visible);
 
 pub const QuicStream = struct {
     const This = @This();
@@ -24,31 +24,31 @@ pub const QuicStream = struct {
 
     // The underlying lsquic stream
     stream: ?*uws.quic.Stream = null,
-    
+
     // Reference to parent socket
     socket: *QuicSocket,
-    
+
     // Stream ID
     stream_id: u64,
-    
+
     // Optional data attached to the stream
     data_value: jsc.JSValue = .zero,
-    
+
     // JavaScript this value
     this_value: jsc.JSValue = .zero,
-    
+
     // Reference counting
     ref_count: RefCount,
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-    
+
     // Stream state
     flags: Flags = .{},
-    
+
     // Buffered writes before stream is connected
     write_buffer: std.ArrayList([]const u8) = undefined,
     write_buffer_initialized: bool = false,
     write_buffer_mutex: std.Thread.Mutex = .{},
-    
+
     has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
     pub const Flags = packed struct {
@@ -80,7 +80,7 @@ pub const QuicStream = struct {
         if (this.write_buffer_initialized) {
             this.write_buffer_mutex.lock();
             defer this.write_buffer_mutex.unlock();
-            
+
             // Free any buffered write data
             for (this.write_buffer.items) |buffered_data| {
                 bun.default_allocator.free(buffered_data);
@@ -113,19 +113,19 @@ pub const QuicStream = struct {
             .stream_id = stream_id,
             .data_value = data_value,
         };
-        
+
         // Initialize write buffer
         this.write_buffer = std.ArrayList([]const u8).init(allocator);
         this.write_buffer_initialized = true;
-        
+
         // Ref the parent socket to keep it alive
         socket.ref();
-        
+
         // Protect the data value if set
         if (!data_value.isEmptyOrUndefinedOrNull()) {
             data_value.protect();
         }
-        
+
         this.ref();
         return this;
     }
@@ -142,7 +142,7 @@ pub const QuicStream = struct {
         }
 
         const data = arguments.ptr[0];
-        
+
         // Convert to buffer
         var buffer: []const u8 = undefined;
         if (data.asArrayBuffer(globalObject)) |array_buffer| {
@@ -159,16 +159,16 @@ pub const QuicStream = struct {
 
         return this.writeInternal(buffer, globalObject);
     }
-    
+
     // Internal write method that can be called from both JS and internal code
     fn writeInternal(this: *This, buffer: []const u8, globalObject: ?*jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         // Write to the underlying stream or buffer if stream not yet connected
         if (this.stream) |stream| {
-            log("QuicStream.write: Writing {} bytes directly to connected stream {*} (ID: {})", .{buffer.len, stream, this.stream_id});
+            log("QuicStream.write: Writing {} bytes directly to connected stream {*} (ID: {})", .{ buffer.len, stream, this.stream_id });
             const written = stream.write(buffer);
             const written_usize: usize = if (written >= 0) @intCast(written) else 0;
-            log("QuicStream.write: stream.write returned {} bytes for stream {}", .{written, this.stream_id});
-            
+            log("QuicStream.write: stream.write returned {} bytes for stream {}", .{ written, this.stream_id });
+
             // Handle backpressure - if not all data was written, set backpressure flag
             if (written_usize < buffer.len) {
                 this.flags.has_backpressure = true;
@@ -176,44 +176,44 @@ pub const QuicStream = struct {
             } else {
                 this.flags.has_backpressure = false;
             }
-            
+
             log("QuicStream.write: wrote {} bytes to stream {}", .{ written_usize, this.stream_id });
             const written_float: f64 = @floatFromInt(written_usize);
             return jsc.JSValue.jsNumber(written_float);
         } else {
             // Stream not connected yet, buffer the write
-            log("QuicStream.write: Stream {} not connected, attempting to buffer {} bytes", .{this.stream_id, buffer.len});
+            log("QuicStream.write: Stream {} not connected, attempting to buffer {} bytes", .{ this.stream_id, buffer.len });
             if (!this.write_buffer_initialized) {
                 log("QuicStream.write: write buffer not initialized for stream {}, returning 0", .{this.stream_id});
                 return jsc.JSValue.jsNumber(0);
             }
-            
+
             this.write_buffer_mutex.lock();
             defer this.write_buffer_mutex.unlock();
-            
+
             // Make a copy of the data to buffer
             const buffered_data = bun.default_allocator.dupe(u8, buffer) catch |err| {
-                log("QuicStream.write: failed to allocate buffer memory for stream {}: {}", .{this.stream_id, err});
+                log("QuicStream.write: failed to allocate buffer memory for stream {}: {}", .{ this.stream_id, err });
                 if (globalObject) |globalObj| {
                     return globalObj.throwError(err, "Failed to allocate memory for write buffer");
                 } else {
                     return jsc.JSValue.jsNumber(0);
                 }
             };
-            
+
             // Add to write buffer
             this.write_buffer.append(buffered_data) catch |err| {
                 bun.default_allocator.free(buffered_data);
-                log("QuicStream.write: failed to append to write buffer for stream {}: {}", .{this.stream_id, err});
+                log("QuicStream.write: failed to append to write buffer for stream {}: {}", .{ this.stream_id, err });
                 if (globalObject) |globalObj| {
                     return globalObj.throwError(err, "Failed to buffer write data");
                 } else {
                     return jsc.JSValue.jsNumber(0);
                 }
             };
-            
+
             log("QuicStream.write: buffered {} bytes for stream {} (buffer size: {})", .{ buffer.len, this.stream_id, this.write_buffer.items.len });
-            
+
             // Return the buffered size so caller thinks the write succeeded
             const buffered_float: f64 = @floatFromInt(buffer.len);
             return jsc.JSValue.jsNumber(buffered_float);
@@ -223,21 +223,21 @@ pub const QuicStream = struct {
     // Buffer write data when stream is not yet connected (internal method)
     pub fn bufferWrite(this: *This, data: []const u8) !void {
         if (this.flags.is_closed) return error.StreamClosed;
-        
+
         if (!this.write_buffer_initialized) {
             return error.BufferNotInitialized;
         }
-        
+
         this.write_buffer_mutex.lock();
         defer this.write_buffer_mutex.unlock();
-        
+
         // Make a copy of the data to buffer
         const buffered_data = try bun.default_allocator.dupe(u8, data);
         errdefer bun.default_allocator.free(buffered_data);
-        
+
         // Add to write buffer
         try this.write_buffer.append(buffered_data);
-        
+
         log("bufferWrite: buffered {} bytes for stream {} (buffer size: {})", .{ data.len, this.stream_id, this.write_buffer.items.len });
     }
 
@@ -264,14 +264,14 @@ pub const QuicStream = struct {
 
     fn closeImpl(this: *This) void {
         if (this.flags.is_closed) return;
-        
+
         this.flags.is_closed = true;
         this.has_pending_activity.store(false, .release);
 
         if (this.stream) |stream| {
             // Remove from socket's stream mapping before closing
             _ = this.socket.removeStreamMapping(stream);
-            
+
             stream.close();
             this.stream = null;
             log("QuicStream.close: closed stream {}", .{this.stream_id});
@@ -281,7 +281,7 @@ pub const QuicStream = struct {
         if (this.write_buffer_initialized) {
             this.write_buffer_mutex.lock();
             defer this.write_buffer_mutex.unlock();
-            
+
             for (this.write_buffer.items) |buffered_data| {
                 bun.default_allocator.free(buffered_data);
             }
@@ -291,13 +291,8 @@ pub const QuicStream = struct {
 
     // Flush any buffered writes to the now-connected stream
     pub fn flushBufferedWrites(this: *This) void {
-        log("flushBufferedWrites: stream_id={}, stream={*}, initialized={}, buffer_len={}", .{
-            this.stream_id,
-            this.stream, 
-            this.write_buffer_initialized,
-            if (this.write_buffer_initialized) this.write_buffer.items.len else 0
-        });
-        
+        log("flushBufferedWrites: stream_id={}, stream={*}, initialized={}, buffer_len={}", .{ this.stream_id, this.stream, this.write_buffer_initialized, if (this.write_buffer_initialized) this.write_buffer.items.len else 0 });
+
         if (!this.write_buffer_initialized or this.stream == null) {
             log("flushBufferedWrites: early return for stream {} - not initialized or no stream", .{this.stream_id});
             return;
@@ -311,14 +306,14 @@ pub const QuicStream = struct {
         var failed_writes: usize = 0;
 
         const buffer_count = this.write_buffer.items.len;
-        log("flushBufferedWrites: flushing {} buffered writes to stream {*} (ID: {})", .{buffer_count, stream, this.stream_id});
+        log("flushBufferedWrites: flushing {} buffered writes to stream {*} (ID: {})", .{ buffer_count, stream, this.stream_id });
 
         // Write all buffered data to the stream
         for (this.write_buffer.items) |buffered_data| {
             const written = stream.write(buffered_data);
             const written_usize: usize = if (written >= 0) @intCast(written) else 0;
             total_written += written_usize;
-            
+
             if (written_usize < buffered_data.len) {
                 this.flags.has_backpressure = true;
                 failed_writes += 1;

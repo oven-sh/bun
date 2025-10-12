@@ -113,6 +113,8 @@ pub const Features = struct {
     pub var exited: usize = 0;
     pub var yarn_migration: usize = 0;
     pub var pnpm_migration: usize = 0;
+    pub var yarn_berry_migration: usize = 0;
+
     pub var yaml_parse: usize = 0;
 
     comptime {

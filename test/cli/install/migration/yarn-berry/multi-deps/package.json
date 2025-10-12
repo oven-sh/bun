@@ -1,0 +1,7 @@
+{
+  "name": "test-multi-deps",
+  "version": "1.0.0",
+  "dependencies": {
+    "react": "^18.2.0"
+  }
+}

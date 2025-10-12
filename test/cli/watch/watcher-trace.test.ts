@@ -137,7 +137,7 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
 
       if (
         path.includes("script.js") ||
-        (fileEvent.changed && fileEvent.changed.some((f: string) => f?.includes("script.js")))
+        (Array.isArray(fileEvent.changed) && fileEvent.changed.some((f: string) => f?.includes("script.js")))
       ) {
         foundScriptEvent = true;
         // Should have write event
@@ -237,7 +237,7 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
       if (j === 2) break; // Stop after 2 runs
       await Bun.write(join(String(dir), "app.js"), `console.log("second-${j}");`);
     } else if (str.includes("first-1")) {
-      // Initial run, start modifying
+      // Second process starts with previous file content ("first-1"), trigger first modification
       await Bun.write(join(String(dir), "app.js"), `console.log("second-0");`);
     }
   }

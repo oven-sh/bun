@@ -293,6 +293,7 @@ fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
+    this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
 
     return .success;

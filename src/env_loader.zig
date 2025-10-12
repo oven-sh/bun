@@ -1099,12 +1099,9 @@ const Parser = struct {
                 } else if (entry.value_ptr.conditional) {
                     if (try this.expandValue(map, entry.value_ptr.value)) |value| {
                         allocator.free(entry.value_ptr.value);
-                        entry.value_ptr.* = .{
-                            .value = try allocator.dupe(u8, value),
-                            .conditional = false,
-                        };
-                        entry.value_ptr.conditional = false;
+                        entry.value_ptr.value = try allocator.dupe(u8, value);
                     }
+                    entry.value_ptr.conditional = false;
                 }
             }
         }

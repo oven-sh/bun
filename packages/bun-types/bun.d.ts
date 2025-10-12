@@ -727,7 +727,7 @@ declare module "bun" {
        */
       trimWhitespace?: boolean;
       /**
-       * Automatically converts string values to appropriate JavaScript types (numbers, booleans) during parsing.
+       * Automatically converts string values to appropriate JavaScript types (numbers, booleans, null) during parsing.
        * @default false
        */
       dynamicTyping?: boolean;

@@ -93,7 +93,10 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
         .changed_filepaths = [_]?[:0]u8{null} ** max_count,
     };
 
-    try Platform.init(&watcher.platform, fs.top_level_dir);
+    Platform.init(&watcher.platform, fs.top_level_dir) catch |err| {
+        allocator.destroy(watcher);
+        return err;
+    };
 
     return watcher;
 }
@@ -132,7 +135,7 @@ pub const max_eviction_count = 8096;
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
 const Platform = switch (Environment.os) {
-    .linux => @import("./watcher/INotifyWatcher.zig"),
+    .linux => @import("./watcher/FanotifyWatcher.zig"),
     .mac => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
     else => @compileError("Unsupported platform"),

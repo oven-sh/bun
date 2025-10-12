@@ -301,6 +301,7 @@ pub const Tag = enum(u8) {
 
 pub const Error = @import("./sys/Error.zig");
 pub const PosixStat = @import("./sys/PosixStat.zig").PosixStat;
+pub const fanotify = if (Environment.isLinux) @import("./sys/fanotify.zig") else struct {};
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);

@@ -115,16 +115,21 @@ pub const PathWatcherManager = struct {
         var watchers = bun.handleOom(bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1));
         errdefer watchers.deinit(bun.default_allocator);
 
+        const main_watcher = Watcher.init(
+            PathWatcherManager,
+            this,
+            vm.transpiler.fs,
+            bun.default_allocator,
+        ) catch |err| {
+            watchers.deinit(bun.default_allocator);
+            return err;
+        };
+
         const manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = try Watcher.init(
-                PathWatcherManager,
-                this,
-                vm.transpiler.fs,
-                bun.default_allocator,
-            ),
+            .main_watcher = main_watcher,
             .vm = vm,
             .watcher_count = 0,
             .mutex = .{},

@@ -1430,7 +1430,7 @@ pub const PublishCommand = struct {
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
             bun.assertWithLocation(count == encoded_tarball_len, @src());
 
-            try writer.print("\",\"length\":{d}}}", .{
+            try writer.print("\",\"length\":{d}}", .{
                 ctx.tarball_bytes.len,
             });
 
@@ -1515,7 +1515,7 @@ pub const PublishCommand = struct {
                 Output.prettyln("<green>✓<r> Generated provenance attestation for {s}@{s}", .{ ctx.package_name, version_without_build_tag });
             }
 
-            try writer.writeAll("}}}");
+            try writer.writeAll("}}");
         }
 
         return buf.items;

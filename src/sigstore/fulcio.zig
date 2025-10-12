@@ -112,11 +112,7 @@ pub const FulcioClient = struct {
         request: *const CertificateRequest,
     ) FulcioError!CertificateChain {
         // Create JSON request body
-        const request_json = std.json.stringifyAlloc(self.allocator, .{
-            .certificateSigningRequest = .{
-                .certificateSigningRequest = request.csr_pem,
-            },
-        }, .{}) catch return FulcioError.CertificateRequestFailed;
+        const request_json = CertificateRequest.toJSON(request) catch return FulcioError.CertificateRequestFailed;
         defer self.allocator.free(request_json);
 
         // Build request URL
@@ -132,7 +128,7 @@ pub const FulcioClient = struct {
         // Set up headers
         var headers: http.HeaderBuilder = .{};
         headers.count("content-type", "application/json");
-        headers.count("accept", "application/pem-certificate-chain");
+        headers.count("accept", "application/json");
         
         // Add authorization header
         const auth_header = try std.fmt.allocPrint(
@@ -147,7 +143,7 @@ pub const FulcioClient = struct {
         defer headers.deinit();
 
         headers.append("content-type", "application/json");
-        headers.append("accept", "application/pem-certificate-chain");
+        headers.append("accept", "application/json");
         headers.append("authorization", auth_header);
 
         // Prepare response buffer
@@ -338,5 +334,3 @@ pub fn requestSigningCertificate(
 
     return chain;
 }
-
-@import("bun")

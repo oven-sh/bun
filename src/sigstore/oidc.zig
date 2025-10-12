@@ -413,17 +413,23 @@ pub const OIDCTokenManager = struct {
     }
 };
 
+// File-scope singletons to avoid use-after-free in createDefaultTokenManager
+var GITHUB_ACTIONS_PROVIDER: GitHubActionsProvider = undefined;
+var GITLAB_CI_PROVIDER: GitLabCIProvider = undefined;
+var providers_initialized = false;
+
 /// Initialize default OIDC token manager with standard providers
 pub fn createDefaultTokenManager(allocator: std.mem.Allocator) !OIDCTokenManager {
     var manager = OIDCTokenManager.init(allocator);
     
-    var github_provider = GitHubActionsProvider.init();
-    try manager.addProvider(github_provider.provider());
+    if (!providers_initialized) {
+        GITHUB_ACTIONS_PROVIDER = GitHubActionsProvider.init();
+        GITLAB_CI_PROVIDER = GitLabCIProvider.init();
+        providers_initialized = true;
+    }
     
-    var gitlab_provider = GitLabCIProvider.init();
-    try manager.addProvider(gitlab_provider.provider());
+    try manager.addProvider(GITHUB_ACTIONS_PROVIDER.provider());
+    try manager.addProvider(GITLAB_CI_PROVIDER.provider());
     
     return manager;
 }
-
-@import("bun")

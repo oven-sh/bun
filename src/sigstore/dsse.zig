@@ -299,17 +299,29 @@ pub const Verifier = struct {
         public_key_pem: []const u8,
     ) DSSEError!bool {
         _ = self;
-        _ = signature;
-        _ = pae;
-        _ = public_key_pem;
-        
-        // Simplified verification - in production this would:
-        // 1. Parse the public key PEM
-        // 2. Decode the signature from base64
-        // 3. Verify the signature against the PAE using the public key
-        // 4. Use BoringSSL's EVP_DigestVerify functions
-        
-        return true; // Mock verification for now
+        // 1) decode signature
+        var sig_bytes = try signature.getSignatureBytes();
+        defer self.allocator.free(sig_bytes);
+        // 2) parse public key
+        bun.BoringSSL.load();
+        const bio = bun.BoringSSL.c.BIO_new_mem_buf(public_key_pem.ptr, @intCast(public_key_pem.len)) orelse return DSSEError.VerificationFailed;
+        defer bun.BoringSSL.c.BIO_free(bio);
+        const x509 = bun.BoringSSL.c.PEM_read_bio_X509(bio, null, null, null);
+        if (x509 == null) return DSSEError.VerificationFailed;
+        defer bun.BoringSSL.c.X509_free(x509);
+        const pkey = bun.BoringSSL.c.X509_get_pubkey(x509);
+        if (pkey == null) return DSSEError.VerificationFailed;
+        defer bun.BoringSSL.c.EVP_PKEY_free(pkey);
+        // 3) verify ECDSA P-256 SHA-256 over PAE
+        const mdctx = bun.BoringSSL.c.EVP_MD_CTX_new() orelse return DSSEError.VerificationFailed;
+        defer bun.BoringSSL.c.EVP_MD_CTX_free(mdctx);
+        if (bun.BoringSSL.c.EVP_DigestVerifyInit(mdctx, null, bun.BoringSSL.c.EVP_sha256(), null, pkey) != 1)
+            return DSSEError.VerificationFailed;
+        if (bun.BoringSSL.c.EVP_DigestVerifyUpdate(mdctx, pae.ptr, pae.len) != 1)
+            return DSSEError.VerificationFailed;
+        const rc = bun.BoringSSL.c.EVP_DigestVerifyFinal(mdctx, sig_bytes.ptr, @intCast(sig_bytes.len));
+        if (rc != 1) return false;
+        return true;
     }
 };
 

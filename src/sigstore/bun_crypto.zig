@@ -39,17 +39,20 @@ pub const EphemeralKeyPair = struct {
     }
 
     pub fn signData(self: *const EphemeralKeyPair, data: []const u8) SigstoreError![]const u8 {
-        // Use ECDSA signing pattern from Bun's WebCrypto
-        const ctx = BoringSSL.EVP_PKEY_CTX_new(self.pkey, null) orelse return SigstoreError.SigningFailed;
-        defer BoringSSL.EVP_PKEY_CTX_free(ctx);
+        const mdctx = BoringSSL.EVP_MD_CTX_new() orelse return SigstoreError.SigningFailed;
+        defer BoringSSL.EVP_MD_CTX_free(mdctx);
 
-        if (BoringSSL.EVP_PKEY_sign_init(ctx) != 1) return SigstoreError.SigningFailed;
+        if (BoringSSL.EVP_DigestSignInit(mdctx, null, BoringSSL.EVP_sha256(), null, self.pkey) != 1)
+            return SigstoreError.SigningFailed;
+        if (BoringSSL.EVP_DigestSignUpdate(mdctx, data.ptr, data.len) != 1)
+            return SigstoreError.SigningFailed;
 
         var sig_len: usize = 0;
-        if (BoringSSL.EVP_PKEY_sign(ctx, null, &sig_len, data.ptr, data.len) != 1) return SigstoreError.SigningFailed;
+        if (BoringSSL.EVP_DigestSignFinal(mdctx, null, &sig_len) != 1)
+            return SigstoreError.SigningFailed;
 
         const signature = try self.allocator.alloc(u8, sig_len);
-        if (BoringSSL.EVP_PKEY_sign(ctx, signature.ptr, &sig_len, data.ptr, data.len) != 1) {
+        if (BoringSSL.EVP_DigestSignFinal(mdctx, signature.ptr, &sig_len) != 1) {
             self.allocator.free(signature);
             return SigstoreError.SigningFailed;
         }

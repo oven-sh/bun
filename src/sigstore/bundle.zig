@@ -480,5 +480,3 @@ pub const BundleBuilder = struct {
         return SigstoreBundle.init(self.allocator, verification_material, dsse_envelope, null);
     }
 };
-
-@import("bun")

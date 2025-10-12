@@ -385,5 +385,3 @@ pub fn createProvenanceGenerator(
 ) !SigstoreProvenanceGenerator {
     return SigstoreProvenanceGenerator.init(allocator, fulcio_url, rekor_url);
 }
-
-@import("bun")

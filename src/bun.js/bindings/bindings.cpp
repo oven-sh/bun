@@ -1,3 +1,12 @@
+/**
+ * Source code for JavaScriptCore bindings used by bind.
+ *
+ * This file is processed by cppbind.ts.
+ *
+ * @see cppbind.ts holds helpful tips on how to add and implement new bindings.
+ *      Note that cppbind.ts also automatically runs some error-checking which
+ *      can be disabled if necessary. Consult cppbind.ts for details.
+ */
 #include "root.h"
 
 #include "JavaScriptCore/ErrorType.h"
@@ -20,8 +29,10 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -37,6 +48,7 @@
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
+#include "JavaScriptCore/OrderedHashTableHelper.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -49,6 +61,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -1935,7 +1948,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
-            std::span<LChar> data;
+            std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
             memcpy(data.data(), header.value.ptr, header.value.len);
 
@@ -1968,8 +1981,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
-        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
-        std::span<LChar> data;
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(header.first.data()), header.first.length() });
+        std::span<Latin1Character> data;
         auto value = String::createUninitialized(header.second.length(), data);
         if (header.second.length() > 0)
             memcpy(data.data(), header.second.data(), header.second.length());
@@ -1988,6 +2001,28 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {
     arg0->deref();
+}
+
+WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
+    Vector<KeyValuePair<String, String>> pairs;
+    pairs.reserveCapacity(count);
+    ZigString buf = *arg3;
+    for (uint32_t i = 0; i < count; i++) {
+        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
+        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
+    }
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
+    }
+    return headers;
 }
 
 JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
@@ -2009,8 +2044,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
     fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(value);
+    return JSC::JSValue::encode(fetchHeaders);
 }
+
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2348,7 +2384,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case JSDOMWrapperType: {
         if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -2377,8 +2413,8 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
     return std::numeric_limits<double>::infinity();
 }
 
-void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, ZigString* key,
-    ZigString* values, size_t valuesLen)
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, ZigString* key, ZigString* values, size_t valuesLen)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
@@ -2395,14 +2431,10 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
-            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                     initializationScope, nullptr,
-                     global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                     valuesLen))) {
+            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
-                    array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+                    array->initializeIndexWithoutBarrier(initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
                 }
             }
         }
@@ -2992,16 +3024,19 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
-bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1,
-    Bun__ArrayBuffer* arg2)
+bool JSC__JSValue__asArrayBuffer(
+    JSC::EncodedJSValue encodedValue,
+    JSC::JSGlobalObject* globalObject,
+    Bun__ArrayBuffer* out)
 {
-    ASSERT_NO_PENDING_EXCEPTION(arg1);
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     if (!value || !value.isCell()) [[unlikely]] {
         return false;
     }
 
     auto type = value.asCell()->type();
+    void* data = nullptr;
 
     switch (type) {
     case JSC::JSType::Uint8ArrayType:
@@ -3017,60 +3052,56 @@ bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObj
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:
     case JSC::JSType::BigUint64ArrayType: {
-        JSC::JSArrayBufferView* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(value);
-        arg2->len = typedArray->length();
-        arg2->byte_len = typedArray->byteLength();
-        // the offset is already set by vector()
-        // https://github.com/oven-sh/bun/issues/561
-        arg2->offset = 0;
-        arg2->cell_type = type;
-        arg2->ptr = (char*)typedArray->vectorWithoutPACValidation();
-        arg2->_value = JSValue::encode(value);
-        return true;
+        JSC::JSArrayBufferView* view = JSC::jsCast<JSC::JSArrayBufferView*>(value);
+        data = view->vector();
+        out->len = view->length();
+        out->byte_len = view->byteLength();
+        out->cell_type = type;
+        out->shared = view->isShared();
+        break;
     }
     case JSC::JSType::ArrayBufferType: {
-        JSC::ArrayBuffer* typedArray = JSC::jsCast<JSC::JSArrayBuffer*>(value)->impl();
-        arg2->len = typedArray->byteLength();
-        arg2->byte_len = typedArray->byteLength();
-        arg2->offset = 0;
-        arg2->cell_type = JSC::JSType::ArrayBufferType;
-        arg2->ptr = (char*)typedArray->data();
-        arg2->shared = typedArray->isShared();
-        arg2->_value = JSValue::encode(value);
-        return true;
+        JSC::ArrayBuffer* buffer = JSC::jsCast<JSC::JSArrayBuffer*>(value)->impl();
+        data = buffer->data();
+        out->len = buffer->byteLength();
+        out->byte_len = buffer->byteLength();
+        out->cell_type = JSC::JSType::ArrayBufferType;
+        out->shared = buffer->isShared();
+        break;
     }
     case JSC::JSType::ObjectType:
     case JSC::JSType::FinalObjectType: {
         if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
-            arg2->len = view->length();
-            arg2->byte_len = view->byteLength();
-            arg2->offset = 0;
-            arg2->cell_type = view->type();
-            arg2->ptr = (char*)view->vectorWithoutPACValidation();
-            arg2->_value = JSValue::encode(value);
-            return true;
-        }
-
-        if (JSC::JSArrayBuffer* jsBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
+            data = view->vector();
+            out->len = view->length();
+            out->byte_len = view->byteLength();
+            out->cell_type = view->type();
+            out->shared = view->isShared();
+        } else if (JSC::JSArrayBuffer* jsBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
                 return false;
-            arg2->len = buffer->byteLength();
-            arg2->byte_len = buffer->byteLength();
-            arg2->offset = 0;
-            arg2->cell_type = JSC::JSType::ArrayBufferType;
-            arg2->ptr = (char*)buffer->data();
-            arg2->_value = JSValue::encode(value);
-            return true;
+            data = buffer->data();
+            out->len = buffer->byteLength();
+            out->byte_len = buffer->byteLength();
+            out->cell_type = JSC::JSType::ArrayBufferType;
+            out->shared = buffer->isShared();
+        } else {
+            return false;
         }
         break;
     }
     default: {
-        break;
+        return false;
     }
     }
-
-    return false;
+    out->_value = JSValue::encode(value);
+    if (data) {
+        // Avoid setting `ptr` to null; the corresponding Zig field is a non-optional pointer.
+        // The caller should have already set `ptr` to a zero-length array.
+        out->ptr = static_cast<char*>(data);
+    }
+    return true;
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
@@ -3230,7 +3261,7 @@ JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObje
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     } else {
-        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     }
 }
 
@@ -3242,7 +3273,7 @@ JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const ZigString* arg0
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     } else {
-        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
+        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     }
 }
 
@@ -3717,7 +3748,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirectMayBeIndex(arg1, pkey, value);
 }
 
-extern "C" void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -4350,18 +4381,13 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toObject(arg1);
 }
 
-JSC::JSString* JSC__JSValue__toString(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.toString(arg1);
-};
-JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+[[ZIG_EXPORT(null_is_throw)]] JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return value.toStringOrNull(arg1);
 }
 
-bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
+[[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);
     JSC::JSValue regex = JSC::JSValue::decode(regexValue);
@@ -4620,6 +4646,15 @@ public:
             openingParentheses = WTF::notFound;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+            // Special case: "unknown" frames don't have parentheses but are valid
+            // These appear in stack traces from certain error paths
+            if (line == "unknown"_s) {
+                frame.sourceURL = line;
+                frame.functionName = StringView();
+                return true;
+            }
+
+            // For any other frame without parentheses, terminate parsing as before
             offset = stack.length();
             return false;
         }
@@ -4737,25 +4772,37 @@ public:
 
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
-    uint8_t frame_i = 0;
-    size_t stack_frame_i = 0;
-    const size_t total_frame_count = frames.size();
-    const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
+    if (flags == PopulateStackTraceFlags::OnlyPosition) {
+        uint8_t frame_i = 0;
+        size_t stack_frame_i = 0;
+        const size_t total_frame_count = frames.size();
+        const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
 
-    while (frame_i < frame_count && stack_frame_i < total_frame_count) {
-        // Skip native frames
-        while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+        while (frame_i < frame_count && stack_frame_i < total_frame_count) {
+            // Skip native frames
+            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+                stack_frame_i++;
+            }
+            if (stack_frame_i >= total_frame_count)
+                break;
+
+            ZigStackFrame& frame = trace.frames_ptr[frame_i];
+            frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
             stack_frame_i++;
+            frame_i++;
         }
-        if (stack_frame_i >= total_frame_count)
-            break;
-
-        ZigStackFrame& frame = trace.frames_ptr[frame_i];
-        populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
-        stack_frame_i++;
-        frame_i++;
+        trace.frames_len = frame_i;
+    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
+        for (uint8_t i = 0; i < trace.frames_len; i++) {
+            ZigStackFrame& frame = trace.frames_ptr[i];
+            // A call with flags set to OnlySourceLines always follows a call with flags set to OnlyPosition,
+            // so jsc_stack_frame_index is always a valid value here.
+            ASSERT(frame.jsc_stack_frame_index >= 0);
+            ASSERT(static_cast<size_t>(frame.jsc_stack_frame_index) < frames.size());
+            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags);
+        }
     }
-    trace.frames_len = frame_i;
 }
 
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
@@ -6006,6 +6053,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6365,9 +6413,9 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObje
     return JSValue::encode(date);
 }
 
-extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const Latin1Character* nullTerminatedChars)
 {
-    double dateSeconds = WTF::parseDate(std::span<const LChar>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
+    double dateSeconds = WTF::parseDate(std::span<const Latin1Character>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
     JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
 
     return JSValue::encode(date);
@@ -6472,30 +6520,52 @@ CPP_DECL WebCore::DOMFormData* WebCore__DOMFormData__fromJS(JSC::EncodedJSValue 
 
 #pragma mark - JSC::JSMap
 
-CPP_DECL JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
 {
-    JSC::JSMap* map = JSC::JSMap::create(arg0->vm(), arg0->mapStructure());
-    return JSC::JSValue::encode(map);
+    return JSC::JSValue::encode(JSC::JSMap::create(arg0->vm(), arg0->mapStructure()));
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__get_(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
 
-    return JSC::JSValue::encode(map->get(arg1, value));
-}
-CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__has(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+// JSMap::get never returns JSValue::zero, even in the case of an exception. The
+// best we can, therefore, do is manually test for exceptions.
+// NOLINTNEXTLINE(bun-bindgen-force-zero_is_throw-for-jsvalue)
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = JSC::getVM(arg1);
+    const JSC::JSValue key = JSC::JSValue::decode(JSValue2);
+
+    // JSMap::get never returns JSValue::zero, even in the case of an exception.
+    // It will return JSValue::undefined and set an exception on the VM.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const JSValue value = map->get(arg1, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(value);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__has(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+{
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->has(arg1, value);
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->remove(arg1, value);
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__clear(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    map->clear(arg1);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    return map->size();
 }
 
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
@@ -6826,4 +6896,20 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     }
 
     return lineColumn.line;
+}
+
+extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }
+extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref(); }
+extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)
+{
+    const std::size_t byteLength = self->byteLength();
+    if (void* data = self->data()) {
+        // Avoid setting `ptr` to null; it's a non-optional pointer in Zig.
+        out->ptr = static_cast<char*>(data);
+    }
+    out->len = byteLength;
+    out->byte_len = byteLength;
+    out->_value = 0;
+    out->cell_type = JSC::JSType::ArrayBufferType;
+    out->shared = self->isShared();
 }

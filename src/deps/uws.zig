@@ -73,6 +73,16 @@ pub const create_bun_socket_error_t = enum(c_int) {
     invalid_ca,
     invalid_ciphers,
 
+    pub fn message(this: create_bun_socket_error_t) ?[]const u8 {
+        return switch (this) {
+            .none => null,
+            .load_ca_file => "Failed to load CA file",
+            .invalid_ca_file => "Invalid CA file",
+            .invalid_ca => "Invalid CA",
+            .invalid_ciphers => "Invalid ciphers",
+        };
+    }
+
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
             .none => brk: {

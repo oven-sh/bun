@@ -304,7 +304,7 @@ pub fn crashHandler(
                     writer.print("Crashed while {}\n", .{action}) catch std.posix.abort();
                 }
 
-                var addr_buf: [10]usize = undefined;
+                var addr_buf: [20]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now

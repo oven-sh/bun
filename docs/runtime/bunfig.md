@@ -232,6 +232,63 @@ Set path where coverage reports will be saved. Please notice, that it works only
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
+### `test.concurrentTestGlob`
+
+Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+This is useful for:
+
+- Gradually migrating test suites to concurrent execution
+- Running integration tests concurrently while keeping unit tests sequential
+- Separating fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified.
+
+### `test.randomize`
+
+Run tests in random order. Default `false`.
+
+```toml
+[test]
+randomize = true
+```
+
+This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+
+The `--randomize` CLI flag will override this setting when specified.
+
+### `test.seed`
+
+Set the random seed for test randomization. This option requires `randomize` to be `true`.
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+
+The `--seed` CLI flag will override this setting when specified.
+
+### `test.rerunEach`
+
+Re-run each test file a specified number of times. Default `0` (run once).
+
+```toml
+[test]
+rerunEach = 3
+```
+
+This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+
+The `--rerun-each` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -553,6 +610,20 @@ Valid values are:
 
 {% /table %}
 
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
+
 <!-- ## Debugging -->
 
 <!--
@@ -580,7 +651,7 @@ editor = "code"
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
 
-Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+Currently, `bunfig.toml` is only automatically loaded for `bun run` in a local project (it doesn't check for a global `.bunfig.toml`).
 
 ### `run.shell` - use the system shell or Bun's shell
 

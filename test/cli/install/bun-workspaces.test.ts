@@ -136,6 +136,44 @@ test("dependency on workspace without version in package.json", async () => {
   }
 }, 20_000);
 
+test("allowing negative workspace patterns", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*", "!packages/pkg2"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "doesnt-exist-oops": "1.2.3",
+        },
+      }),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   await Promise.all([
     write(

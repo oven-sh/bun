@@ -451,7 +451,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
-    hasPendingActivity: true,
+    values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {
         fn: "send",

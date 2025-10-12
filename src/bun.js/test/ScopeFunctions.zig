@@ -13,12 +13,14 @@ pub const strings = struct {
     pub const todo = bun.String.static("todo");
     pub const failing = bun.String.static("failing");
     pub const concurrent = bun.String.static("concurrent");
+    pub const serial = bun.String.static("serial");
     pub const only = bun.String.static("only");
     pub const @"if" = bun.String.static("if");
     pub const skipIf = bun.String.static("skipIf");
     pub const todoIf = bun.String.static("todoIf");
     pub const failingIf = bun.String.static("failingIf");
     pub const concurrentIf = bun.String.static("concurrentIf");
+    pub const serialIf = bun.String.static("serialIf");
     pub const each = bun.String.static("each");
 };
 
@@ -32,7 +34,10 @@ pub fn getFailing(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSErro
     return genericExtend(this, globalThis, .{ .self_mode = .failing }, "get .failing", strings.failing);
 }
 pub fn getConcurrent(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_concurrent = true }, "get .concurrent", strings.concurrent);
+    return genericExtend(this, globalThis, .{ .self_concurrent = .yes }, "get .concurrent", strings.concurrent);
+}
+pub fn getSerial(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    return genericExtend(this, globalThis, .{ .self_concurrent = .no }, "get .serial", strings.serial);
 }
 pub fn getOnly(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     return genericExtend(this, globalThis, .{ .self_only = true }, "get .only", strings.only);
@@ -50,7 +55,10 @@ pub fn fnFailingIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame
     return genericIf(this, globalThis, callFrame, .{ .self_mode = .failing }, "call .failingIf()", false, strings.failingIf);
 }
 pub fn fnConcurrentIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-    return genericIf(this, globalThis, callFrame, .{ .self_concurrent = true }, "call .concurrentIf()", false, strings.concurrentIf);
+    return genericIf(this, globalThis, callFrame, .{ .self_concurrent = .yes }, "call .concurrentIf()", false, strings.concurrentIf);
+}
+pub fn fnSerialIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+    return genericIf(this, globalThis, callFrame, .{ .self_concurrent = .no }, "call .serialIf()", false, strings.serialIf);
 }
 pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     groupLog.begin(@src());
@@ -196,9 +204,14 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var base = this.cfg;
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
-    if (bun.jsc.Jest.Jest.runner) |runner| if (runner.concurrent) {
-        base.self_concurrent = true;
-    };
+    // Use the file's default concurrent setting (determined once when entering the file)
+    // or the global concurrent flag from the runner
+    if (bunTest.default_concurrent or (bun.jsc.Jest.Jest.runner != null and bun.jsc.Jest.Jest.runner.?.concurrent)) {
+        // Only set to concurrent if still inheriting
+        if (base.self_concurrent == .inherit) {
+            base.self_concurrent = .yes;
+        }
+    }
 
     switch (this.mode) {
         .describe => {
@@ -236,7 +249,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = timeout,
-            }, base);
+            }, base, .collection);
         },
     }
 }
@@ -265,9 +278,8 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: bun_te
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
-    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
     if (bun.detectCI()) |_| {
-        return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
+        return globalThis.throwPretty("{s} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.", .{signature});
     }
 }
 
@@ -398,7 +410,11 @@ pub const fromJSDirect = js.fromJSDirect;
 
 pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
     try writer.print("{s}", .{@tagName(this.mode)});
-    if (this.cfg.self_concurrent) try writer.print(".concurrent", .{});
+    switch (this.cfg.self_concurrent) {
+        .yes => try writer.print(".concurrent", .{}),
+        .no => try writer.print(".serial", .{}),
+        .inherit => {},
+    }
     if (this.cfg.self_mode != .normal) try writer.print(".{s}", .{@tagName(this.cfg.self_mode)});
     if (this.cfg.self_only) try writer.print(".only", .{});
     if (this.each != .zero) try writer.print(".each()", .{});

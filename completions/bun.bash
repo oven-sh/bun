@@ -137,7 +137,7 @@ _bun_scripts_completions() {
     local line=0
 
     for (( ; line < ${#COMP_WORDS[@]}; line += 1)); do
-        [[ ${COMP_WORDS[${line}]} == '--cwd' ]] && working_dir="${COMP_WORDS[line + 1]}"
+        [[ ${COMP_WORDS[${line}]} == '--cwd' ]] && working_dir="${COMP_WORDS[$((line + 1))]}"
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(< "${working_dir}/package.json")

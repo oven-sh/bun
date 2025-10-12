@@ -1,3 +1,5 @@
+#include "root.h"
+
 #include "V8StackTraceIterator.h"
 #include "wtf/text/StringToIntegerConversion.h"
 

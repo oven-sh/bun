@@ -59,32 +59,16 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
         writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
         writer.writeAll(":{\"events\":[") catch return;
 
-        // Write array of event types
+        // Write array of event types using comptime reflection
+        const fields = std.meta.fields(@TypeOf(event.op));
         var first = true;
-        if (event.op.delete) {
-            if (!first) writer.writeAll(",") catch return;
-            writer.writeAll("\"delete\"") catch return;
-            first = false;
-        }
-        if (event.op.write) {
-            if (!first) writer.writeAll(",") catch return;
-            writer.writeAll("\"write\"") catch return;
-            first = false;
-        }
-        if (event.op.rename) {
-            if (!first) writer.writeAll(",") catch return;
-            writer.writeAll("\"rename\"") catch return;
-            first = false;
-        }
-        if (event.op.metadata) {
-            if (!first) writer.writeAll(",") catch return;
-            writer.writeAll("\"metadata\"") catch return;
-            first = false;
-        }
-        if (event.op.move_to) {
-            if (!first) writer.writeAll(",") catch return;
-            writer.writeAll("\"move_to\"") catch return;
-            first = false;
+        inline for (fields) |field| {
+            // Only process bool fields (skip _padding and other non-bool fields)
+            if (field.type == bool and @field(event.op, field.name)) {
+                if (!first) writer.writeAll(",") catch return;
+                writer.print("\"{s}\"", .{field.name}) catch return;
+                first = false;
+            }
         }
         writer.writeAll("]") catch return;
 

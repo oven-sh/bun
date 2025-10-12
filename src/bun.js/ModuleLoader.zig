@@ -1108,16 +1108,12 @@ pub fn transpileSourceCode(
                 const csv_module_source_code_string = std.fmt.allocPrint(allocator,
                     \\// Generated code
                     \\import {{CSV}} from 'bun';
-                    \\const parsed = CSV.parse(await Bun.file(import.meta.path).text(),{s});
+                    \\const parsed = CSV.parse("{s}",{s});
                     \\
                     \\export const __esModule = true;
-                    \\export const data = parsed.data;
-                    \\export const rows = parsed.rows;
-                    \\export const columns = parsed.columns;
-                    \\export const errors = parsed.errors;
-                    \\export const comments = parsed.comments;
-                    \\export default parsed.data;
-                , .{options_string}) catch bun.outOfMemory();
+                    \\export const {{ rows, columns, errors, comments, data }} = parsed;
+                    \\export default data;
+                , .{ strings.formatEscapes(source.contents, .{ .quote_char = '"' }), options_string }) catch bun.outOfMemory();
 
                 return ResolvedSource{
                     .allocator = null,

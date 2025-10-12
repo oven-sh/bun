@@ -712,13 +712,12 @@ declare module "bun" {
        */
       delimiter?: string;
       /**
-       * Instructs the parser to ignore lines representing comments in a CSV file.
+       * Instructs the parser to ignore lines representing comments in a CSV file, denoted by {@link commentChar}.
        * @default false
        */
       comments?: boolean;
       /**
        * Defines which character(s) identify comment lines in a CSV file.
-       * By default, this is set to `#` and consumes the entire line.
        * @default '#'
        */
       commentChar?: string;
@@ -729,7 +728,6 @@ declare module "bun" {
       trimWhitespace?: boolean;
       /**
        * Automatically converts string values to appropriate JavaScript types (numbers, booleans) during parsing.
-       * This eliminates the need for manual type conversion after parsing is complete.
        * @default false
        */
       dynamicTyping?: boolean;
@@ -782,19 +780,21 @@ declare module "bun" {
       }[];
     }
 
-    type InferCSVResultType<T, Opts extends CSVParserOptions> = T extends undefined
-      ? Opts extends { header: false }
-        ? Opts extends { dynamicTyping: true }
-          ? (string | number | boolean)[]
-          : string[]
-        : Opts extends { dynamicTyping: true }
-          ? Record<string, string | number | boolean>
-          : Record<string, string>
-      : T;
-
     type Prettify<T> = {
       [K in keyof T]: T[K];
     } & {};
+
+    type DynamicTypingTypes = string | number | boolean | null;
+
+    type InferCSVResultType<T, Opts extends CSVParserOptions> = T extends undefined
+      ? Opts extends { header: false }
+        ? Opts extends { dynamicTyping: true }
+          ? DynamicTypingTypes[]
+          : string[]
+        : Opts extends { dynamicTyping: true }
+          ? Record<string, DynamicTypingTypes>
+          : Record<string, string>
+      : Prettify<T>;
 
     /**
      * Parse a CSV string and return a CSVParserResult.
@@ -836,7 +836,6 @@ declare module "bun" {
       data: string,
       options?: Opts,
     ): CSVParserResult<InferCSVResultType<T, Opts>>;
-    // ): Prettify<CSVParserResult<InferCSVResultType<T, Opts>>>;
   }
 
   /**

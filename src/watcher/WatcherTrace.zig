@@ -46,16 +46,8 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
         writer.print("{d}", .{timestamp}) catch return;
         writer.writeAll(",\"index\":") catch return;
         writer.print("{d}", .{event.index}) catch return;
-        writer.writeAll(",\"path\":\"") catch return;
-
-        // Escape quotes and backslashes in path
-        for (file_path) |c| {
-            if (c == '"' or c == '\\') {
-                writer.writeByte('\\') catch return;
-            }
-            writer.writeByte(c) catch return;
-        }
-        writer.writeAll("\"") catch return;
+        writer.writeAll(",\"path\":") catch return;
+        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
 
         // Write individual operation flags
         writer.writeAll(",\"delete\":") catch return;
@@ -77,15 +69,7 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
             if (name_opt) |name| {
                 if (!first) writer.writeAll(",") catch return;
                 first = false;
-                writer.writeAll("\"") catch return;
-                // Escape quotes and backslashes in filename
-                for (name) |c| {
-                    if (c == '"' or c == '\\') {
-                        writer.writeByte('\\') catch return;
-                    }
-                    writer.writeByte(c) catch return;
-                }
-                writer.writeAll("\"") catch return;
+                writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
             }
         }
         writer.writeAll("]}\n") catch return;

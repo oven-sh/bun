@@ -1074,7 +1074,7 @@ const Parser = struct {
                 this.skipLine();
                 continue;
             };
-            const is_backtick_quoted = expand and this.pos < this.src.len and this.src[this.pos] == '`';
+            const should_expand = expand and this.pos < this.src.len and this.src[this.pos] == '`';
             const value = try this.parseValue(is_process);
             const entry = try map.map.getOrPut(key);
             if (entry.found_existing) {
@@ -1088,7 +1088,7 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = try allocator.dupe(u8, value),
-                .conditional = is_backtick_quoted,
+                .conditional = should_expand,
             };
         }
         if (comptime !is_process and expand) {

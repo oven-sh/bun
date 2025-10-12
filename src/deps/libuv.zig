@@ -4,7 +4,7 @@ const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
 const LPFN_CONNECTEX = *const anyopaque;
 
-pub const log = bun.Output.scoped(.uv, true);
+pub const log = bun.Output.scoped(.uv, .hidden);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -143,10 +143,10 @@ pub const UV__ENODATA = -@as(c_int, 4024);
 pub const UV__EUNATCH = -@as(c_int, 4023);
 pub const UV_VERSION_H = "";
 pub const UV_VERSION_MAJOR = @as(c_int, 1);
-pub const UV_VERSION_MINOR = @as(c_int, 46);
-pub const UV_VERSION_PATCH = @as(c_int, 1);
-pub const UV_VERSION_IS_RELEASE = @as(c_int, 0);
-pub const UV_VERSION_SUFFIX = "dev";
+pub const UV_VERSION_MINOR = @as(c_int, 51);
+pub const UV_VERSION_PATCH = @as(c_int, 0);
+pub const UV_VERSION_IS_RELEASE = @as(c_int, 1);
+pub const UV_VERSION_SUFFIX = "";
 pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_MINOR << @as(c_int, 8))) | UV_VERSION_PATCH;
 
 pub const UV_THREADPOOL_H_ = "";
@@ -1471,6 +1471,7 @@ pub const struct_uv_tty_s = extern struct {
         normal = 0,
         raw = 1,
         io = 2,
+        vt = 3,
     };
 
     pub fn setMode(this: *uv_tty_t, mode: Mode) ReturnCode {
@@ -2981,7 +2982,7 @@ fn StreamMixin(comptime Type: type) type {
                         req.readStop();
                         error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.sys.E.CANCELED);
                     } else {
-                        read_cb(context_data, buffer.slice());
+                        read_cb(context_data, buffer.base[0..@intCast(nreads)]);
                     }
                 }
             };

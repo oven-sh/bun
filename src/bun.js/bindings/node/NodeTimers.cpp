@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
 
     default: {
         ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -88,7 +88,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     default: {
         ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -150,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     default: {
         ArgList argumentsList = ArgList(callFrame, 1);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);

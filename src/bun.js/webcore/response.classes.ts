@@ -4,6 +4,7 @@ export default [
   define({
     name: "Request",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     klass: {},
@@ -12,6 +13,7 @@ export default [
     configurable: false,
     overridesToJS: true,
     memoryCost: true,
+    values: ["stream"],
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },
@@ -68,7 +70,9 @@ export default [
   define({
     name: "Response",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
+    final: false,
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,
@@ -84,6 +88,7 @@ export default [
         fn: "constructError",
       },
     },
+    values: ["stream"],
     proto: {
       url: {
         getter: "getURL",
@@ -133,7 +138,14 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
-    structuredClone: { transferable: false, tag: 254 },
+    structuredClone: {
+      transferable: false,
+      tag: 254,
+
+      // TODO: fix this.
+      // We should support it unless it's a file descriptor.
+      storable: true,
+    },
     estimatedSize: true,
     values: ["stream"],
     overridesToJS: true,

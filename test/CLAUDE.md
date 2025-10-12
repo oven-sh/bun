@@ -16,9 +16,10 @@ Note that compiling Bun may take up to 2.5 minutes. It is slow!
 
 ## Testing style
 
-Use `bun:test` with files that end in `*.test.ts`.
+Use `bun:test` with files that end in `*.test.{ts,js,jsx,tsx,mjs,cjs}`. If it's a test/js/node/test/{parallel,sequential}/\*.js without a .test.extension, use `bun bd <file>` instead of `bun bd test <file>` since those expect exit code 0 and don't use bun's test runner.
 
-**Do not write flaky tests**. Unless explicitly asked, **never wait for time to pass in tests**. Always wait for the condition to be met instead of waiting for an arbitrary amount of time. **Never use hardcoded port numbers**. Always use `port: 0` to get a random port.
+- **Do not write flaky tests**. Unless explicitly asked, **never wait for time to pass in tests**. Always wait for the condition to be met instead of waiting for an arbitrary amount of time. **Never use hardcoded port numbers**. Always use `port: 0` to get a random port.
+- **Prefer concurrent tests over sequential tests**: When multiple tests in the same file spawn processes or write files, make them concurrent with `test.concurrent` or `describe.concurrent` unless it's very difficult to make them concurrent.
 
 ### Spawning processes
 
@@ -27,11 +28,11 @@ Use `bun:test` with files that end in `*.test.ts`.
 When spawning Bun processes, use `bunExe` and `bunEnv` from `harness`. This ensures the same build of Bun is used to run the test and ensures debug logging is silenced.
 
 ```ts
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { test, expect } from "bun:test";
 
 test("spawns a Bun process", async () => {
-  const dir = tempDirWithFiles("my-test-prefix", {
+  using dir = tempDir("my-test-prefix", {
     "my.fixture.ts": `
       console.log("Hello, world!");
     `,
@@ -40,7 +41,7 @@ test("spawns a Bun process", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "my.fixture.ts"],
     env: bunEnv,
-    cwd: dir,
+    cwd: String(dir),
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -94,15 +95,15 @@ Most APIs in Bun support `port: 0` to get a random port. Never hardcode ports. A
 Use `tempDirWithFiles` to create a temporary directory with files.
 
 ```ts
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "node:path";
 
 test("creates a temporary directory with files", () => {
-  const dir = tempDirWithFiles("my-test-prefix", {
+  using dir = tempDir("my-test-prefix", {
     "file.txt": "Hello, world!",
   });
 
-  expect(await Bun.file(path.join(dir.path, "file.txt")).text()).toBe(
+  expect(await Bun.file(path.join(String(dir), "file.txt")).text()).toBe(
     "Hello, world!",
   );
 });
@@ -115,7 +116,7 @@ To create a repetitive string, use `Buffer.alloc(count, fill).toString()` instea
 ### Test Organization
 
 - Use `describe` blocks for grouping related tests
-- Regression tests go in `/test/regression/issue/` with issue number
+- Regression tests for specific issues go in `/test/regression/issue/${issueNumber}.test.ts`. If there's no issue number, do not put them in the regression directory.
 - Unit tests for specific features are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`)
 - Integration tests are in `/test/integration/`
 

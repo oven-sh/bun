@@ -294,7 +294,7 @@ pub fn copyFileReadWriteLoop(
     }
 }
 
-const debug = bun.Output.scoped(.copy_file, true);
+const debug = bun.Output.scoped(.copy_file, .hidden);
 
 const bun = @import("bun");
 const Environment = bun.Environment;

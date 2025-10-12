@@ -6,14 +6,19 @@
 
 const Blob = @This();
 
-const debug = Output.scoped(.Blob, false);
+const debug = Output.scoped(.Blob, .visible);
 
 pub const Store = @import("./blob/Store.zig");
 pub const read_file = @import("./blob/read_file.zig");
 pub const write_file = @import("./blob/write_file.zig");
 pub const copy_file = @import("./blob/copy_file.zig");
 
-pub const new = bun.TrivialNew(@This());
+pub fn new(blob: Blob) *Blob {
+    const result = bun.new(Blob, blob);
+    result.#ref_count = .init(1);
+    return result;
+}
+
 pub const js = jsc.Codegen.JSBlob;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -22,9 +27,6 @@ reported_estimated_size: usize = 0,
 
 size: SizeType = 0,
 offset: SizeType = 0,
-/// When set, the blob will be freed on finalization callbacks
-/// If the blob is contained in Response or Request, this must be null
-allocator: ?std.mem.Allocator = null,
 store: ?*Store = null,
 content_type: string = "",
 content_type_allocated: bool = false,
@@ -32,10 +34,14 @@ content_type_was_set: bool = false,
 
 /// JavaScriptCore strings are either latin1 or UTF-16
 /// When UTF-16, they're nearly always due to non-ascii characters
-is_all_ascii: ?bool = null,
+charset: Charset = .unknown,
 
 /// Was it created via file constructor?
 is_jsdom_file: bool = false,
+
+/// Reference count, for use with `bun.ptr.ExternalShared`. If the reference count is 0, that means
+/// this blob is *not* heap-allocated, and will not be freed in `deinit`.
+#ref_count: bun.ptr.RawRefCount(u32, .single_threaded) = .init(0),
 
 globalThis: *JSGlobalObject = undefined,
 
@@ -44,6 +50,8 @@ last_modified: f64 = 0.0,
 /// we must be able to set the name, and we need to keep the value alive
 /// https://github.com/oven-sh/bun/issues/10178
 name: bun.String = .dead,
+
+pub const Ref = bun.ptr.ExternalShared(Blob);
 
 /// Max int of double precision
 /// 9 petabytes is probably enough for awhile
@@ -56,7 +64,8 @@ pub const max_size = std.math.maxInt(SizeType);
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
-const serialization_version: u8 = 2;
+/// 3: Added File name serialization for File objects (when is_jsdom_file is true)
+const serialization_version: u8 = 3;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -71,7 +80,7 @@ pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
     var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
 pub fn hasContentTypeFromUser(this: *const Blob) bool {
@@ -112,6 +121,7 @@ pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalOb
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
 }
+
 pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
     debug("doReadFile", .{});
 
@@ -141,8 +151,8 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         *Handler,
         handler,
         Handler.run,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -179,8 +189,8 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         NewInternalReadFileHandler(Handler, Function).run,
         this.offset,
         this.size,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
     read_file_task.schedule();
 }
 
@@ -317,6 +327,19 @@ fn _onStructuredCloneSerialize(
 
     try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
     try writeFloat(f64, this.last_modified, Writer, writer);
+
+    // Serialize File name if this is a File object
+    if (this.is_jsdom_file) {
+        if (this.getNameString()) |name_string| {
+            const name_slice = name_string.toUTF8(bun.default_allocator);
+            defer name_slice.deinit();
+            try writer.writeInt(u32, @truncate(name_slice.slice().len), .little);
+            try writer.writeAll(name_slice.slice());
+        } else {
+            // No name available, write empty string
+            try writer.writeInt(u32, 0, .little);
+        }
+    }
 }
 
 pub fn onStructuredCloneSerialize(
@@ -471,9 +494,19 @@ fn _onStructuredCloneDeserialize(
         blob.last_modified = try readFloat(f64, Reader, reader);
 
         if (version == 2) break :versions;
+
+        // Version 3: Read File name if this is a File object
+        if (blob.is_jsdom_file) {
+            const name_len = try reader.readInt(u32, .little);
+            const name_bytes = try readSlice(reader, name_len, allocator);
+            blob.name = bun.String.cloneUTF8(name_bytes);
+            allocator.free(name_bytes);
+        }
+
+        if (version == 3) break :versions;
     }
 
-    blob.allocator = allocator;
+    bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});
     blob.offset = @as(u52, @intCast(offset));
     if (content_type.len > 0) {
         blob.content_type = content_type;
@@ -484,12 +517,12 @@ fn _onStructuredCloneDeserialize(
     return blob.toJS(globalThis);
 }
 
-pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!JSValue {
-    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
-    var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
+pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) bun.JSError!JSValue {
+    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr.*);
+    var buffer_stream = std.io.fixedBufferStream(ptr.*[0..total_length]);
     const reader = buffer_stream.reader();
 
-    return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
+    const result = _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
         error.EndOfStream, error.TooSmall, error.InvalidValue => {
             return globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
         },
@@ -497,6 +530,11 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8,
             return globalThis.throwOutOfMemory();
         },
     };
+
+    // Advance the pointer by the number of bytes consumed
+    ptr.* = ptr.* + buffer_stream.pos;
+
+    return result;
 }
 
 const URLSearchParamsConverter = struct {
@@ -504,7 +542,7 @@ const URLSearchParamsConverter = struct {
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
     pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
-        var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch bun.outOfMemory();
+        var out = bun.handleOom(str.toSlice(this.allocator).cloneIfNeeded(this.allocator));
         this.buf = @constCast(out.slice());
     }
 };
@@ -561,9 +599,9 @@ pub fn fromDOMFormData(
     context.joiner.pushStatic(boundary);
     context.joiner.pushStatic("--\r\n");
 
-    const store = Blob.Store.init(context.joiner.done(allocator) catch bun.outOfMemory(), allocator);
+    const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch bun.outOfMemory();
+    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 
@@ -583,7 +621,7 @@ export fn Blob__dupeFromJS(value: jsc.JSValue) ?*Blob {
     return Blob__dupe(this);
 }
 
-export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
+export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) void {
     this.is_jsdom_file = true;
 
     // This is not 100% correct...
@@ -595,19 +633,10 @@ export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
             }
         }
     }
-
-    return this;
 }
 
-export fn Blob__dupe(ptr: *anyopaque) *Blob {
-    const this = bun.cast(*Blob, ptr);
-    const new_ptr = new(this.dupeWithContentType(true));
-    new_ptr.allocator = bun.default_allocator;
-    return new_ptr;
-}
-
-export fn Blob__destroy(this: *Blob) void {
-    this.finalize();
+export fn Blob__dupe(this: *Blob) *Blob {
+    return new(this.dupeWithContentType(true));
 }
 
 export fn Blob__getFileNameString(this: *Blob) callconv(.C) bun.String {
@@ -620,7 +649,6 @@ export fn Blob__getFileNameString(this: *Blob) callconv(.C) bun.String {
 
 comptime {
     _ = Blob__dupeFromJS;
-    _ = Blob__destroy;
     _ = Blob__dupe;
     _ = Blob__setAsFile;
     _ = Blob__getFileNameString;
@@ -988,7 +1016,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 write_file_promise,
                 &WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
-            );
+            ) catch |e| switch (e) {
+                error.WriteFileWindowsDeinitialized => {},
+            };
             return promise_value;
         }
 
@@ -1000,7 +1030,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+        var task = bun.handleOom(write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier));
         // Defer promise creation until we're just about to schedule the task
         var promise = jsc.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -1047,10 +1077,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
         // this is an edgecase
         // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
         // eventually, this could be like Buffer.concat
-        var clone = source_blob.dupe();
-        clone.allocator = bun.default_allocator;
-        const cloned = Blob.new(clone);
-        cloned.allocator = bun.default_allocator;
+        const cloned = Blob.new(source_blob.dupe());
         return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
     } else if (destination_type == .bytes and (source_type == .file or source_type == .s3)) {
         const blob_value = source_blob.getSliceFrom(ctx, 0, 0, "", false);
@@ -1315,7 +1342,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     // TODO: implement a writeev() fast path
     var source_blob: Blob = brk: {
         if (data.as(Response)) |response| {
-            switch (response.body.value) {
+            const bodyValue = response.getBodyValue();
+            switch (bodyValue.*) {
                 .WTFStringImpl,
                 .InternalBlob,
                 .Used,
@@ -1323,20 +1351,21 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Blob,
                 .Null,
                 => {
-                    break :brk response.body.use();
+                    break :brk bodyValue.use();
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();
-                    _ = response.body.value.use();
+                    _ = bodyValue.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
-                .Locked => |*locked| {
+                .Locked => {
                     if (destination_blob.isS3()) {
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try response.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        _ = try bodyValue.toReadableStream(globalThis);
+
+                        if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1367,16 +1396,16 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .promise = jsc.JSPromise.Strong.init(globalThis),
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
                     });
-
-                    response.body.value.Locked.task = task;
-                    response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                    bodyValue.Locked.task = task;
+                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
                     return task.promise.value();
                 },
             }
         }
 
         if (data.as(Request)) |request| {
-            switch (request.body.value) {
+            const bodyValue = request.getBodyValue();
+            switch (bodyValue.*) {
                 .WTFStringImpl,
                 .InternalBlob,
                 .Used,
@@ -1384,11 +1413,11 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Blob,
                 .Null,
                 => {
-                    break :brk request.body.value.use();
+                    break :brk bodyValue.use();
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();
-                    _ = request.body.value.use();
+                    _ = bodyValue.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
                 .Locked => |locked| {
@@ -1396,8 +1425,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try request.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        _ = try bodyValue.toReadableStream(globalThis);
+                        if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1428,8 +1457,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
                     });
 
-                    request.body.value.Locked.task = task;
-                    request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                    bodyValue.Locked.task = task;
+                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                     return task.promise.value();
                 },
@@ -1717,7 +1746,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                     );
                 },
                 .s3, .file => {
@@ -1730,7 +1759,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
                         bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                         ),
                         allocator,
                     ),
@@ -1765,7 +1794,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                             blob.content_type = mime.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1791,7 +1820,6 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     }
 
     var blob_ = Blob.new(blob);
-    blob_.allocator = allocator;
     blob_.is_jsdom_file = true;
     return blob_;
 }
@@ -1866,7 +1894,7 @@ pub fn constructBunFile(
                             blob.content_type = entry.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1879,7 +1907,6 @@ pub fn constructBunFile(
     }
 
     var ptr = Blob.new(blob);
-    ptr.allocator = bun.default_allocator;
     return ptr.toJS(globalObject);
 }
 
@@ -1892,7 +1919,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                 const credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
                 const copy = path_or_fd.*;
                 path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
-                return Blob.initWithStore(Blob.Store.initS3(copy.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+                return Blob.initWithStore(bun.handleOom(Blob.Store.initS3(copy.path, null, credentials, allocator)), globalThis);
             }
         }
     }
@@ -1907,7 +1934,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                     path_or_fd.* = .{
                         .path = .{
                             // this memory is freed with this allocator in `Blob.Store.deinit`
-                            .string = bun.PathString.init(allocator.dupe(u8, "\\\\.\\NUL") catch bun.outOfMemory()),
+                            .string = bun.PathString.init(bun.handleOom(allocator.dupe(u8, "\\\\.\\NUL"))),
                         },
                     };
                     slice = path_or_fd.path.slice();
@@ -1946,7 +1973,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
         }
     };
 
-    return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
+    return Blob.initWithStore(bun.handleOom(Blob.Store.initFile(path, null, allocator)), globalThis);
 }
 
 pub fn getStream(
@@ -2136,11 +2163,11 @@ fn getExistsSync(this: *Blob) jsc.JSValue {
 
     // If there's no store that means it's empty and we just return true
     // it will not error to return an empty Blob
-    const store = this.store orelse return JSValue.jsBoolean(true);
+    const store = this.store orelse return .true;
 
     if (store.data == .bytes) {
         // Bytes will never error
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     // We say regular files and pipes exist.
@@ -2263,7 +2290,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                         this.content_type = mime.value;
                     } else {
-                        const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
                         this.content_type_allocated = true;
                     }
@@ -2468,7 +2495,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                         store.data.file.pathlike.path.slice(),
                     ).cloneIfNeeded(
                         bun.default_allocator,
-                    ) catch bun.outOfMemory(),
+                    ) catch |err| bun.handleOom(err),
                 };
             }
         };
@@ -2604,7 +2631,7 @@ pub fn getWriter(
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             this.content_type = mime.value;
                         } else {
-                            const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                            const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
                             this.content_type_allocated = true;
                         }
@@ -2707,8 +2734,8 @@ pub fn getWriter(
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
                 ).cloneIfNeeded(
-                    globalThis.allocator(),
-                ) catch bun.outOfMemory(),
+                    bun.default_allocator,
+                ) catch |err| bun.handleOom(err),
             };
         }
     };
@@ -2740,7 +2767,7 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
     const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
-    // This copies over the is_all_ascii flag
+    // This copies over the charset field
     // which is okay because this will only be a <= slice
     var blob = this.dupe();
     blob.offset = offset;
@@ -2756,7 +2783,6 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
     var blob_ = Blob.new(blob);
-    blob_.allocator = bun.default_allocator;
     return blob_.toJS(globalThis);
 }
 
@@ -2777,7 +2803,6 @@ pub fn getSlice(
     if (this.size == 0) {
         const empty = Blob.initEmpty(globalThis);
         var ptr = Blob.new(empty);
-        ptr.allocator = allocator;
         return ptr.toJS(globalThis);
     }
 
@@ -2845,7 +2870,7 @@ pub fn getSlice(
                 }
 
                 content_type_was_allocated = slice.len > 0;
-                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                 content_type = strings.copyLowercase(slice, content_type_buf);
             }
         }
@@ -3030,15 +3055,12 @@ export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
 export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.C) *Blob {
     if (ptr == null or len == 0) {
         const blob = new(initEmpty(globalThis));
-        blob.allocator = bun.default_allocator;
         return blob;
     }
 
-    const bytes = bun.default_allocator.dupe(u8, ptr.?[0..len]) catch bun.outOfMemory();
+    const bytes = bun.handleOom(bun.default_allocator.dupe(u8, ptr.?[0..len]));
     const store = Store.init(bytes, bun.default_allocator);
-    var blob = initWithStore(store, globalThis);
-    blob.allocator = bun.default_allocator;
-    return new(blob);
+    return new(initWithStore(store, globalThis));
 }
 
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -3191,7 +3213,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                     blob.content_type = mime.value;
                                     break :inner;
                                 }
-                                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                                 blob.content_type = strings.copyLowercase(slice, content_type_buf);
                                 blob.content_type_allocated = true;
                             }
@@ -3208,14 +3230,17 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     blob.calculateEstimatedByteSize();
-
-    var blob_ = Blob.new(blob);
-    blob_.allocator = allocator;
-    return blob_;
+    return Blob.new(blob);
 }
 
 pub fn finalize(this: *Blob) void {
-    this.deinit();
+    bun.assertf(
+        this.isHeapAllocated(),
+        "`finalize` may only be called on a heap-allocated Blob",
+        .{},
+    );
+    var shared = Blob.Ref.adopt(this);
+    shared.deinit();
 }
 
 pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, is_all_ascii: bool) Blob {
@@ -3228,10 +3253,9 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
     return Blob{
         .size = @as(SizeType, @truncate(bytes.len)),
         .store = store,
-        .allocator = null,
         .content_type = "",
         .globalThis = globalThis,
-        .is_all_ascii = is_all_ascii,
+        .charset = .fromIsAllASCII(is_all_ascii),
     };
 }
 
@@ -3243,7 +3267,6 @@ pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObje
             Blob.Store.init(bytes, allocator)
         else
             null,
-        .allocator = null,
         .content_type = "",
         .globalThis = globalThis,
     };
@@ -3261,7 +3284,6 @@ pub fn createWithBytesAndAllocator(
             Blob.Store.init(bytes, allocator)
         else
             null,
-        .allocator = null,
         .content_type = if (was_string) MimeType.text.value else "",
         .globalThis = globalThis,
     };
@@ -3307,14 +3329,13 @@ pub fn create(
     globalThis: *JSGlobalObject,
     was_string: bool,
 ) Blob {
-    return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
+    return bun.handleOom(tryCreate(bytes_, allocator_, globalThis, was_string));
 }
 
 pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
     return Blob{
         .size = store.size(),
         .store = store,
-        .allocator = null,
         .content_type = if (store.data == .file)
             store.data.file.mime_type.value
         else
@@ -3327,7 +3348,6 @@ pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
     return Blob{
         .size = 0,
         .store = null,
-        .allocator = null,
         .content_type = "",
         .globalThis = globalThis,
     };
@@ -3354,7 +3374,8 @@ pub fn dupe(this: *const Blob) Blob {
 pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
-    if (duped.content_type_allocated and duped.allocator != null and !include_content_type) {
+    duped.setNotHeapAllocated();
+    if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
 
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
@@ -3371,18 +3392,16 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
         if (this.content_type_was_set) {
             duped.content_type_was_set = duped.content_type.len > 0;
         }
-    } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-        duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
+    } else if (duped.content_type_allocated and duped.isHeapAllocated() and include_content_type) {
+        duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();
-
-    duped.allocator = null;
     return duped;
 }
 
 pub fn toJS(this: *Blob, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     // if (comptime Environment.allow_assert) {
-    //     assert(this.allocator != null);
+    //     assert(this.isHeapAllocated());
     // }
     this.calculateEstimatedByteSize();
 
@@ -3398,10 +3417,7 @@ pub fn deinit(this: *Blob) void {
     this.name.deref();
     this.name = .dead;
 
-    // TODO: remove this field, make it a boolean.
-    if (this.allocator) |alloc| {
-        this.allocator = null;
-        bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
+    if (this.isHeapAllocated()) {
         bun.destroy(this);
     }
 }
@@ -3416,8 +3432,9 @@ pub fn sharedView(this: *const Blob) []const u8 {
 }
 
 pub const Lifetime = jsc.WebCore.Lifetime;
+
 pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
-    this.is_all_ascii = is_all_ascii;
+    this.charset = .fromIsAllASCII(is_all_ascii);
     // if this Blob represents the entire binary data
     // which will be pretty common
     // we can update the store's is_all_ascii flag
@@ -3450,7 +3467,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
 
     // null == unknown
     // false == can't be
-    const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
+    const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         // if toUTF16Alloc returns null, it means there are no non-ASCII characters
@@ -3560,7 +3577,7 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     }
     // null == unknown
     // false == can't be
-    const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
+    const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
     defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
@@ -3841,7 +3858,7 @@ fn fromJSWithoutDeferGC(
                     if (top_value.as(Blob)) |blob| {
                         if (comptime move) {
                             var _blob = blob.*;
-                            _blob.allocator = null;
+                            _blob.setNotHeapAllocated();
                             blob.transfer();
                             return _blob;
                         } else {
@@ -3949,7 +3966,7 @@ fn fromJSWithoutDeferGC(
 
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
-                                    could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
+                                    could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                                     joiner.pushStatic(blob.sharedView());
                                     continue;
                                 } else if (current.toSliceClone(global)) |sliced| {
@@ -3968,7 +3985,7 @@ fn fromJSWithoutDeferGC(
 
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
-                    could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
+                    could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                     joiner.pushStatic(blob.sharedView());
                 } else if (current.toSliceClone(global)) |sliced| {
                     const allocator = sliced.allocator.get();
@@ -4115,7 +4132,6 @@ pub const Any = union(enum) {
             },
             .blob => {
                 const result = Blob.new(this.toBlob(globalThis));
-                result.allocator = bun.default_allocator;
                 result.globalThis = globalThis;
                 return result.toJS(globalThis);
             },
@@ -4326,7 +4342,7 @@ pub const Any = union(enum) {
 
     pub fn wasString(self: *const @This()) bool {
         return switch (self.*) {
-            .Blob => self.Blob.is_all_ascii orelse false,
+            .Blob => self.Blob.charset == .all_ascii,
             .WTFStringImpl => true,
             // .InlineBlob => self.InlineBlob.was_string,
             .InternalBlob => self.InternalBlob.was_string,
@@ -4390,7 +4406,7 @@ pub const Internal = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();
@@ -4404,7 +4420,7 @@ pub const Internal = struct {
             return out.toJS(globalThis);
         } else {
             var str = ZigString.init(this.toOwnedSlice());
-            str.mark();
+            str.markGlobal();
             return str.toExternalValue(globalThis);
         }
     }
@@ -4730,6 +4746,61 @@ pub fn FileCloser(comptime This: type) type {
             return false;
         }
     };
+}
+
+/// This takes up less space than a `?bool`.
+pub const Charset = enum {
+    unknown,
+    all_ascii,
+    non_ascii,
+
+    pub fn fromIsAllASCII(is_all_ascii: ?bool) Charset {
+        return if (is_all_ascii orelse return .unknown)
+            .all_ascii
+        else
+            .non_ascii;
+    }
+};
+
+pub fn isAllASCII(self: *const Blob) ?bool {
+    return switch (self.charset) {
+        .unknown => null,
+        .all_ascii => true,
+        .non_ascii => false,
+    };
+}
+
+/// Takes ownership of `self` by value. Invalidates `self`.
+pub fn takeOwnership(self: *Blob) Blob {
+    var result = self.*;
+    self.* = undefined;
+    result.setNotHeapAllocated();
+    return result;
+}
+
+pub fn isHeapAllocated(self: *const Blob) bool {
+    return self.#ref_count.raw_value != 0;
+}
+
+fn setNotHeapAllocated(self: *Blob) void {
+    self.#ref_count = .init(0);
+}
+
+pub const external_shared_descriptor = struct {
+    pub const ref = Blob__ref;
+    pub const deref = Blob__deref;
+};
+
+export fn Blob__ref(self: *Blob) void {
+    bun.assertf(self.isHeapAllocated(), "cannot ref: this Blob is not heap-allocated", .{});
+    self.#ref_count.increment();
+}
+
+export fn Blob__deref(self: *Blob) void {
+    bun.assertf(self.isHeapAllocated(), "cannot deref: this Blob is not heap-allocated", .{});
+    if (self.#ref_count.decrement() == .should_destroy) {
+        self.deinit();
+    }
 }
 
 const WriteFilePromise = write_file.WriteFilePromise;

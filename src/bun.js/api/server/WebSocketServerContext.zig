@@ -29,9 +29,10 @@ pub const Handler = struct {
     active_connections: usize = 0,
 
     /// used by publish()
-    flags: packed struct(u2) {
+    flags: packed struct(u8) {
         ssl: bool = false,
         publish_to_self: bool = false,
+        _: u6 = 0,
     } = .{},
 
     pub fn runErrorCallback(this: *const Handler, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) void {

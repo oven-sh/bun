@@ -37,9 +37,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto&& origin = SourceOrigin(WTF::URL(urlString));
-    SourceCode source = JSC::makeSource(SOURCE, origin,
-        JSC::SourceTaintedOrigin::Untainted,
-        moduleName);
+    SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
     maybeAddCodeCoverage(vm, source);
     JSFunction* func
         = JSFunction::create(
@@ -100,12 +98,7 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
-JSValue initializeInternalModuleFromDisk(
-    JSGlobalObject* globalObject,
-    VM& vm,
-    const WTF::String& moduleName,
-    WTF::String fileBase,
-    const WTF::String& urlString)
+JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
 {
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
@@ -131,6 +124,11 @@ const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &
 InternalModuleRegistry::InternalModuleRegistry(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
+    // Initialize all internal fields to jsUndefined() using setWithoutWriteBarrier
+    // to avoid triggering write barriers during construction
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        this->internalField(static_cast<Field>(i)).setWithoutWriteBarrier(jsUndefined());
+    }
 }
 
 template<typename Visitor>
@@ -154,10 +152,6 @@ void InternalModuleRegistry::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
-        this->internalField(static_cast<Field>(i)).set(vm, this, jsUndefined());
-    }
 }
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)

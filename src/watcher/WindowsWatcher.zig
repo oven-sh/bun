@@ -217,7 +217,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
-            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], []const u16, event.filename);
+            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], event.filename);
             const eventpath = buf[0 .. base_idx + convert_res.written];
 
             log("watcher update event: (filename: {s}, action: {s}", .{ eventpath, @tagName(event.action) });
@@ -309,7 +309,7 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
     };
 }
 
-const log = Output.scoped(.watcher, false);
+const log = Output.scoped(.watcher, .visible);
 
 const std = @import("std");
 const w = std.os.windows;

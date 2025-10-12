@@ -1,10 +1,4 @@
 pub const BuildCommand = struct {
-    const compile_define_keys = &.{
-        "process.platform",
-        "process.arch",
-        "process.versions.bun",
-    };
-
     pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
@@ -26,7 +20,9 @@ pub const BuildCommand = struct {
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
+            const compile_define_keys = compile_target.defineKeys();
             const compile_define_values = compile_target.defineValues();
+
             if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
@@ -79,6 +75,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
@@ -99,12 +96,6 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.outdir.len > 0) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
                 Global.exit(1);
@@ -426,7 +417,7 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try bun.StandaloneModuleGraph.toExecutable(
+                const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
                     output_files,
@@ -435,9 +426,19 @@ pub const BuildCommand = struct {
                     outfile,
                     this_transpiler.env,
                     this_transpiler.options.output_format,
-                    ctx.bundler_options.windows_hide_console,
-                    ctx.bundler_options.windows_icon,
-                );
+                    ctx.bundler_options.windows,
+                    ctx.bundler_options.compile_exec_argv orelse "",
+                    null,
+                ) catch |err| {
+                    Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (result != .success) {
+                    Output.printErrorln("{s}", .{result.err.slice()});
+                    Global.exit(1);
+                }
+
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,

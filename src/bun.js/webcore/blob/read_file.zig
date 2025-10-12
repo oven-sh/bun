@@ -1,6 +1,6 @@
-const bloblog = bun.Output.scoped(.WriteFile, true);
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
-const log = bun.Output.scoped(.ReadFile, true);
+const log = bun.Output.scoped(.ReadFile, .hidden);
 
 pub fn NewReadFileHandler(comptime Function: anytype) type {
     return struct {
@@ -10,8 +10,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
 
         pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) void {
             var promise = handler.promise.swap();
-            var blob = handler.context;
-            blob.allocator = null;
+            var blob = handler.context.takeOwnership();
             const globalThis = handler.globalThis;
             bun.destroy(handler);
             switch (maybe_bytes) {
@@ -442,9 +441,9 @@ pub const ReadFile = struct {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecis` so that it's an exact amount
                         // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        bun.handleOom(this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len));
                     } else {
-                        this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        bun.handleOom(this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len));
                     }
                     this.buffer.appendSliceAssumeCapacity(read);
                 } else {

@@ -196,8 +196,8 @@ pub const SocketContext = opaque {
         return c.us_socket_context_adopt_socket(@intFromBool(ssl), this, s, ext_size);
     }
 
-    pub fn connect(this: *SocketContext, ssl: bool, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque {
-        return c.us_socket_context_connect(@intFromBool(ssl), this, host, port, options, socket_ext_size, has_dns_resolved);
+    pub fn connect(this: *SocketContext, ssl: bool, host: [*:0]const u8, port: i32, local_host: ?[*:0]const u8, local_port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque {
+        return c.us_socket_context_connect(@intFromBool(ssl), this, host, port, local_host, local_port, options, socket_ext_size, has_dns_resolved);
     }
 
     pub fn connectUnix(this: *SocketContext, ssl: bool, path: [:0]const u8, options: i32, socket_ext_size: i32) ?*us_socket_t {
@@ -229,11 +229,11 @@ pub const SocketContext = opaque {
         ca_file_name: [*c]const u8 = null,
         ssl_ciphers: [*c]const u8 = null,
         ssl_prefer_low_memory_usage: i32 = 0,
-        key: ?[*]?[*:0]const u8 = null,
+        key: ?[*]const ?[*:0]const u8 = null,
         key_count: u32 = 0,
-        cert: ?[*]?[*:0]const u8 = null,
+        cert: ?[*]const ?[*:0]const u8 = null,
         cert_count: u32 = 0,
-        ca: ?[*]?[*:0]const u8 = null,
+        ca: ?[*]const ?[*:0]const u8 = null,
         ca_count: u32 = 0,
         secure_options: u32 = 0,
         reject_unauthorized: i32 = 0,
@@ -254,7 +254,7 @@ pub const c = struct {
     pub extern fn us_create_child_socket_context(ssl: i32, context: ?*SocketContext, context_ext_size: i32) ?*SocketContext;
     pub extern fn us_socket_context_adopt_socket(ssl: i32, context: *SocketContext, s: *us_socket_t, ext_size: i32) ?*us_socket_t;
     pub extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
-    pub extern fn us_socket_context_connect(ssl: i32, context: *SocketContext, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
+    pub extern fn us_socket_context_connect(ssl: i32, context: *SocketContext, host: [*:0]const u8, port: i32, local_host: ?[*:0]const u8, local_port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
     pub extern fn us_socket_context_connect_unix(ssl: i32, context: *SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*us_socket_t;
     pub extern fn us_socket_context_ext(ssl: i32, context: *SocketContext) ?*anyopaque;
     pub extern fn us_socket_context_free(ssl: i32, context: *SocketContext) void;
@@ -280,7 +280,7 @@ pub const c = struct {
     pub extern fn create_ssl_context_from_bun_options(options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 };
 
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 
 const std = @import("std");
 

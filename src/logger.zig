@@ -279,7 +279,7 @@ pub const Data = struct {
             if (location.line_text) |line_text_| {
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
                 const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
-                if (location.column > -1 and line_text.len > 0) {
+                if (location.column > 0 and line_text.len > 0) {
                     var line_offset_for_second_line: usize = @intCast(location.column - 1);
 
                     if (location.line > -1) {
@@ -1335,15 +1335,6 @@ pub const Log = struct {
 
         if (needs_newline) _ = try to.write("\n");
     }
-
-    pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
-        var holder = try allocator.create(js.ZigException.Holder);
-        holder.* = js.ZigException.Holder.init();
-        var zig_exception: *js.ZigException = holder.zigException();
-        zig_exception.exception = this;
-        zig_exception.code = js.JSErrorCode.BundlerError;
-        return holder;
-    }
 };
 
 pub inline fn usize2Loc(loc: usize) Loc {
@@ -1617,7 +1608,6 @@ const Output = bun.Output;
 const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const js = bun.jsc;
 const jsc = bun.jsc;
 const strings = bun.strings;
 const Index = bun.ast.Index;

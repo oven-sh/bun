@@ -86,9 +86,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 }
                 if (allow_request_response) {
                     if (value.as(jsc.WebCore.Request)) |request| {
-                        request.body.value.toBlobIfPossible();
+                        const bodyValue = request.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -98,9 +99,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                     }
 
                     if (value.as(jsc.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        const bodyValue = response.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -399,7 +401,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -417,6 +425,11 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime max_size: usize, input: []const u8) bun.JSError!jsc.JSValue {
+        bun.assertf(
+            input.len <= max_size,
+            "input length ({}) should not exceed max_size ({})",
+            .{ input.len, max_size },
+        );
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -433,7 +446,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -785,7 +804,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
+        bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
 
         while (i < len) {
             const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -799,7 +818,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
+            bun.handleOom(bufferlist.append(bun.platformIOVecCreate(buf)));
             i += 1;
         }
 

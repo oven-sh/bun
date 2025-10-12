@@ -68,8 +68,8 @@ pub fn signalHeaderProgress(this: *AsyncHTTP) void {
     progress.store(true, .release);
 }
 
-pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-    var stream = this.signals.body_streaming orelse return;
+pub fn enableResponseBodyStreaming(this: *AsyncHTTP) void {
+    var stream = this.signals.response_body_streaming orelse return;
     stream.store(true, .release);
 }
 
@@ -468,7 +468,7 @@ pub fn onStart(this: *AsyncHTTP) void {
     this.client.start(this.request_body, this.response_buffer);
 }
 
-const log = bun.Output.scoped(.AsyncHTTP, false);
+const log = bun.Output.scoped(.AsyncHTTP, .visible);
 
 const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
 pub const HTTPChannel = Channel(HTTPCallbackPair, .{ .Static = 1000 });

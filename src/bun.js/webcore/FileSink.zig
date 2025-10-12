@@ -27,7 +27,7 @@ run_pending_later: FlushPendingTask = .{},
 /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
 readable_stream: jsc.WebCore.ReadableStream.Strong = .{},
 
-const log = Output.scoped(.FileSink, false);
+const log = Output.scoped(.FileSink, .visible);
 
 pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
@@ -62,12 +62,33 @@ pub fn memoryCost(this: *const FileSink) usize {
 
 fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.C) void {
     var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
-    this.force_sync = true;
+
     if (comptime !Environment.isWindows) {
+        this.force_sync = true;
         this.writer.force_sync = true;
         if (this.fd != bun.invalid_fd) {
             _ = bun.sys.updateNonblocking(this.fd, false);
         }
+    } else {
+        if (this.writer.source) |*source| {
+            switch (source.*) {
+                .pipe => |pipe| {
+                    if (uv.uv_stream_set_blocking(@ptrCast(pipe), 1) == .zero) {
+                        return;
+                    }
+                },
+                .tty => |tty| {
+                    if (uv.uv_stream_set_blocking(@ptrCast(tty), 1) == .zero) {
+                        return;
+                    }
+                },
+
+                else => {},
+            }
+        }
+
+        // Fallback to WriteFile() if it fails.
+        this.force_sync = true;
     }
 }
 

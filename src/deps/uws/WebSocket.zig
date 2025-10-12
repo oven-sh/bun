@@ -72,6 +72,15 @@ pub const RawWebSocket = opaque {
     pub fn memoryCost(this: *RawWebSocket, ssl_flag: i32) usize {
         return c.uws_ws_memory_cost(ssl_flag, this);
     }
+
+    /// They're the same memory address.
+    ///
+    /// Equivalent to:
+    ///
+    ///   (struct us_socket_t *)socket
+    pub fn asSocket(this: *RawWebSocket) *uws.Socket {
+        return @as(*uws.Socket, @ptrCast(this));
+    }
 };
 
 pub const AnyWebSocket = union(enum) {

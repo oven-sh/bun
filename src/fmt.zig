@@ -254,7 +254,7 @@ fn getSharedBuffer() []u8 {
 }
 threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
-pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
+pub fn formatUTF16Type(slice_: []const u16, writer: anytype) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -272,7 +272,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -280,7 +280,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     }
 }
 
-pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, writer: anytype, opts: PathFormatOptions) !void {
+pub fn formatUTF16TypeWithPathOptions(slice_: []const u16, writer: anytype, opts: PathFormatOptions) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -298,7 +298,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
 
@@ -356,9 +356,9 @@ pub const FormatUTF16 = struct {
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
-            try formatUTF16TypeWithPathOptions([]const u16, self.buf, writer, opts);
+            try formatUTF16TypeWithPathOptions(self.buf, writer, opts);
         } else {
-            try formatUTF16Type([]const u16, self.buf, writer);
+            try formatUTF16Type(self.buf, writer);
         }
     }
 };
@@ -465,7 +465,7 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
             try writer.writeAll(slice[0..i]);
             slice = slice[i..];
         }
-        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
+        const result = strings.copyLatin1IntoUTF8(chunk, slice[0..@min(chunk.len, slice.len)]);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -1836,7 +1836,6 @@ fn OutOfRangeFormatter(comptime T: type) type {
     } else if (T == bun.String) {
         return BunStringOutOfRangeFormatter;
     }
-
     return IntOutOfRangeFormatter;
 }
 

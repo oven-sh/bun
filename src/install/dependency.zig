@@ -247,6 +247,20 @@ pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
+pub fn splitVersionAndMaybeName(str: []const u8) struct { []const u8, ?[]const u8 } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[at_index + 1 ..], str[0..at_index] };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[second_at_index + 1 ..], str[0..second_at_index] };
+    }
+
+    return .{ str, null };
+}
+
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
 pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     if (strings.indexOfChar(str, '@')) |at_index| {
@@ -1291,7 +1305,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     var buf = alias;
 
     if (name_value.isString()) {
-        var builder = bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len) catch bun.outOfMemory();
+        var builder = bun.handleOom(bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len));
         name = builder.append(name_slice.slice());
         alias = builder.append(alias_slice.slice());
         buf = builder.allocatedSlice();

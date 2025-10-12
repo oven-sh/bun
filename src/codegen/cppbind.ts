@@ -45,8 +45,8 @@ To run manually:
 
 - **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
   ```cpp
-  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis, 
-                                        [[ZIG_NONNULL]] JSValue* values, 
+  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis,
+                                        [[ZIG_NONNULL]] JSValue* values,
                                         size_t count) { ... }
   ```
   Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
@@ -397,7 +397,7 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
   };
 }
 
-type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "nothrow";
+type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_throw" | "nothrow";
 
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
@@ -471,7 +471,7 @@ function generateZigParameterList(parameters: CppParameter[], globalThisArg?: Cp
 function generateZigSourceComment(cfg: Cfg, resultSourceLinks: string[], fn: CppFn): string {
   const fileName = relative(cfg.dstDir, fn.position.file);
   resultSourceLinks.push(`${fn.name}:${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
-  return `    /// Source: ${fn.name}`;
+  return `/// Source: ${fn.name}`;
 }
 
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
@@ -570,7 +570,8 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
         tagStr === "nothrow" ||
         tagStr === "zero_is_throw" ||
         tagStr === "check_slow" ||
-        tagStr === "false_is_throw"
+        tagStr === "false_is_throw" ||
+        tagStr === "null_is_throw"
       ) {
         tag = tagStr;
       } else if (tagStr === "print") {
@@ -580,7 +581,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       } else {
         appendError(
           nodePosition(tagIdentifier, ctx),
-          "tag must be nothrow, zero_is_throw, check_slow, or false_is_throw: " + tagStr,
+          "tag must be nothrow, zero_is_throw, check_slow, false_is_throw, or null_is_throw: " + tagStr,
         );
         tag = "nothrow";
       }
@@ -639,12 +640,12 @@ function generateZigFn(
   resultSourceLinks: string[],
   cfg: Cfg,
 ): void {
-  const returnType = generateZigType(fn.returnType, null);
+  let returnType = generateZigType(fn.returnType, null);
   if (resultBindings.length) resultBindings.push("");
   resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
   if (fn.tag === "nothrow") {
     resultBindings.push(
-      `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
+      `pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
     return;
   }
@@ -667,21 +668,21 @@ function generateZigFn(
       );
     }
     resultBindings.push(
-      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-      `        if (comptime Environment.ci_assert) {`,
-      `            var scope: jsc.CatchScope = undefined;`,
-      `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-      `            defer scope.deinit();`,
+      `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
+      `    if (comptime Environment.ci_assert) {`,
+      `        var scope: jsc.CatchScope = undefined;`,
+      `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+      `        defer scope.deinit();`,
       ``,
-      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `            try scope.returnIfException();`,
-      `            return result;`,
-      `        } else {`,
-      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `            if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
-      `            return result;`,
-      `        }`,
+      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `        try scope.returnIfException();`,
+      `        return result;`,
+      `    } else {`,
+      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `        if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
+      `        return result;`,
       `    }`,
+      `}`,
     );
     return;
   }
@@ -697,23 +698,30 @@ function generateZigFn(
     if (returnType !== "bool") {
       appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
     }
+    returnType = "void";
+  } else if (fn.tag === "null_is_throw") {
+    equalsValue = "null";
+    if (!returnType.startsWith("?*")) {
+      appendError(fn.position, "ZIG_EXPORT(null_is_throw) is only allowed for functions that return optional pointer");
+    }
+    returnType = returnType.slice(1);
   } else assertNever(fn.tag);
   resultBindings.push(
-    `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-    `        if (comptime Environment.ci_assert) {`,
-    `            var scope: jsc.ExceptionValidationScope = undefined;`,
-    `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-    `            defer scope.deinit();`,
+    `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
+    `    if (comptime Environment.ci_assert) {`,
+    `        var scope: jsc.ExceptionValidationScope = undefined;`,
+    `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+    `        defer scope.deinit();`,
     ``,
-    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `            scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
-    `            return if (value == ${equalsValue}) error.JSError else value;`,
-    `        } else {`,
-    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `            if (value == ${equalsValue}) return error.JSError;`,
-    `            return value;`,
-    `        }`,
+    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `        scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
+    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"}${fn.tag === "null_is_throw" ? ".?" : ""};`,
+    `    } else {`,
+    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `        if (value == ${equalsValue}) return error.JSError;`,
+    ...(fn.tag === "false_is_throw" ? [] : [`        return value${fn.tag === "null_is_throw" ? ".?" : ""};`]),
     `    }`,
+    `}`,
   );
   return;
 }
@@ -729,22 +737,21 @@ async function readFileOrEmpty(file: string): Promise<string> {
 
 async function main() {
   const args = process.argv.slice(2);
-  const rootDir = args[0];
   const dstDir = args[1];
-  if (!rootDir || !dstDir) {
+  if (!dstDir) {
     console.error(
       String.raw`
-                   _     _           _ 
+                   _     _           _
                   | |   (_)         | |
    ___ _ __  _ __ | |__  _ _ __   __| |
   / __| '_ \| '_ \| '_ \| | '_ \ / _' |
  | (__| |_) | |_) | |_) | | | | | (_| |
   \___| .__/| .__/|_.__/|_|_| |_|\__,_|
-      | |   | |                        
-      |_|   |_|                        
+      | |   | |
+      |_|   |_|
 `.slice(1),
     );
-    console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
+    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen");
     process.exit(1);
   }
   await mkdir(dstDir, { recursive: true });
@@ -759,9 +766,8 @@ async function main() {
     .filter(q => !q.startsWith("#"));
 
   const allFunctions: CppFn[] = [];
-  for (const file of allCppFiles) {
-    await processFile(parser, file, allFunctions);
-  }
+  await Promise.all(allCppFiles.map(file => processFile(parser, file, allFunctions)));
+  allFunctions.sort((a, b) => (a.position.file < b.position.file ? -1 : a.position.file > b.position.file ? 1 : 0));
 
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];
@@ -785,10 +791,10 @@ async function main() {
   const resultFilePath = join(dstDir, "cpp.zig");
   const resultContents =
     typeDeclarations +
-    "\nconst raw = struct {\n" +
-    resultRaw.join("\n") +
-    "\n};\n\npub const bindings = struct {\n" +
+    "\n" +
     resultBindings.join("\n") +
+    "\n\nconst raw = struct {\n" +
+    resultRaw.join("\n") +
     "\n};\n";
   if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
     await Bun.write(resultFilePath, resultContents);
@@ -798,21 +804,22 @@ async function main() {
   const resultSourceLinksContents = resultSourceLinks.join("\n");
   if ((await readFileOrEmpty(resultSourceLinksFilePath)) !== resultSourceLinksContents) {
     await Bun.write(resultSourceLinksFilePath, resultSourceLinksContents);
+    const now = Date.now();
+    const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
+    if (process.env.CI) {
+      console.log(
+        " ".repeat(sin) +
+          (errors.length > 0 ? "✗" : "✓") +
+          " cppbind.ts generated bindings to " +
+          resultFilePath +
+          (errors.length > 0 ? " with errors" : "") +
+          " in " +
+          (now - start) +
+          "ms",
+      );
+    }
   }
 
-  const now = Date.now();
-  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
-
-  console.log(
-    " ".repeat(sin) +
-      (errors.length > 0 ? "✗" : "✓") +
-      " cppbind.ts generated bindings to " +
-      resultFilePath +
-      (errors.length > 0 ? " with errors" : "") +
-      " in " +
-      (now - start) +
-      "ms",
-  );
   if (errors.length > 0) {
     process.exit(1);
   }

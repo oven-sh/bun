@@ -32,6 +32,7 @@ pub const JSHostFnZig = host_fn.JSHostFnZig;
 pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
 pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
+pub const toJSHostFnResult = host_fn.toJSHostFnResult;
 pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
 pub const toJSHostCall = host_fn.toJSHostCall;
 pub const fromJSHostCall = host_fn.fromJSHostCall;
@@ -43,6 +44,7 @@ pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;
 pub const array_buffer = @import("./jsc/array_buffer.zig");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
+pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
 pub const CachedBytecode = @import("./bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("./bindings/CallFrame.zig").CallFrame;
 pub const CommonAbortReason = @import("./bindings/CommonAbortReason.zig").CommonAbortReason;
@@ -50,8 +52,8 @@ pub const CommonStrings = @import("./bindings/CommonStrings.zig").CommonStrings;
 pub const CustomGetterSetter = @import("./bindings/CustomGetterSetter.zig").CustomGetterSetter;
 pub const DOMFormData = @import("./bindings/DOMFormData.zig").DOMFormData;
 pub const DOMURL = @import("./bindings/DOMURL.zig").DOMURL;
+pub const DecodedJSValue = @import("./bindings/DecodedJSValue.zig").DecodedJSValue;
 pub const DeferredError = @import("./bindings/DeferredError.zig").DeferredError;
-pub const EncodedJSValue = @import("./bindings/EncodedJSValue.zig").EncodedJSValue;
 pub const GetterSetter = @import("./bindings/GetterSetter.zig").GetterSetter;
 pub const JSArray = @import("./bindings/JSArray.zig").JSArray;
 pub const JSArrayIterator = @import("./bindings/JSArrayIterator.zig").JSArrayIterator;
@@ -82,6 +84,7 @@ pub const Exception = @import("./bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvider;
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
+pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
@@ -163,7 +166,7 @@ pub const API = bun.api;
 /// Deprecated: Use `bun.api.node`
 pub const Node = bun.api.node;
 
-const log = bun.Output.scoped(.JSC, true);
+const log = bun.Output.scoped(.JSC, .hidden);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
@@ -273,6 +276,8 @@ pub const math = struct {
         return Bun__JSC__operationMathPow(x, y);
     }
 };
+
+pub const generated = @import("bindgen_generated");
 
 const bun = @import("bun");
 const std = @import("std");

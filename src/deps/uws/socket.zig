@@ -478,7 +478,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             else
                 host;
 
-            const host_ = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            const host_ = bun.handleOom(allocator.dupeZ(u8, clean_host));
             defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
@@ -507,7 +507,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime socket_field_name: []const u8,
             allowHalfOpen: bool,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen, null, 0);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -578,7 +578,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+            const path_ = bun.handleOom(allocator.dupeZ(u8, path));
             defer allocator.free(path_);
 
             const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
@@ -597,9 +597,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
             allowHalfOpen: bool,
+            local_host: ?[]const u8,
+            local_port: i32,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
-            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var allocator = stack_fallback.get();
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
@@ -608,14 +610,31 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             else
                 raw_host;
 
-            const host = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            const host = bun.handleOom(allocator.dupeZ(u8, clean_host));
             defer allocator.free(host);
+
+            // Handle local_host parameter - also remove brackets from IPv6 addresses
+            var local_host_z: ?[*:0]const u8 = null;
+            var local_host_buf: ?[]u8 = null;
+            defer if (local_host_buf) |buf| allocator.free(buf);
+
+            if (local_host) |lh| {
+                const clean_local_host = if (lh.len > 1 and lh[0] == '[' and lh[lh.len - 1] == ']')
+                    lh[1 .. lh.len - 1]
+                else
+                    lh;
+                const lh_z = bun.handleOom(allocator.dupeZ(u8, clean_local_host));
+                local_host_buf = lh_z;
+                local_host_z = lh_z.ptr;
+            }
 
             var did_dns_resolve: i32 = 0;
             const socket_ptr = socket_ctx.connect(
                 is_ssl,
                 host.ptr,
                 port,
+                local_host_z,
+                local_port,
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
@@ -1211,7 +1230,7 @@ const c = struct {
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 
 const std = @import("std");
 

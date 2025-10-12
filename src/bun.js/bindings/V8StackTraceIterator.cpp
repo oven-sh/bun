@@ -135,7 +135,18 @@ bool V8StackTraceIterator::parseFrame(StackFrame& frame)
     }
 done_block:
 
-    WTF::StringView functionName = line.substring(0, openingParentheses - 1);
+    // Extract function name, being careful to avoid underflow when openingParentheses is 0
+    WTF::StringView functionName;
+    if (openingParentheses == 0) {
+        functionName = WTF::StringView();
+    } else {
+        // Check if there's a space before the opening parenthesis and trim it
+        unsigned endIndex = openingParentheses;
+        if (endIndex > 0 && line[endIndex - 1] == ' ') {
+            endIndex--;
+        }
+        functionName = line.substring(0, endIndex);
+    }
 
     if (functionName == "global code"_s) {
         functionName = WTF::StringView();

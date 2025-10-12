@@ -973,3 +973,32 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 }
 
 #endif
+
+extern "C" void Bun__WTFGetBacktrace(void** stack, int* size, void* first_addr)
+{
+    if (first_addr) {
+        // If we have a first_addr, we need to handle it specially
+        if (*size <= 0) {
+            return;
+        }
+
+        // Store the first address at the beginning
+        stack[0] = first_addr;
+
+        // If there's only room for one frame, we're done
+        if (*size == 1) {
+            return;
+        }
+
+        // Get the remaining frames starting from index 1
+        int remaining_size = *size - 1;
+        void** remaining_stack = stack + 1;
+        WTFGetBacktrace(remaining_stack, &remaining_size);
+
+        // Update the actual size (first_addr + captured frames)
+        *size = remaining_size + 1;
+    } else {
+        // No first_addr, just call WTFGetBacktrace directly
+        WTFGetBacktrace(stack, size);
+    }
+}

@@ -319,7 +319,7 @@ pub fn crashHandler(
                         .index = 0,
                         .instruction_addresses = &addr_buf,
                     };
-                    std.debug.captureStackTrace(begin_addr orelse @returnAddress(), &trace_buf);
+                    captureStackTrace(begin_addr orelse @returnAddress(), &trace_buf);
                     break :get_backtrace &trace_buf;
                 };
 
@@ -1605,6 +1605,22 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }
 extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
+extern "c" fn Bun__WTFGetBacktrace(stack: [*]?*anyopaque, size: *c_int, first_addr: ?*anyopaque) void;
+
+/// Capture a stack trace using WTFGetBacktrace instead of std.debug.captureStackTrace.
+/// This function handles the case where first_addr is non-null by passing it to the C function.
+inline fn captureStackTrace(first_addr: ?usize, trace: *std.builtin.StackTrace) void {
+    const max_frames = trace.instruction_addresses.len;
+    var size: c_int = @intCast(max_frames);
+
+    // WTFGetBacktrace expects void** but we have [*]usize
+    // We need to cast properly
+    const stack_ptr: [*]?*anyopaque = @ptrCast(trace.instruction_addresses.ptr);
+    const first_addr_ptr: ?*anyopaque = if (first_addr) |addr| @ptrFromInt(addr) else null;
+
+    Bun__WTFGetBacktrace(stack_ptr, &size, first_addr_ptr);
+    trace.index = @intCast(size);
+}
 
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
@@ -1723,7 +1739,7 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
 pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimits) void {
     var addrs: [32]usize = undefined;
     var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
-    std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
+    captureStackTrace(first_address orelse @returnAddress(), &stack);
     dumpStackTrace(stack, limits);
 }
 
@@ -1772,7 +1788,7 @@ pub const StoredTrace = struct {
     pub fn capture(begin: ?usize) StoredTrace {
         var stored: StoredTrace = StoredTrace.empty;
         var frame = stored.trace();
-        std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
+        captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;
         for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
             if (addr == 0) {

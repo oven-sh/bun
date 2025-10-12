@@ -93,8 +93,8 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
   });
 
   let i = 0;
-  for await (const line of proc.stdout) {
-    const str = new TextDecoder().decode(line);
+  for await (const chunk of proc.stdout) {
+    const str = new TextDecoder().decode(chunk);
     if (str.includes(`run ${i}`)) {
       i++;
       if (i === 3) break; // Stop after 3 runs
@@ -166,8 +166,8 @@ test("BUN_WATCHER_TRACE with empty path does not create trace", async () => {
   });
 
   // Wait for first run, then exit
-  for await (const line of proc.stdout) {
-    const str = new TextDecoder().decode(line);
+  for await (const chunk of proc.stdout) {
+    const str = new TextDecoder().decode(chunk);
     if (str.includes("ready")) {
       break;
     }
@@ -200,8 +200,8 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
   });
 
   let i = 0;
-  for await (const line of proc1.stdout) {
-    const str = new TextDecoder().decode(line);
+  for await (const chunk of proc1.stdout) {
+    const str = new TextDecoder().decode(chunk);
     if (str.includes(`first-${i}`)) {
       i++;
       if (i === 2) break; // Stop after 2 runs
@@ -230,8 +230,8 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
   });
 
   let j = 0;
-  for await (const line of proc2.stdout) {
-    const str = new TextDecoder().decode(line);
+  for await (const chunk of proc2.stdout) {
+    const str = new TextDecoder().decode(chunk);
     if (str.includes(`second-${j}`)) {
       j++;
       if (j === 2) break; // Stop after 2 runs

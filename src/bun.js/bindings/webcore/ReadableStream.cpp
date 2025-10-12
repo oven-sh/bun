@@ -266,11 +266,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
 
 } // namespace WebCore
 
+using namespace JSC;
+using namespace WebCore;
+
 extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
     if (!readableStream) [[unlikely]]
         return false;
@@ -322,9 +322,6 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
 extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
     if (!readableStream) [[unlikely]]
         return;
@@ -339,9 +336,6 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     auto value = JSC::JSValue::decode(possibleReadableStream);
     if (value.isEmpty() || !value.isCell())
         return;
@@ -354,22 +348,14 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     readableStream->setDisturbed(true);
 }
 
-extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     ASSERT(globalObject);
     return WebCore::ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
 }
 
-extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     ASSERT(globalObject);
     WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
@@ -377,9 +363,6 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
 
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
-    using namespace JSC;
-    using namespace WebCore;
-
     ASSERT(globalObject);
     JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
     if (!object) {
@@ -471,8 +454,6 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -490,8 +471,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 
 static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -531,15 +510,11 @@ static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBo
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     return ZigGlobalObject__readableStreamToArrayBufferBody(static_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -579,8 +554,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSFunction* function = nullptr;
@@ -601,8 +574,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSFunction* function = nullptr;
@@ -624,8 +595,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSFunction* function = nullptr;
@@ -646,8 +615,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSFunction* function = nullptr;
@@ -666,11 +633,8 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::Global
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     if (callFrame->argumentCount() < 1) [[unlikely]] {
@@ -683,11 +647,8 @@ JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSC::JSGlobalObje
     return ZigGlobalObject__readableStreamToArrayBufferBody(static_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
 }
 
-JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToBytes);
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToBytes, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    using namespace JSC;
-    using namespace WebCore;
     auto& vm = JSC::getVM(globalObject);
 
     if (callFrame->argumentCount() < 1) [[unlikely]] {

@@ -179,17 +179,29 @@ pub const SigstoreBundle = struct {
         for (self.verification_material.tlog_entries, 0..) |entry, i| {
             if (i > 0) try tlog_json.appendSlice(",");
             
-            const entry_json = try std.fmt.allocPrint(self.allocator,
-                \\{{"logIndex":"{d}","logId":{{"keyId":"{s}"}},"kindVersion":{{"kind":"{s}","version":"{s}"}},"integratedTime":"{d}","inclusionPromise":{{"signedEntryTimestamp":"{s}"}},"canonicalizedBody":"{s}"}}
-            , .{
-                entry.log_index,
-                entry.log_id.key_id,
-                entry.kind_version.kind,
-                entry.kind_version.version,
-                entry.integrated_time,
-                if (entry.inclusion_promise) |promise| promise.signed_entry_timestamp else "",
-                entry.canonicalized_body,
-            });
+            const entry_json = if (entry.inclusion_promise) |promise|
+                try std.fmt.allocPrint(self.allocator,
+                    \\{{"logIndex":"{d}","logId":{{"keyId":"{s}"}},"kindVersion":{{"kind":"{s}","version":"{s}"}},"integratedTime":"{d}","inclusionPromise":{{"signedEntryTimestamp":"{s}"}},"canonicalizedBody":"{s}"}}
+                , .{
+                    entry.log_index,
+                    entry.log_id.key_id,
+                    entry.kind_version.kind,
+                    entry.kind_version.version,
+                    entry.integrated_time,
+                    promise.signed_entry_timestamp,
+                    entry.canonicalized_body,
+                })
+            else
+                try std.fmt.allocPrint(self.allocator,
+                    \\{{"logIndex":"{d}","logId":{{"keyId":"{s}"}},"kindVersion":{{"kind":"{s}","version":"{s}"}},"integratedTime":"{d}","canonicalizedBody":"{s}"}}
+                , .{
+                    entry.log_index,
+                    entry.log_id.key_id,
+                    entry.kind_version.kind,
+                    entry.kind_version.version,
+                    entry.integrated_time,
+                    entry.canonicalized_body,
+                });
             defer self.allocator.free(entry_json);
             
             try tlog_json.appendSlice(entry_json);
@@ -461,10 +473,7 @@ pub const BundleBuilder = struct {
                 .allocator = self.allocator,
             },
             .integrated_time = log_entry.integrated_time,
-            .inclusion_promise = TlogEntry.InclusionPromise{
-                .signed_entry_timestamp = try self.allocator.dupe(u8, log_entry.uuid),
-                .allocator = self.allocator,
-            },
+            .inclusion_promise = null, // Omit until real SET is available
             .inclusion_proof = null,
             .canonicalized_body = try self.allocator.dupe(u8, log_entry.body),
             .allocator = self.allocator,

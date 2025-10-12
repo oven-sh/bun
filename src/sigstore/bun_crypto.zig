@@ -100,6 +100,8 @@ pub const CertificateParser = struct {
 
         // This is a simplified extraction - in production you'd want more robust SAN parsing
         const san_names = @as(*BoringSSL.GENERAL_NAMES, @ptrCast(san_ext));
+        defer BoringSSL.GENERAL_NAMES_free(san_names);
+        
         const name_count = BoringSSL.sk_GENERAL_NAME_num(san_names);
 
         if (name_count > 0) {

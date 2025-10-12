@@ -1,5 +1,4 @@
 const string = []const u8;
-const sigstore = @import("../sigstore/provenance_generator.zig");
 
 pub const ProvenanceError = error{
     UnsupportedCIProvider,
@@ -67,5 +66,6 @@ pub const ProvenanceGenerator = struct {
     }
 };
 
+const sigstore = @import("../sigstore/provenance_generator.zig");
 const bun = @import("bun");
 const std = @import("std");

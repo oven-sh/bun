@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const crypto = @import("bun_crypto.zig");
-
 pub const DSSEError = error{
     InvalidPayload,
     SigningFailed,
@@ -96,28 +92,35 @@ pub const Envelope = struct {
         var json_buf = std.ArrayList(u8).init(self.allocator);
         defer json_buf.deinit();
 
-        try json_buf.appendSlice("{\"payload\":\"");
-        try json_buf.appendSlice(self.payload);
-        try json_buf.appendSlice("\",\"payloadType\":\"");
-        try json_buf.appendSlice(self.payload_type);
-        try json_buf.appendSlice("\",\"signatures\":[");
-
-        for (self.signatures, 0..) |sig, i| {
-            if (i > 0) try json_buf.appendSlice(",");
-            try json_buf.appendSlice("{\"sig\":\"");
-            try json_buf.appendSlice(sig.sig);
-            try json_buf.appendSlice("\"");
+        var writer = std.json.Writer(@TypeOf(json_buf.writer())).init(json_buf.writer());
+        writer.beginObject() catch return DSSEError.OutOfMemory;
+        
+        writer.objectField("payload") catch return DSSEError.OutOfMemory;
+        writer.write(self.payload) catch return DSSEError.OutOfMemory;
+        
+        writer.objectField("payloadType") catch return DSSEError.OutOfMemory;
+        writer.write(self.payload_type) catch return DSSEError.OutOfMemory;
+        
+        writer.objectField("signatures") catch return DSSEError.OutOfMemory;
+        writer.beginArray() catch return DSSEError.OutOfMemory;
+        
+        for (self.signatures) |sig| {
+            writer.beginObject() catch return DSSEError.OutOfMemory;
+            
+            writer.objectField("sig") catch return DSSEError.OutOfMemory;
+            writer.write(sig.sig) catch return DSSEError.OutOfMemory;
             
             if (sig.keyid) |keyid| {
-                try json_buf.appendSlice(",\"keyid\":\"");
-                try json_buf.appendSlice(keyid);
-                try json_buf.appendSlice("\"");
+                writer.objectField("keyid") catch return DSSEError.OutOfMemory;
+                writer.write(keyid) catch return DSSEError.OutOfMemory;
             }
             
-            try json_buf.appendSlice("}");
+            writer.endObject() catch return DSSEError.OutOfMemory;
         }
-
-        try json_buf.appendSlice("]}");
+        
+        writer.endArray() catch return DSSEError.OutOfMemory;
+        writer.endObject() catch return DSSEError.OutOfMemory;
+        
         return json_buf.toOwnedSlice();
     }
 
@@ -145,6 +148,7 @@ pub const Envelope = struct {
             .signatures = try allocator.alloc(Signature, 0),
             .allocator = allocator,
         };
+        errdefer envelope.deinit();
 
         // Parse signatures
         for (signatures_obj.array.items) |sig_obj| {
@@ -163,6 +167,7 @@ pub const Envelope = struct {
                 .sig = try allocator.dupe(u8, sig_data.string),
                 .allocator = allocator,
             };
+            errdefer signature.deinit();
 
             try envelope.addSignature(signature);
         }
@@ -356,4 +361,6 @@ pub fn verifyDSSEEnvelope(
     return verifier.verifyEnvelope(&envelope, public_key_pem);
 }
 
-@import("bun")
+const std = @import("std");
+const bun = @import("bun");
+const crypto = @import("bun_crypto.zig");

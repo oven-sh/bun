@@ -900,7 +900,9 @@ class PostgresAdapter
     }
   }
 
-  // Reserved connection helper to set adapter-level defaults
+  // Reserved connection helper. Note: the `connection` parameter is intentionally ignored.
+  // This forwards to global adapter-level defaults via `setCopyDefaults()`.
+  // If per-connection defaults are desired, callers should configure them on the connection object (when supported).
   setCopyDefaultsFor(
     connection: PooledPostgresConnection,
     newDefaults: Partial<{

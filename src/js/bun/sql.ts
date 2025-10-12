@@ -159,6 +159,15 @@ function resolveCopyToMaxBytes(queryOrOptions: any, pool: any): number {
       : Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0));
 }
 
+function getByteLength(value: string | { byteLength: number } | Uint8Array | ArrayBuffer): number {
+  if (typeof value === "string") {
+    return (Buffer as any)?.byteLength
+      ? (Buffer as any).byteLength(value, "utf8")
+      : new TextEncoder().encode(value).byteLength;
+  }
+  return (value as any)?.byteLength >>> 0 || 0;
+}
+
 /**
  * Sends data in chunks with backpressure handling
  */
@@ -208,7 +217,7 @@ async function sendChunkedData(
     }
   };
 
-  const dataLength = typeof data === "string" ? data.length : data.byteLength;
+  const dataLength = getByteLength(data);
 
   if (dataLength <= maxChunkSize) {
     if (maxBytes && counters.bytesSent + dataLength > maxBytes) {
@@ -225,7 +234,7 @@ async function sendChunkedData(
         typeof data === "string"
           ? data.slice(i, i + maxChunkSize)
           : data.subarray(i, Math.min(dataLength, i + maxChunkSize));
-      const partLength = typeof part === "string" ? part.length : part.byteLength;
+      const partLength = getByteLength(part as any);
 
       if (maxBytes && counters.bytesSent + partLength > maxBytes) {
         throw new Error("copyFrom: maxBytes exceeded");
@@ -1296,7 +1305,8 @@ const SQL: typeof Bun.SQL = function SQL(
         const parts = row.map(v => {
           // Check for actual null/undefined before serializing
           if (v === null || v === undefined) {
-            return ""; // Emit unquoted empty field for NULL
+            // Emit caller-provided NULL literal; quote if needed for CSV
+            return needsCsvQuote(nullToken, delimiter) ? pgCsvQuote(nullToken) : nullToken;
           }
           const s = serializeValue(v);
           // Empty string should be quoted to distinguish from NULL
@@ -1342,7 +1352,7 @@ const SQL: typeof Bun.SQL = function SQL(
       const flushBatch = async () => {
         if (batch.length > 0) {
           // Enforce maxBytes and update progress before sending this batch
-          const bLen = batch.length;
+          const bLen = getByteLength(batch);
           // Resolve maxBytes from options or adapter defaults
           let __fromDefaults__: { maxChunkSize: number; maxBytes: number } = { maxChunkSize: 256 * 1024, maxBytes: 0 };
           try {
@@ -1563,7 +1573,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (aborted) throw new Error("AbortError");
       const fallback = sanitizeString(String(data ?? ""));
       (reserved as any).copySendData(fallback);
-      bytesSent += fallback.length;
+      bytesSent += getByteLength(fallback);
       chunksSent += 1;
       notifyProgress();
       (reserved as any).copyDone();
@@ -1615,6 +1625,7 @@ const SQL: typeof Bun.SQL = function SQL(
           WHERE c.relname = $1
             AND ($2::text IS NULL OR n.nspname = $2)
             AND a.attnum > 0 AND NOT a.attisdropped
+          ORDER BY a.attnum
         `;
         const rows = await (reserved as any).unsafe(q, [relName, schemaName]);
         // Build expected OIDs for provided type tokens
@@ -1634,20 +1645,35 @@ const SQL: typeof Bun.SQL = function SQL(
         if (!Array.isArray(rows) || rows.length === 0) {
           throw new Error("Could not resolve column OIDs for validation.");
         }
-        const oidByName = new Map<string, number>();
-        for (const r of rows) {
-          if (typeof r?.name === "string" && typeof r?.oid === "number") {
-            oidByName.set(r.name, r.oid);
+        if ((colNames?.length ?? 0) > 0) {
+          const oidByName = new Map<string, number>();
+          for (const r of rows) {
+            if (typeof r?.name === "string" && typeof r?.oid === "number") {
+              oidByName.set(r.name, r.oid);
+            }
           }
-        }
-        for (let i = 0; i < expectedOids.length; i++) {
-          const colName = String(colNames[i] ?? `col${i + 1}`);
-          const got = oidByName.get(colName);
-          const want = expectedOids[i];
-          if (typeof got !== "number" || got !== want) {
-            throw new Error(
-              `COPY binaryTypes validation failed for column "${colName}": expected OID ${want}, got ${got}`,
-            );
+          for (let i = 0; i < expectedOids.length; i++) {
+            const colName = String(colNames[i]);
+            const got = oidByName.get(colName);
+            const want = expectedOids[i];
+            if (typeof got !== "number" || got !== want) {
+              throw new Error(
+                `COPY binaryTypes validation failed for column "${colName}": expected OID ${want}, got ${got}`,
+              );
+            }
+          }
+        } else {
+          if (rows.length < expectedOids.length) {
+            throw new Error("Could not resolve column OIDs for validation.");
+          }
+          for (let i = 0; i < expectedOids.length; i++) {
+            const got = rows[i]?.oid;
+            const want = expectedOids[i];
+            if (typeof got !== "number" || got !== want) {
+              throw new Error(
+                `COPY binaryTypes validation failed for column #${i + 1}: expected OID ${want}, got ${got}`,
+              );
+            }
           }
         }
       }
@@ -1823,7 +1849,7 @@ const SQL: typeof Bun.SQL = function SQL(
                 typeof queryOrOptions === "string"
                   ? (__toDefaults__.timeout ?? 0)
                   : (queryOrOptions as any).timeout !== undefined
-                    ? Math.max(0, (queryOrOptions as any).timeout | 0)
+                    ? Math.max(0, Math.trunc((queryOrOptions as any).timeout))
                     : (__toDefaults__.timeout ?? 0);
 
               if (typeof (reserved as any).setCopyTimeout === "function") {

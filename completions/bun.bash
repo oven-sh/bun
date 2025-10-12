@@ -147,7 +147,7 @@ _bun_scripts_completions() {
         local scripts="${matched%\}*}"
         local -a script_candidates
 
-        while [[ ${scripts} =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*":"[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
+        while [[ ${scripts} =~ ^'"'(([^\"\\]|\\.)+)'"'[[:space:]]*':'[[:space:]]*'"'(([^\"\\]|\\.)*)'"'[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script
             script="$(_bun_escape_bash_specials "${BASH_REMATCH[1]}" 0)"
 

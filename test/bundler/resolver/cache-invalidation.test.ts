@@ -232,4 +232,145 @@ describe("resolver cache invalidation", () => {
     expect(result3.success).toBe(true);
     expect((await result3.outputs[0].text()).includes("ts version")).toBe(true);
   });
+
+  test("package.json exports field after deletion and recreation", async () => {
+    using dir = tempDir("cache-test-pkg-exports", {
+      "entry.js": `export { value } from "mypkg";`,
+      "node_modules/mypkg/package.json": JSON.stringify({
+        name: "mypkg",
+        exports: {
+          ".": "./dist/index.js",
+        },
+      }),
+      "node_modules/mypkg/dist/index.js": `export const value = "v1";`,
+    });
+
+    const pkgPath = path.join(String(dir), "node_modules", "mypkg");
+    const distPath = path.join(pkgPath, "dist");
+
+    // Build 1: Should resolve via exports
+    const result1 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out1"),
+    });
+    expect(result1.success).toBe(true);
+    expect((await result1.outputs[0].text()).includes("v1")).toBe(true);
+
+    // Delete dist directory
+    await fs.rm(distPath, { recursive: true });
+
+    // Build 2: Should fail
+    let build2Failed = false;
+    try {
+      await Bun.build({
+        entrypoints: [path.join(String(dir), "entry.js")],
+        outdir: path.join(String(dir), "out2"),
+      });
+    } catch (e) {
+      build2Failed = true;
+    }
+    expect(build2Failed).toBe(true);
+
+    // Recreate dist with new version
+    await fs.mkdir(distPath);
+    await fs.writeFile(path.join(distPath, "index.js"), `export const value = "v2";`);
+
+    // Build 3: Should succeed with new version
+    const result3 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out3"),
+    });
+    expect(result3.success).toBe(true);
+    expect((await result3.outputs[0].text()).includes("v2")).toBe(true);
+  });
+
+  test("bare import with local node_modules after deletion", async () => {
+    using dir = tempDir("cache-test-bare-import", {
+      "entry.js": `export { value } from "mylib";`,
+      "node_modules/mylib/index.js": `export const value = "v1";`,
+      "node_modules/mylib/package.json": JSON.stringify({ name: "mylib" }),
+    });
+
+    const nodeModulesMylib = path.join(String(dir), "node_modules", "mylib");
+
+    // Build 1: Should resolve to node_modules
+    const result1 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out1"),
+    });
+    expect(result1.success).toBe(true);
+    expect((await result1.outputs[0].text()).includes("v1")).toBe(true);
+
+    // Delete node_modules/mylib
+    await fs.rm(nodeModulesMylib, { recursive: true });
+
+    // Build 2: Should fail (no fallback for bare imports)
+    let build2Failed = false;
+    try {
+      await Bun.build({
+        entrypoints: [path.join(String(dir), "entry.js")],
+        outdir: path.join(String(dir), "out2"),
+      });
+    } catch (e) {
+      build2Failed = true;
+    }
+    expect(build2Failed).toBe(true);
+
+    // Recreate node_modules/mylib with new version
+    await fs.mkdir(nodeModulesMylib, { recursive: true });
+    await fs.writeFile(path.join(nodeModulesMylib, "package.json"), JSON.stringify({ name: "mylib" }));
+    await fs.writeFile(path.join(nodeModulesMylib, "index.js"), `export const value = "v2";`);
+
+    // Build 3: Should succeed with new version
+    const result3 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out3"),
+    });
+    expect(result3.success).toBe(true);
+    expect((await result3.outputs[0].text()).includes("v2")).toBe(true);
+  });
+
+  test("sibling directory resolution after parent deletion", async () => {
+    using dir = tempDir("cache-test-sibling", {
+      "src/index.js": `export { helper } from "../lib/helper.js";`,
+      "lib/helper.js": `export const helper = "original";`,
+    });
+
+    const libPath = path.join(String(dir), "lib");
+
+    // Build 1: Should resolve sibling directory
+    const result1 = await Bun.build({
+      entrypoints: [path.join(String(dir), "src", "index.js")],
+      outdir: path.join(String(dir), "out1"),
+    });
+    expect(result1.success).toBe(true);
+
+    // Delete lib directory
+    await fs.rm(libPath, { recursive: true });
+
+    // Build 2: Should fail
+    let build2Failed = false;
+    try {
+      await Bun.build({
+        entrypoints: [path.join(String(dir), "src", "index.js")],
+        outdir: path.join(String(dir), "out2"),
+      });
+    } catch (e) {
+      build2Failed = true;
+    }
+    expect(build2Failed).toBe(true);
+
+    // Recreate lib directory
+    await fs.mkdir(libPath);
+    await fs.writeFile(path.join(libPath, "helper.js"), `export const helper = "recreated";`);
+
+    // Build 3: Should succeed
+    const result3 = await Bun.build({
+      entrypoints: [path.join(String(dir), "src", "index.js")],
+      outdir: path.join(String(dir), "out3"),
+    });
+    expect(result3.success).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    expect(text3.includes("recreated")).toBe(true);
+  });
 });

@@ -3113,8 +3113,30 @@ fn printErrorInstance(
         const error_obj = error_instance.getObject().?;
         var iterator = try Iterator.init(this.global, error_obj);
         defer iterator.deinit();
-        const longest_name = @min(iterator.getLongestPropertyName(), 10);
+        var longest_name_base = iterator.getLongestPropertyName();
+        // In AI agent mode, we'll also print the "name" field if it's not "Error".
+        // Since we normalize all errors to "error:" prefix above, we need to preserve
+        // the actual error type (TypeError, ReferenceError, etc.) as a property.
+        // This provides structured error information while maintaining grepability.
+        if (Output.isAIAgent() and !name.eqlComptime("Error")) {
+            longest_name_base = @max(longest_name_base, "name".len);
+        }
+        const longest_name = @min(longest_name_base, 10);
         var is_first_property = true;
+
+        // In AI agent mode, print the name property first if it's not "Error".
+        // Example output:
+        //   error: This is a test error
+        //    name: "TypeError"
+        // This way AI agents can grep for "^error:" to find all errors, then
+        // parse the "name:" field to determine the specific error type.
+        if (Output.isAIAgent() and !name.eqlComptime("Error")) {
+            const pad_left = longest_name -| "name".len;
+            try writer.writeByteNTimes(' ', pad_left);
+            try writer.print(comptime Output.prettyFmt(" name<r><d>:<r> ", allow_ansi_color), .{});
+            try writer.print(comptime Output.prettyFmt("\"{}\"\n", allow_ansi_color), .{name});
+            is_first_property = false;
+        }
         while (try iterator.next()) |field| {
             const value = iterator.value;
             if (field.eqlComptime("message") or field.eqlComptime("name") or field.eqlComptime("stack")) {
@@ -3288,7 +3310,15 @@ fn printErrorNameAndMessage(
         try writer.writeAll(Output.prettyFmt("<red>frontend<r> ", true));
     }
     if (!name.isEmpty() and !message.isEmpty()) {
-        const display_name, const display_message = if (name.eqlComptime("Error")) brk: {
+        const display_name, const display_message = if (Output.isAIAgent()) brk: {
+            // In AI agent mode, always use "error:" prefix regardless of error type.
+            // This allows AI agents to reliably search for errors using:
+            //   command 2>&1 | grep "^error:"
+            // instead of needing to match multiple patterns like:
+            //   grep -E "^(Error|TypeError|ReferenceError|SyntaxError|RangeError|...):"
+            // The actual error name (e.g., "TypeError") is shown as a property below.
+            break :brk .{ String.empty, message };
+        } else if (name.eqlComptime("Error")) brk: {
             // If `err.code` is set, and `err.message` is of form `{code}: {text}`,
             // use the code as the name since `error: ENOENT: no such ...` is
             // not as nice looking since it there are two error prefixes.

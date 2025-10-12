@@ -40,6 +40,8 @@ pub const UnixOrHost = union(enum) {
     host: struct {
         host: []const u8,
         port: u16,
+        local_host: ?[]const u8 = null,
+        local_port: u16 = 0,
     },
     fd: bun.FileDescriptor,
 
@@ -55,6 +57,8 @@ pub const UnixOrHost = union(enum) {
                     .host = .{
                         .host = bun.handleOom(bun.default_allocator.dupe(u8, h.host)),
                         .port = this.host.port,
+                        .local_host = if (h.local_host) |lh| bun.handleOom(bun.default_allocator.dupe(u8, lh)) else null,
+                        .local_port = h.local_port,
                     },
                 };
             },
@@ -69,6 +73,9 @@ pub const UnixOrHost = union(enum) {
             },
             .host => |h| {
                 bun.default_allocator.free(h.host);
+                if (h.local_host) |lh| {
+                    bun.default_allocator.free(lh);
+                }
             },
             .fd => {}, // this is an integer
         }
@@ -584,7 +591,12 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             }
         }
         if (port) |_| {
-            break :blk .{ .host = .{ .host = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice(), .port = port.? } };
+            break :blk .{ .host = .{
+                .host = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice(),
+                .port = port.?,
+                .local_host = if (socket_config.localAddress) |la| bun.handleOom(la.cloneIfNeeded(bun.default_allocator)).slice() else null,
+                .local_port = socket_config.localPort orelse 0,
+            } };
         }
 
         break :blk .{ .unix = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice() };

@@ -1045,7 +1045,6 @@ if(APPLE)
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    -Wl,-map,${bun}.linker-map
   )
 
   if(DEBUG)
@@ -1065,6 +1064,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC
       -dead_strip
       -dead_strip_dylibs
+      -Wl,-map,${bun}.linker-map
     )
   endif()
 endif()
@@ -1098,6 +1098,17 @@ if(LINUX)
     )
   endif()
 
+  if (ENABLE_LTO)
+    # We are optimizing for size at a slight debug-ability cost
+    target_link_options(${bun} PUBLIC
+      -Wl,--no-eh-frame-hdr
+    )
+  else()
+    target_link_options(${bun} PUBLIC
+      -Wl,--eh-frame-hdr
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     --ld-path=${LLD_PROGRAM}
     -fno-pic
@@ -1112,11 +1123,9 @@ if(LINUX)
     # make debug info faster to load
     -Wl,--gdb-index
     -Wl,-z,combreloc
-    -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
     -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
-    -Wl,-Map=${bun}.linker-map
   )
 
   # don't strip in debug, this seems to be needed so that the Zig std library
@@ -1131,6 +1140,7 @@ if(LINUX)
   if (NOT DEBUG AND NOT ENABLE_ASAN AND NOT ENABLE_VALGRIND)
     target_link_options(${bun} PUBLIC
       -Wl,-icf=safe
+      -Wl,-Map=${bun}.linker-map
     )
   endif()
 

@@ -71,6 +71,8 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+public_hoist_patterns: ?[]const []const u8 = null,
+
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
@@ -384,6 +386,10 @@ pub fn load(
 
         if (config.minimum_release_age_excludes) |exclusions| {
             this.minimum_release_age_excludes = exclusions;
+        }
+
+        if (config.public_hoist_patterns) |public_hoist_patterns| {
+            this.public_hoist_patterns = public_hoist_patterns;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;

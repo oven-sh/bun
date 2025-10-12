@@ -3055,6 +3055,8 @@ pub const api = struct {
 
         minimum_release_age_ms: ?f64 = null,
         minimum_release_age_excludes: ?[]const []const u8 = null,
+
+        public_hoist_patterns: ?[]const []const u8 = null,
     };
 
     pub const ClientServerModule = struct {

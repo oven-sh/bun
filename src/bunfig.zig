@@ -726,6 +726,33 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        var patterns: bun.collections.ArrayListDefault([]const u8) = .init();
+
+                        switch (public_hoist_pattern_expr.data) {
+                            .e_string => |pattern| {
+                                try patterns.append(try pattern.stringCloned(this.allocator));
+                                install.public_hoist_patterns = try patterns.toOwnedSlice();
+                            },
+                            .e_array => |public_hoist_patterns| {
+                                try patterns.ensureUnusedCapacity(public_hoist_patterns.items.len);
+                                for (public_hoist_patterns.slice()) |pattern_expr| {
+                                    if (try pattern_expr.asStringCloned(this.allocator)) |pattern| {
+                                        patterns.appendAssumeCapacity(pattern);
+                                    } else {
+                                        try this.addError(pattern_expr.loc, "Expected a string pattern");
+                                    }
+                                }
+                                install.public_hoist_patterns = try patterns.toOwnedSlice();
+                            },
+                            else => {
+                                try this.addError(public_hoist_pattern_expr.loc, "Expected a string pattern or an array of string pattens");
+                            },
+                        }
+
+                        install.public_hoist_patterns = try patterns.toOwnedSlice();
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {

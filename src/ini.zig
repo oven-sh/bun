@@ -1069,6 +1069,26 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("public-hoist-pattern")) |public_hoist_pattern_expr| {
+        switch (public_hoist_pattern_expr.data) {
+            .e_string => |pattern| {
+                var patterns: bun.collections.ArrayListDefault([]const u8) = .init();
+                try patterns.append(try pattern.stringCloned(allocator));
+                install.public_hoist_patterns = try patterns.toOwnedSlice();
+            },
+            .e_array => |public_hoist_patterns| {
+                var patterns: bun.collections.ArrayListDefault([]const u8) = try .initCapacity(public_hoist_patterns.items.len);
+                for (public_hoist_patterns.slice()) |pattern_expr| {
+                    if (try pattern_expr.asStringCloned(allocator)) |pattern| {
+                        patterns.appendAssumeCapacity(pattern);
+                    }
+                }
+                install.public_hoist_patterns = try patterns.toOwnedSlice();
+            },
+            else => {},
+        }
+    }
+
     var registry_map = install.scoped orelse bun.schema.api.NpmRegistryMap{};
 
     // Process scopes

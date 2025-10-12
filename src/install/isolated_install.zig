@@ -412,6 +412,9 @@ pub fn installIsolatedPackages(
             .entry_parent_id = .invalid,
         });
 
+        var publicly_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        defer publicly_hoisted.deinit();
+
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (entry_queue.readItem()) |entry| {
             const pkg_id = node_pkg_ids[entry.node_id.get()];
@@ -532,6 +535,38 @@ pub fn installIsolatedPackages(
                     .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                     &ctx,
                 );
+
+                if (entry.entry_parent_id == .root) {
+                    // make sure direct dependencies are not replaced
+                    const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                    try publicly_hoisted.put(dep_name, {});
+                }
+
+                if (new_entry_dep_id != invalid_dependency_id and entry.entry_parent_id != .root) {
+                    const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                    if (manager.options.public_hoist_patterns) |public_hoist_patterns| {
+                        var match = false;
+                        for (public_hoist_patterns) |pattern| {
+                            switch (bun.glob.match(pattern, dep_name)) {
+                                .match => match = true,
+                                .no_match => {},
+                                .negate_match => {},
+                                .negate_no_match => match = false,
+                            }
+                        }
+
+                        if (match) {
+                            const hoisted_entry = try publicly_hoisted.getOrPut(dep_name);
+                            if (!hoisted_entry.found_existing) {
+                                try entry_dependencies[0].insert(
+                                    lockfile.allocator,
+                                    .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
+                                    &ctx,
+                                );
+                            }
+                        }
+                    }
+                }
             }
 
             try dedupe_entry.value_ptr.append(lockfile.allocator, .{

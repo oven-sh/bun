@@ -101,8 +101,8 @@ describe("resolver cache invalidation", () => {
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
     // Verify it's using multiplication (new), not addition (old)
-    expect(text3).toContain("*");
-    expect(text3).not.toContain("+");
+    expect(text3).toContain("a * b");
+    expect(text3).not.toContain("a + b");
   });
 
   test("direct file deleted then recreated", async () => {

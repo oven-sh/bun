@@ -130,14 +130,8 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 });
             }
 
-            if (strings.withoutPrefixIfPossibleComptime(res_str, "file:")) |path_with_hash| {
-                // Strip hash if present (yarn includes #hash in resolved field)
-                const path = if (strings.indexOfChar(path_with_hash, '#')) |hash_idx|
-                    path_with_hash[0..hash_idx]
-                else
-                    path_with_hash;
-
-                if (strings.endsWithComptime(res_str, ".tgz") or strings.endsWithComptime(res_str, ".tar.gz")) {
+            if (strings.withoutPrefixIfPossibleComptime(res_str, "file:")) |path| {
+                if (strings.endsWithComptime(res_str, ".tgz")) {
                     return This.init(.{ .local_tarball = try string_buf.append(path) });
                 }
                 return This.init(.{ .folder = try string_buf.append(path) });

@@ -25,7 +25,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out1"),
     });
     expect(result1.success).toBe(true);
-    expect((await result1.outputs[0].text()).includes("42")).toBe(true);
+    const text1 = await result1.outputs[0].text();
+    expect(text1).toContain("42");
 
     // Delete directory
     await fs.rm(subdirPath, { recursive: true });
@@ -53,7 +54,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out3"),
     });
     expect(result3.success).toBe(true);
-    expect((await result3.outputs[0].text()).includes("99")).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    expect(text3).toContain("99");
   });
 
   test("directory with index.ts deleted then recreated", async () => {
@@ -118,7 +120,7 @@ describe("resolver cache invalidation", () => {
     });
     expect(result1.success).toBe(true);
     const text1 = await result1.outputs[0].text();
-    expect(text1.includes("1")).toBe(true);
+    expect(text1).toContain("1");
 
     // Delete file
     await fs.rm(configPath);
@@ -146,7 +148,7 @@ describe("resolver cache invalidation", () => {
     });
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
-    expect(text3.includes("2")).toBe(true);
+    expect(text3).toContain("2");
   });
 
   test("nested directory deleted then recreated", async () => {
@@ -193,7 +195,7 @@ describe("resolver cache invalidation", () => {
     });
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
-    expect(text3.includes("recreated")).toBe(true);
+    expect(text3).toContain("recreated");
   });
 
   test("extension resolution after file deletion", async () => {
@@ -211,7 +213,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out1"),
     });
     expect(result1.success).toBe(true);
-    expect((await result1.outputs[0].text()).includes("js version")).toBe(true);
+    const text1 = await result1.outputs[0].text();
+    expect(text1).toContain("js version");
 
     // Delete .js file
     await fs.rm(helperJsPath);
@@ -238,7 +241,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out3"),
     });
     expect(result3.success).toBe(true);
-    expect((await result3.outputs[0].text()).includes("ts version")).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    expect(text3).toContain("ts version");
   });
 
   test("package.json exports field after deletion and recreation", async () => {
@@ -262,7 +266,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out1"),
     });
     expect(result1.success).toBe(true);
-    expect((await result1.outputs[0].text()).includes("v1")).toBe(true);
+    const text1 = await result1.outputs[0].text();
+    expect(text1).toContain("v1");
 
     // Delete dist directory
     await fs.rm(distPath, { recursive: true });
@@ -290,7 +295,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out3"),
     });
     expect(result3.success).toBe(true);
-    expect((await result3.outputs[0].text()).includes("v2")).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    expect(text3).toContain("v2");
   });
 
   test("bare import with local node_modules after deletion", async () => {
@@ -308,7 +314,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out1"),
     });
     expect(result1.success).toBe(true);
-    expect((await result1.outputs[0].text()).includes("v1")).toBe(true);
+    const text1 = await result1.outputs[0].text();
+    expect(text1).toContain("v1");
 
     // Delete node_modules/mylib
     await fs.rm(nodeModulesMylib, { recursive: true });
@@ -337,7 +344,8 @@ describe("resolver cache invalidation", () => {
       outdir: path.join(String(dir), "out3"),
     });
     expect(result3.success).toBe(true);
-    expect((await result3.outputs[0].text()).includes("v2")).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    expect(text3).toContain("v2");
   });
 
   test("sibling directory resolution after parent deletion", async () => {
@@ -382,6 +390,6 @@ describe("resolver cache invalidation", () => {
     });
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
-    expect(text3.includes("recreated")).toBe(true);
+    expect(text3).toContain("recreated");
   });
 });

@@ -5,86 +5,62 @@ import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
   using dir = tempDir("watcher-trace", {
-    "index.js": `console.log("hello");`,
-    "watcher.js": `
-      import { watch } from "fs";
-      const watcher = watch(".", { recursive: true }, (eventType, filename) => {
-        console.log("WATCHER_EVENT", eventType, filename);
-      });
-      // Keep the process alive for a bit
-      setTimeout(() => {
-        watcher.close();
-        process.exit(0);
-      }, 3000);
-    `,
+    "script.js": `console.log("ready");`,
   });
 
   const traceFile = join(String(dir), "trace.log");
   const env = { ...bunEnv, BUN_WATCHER_TRACE: traceFile };
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "watcher.js"],
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "script.js"],
     env,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
   });
 
-  // Give watcher time to initialize
-  await Bun.sleep(500);
+  // Wait for first run, then trigger a change
+  for await (const line of proc.stdout) {
+    const str = new TextDecoder().decode(line);
+    if (str.includes("ready")) {
+      await Bun.write(join(String(dir), "script.js"), `console.log("modified");`);
+      break;
+    }
+  }
 
-  // Write to a file to trigger a watch event
-  await Bun.write(join(String(dir), "test.txt"), "test content");
-  await Bun.sleep(500);
-
-  // Modify the file
-  await Bun.write(join(String(dir), "test.txt"), "modified content");
-  await Bun.sleep(500);
-
-  // Delete the file
-  await Bun.write(join(String(dir), "delete.txt"), "to be deleted");
-  await Bun.sleep(300);
-  await Bun.$`rm ${join(String(dir), "delete.txt")}`.quiet();
-  await Bun.sleep(500);
-
-  const exitCode = await proc.exited;
+  proc.kill();
+  await proc.exited;
 
   // Check that trace file was created
   expect(existsSync(traceFile)).toBe(true);
 
   const traceContent = readFileSync(traceFile, "utf-8");
-  const lines = traceContent.trim().split("\n");
+  const lines = traceContent
+    .trim()
+    .split("\n")
+    .filter(l => l.trim());
 
   // Should have at least one event
   expect(lines.length).toBeGreaterThan(0);
 
   // Parse and validate JSON structure
   for (const line of lines) {
-    if (line.trim()) {
-      const event = JSON.parse(line);
+    const event = JSON.parse(line);
 
-      // Check required fields exist
-      expect(event).toHaveProperty("timestamp");
-      expect(event).toHaveProperty("index");
-      expect(event).toHaveProperty("path");
-      expect(event).toHaveProperty("delete");
-      expect(event).toHaveProperty("write");
-      expect(event).toHaveProperty("rename");
-      expect(event).toHaveProperty("metadata");
-      expect(event).toHaveProperty("move_to");
-      expect(event).toHaveProperty("changed_files");
+    // Check required fields exist
+    expect(event).toHaveProperty("timestamp");
+    expect(event).toHaveProperty("index");
+    expect(event).toHaveProperty("path");
+    expect(event).toHaveProperty("events");
+    expect(event).toHaveProperty("changed_files");
 
-      // Validate types
-      expect(typeof event.timestamp).toBe("number");
-      expect(typeof event.index).toBe("number");
-      expect(typeof event.path).toBe("string");
-      expect(typeof event.delete).toBe("boolean");
-      expect(typeof event.write).toBe("boolean");
-      expect(typeof event.rename).toBe("boolean");
-      expect(typeof event.metadata).toBe("boolean");
-      expect(typeof event.move_to).toBe("boolean");
-      expect(Array.isArray(event.changed_files)).toBe(true);
-    }
+    // Validate types
+    expect(typeof event.timestamp).toBe("number");
+    expect(typeof event.index).toBe("number");
+    expect(typeof event.path).toBe("string");
+    expect(Array.isArray(event.events)).toBe(true);
+    expect(Array.isArray(event.changed_files)).toBe(true);
   }
 }, 10000);
 
@@ -139,28 +115,20 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
     expect(event).toHaveProperty("timestamp");
     expect(event).toHaveProperty("index");
     expect(event).toHaveProperty("path");
-    expect(event).toHaveProperty("delete");
-    expect(event).toHaveProperty("write");
-    expect(event).toHaveProperty("rename");
-    expect(event).toHaveProperty("metadata");
-    expect(event).toHaveProperty("move_to");
+    expect(event).toHaveProperty("events");
     expect(event).toHaveProperty("changed_files");
 
     // Validate types
     expect(typeof event.timestamp).toBe("number");
     expect(typeof event.index).toBe("number");
     expect(typeof event.path).toBe("string");
-    expect(typeof event.delete).toBe("boolean");
-    expect(typeof event.write).toBe("boolean");
-    expect(typeof event.rename).toBe("boolean");
-    expect(typeof event.metadata).toBe("boolean");
-    expect(typeof event.move_to).toBe("boolean");
+    expect(Array.isArray(event.events)).toBe(true);
     expect(Array.isArray(event.changed_files)).toBe(true);
 
     if (event.path.includes("script.js") || event.changed_files.some((f: string) => f?.includes("script.js"))) {
       foundScriptEvent = true;
-      // Should have write flag set
-      expect(event.write).toBe(true);
+      // Should have write event
+      expect(event.events).toContain("write");
     }
   }
 

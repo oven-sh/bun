@@ -1,5 +1,9 @@
+const std = @import("std");
+const bun = @import("../bun.zig");
+const Watcher = @import("../Watcher.zig");
+
 /// Optional trace file for debugging watcher events
-var trace_file: ?bun.FileDescriptor = null;
+var trace_file: ?bun.sys.File = null;
 
 /// Initialize trace file if BUN_WATCHER_TRACE env var is set.
 /// Only checks once on first call.
@@ -12,7 +16,7 @@ pub fn init() void {
             const mode = 0o644;
             switch (bun.sys.openA(trace_path, flags, mode)) {
                 .result => |fd| {
-                    trace_file = fd;
+                    trace_file = bun.sys.File{ .handle = fd };
                 },
                 .err => {
                     // Silently ignore errors opening trace file
@@ -25,68 +29,77 @@ pub fn init() void {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_files: []?[:0]u8) void {
-    const fd = trace_file orelse return;
+    const file = trace_file orelse return;
 
-    var buf: [16384]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buf);
-    const writer = stream.writer();
+    var buffered = std.io.bufferedWriter(file.writer());
+    defer buffered.flush() catch {};
+    const writer = buffered.writer();
 
     // Get current timestamp
     const timestamp = std.time.milliTimestamp();
 
     for (events) |event| {
-        stream.reset();
-
         const watchlist_slice = watcher.watchlist.slice();
         const file_paths = watchlist_slice.items(.file_path);
         const file_path = if (event.index < file_paths.len) file_paths[event.index] else "(unknown)";
 
-        // Write JSON manually for each event
-        writer.writeAll("{\"timestamp\":") catch return;
-        writer.print("{d}", .{timestamp}) catch return;
-        writer.writeAll(",\"index\":") catch return;
-        writer.print("{d}", .{event.index}) catch return;
-        writer.writeAll(",\"path\":") catch return;
-        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
-
-        // Write individual operation flags
-        writer.writeAll(",\"delete\":") catch return;
-        writer.writeAll(if (event.op.delete) "true" else "false") catch return;
-        writer.writeAll(",\"write\":") catch return;
-        writer.writeAll(if (event.op.write) "true" else "false") catch return;
-        writer.writeAll(",\"rename\":") catch return;
-        writer.writeAll(if (event.op.rename) "true" else "false") catch return;
-        writer.writeAll(",\"metadata\":") catch return;
-        writer.writeAll(if (event.op.metadata) "true" else "false") catch return;
-        writer.writeAll(",\"move_to\":") catch return;
-        writer.writeAll(if (event.op.move_to) "true" else "false") catch return;
-
-        // Add changed file names if any
+        // Build array of operation types
         const names = event.names(changed_files);
-        writer.writeAll(",\"changed_files\":[") catch return;
+
+        // Write JSON for each event
+        writer.writeAll("{\"timestamp\":") catch continue;
+        writer.print("{d}", .{timestamp}) catch continue;
+        writer.writeAll(",\"index\":") catch continue;
+        writer.print("{d}", .{event.index}) catch continue;
+        writer.writeAll(",\"path\":") catch continue;
+        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch continue;
+        writer.writeAll(",\"events\":[") catch continue;
+
+        // Write array of event types that occurred
         var first = true;
+        if (event.op.delete) {
+            if (!first) writer.writeAll(",") catch continue;
+            writer.writeAll("\"delete\"") catch continue;
+            first = false;
+        }
+        if (event.op.write) {
+            if (!first) writer.writeAll(",") catch continue;
+            writer.writeAll("\"write\"") catch continue;
+            first = false;
+        }
+        if (event.op.rename) {
+            if (!first) writer.writeAll(",") catch continue;
+            writer.writeAll("\"rename\"") catch continue;
+            first = false;
+        }
+        if (event.op.metadata) {
+            if (!first) writer.writeAll(",") catch continue;
+            writer.writeAll("\"metadata\"") catch continue;
+            first = false;
+        }
+        if (event.op.move_to) {
+            if (!first) writer.writeAll(",") catch continue;
+            writer.writeAll("\"move_to\"") catch continue;
+            first = false;
+        }
+
+        writer.writeAll("],\"changed_files\":[") catch continue;
+        first = true;
         for (names) |name_opt| {
             if (name_opt) |name| {
-                if (!first) writer.writeAll(",") catch return;
+                if (!first) writer.writeAll(",") catch continue;
                 first = false;
-                writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
+                writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch continue;
             }
         }
-        writer.writeAll("]}\n") catch return;
-
-        const written = stream.getWritten();
-        _ = bun.sys.write(fd, written);
+        writer.writeAll("]}\n") catch continue;
     }
 }
 
 /// Close the trace file if open
 pub fn deinit() void {
-    if (trace_file) |fd| {
-        fd.close();
+    if (trace_file) |file| {
+        file.close();
         trace_file = null;
     }
 }
-
-const Watcher = @import("../Watcher.zig");
-const bun = @import("../bun.zig");
-const std = @import("std");

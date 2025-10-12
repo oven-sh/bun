@@ -159,7 +159,10 @@ pub fn init(flags: InitFlags, event_flags: EventFlags) Maybe(bun.FileDescriptor)
         return .{ .err = bun.sys.Error.fromCode(errno, .open) };
     }
 
-    return .{ .result = bun.FileDescriptor.fromNative(@intCast(rc)) };
+    // syscall returns usize, but file descriptors are i32
+    // Cast to isize first to properly handle signed values
+    const fd: std.posix.fd_t = @intCast(@as(isize, @bitCast(rc)));
+    return .{ .result = bun.FileDescriptor.fromNative(fd) };
 }
 
 /// Add or remove a mark on a filesystem object

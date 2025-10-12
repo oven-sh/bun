@@ -91,12 +91,16 @@ describe("resolver cache invalidation", () => {
     await fs.mkdir(utilsPath);
     await fs.writeFile(path.join(utilsPath, "index.ts"), `export const add = (a: number, b: number) => a * b;`);
 
-    // Build 3: Should succeed
+    // Build 3: Should succeed with new implementation
     const result3 = await Bun.build({
       entrypoints: [path.join(String(dir), "entry.ts")],
       outdir: path.join(String(dir), "out3"),
     });
     expect(result3.success).toBe(true);
+    const text3 = await result3.outputs[0].text();
+    // Verify it's using multiplication (new), not addition (old)
+    expect(text3).toContain("*");
+    expect(text3).not.toContain("+");
   });
 
   test("direct file deleted then recreated", async () => {

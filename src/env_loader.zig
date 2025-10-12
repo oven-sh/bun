@@ -1074,6 +1074,7 @@ const Parser = struct {
                 this.skipLine();
                 continue;
             };
+            const expand_key = expand and (key.len > 0 and key[0] == '`');
             const value = try this.parseValue(is_process);
             const entry = try map.map.getOrPut(key);
             if (entry.found_existing) {
@@ -1087,7 +1088,7 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = try allocator.dupe(u8, value),
-                .conditional = false,
+                .conditional = expand_key,
             };
         }
         if (comptime !is_process and expand) {
@@ -1095,7 +1096,7 @@ const Parser = struct {
             while (it.next()) |entry| {
                 if (count > 0) {
                     count -= 1;
-                } else if (entry.value_ptr.value.len > 0 and entry.value_ptr.value[0] == '`') {
+                } else if (entry.value_ptr.conditional) {
                     if (try this.expandValue(map, entry.value_ptr.value)) |value| {
                         allocator.free(entry.value_ptr.value);
                         entry.value_ptr.* = .{

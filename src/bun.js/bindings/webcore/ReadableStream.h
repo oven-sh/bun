@@ -104,4 +104,12 @@ inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, R
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
 
+// Forward declarations for code generators
+JSC::FunctionExecutable* readableStreamReadableStreamToArrayBufferCodeGenerator(JSC::VM&);
+JSC::FunctionExecutable* readableStreamReadableStreamToBytesCodeGenerator(JSC::VM&);
+JSC::FunctionExecutable* readableStreamReadableStreamToTextCodeGenerator(JSC::VM&);
+JSC::FunctionExecutable* readableStreamReadableStreamToFormDataCodeGenerator(JSC::VM&);
+JSC::FunctionExecutable* readableStreamReadableStreamToJSONCodeGenerator(JSC::VM&);
+JSC::FunctionExecutable* readableStreamReadableStreamToBlobCodeGenerator(JSC::VM&);
+
 }

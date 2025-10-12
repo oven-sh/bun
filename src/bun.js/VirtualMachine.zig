@@ -3115,7 +3115,7 @@ fn printErrorInstance(
         defer iterator.deinit();
         var longest_name_base = iterator.getLongestPropertyName();
         // In AI agent mode, we'll also print the "name" field if it's not "Error".
-        // Since we normalize all errors to "error:" prefix above, we need to preserve
+        // Since we normalize all errors to "error:" prefix in printErrorNameAndMessage, we need to preserve
         // the actual error type (TypeError, ReferenceError, etc.) as a property.
         // This provides structured error information while maintaining grepability.
         if (Output.isAIAgent() and !name.eqlComptime("Error")) {

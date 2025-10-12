@@ -306,11 +306,64 @@ pub fn migrateYarnBerryLockfile(
     lockfile.buffers.resolutions.expandToCapacity();
     @memset(lockfile.buffers.resolutions.items, invalid_package_id);
 
-    // TODO: Implement dependency resolution matching
-    // This requires matching dependency descriptors to package IDs in the yarn berry format
-    // For now, yarn berry migration is incomplete and will require a full install
+    // Match dependencies to package IDs
+    // In yarn berry, dependencies are resolved by matching "name@descriptor" patterns
+    const string_bytes = string_buf.bytes.items;
+    var resolution_idx: usize = 0;
 
-    _ = manager; // Currently unused
+    for (lockfile.packages.items(.dependencies), lockfile.packages.items(.name)) |dep_list, pkg_name| {
+        _ = pkg_name; // Not needed for resolution lookup
+
+        for (dep_list.off..dep_list.off + dep_list.len) |dep_idx| {
+            const dep = lockfile.buffers.dependencies.items[dep_idx];
+            const dep_name_str = dep.name.slice(string_bytes);
+            const dep_version_str = dep.version.literal.slice(string_bytes);
+
+            // Build the yarn berry lookup key: "name@npm:version" or similar
+            // Try to find matching package in pkg_map
+            var found_pkg_id: ?PackageID = null;
+
+            // Try different formats:
+            // 1. "name@npm:version"
+            var lookup_buf: [1024]u8 = undefined;
+            const lookup_key = std.fmt.bufPrint(&lookup_buf, "{s}@npm:{s}", .{ dep_name_str, dep_version_str }) catch {
+                resolution_idx += 1;
+                continue;
+            };
+
+            if (pkg_map.get(lookup_key)) |pkg_id| {
+                found_pkg_id = pkg_id;
+            }
+
+            // 2. Try just "name@version" for non-npm deps
+            if (found_pkg_id == null) {
+                const lookup_key2 = std.fmt.bufPrint(&lookup_buf, "{s}@{s}", .{ dep_name_str, dep_version_str }) catch {
+                    resolution_idx += 1;
+                    continue;
+                };
+                if (pkg_map.get(lookup_key2)) |pkg_id| {
+                    found_pkg_id = pkg_id;
+                }
+            }
+
+            // 3. Try workspace format
+            if (found_pkg_id == null and strings.hasPrefixComptime(dep_version_str, "workspace:")) {
+                const lookup_key3 = std.fmt.bufPrint(&lookup_buf, "{s}@{s}", .{ dep_name_str, dep_version_str }) catch {
+                    resolution_idx += 1;
+                    continue;
+                };
+                if (pkg_map.get(lookup_key3)) |pkg_id| {
+                    found_pkg_id = pkg_id;
+                }
+            }
+
+            if (found_pkg_id) |pkg_id| {
+                lockfile.buffers.resolutions.items[resolution_idx] = pkg_id;
+            }
+
+            resolution_idx += 1;
+        }
+    }
 
     return .{
         .ok = .{

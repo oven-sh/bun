@@ -4,6 +4,7 @@ const Watcher = @This();
 
 const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
+const WatcherTrace = @import("./watcher/WatcherTrace.zig");
 
 // This will always be [max_count]WatchEvent,
 // We avoid statically allocating because it increases the binary size.
@@ -95,7 +96,16 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
 
     try Platform.init(&watcher.platform, fs.top_level_dir);
 
+    // Initialize trace file if BUN_WATCHER_TRACE env var is set
+    WatcherTrace.init();
+
     return watcher;
+}
+
+/// Write trace events to the trace file if enabled.
+/// This runs on the watcher thread, so no locking is needed.
+pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?[:0]u8) void {
+    WatcherTrace.writeEvents(this, events, changed_files);
 }
 
 pub fn start(this: *Watcher) !void {
@@ -243,6 +253,9 @@ fn threadMain(this: *Watcher) !void {
         }
     }
     this.watchlist.deinit(this.allocator);
+
+    // Close trace file if open
+    WatcherTrace.deinit();
 
     const allocator = this.allocator;
     allocator.destroy(this);

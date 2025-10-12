@@ -1437,6 +1437,7 @@ pub const PublishCommand = struct {
             // Add provenance attachment if enabled
             if (ctx.manager.options.publish_config.provenance) {
                 var provenance_generator = ProvenanceGenerator.init(ctx.allocator);
+                defer provenance_generator.deinit();
 
                 const access_str = if (ctx.manager.options.publish_config.access) |access| @tagName(access) else null;
 
@@ -1452,6 +1453,22 @@ pub const PublishCommand = struct {
                         },
                         error.PublicAccessRequired => {
                             Output.errGeneric("Can't generate provenance for private package, you must set `access` to public", .{});
+                            Global.crash();
+                        },
+                        error.TokenAcquisitionFailed => {
+                            Output.errGeneric("Failed to acquire OIDC token for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.CertificateRequestFailed => {
+                            Output.errGeneric("Failed to request certificate from Fulcio for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.SigningFailed => {
+                            Output.errGeneric("Failed to sign provenance data", .{});
+                            Global.crash();
+                        },
+                        error.TransparencyLogFailed => {
+                            Output.errGeneric("Failed to submit to Rekor transparency log", .{});
                             Global.crash();
                         },
                         else => {

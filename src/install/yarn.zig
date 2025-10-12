@@ -1684,7 +1684,7 @@ pub fn migrateYarnLockfile(
         .migrated = .yarn,
         .loaded_from_binary_lockfile = false,
         .serializer_result = .{},
-        .format = .binary,
+        .format = .text,
     } };
 
     return result;

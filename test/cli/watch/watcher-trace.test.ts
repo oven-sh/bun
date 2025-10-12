@@ -50,17 +50,22 @@ test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
 
     // Check required fields exist
     expect(event).toHaveProperty("timestamp");
-    expect(event).toHaveProperty("index");
-    expect(event).toHaveProperty("path");
-    expect(event).toHaveProperty("events");
-    expect(event).toHaveProperty("changed_files");
+    expect(event).toHaveProperty("files");
 
     // Validate types
     expect(typeof event.timestamp).toBe("number");
-    expect(typeof event.index).toBe("number");
-    expect(typeof event.path).toBe("string");
-    expect(Array.isArray(event.events)).toBe(true);
-    expect(Array.isArray(event.changed_files)).toBe(true);
+    expect(typeof event.files).toBe("object");
+
+    // Validate files object structure
+    for (const [path, fileEvent] of Object.entries(event.files)) {
+      expect(typeof path).toBe("string");
+      expect(fileEvent).toHaveProperty("events");
+      expect(Array.isArray(fileEvent.events)).toBe(true);
+      // "changed" field is optional
+      if (fileEvent.changed) {
+        expect(Array.isArray(fileEvent.changed)).toBe(true);
+      }
+    }
   }
 }, 10000);
 
@@ -113,22 +118,25 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
 
     // Check required fields exist
     expect(event).toHaveProperty("timestamp");
-    expect(event).toHaveProperty("index");
-    expect(event).toHaveProperty("path");
-    expect(event).toHaveProperty("events");
-    expect(event).toHaveProperty("changed_files");
+    expect(event).toHaveProperty("files");
 
     // Validate types
     expect(typeof event.timestamp).toBe("number");
-    expect(typeof event.index).toBe("number");
-    expect(typeof event.path).toBe("string");
-    expect(Array.isArray(event.events)).toBe(true);
-    expect(Array.isArray(event.changed_files)).toBe(true);
+    expect(typeof event.files).toBe("object");
 
-    if (event.path.includes("script.js") || event.changed_files.some((f: string) => f?.includes("script.js"))) {
-      foundScriptEvent = true;
-      // Should have write event
-      expect(event.events).toContain("write");
+    // Check for script.js events
+    for (const [path, fileEvent] of Object.entries(event.files)) {
+      expect(fileEvent).toHaveProperty("events");
+      expect(Array.isArray(fileEvent.events)).toBe(true);
+
+      if (
+        path.includes("script.js") ||
+        (fileEvent.changed && fileEvent.changed.some((f: string) => f?.includes("script.js")))
+      ) {
+        foundScriptEvent = true;
+        // Should have write event
+        expect(fileEvent.events).toContain("write");
+      }
     }
   }
 
@@ -244,6 +252,6 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
   for (const line of secondLines) {
     const event = JSON.parse(line);
     expect(event).toHaveProperty("timestamp");
-    expect(event).toHaveProperty("path");
+    expect(event).toHaveProperty("files");
   }
 }, 10000);

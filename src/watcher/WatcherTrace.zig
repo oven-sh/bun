@@ -28,6 +28,7 @@ pub fn init() void {
 
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
+/// Events are assumed to be already deduped by path.
 pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_files: []?[:0]u8) void {
     const file = trace_file orelse return;
 
@@ -38,62 +39,81 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
     // Get current timestamp
     const timestamp = std.time.milliTimestamp();
 
-    for (events) |event| {
-        const watchlist_slice = watcher.watchlist.slice();
-        const file_paths = watchlist_slice.items(.file_path);
-        const file_path = if (event.index < file_paths.len) file_paths[event.index] else "(unknown)";
+    // Write: { "timestamp": number, "files": { ... } }
+    writer.writeAll("{\"timestamp\":") catch return;
+    writer.print("{d}", .{timestamp}) catch return;
+    writer.writeAll(",\"files\":{") catch return;
 
-        // Build array of operation types
+    const watchlist_slice = watcher.watchlist.slice();
+    const file_paths = watchlist_slice.items(.file_path);
+
+    var first_file = true;
+    for (events) |event| {
+        const file_path = if (event.index < file_paths.len) file_paths[event.index] else "(unknown)";
         const names = event.names(changed_files);
 
-        // Write JSON for each event
-        writer.writeAll("{\"timestamp\":") catch continue;
-        writer.print("{d}", .{timestamp}) catch continue;
-        writer.writeAll(",\"index\":") catch continue;
-        writer.print("{d}", .{event.index}) catch continue;
-        writer.writeAll(",\"path\":") catch continue;
-        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch continue;
-        writer.writeAll(",\"events\":[") catch continue;
+        if (!first_file) writer.writeAll(",") catch return;
+        first_file = false;
 
-        // Write array of event types that occurred
+        // Write path as key
+        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
+        writer.writeAll(":{\"events\":[") catch return;
+
+        // Write array of event types
         var first = true;
         if (event.op.delete) {
-            if (!first) writer.writeAll(",") catch continue;
-            writer.writeAll("\"delete\"") catch continue;
+            if (!first) writer.writeAll(",") catch return;
+            writer.writeAll("\"delete\"") catch return;
             first = false;
         }
         if (event.op.write) {
-            if (!first) writer.writeAll(",") catch continue;
-            writer.writeAll("\"write\"") catch continue;
+            if (!first) writer.writeAll(",") catch return;
+            writer.writeAll("\"write\"") catch return;
             first = false;
         }
         if (event.op.rename) {
-            if (!first) writer.writeAll(",") catch continue;
-            writer.writeAll("\"rename\"") catch continue;
+            if (!first) writer.writeAll(",") catch return;
+            writer.writeAll("\"rename\"") catch return;
             first = false;
         }
         if (event.op.metadata) {
-            if (!first) writer.writeAll(",") catch continue;
-            writer.writeAll("\"metadata\"") catch continue;
+            if (!first) writer.writeAll(",") catch return;
+            writer.writeAll("\"metadata\"") catch return;
             first = false;
         }
         if (event.op.move_to) {
-            if (!first) writer.writeAll(",") catch continue;
-            writer.writeAll("\"move_to\"") catch continue;
+            if (!first) writer.writeAll(",") catch return;
+            writer.writeAll("\"move_to\"") catch return;
             first = false;
         }
+        writer.writeAll("]") catch return;
 
-        writer.writeAll("],\"changed_files\":[") catch continue;
-        first = true;
+        // Only write "changed" field if there are changed files
+        var has_changed = false;
         for (names) |name_opt| {
-            if (name_opt) |name| {
-                if (!first) writer.writeAll(",") catch continue;
-                first = false;
-                writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch continue;
+            if (name_opt != null) {
+                has_changed = true;
+                break;
             }
         }
-        writer.writeAll("]}\n") catch continue;
+
+        if (has_changed) {
+            writer.writeAll(",\"changed\":[") catch return;
+            first = true;
+            for (names) |name_opt| {
+                if (name_opt) |name| {
+                    if (!first) writer.writeAll(",") catch return;
+                    first = false;
+                    writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
+                }
+            }
+            writer.writeAll("]") catch return;
+        }
+
+        writer.writeAll("}") catch return;
     }
+
+    writer.writeAll("}}\n") catch return;
 }
 
 /// Close the trace file if open

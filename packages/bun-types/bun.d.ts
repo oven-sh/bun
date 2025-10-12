@@ -784,53 +784,24 @@ declare module "bun" {
       [K in keyof T]: T[K];
     } & {};
 
-    type DynamicTypingTypes = string | number | boolean | null;
-
     type InferCSVResultType<T, Opts extends CSVParserOptions> = T extends undefined
       ? Opts extends { header: false }
         ? Opts extends { dynamicTyping: true }
-          ? DynamicTypingTypes[]
+          ? (string | number | boolean | null)[]
           : string[]
         : Opts extends { dynamicTyping: true }
-          ? Record<string, DynamicTypingTypes>
+          ? Record<string, string | number | boolean | null>
           : Record<string, string>
       : Prettify<T>;
 
     /**
      * Parse a CSV string and return a CSVParserResult.
-     * Overload for options with header: false (returns string[][]).
      *
      * @category Utilities
      *
-     * @param input The CSV string to parse
-     * @param options Parsing options with header: false
-     * @returns Array of string arrays (rows without headers)
-     */
-    export function parse(data: string, options: CSVParserOptions & { header: false }): CSVParserResult<string[][]>;
-
-    /**
-     * Parse a CSV string and return a CSVParserResult.
-     * Overload for options with dynamicTyping: true (returns values with dynamic types).
-     *
-     * @category Utilities
-     *
-     * @param input The CSV string to parse
-     * @param options Parsing options with dynamicTyping: true
-     * @returns Array of records with string keys and dynamically-typed values
-     */
-    export function parse(
-      data: string,
-      options: CSVParserOptions & { dynamicTyping: true },
-    ): CSVParserResult<Record<string, string | number | boolean>[]>;
-
-    /**
-     * Parse a CSV string and return a CSVParserResult.
-     *
-     * @category Utilities
-     *
-     * @param input The CSV string to parse
+     * @param data The CSV string to parse
      * @param options Parsing options
-     * @returns If header is true (default), data is Record<string, string>[]; otherwise, data is string[][]
+     * @returns If header is true (default), data is a list of Records; otherwise, data is list of lists
      */
     export function parse<T = undefined, const Opts extends CSVParserOptions = CSVParserOptions>(
       data: string,

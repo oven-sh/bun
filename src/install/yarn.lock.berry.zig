@@ -88,10 +88,14 @@ pub fn migrateYarnBerryLockfile(
     defer pkg_map.deinit();
 
     // Read root package.json for workspace info
+    var pkg_json_path: bun.AbsPath(.{}) = .initTopLevelDir();
+    defer pkg_json_path.deinit();
+    pkg_json_path.append("package.json");
+
     const root_pkg_json = manager.workspace_package_json_cache.getWithPath(
         allocator,
         log,
-        "package.json",
+        pkg_json_path.slice(),
         .{},
     ).unwrap() catch {
         return invalidYarnBerryLockfile();
@@ -115,7 +119,7 @@ pub fn migrateYarnBerryLockfile(
     }
 
     root_pkg.meta.id = 0;
-    root_pkg.resolution = .init(.{ .root = {} });
+    root_pkg.resolution = Resolution.init(.{ .root = {} });
     try lockfile.packages.append(allocator, root_pkg);
     try lockfile.getOrPutID(0, root_name_hash);
 
@@ -166,12 +170,7 @@ pub fn migrateYarnBerryLockfile(
 
         const version_str = key_str[pkg_name.len + 1 ..];
 
-        // Get resolution
-        const resolution_str = if (pkg_obj.get("resolution")) |res_expr|
-            res_expr.asString(allocator)
-        else
-            null;
-
+        // Get version field
         const version_field = if (pkg_obj.get("version")) |v_expr|
             v_expr.asString(allocator)
         else
@@ -200,27 +199,51 @@ pub fn migrateYarnBerryLockfile(
             else
                 version_str;
             break :blk Resolution.init(.{ .workspace = try string_buf.append(workspace_path) });
-        } else if (resolution_str) |res| blk: {
-            if (strings.hasPrefixComptime(res, "http://") or strings.hasPrefixComptime(res, "https://")) {
-                // npm package
-                if (version_field) |ver| {
-                    const version = try string_buf.append(ver);
-                    const result = Semver.Version.parse(version.sliced(string_buf.bytes.items));
-                    if (result.valid) {
-                        break :blk Resolution.init(.{
-                            .npm = .{
-                                .url = try string_buf.append(res),
-                                .version = result.version.min(),
-                            },
-                        });
-                    }
-                }
-                break :blk Resolution.init(.{ .remote_tarball = try string_buf.append(res) });
-            } else {
-                break :blk Resolution.init(.{ .folder = try string_buf.append(res) });
+        } else if (version_field) |ver| blk: {
+            // Yarn berry always has a version field for npm packages
+            // Construct the npm registry URL
+            const registry = manager.scopeForPackageName(pkg_name);
+
+            const version = try string_buf.append(ver);
+            const result = Semver.Version.parse(version.sliced(string_buf.bytes.items));
+            if (!result.valid) {
+                // Skip packages with invalid versions
+                continue;
             }
-        } else blk: {
-            break :blk Resolution{};
+
+            // Build registry URL: https://registry.npmjs.org/package/-/package-version.tgz
+            var url_buf: [2048]u8 = undefined;
+            const url = if (pkg_name[0] == '@') scoped: {
+                // Scoped package: @scope/name -> @scope/name/-/name-version.tgz
+                const slash_idx = strings.indexOfChar(pkg_name, '/') orelse {
+                    continue;
+                };
+                const short_name = pkg_name[slash_idx + 1 ..];
+                break :scoped std.fmt.bufPrint(&url_buf, "{s}{s}/-/{s}-{s}.tgz", .{
+                    registry.url.href,
+                    pkg_name,
+                    short_name,
+                    ver,
+                }) catch continue;
+            } else normal: {
+                // Normal package: name -> name/-/name-version.tgz
+                break :normal std.fmt.bufPrint(&url_buf, "{s}{s}/-/{s}-{s}.tgz", .{
+                    registry.url.href,
+                    pkg_name,
+                    pkg_name,
+                    ver,
+                }) catch continue;
+            };
+
+            break :blk Resolution.init(.{
+                .npm = .{
+                    .url = try string_buf.append(url),
+                    .version = result.version.min(),
+                },
+            });
+        } else {
+            // No version field - skip this package
+            continue;
         };
 
         // Parse checksum/integrity
@@ -257,7 +280,12 @@ pub fn migrateYarnBerryLockfile(
                     const dep_value = dep_prop.value.?;
 
                     const dep_name_str = dep_key.asString(allocator) orelse continue;
-                    const dep_version_str = dep_value.asString(allocator) orelse continue;
+                    var dep_version_str = dep_value.asString(allocator) orelse continue;
+
+                    // Strip "npm:" prefix from yarn berry dependency versions
+                    if (strings.hasPrefixComptime(dep_version_str, "npm:")) {
+                        dep_version_str = dep_version_str["npm:".len..];
+                    }
 
                     const dep_name_hash = String.Builder.stringHash(dep_name_str);
                     const dep_name = try string_buf.appendWithHash(dep_name_str, dep_name_hash);
@@ -362,6 +390,15 @@ pub fn migrateYarnBerryLockfile(
             }
 
             resolution_idx += 1;
+        }
+    }
+
+    // Verify all packages have valid resolutions (not uninitialized)
+    for (lockfile.packages.items(.resolution), lockfile.packages.items(.name), 0..) |res, name, i| {
+        if (res.tag == .uninitialized) {
+            const name_str = name.slice(string_bytes);
+            try log.addErrorFmt(null, logger.Loc.Empty, allocator, "Package {d} ({s}) has uninitialized resolution", .{ i, name_str });
+            return error.InvalidYarnBerryLockfile;
         }
     }
 

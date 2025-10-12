@@ -30,17 +30,17 @@ pub const QuicSocket = struct {
     connection_id: ?[]const u8 = null,
     ssl_config: ?SSLConfig = null,
     stream_counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    
+
     // Stream tracking - maps lsquic stream pointers to QuicStream objects
     stream_map: std.AutoHashMap(usize, *QuicStream) = undefined,
     stream_map_mutex: std.Thread.Mutex = .{},
     stream_map_initialized: bool = false,
-    
+
     // Pending streams queue - QuicStreams waiting to be connected to lsquic streams
     pending_streams: std.ArrayList(*QuicStream) = undefined,
     pending_streams_mutex: std.Thread.Mutex = .{},
     pending_streams_initialized: bool = false,
-    
+
     // Stream ID counter for this socket (per-socket state)
     next_stream_id: std.atomic.Value(u64) = std.atomic.Value(u64).init(1),
 
@@ -82,7 +82,7 @@ pub const QuicSocket = struct {
         if (this.stream_map_initialized) {
             this.stream_map_mutex.lock();
             defer this.stream_map_mutex.unlock();
-            
+
             // Deref all tracked streams
             var iterator = this.stream_map.iterator();
             while (iterator.next()) |entry| {
@@ -91,12 +91,12 @@ pub const QuicSocket = struct {
             this.stream_map.deinit();
             this.stream_map_initialized = false;
         }
-        
+
         // Clean up pending streams queue
         if (this.pending_streams_initialized) {
             this.pending_streams_mutex.lock();
             defer this.pending_streams_mutex.unlock();
-            
+
             // Deref all pending streams
             for (this.pending_streams.items) |pending_stream| {
                 pending_stream.deref();
@@ -148,15 +148,15 @@ pub const QuicSocket = struct {
         this.* = This{
             .ref_count = RefCount.init(),
         };
-        
+
         // Initialize stream map
         this.stream_map = std.AutoHashMap(usize, *QuicStream).init(allocator);
         this.stream_map_initialized = true;
-        
+
         // Initialize pending streams queue
         this.pending_streams = std.ArrayList(*QuicStream).init(allocator);
         this.pending_streams_initialized = true;
-        
+
         return this;
     }
 
@@ -197,7 +197,7 @@ pub const QuicSocket = struct {
             const this_ptr: **This = @ptrCast(@alignCast(ext));
             this_ptr.* = this;
             log("Stored QuicSocket instance {*} in context ext data at {*}", .{ this, ext });
-            
+
             // Also add to global map with socket context as key for stream callbacks
             addToGlobalSocketMap(@as(*uws.quic.SocketContext, @ptrCast(context)), this);
         } else {
@@ -223,7 +223,7 @@ pub const QuicSocket = struct {
         const socket = this.socket_context.?.connect(hostname_cstr.ptr, @intCast(port), @sizeOf(*This)) orelse return error.ConnectionFailed;
 
         this.socket = socket;
-        
+
         // Add to global socket map for stream callback lookups (use socket as key)
         addToGlobalSocketMap(socket, this);
 
@@ -257,7 +257,7 @@ pub const QuicSocket = struct {
             this.flags.is_connected = true;
         }
 
-        // Call the socket open handler for server listen sockets  
+        // Call the socket open handler for server listen sockets
         if (js.gc.onSocketOpen.get(this.this_value)) |callback| {
             const vm = jsc.VirtualMachine.get();
             const globalObject = vm.global;
@@ -297,12 +297,12 @@ pub const QuicSocket = struct {
         // CRITICAL FIX: For socket.write() calls (not stream.write()), we need to create
         // a default stream if none exists, and write to it. This matches the expected
         // behavior from the tests where socket.write() should "just work".
-        
+
         // Check if we have any active streams to write to
         if (this.stream_map_initialized) {
             this.stream_map_mutex.lock();
             defer this.stream_map_mutex.unlock();
-            
+
             // If we have active streams, write to the first available one
             var iterator = this.stream_map.iterator();
             if (iterator.next()) |entry| {
@@ -400,75 +400,74 @@ pub const QuicSocket = struct {
         log("Stream cleanup handled by C layer", .{});
     }
 
-
     // Stream mapping helper functions
     fn addStreamMapping(this: *This, stream_ptr: *uws.quic.Stream, quic_stream: *QuicStream) void {
         if (!this.stream_map_initialized) return;
-        
+
         this.stream_map_mutex.lock();
         defer this.stream_map_mutex.unlock();
-        
+
         const key: usize = @intFromPtr(stream_ptr);
         this.stream_map.put(key, quic_stream) catch |err| {
             log("Failed to add stream mapping: {}", .{err});
             return;
         };
-        
+
         log("Added stream mapping: lsquic_stream={*} -> QuicStream={*}", .{ stream_ptr, quic_stream });
     }
-    
+
     pub fn removeStreamMapping(this: *This, stream_ptr: *uws.quic.Stream) ?*QuicStream {
         if (!this.stream_map_initialized) return null;
-        
+
         this.stream_map_mutex.lock();
         defer this.stream_map_mutex.unlock();
-        
+
         const key: usize = @intFromPtr(stream_ptr);
         if (this.stream_map.fetchRemove(key)) |kv| {
             log("Removed stream mapping: lsquic_stream={*} -> QuicStream={*}", .{ stream_ptr, kv.value });
             return kv.value;
         }
-        
+
         return null;
     }
-    
+
     fn getStreamMapping(this: *This, stream_ptr: *uws.quic.Stream) ?*QuicStream {
         if (!this.stream_map_initialized) return null;
-        
+
         this.stream_map_mutex.lock();
         defer this.stream_map_mutex.unlock();
-        
+
         const key: usize = @intFromPtr(stream_ptr);
         return this.stream_map.get(key);
     }
-    
+
     // Pending stream queue helper functions
     fn addPendingStream(this: *This, quic_stream: *QuicStream) void {
         if (!this.pending_streams_initialized) return;
-        
+
         this.pending_streams_mutex.lock();
         defer this.pending_streams_mutex.unlock();
-        
+
         this.pending_streams.append(quic_stream) catch |err| {
             log("Failed to add pending stream: {}", .{err});
             return;
         };
-        
+
         // Ref the stream to keep it alive while pending
         quic_stream.ref();
         log("Added QuicStream {*} to pending queue (queue size: {})", .{ quic_stream, this.pending_streams.items.len });
     }
-    
+
     fn popPendingStream(this: *This) ?*QuicStream {
         if (!this.pending_streams_initialized) return null;
-        
+
         this.pending_streams_mutex.lock();
         defer this.pending_streams_mutex.unlock();
-        
+
         if (this.pending_streams.items.len == 0) {
             return null;
         }
-        
+
         const quic_stream = this.pending_streams.orderedRemove(0); // FIFO
         log("Popped QuicStream {*} from pending queue (queue size: {})", .{ quic_stream, this.pending_streams.items.len });
         return quic_stream;
@@ -780,23 +779,23 @@ pub const QuicSocket = struct {
         // Set up GC-protected callbacks from options
         // Map QUIC callback names to handler fields
         const callback_pairs = .{
-            .{ "onStreamOpen", "open" },      // Stream-level open callback
-            .{ "onStreamData", "data" },      // Stream-level data callback  
-            .{ "onStreamClose", "close" },    // Stream-level close callback
-            .{ "onStreamError", "error" },    // Stream-level error callback
-            .{ "onStreamDrain", "drain" },    // Stream-level drain callback
+            .{ "onStreamOpen", "open" }, // Stream-level open callback
+            .{ "onStreamData", "data" }, // Stream-level data callback
+            .{ "onStreamClose", "close" }, // Stream-level close callback
+            .{ "onStreamError", "error" }, // Stream-level error callback
+            .{ "onStreamDrain", "drain" }, // Stream-level drain callback
             .{ "onSocketOpen", "socketOpen" }, // Socket-level open callback
             .{ "onConnection", "connection" }, // Server connection callback
             .{ "onSocketClose", "socketClose" }, // Socket-level close callback
             .{ "onSocketError", "socketError" }, // Socket-level error callback
         };
-        
+
         // Also support legacy callback names for backward compatibility
         const legacy_callback_pairs = .{
-            .{ "onStreamData", "message" },   // Legacy stream data callback
-            .{ "onSocketOpen", "open" },      // Legacy socket open callback (if no socketOpen)
-            .{ "onSocketClose", "close" },    // Legacy socket close callback (if no socketClose)
-            .{ "onSocketError", "error" },    // Legacy socket error callback (if no socketError)
+            .{ "onStreamData", "message" }, // Legacy stream data callback
+            .{ "onSocketOpen", "open" }, // Legacy socket open callback (if no socketOpen)
+            .{ "onSocketClose", "close" }, // Legacy socket close callback (if no socketClose)
+            .{ "onSocketError", "error" }, // Legacy socket error callback (if no socketError)
         };
 
         inline for (callback_pairs) |pair| {
@@ -818,7 +817,7 @@ pub const QuicSocket = struct {
                 }
             }
         }
-        
+
         // Process legacy callbacks only if the primary ones weren't set
         inline for (legacy_callback_pairs) |pair| {
             // Only set legacy callback if the primary callback is not already set
@@ -903,7 +902,7 @@ pub const QuicSocket = struct {
                 log("Found onSocketOpen callback, calling JavaScript handler", .{});
                 const vm = jsc.VirtualMachine.get();
                 const globalObject = vm.global;
-                
+
                 vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{this.this_value});
                 log("JavaScript onSocketOpen handler called successfully", .{});
             } else {
@@ -938,29 +937,65 @@ pub const QuicSocket = struct {
             log("ERROR: No ext_data for connection context", .{});
             return;
         };
-        const this = safelyDereferenceExtData(ext_data) orelse {
+
+        // The context ext_data points to the LISTEN socket's QuicSocket
+        // We need to get the listen socket to access its callbacks and settings
+        const listen_quic_socket = safelyDereferenceExtData(ext_data) orelse {
             log("ERROR: Failed to safely dereference QuicSocket from ext_data in connection callback", .{});
             return;
         };
 
-        log("QuicSocket instance retrieved: {*}", .{this});
+        log("Listen QuicSocket instance retrieved: {*}", .{listen_quic_socket});
 
-        // For server connections, set the socket for this connection
-        // This allows server-side writes to work properly
-        this.socket = socket;
-        this.flags.is_connected = true;
+        // Create a NEW QuicSocket instance for this specific connection
+        const connection_quic_socket = QuicSocket.init(bun.default_allocator) catch {
+            log("ERROR: Failed to create QuicSocket for connection", .{});
+            return;
+        };
 
-        // Call JavaScript onConnection handler for server-side connections
-        if (js.gc.onConnection.get(this.this_value)) |callback| {
-            log("Calling JavaScript onConnection handler", .{});
-            const vm = jsc.VirtualMachine.get();
-            const globalObject = vm.global;
-            
-            // For now pass the same socket instance - TODO: create new QuicSocket for connection
-            vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{this.this_value});
+        // Copy configuration from listen socket
+        connection_quic_socket.flags.is_server = true;
+        connection_quic_socket.flags.is_connected = true;
+        connection_quic_socket.socket_context = listen_quic_socket.socket_context;
+        connection_quic_socket.socket = socket;
+        connection_quic_socket.ssl_config = if (listen_quic_socket.ssl_config) |*ssl| ssl.clone() else null;
+
+        // Create JavaScript object for this connection socket
+        const vm = jsc.VirtualMachine.get();
+        const globalObject = vm.global;
+        connection_quic_socket.this_value = connection_quic_socket.toJS(globalObject);
+        connection_quic_socket.poll_ref.ref(vm);
+
+        // Copy callbacks from listen socket to connection socket
+        // This ensures the connection socket responds to stream events
+        if (js.gc.onStreamOpen.get(listen_quic_socket.this_value)) |cb| {
+            js.gc.onStreamOpen.set(connection_quic_socket.this_value, globalObject, cb);
+        }
+        if (js.gc.onStreamData.get(listen_quic_socket.this_value)) |cb| {
+            js.gc.onStreamData.set(connection_quic_socket.this_value, globalObject, cb);
+        }
+        if (js.gc.onStreamClose.get(listen_quic_socket.this_value)) |cb| {
+            js.gc.onStreamClose.set(connection_quic_socket.this_value, globalObject, cb);
+        }
+        if (js.gc.onStreamError.get(listen_quic_socket.this_value)) |cb| {
+            js.gc.onStreamError.set(connection_quic_socket.this_value, globalObject, cb);
+        }
+        if (js.gc.onStreamDrain.get(listen_quic_socket.this_value)) |cb| {
+            js.gc.onStreamDrain.set(connection_quic_socket.this_value, globalObject, cb);
+        }
+
+        // Add to global socket map so stream callbacks can find it
+        addToGlobalSocketMap(socket, connection_quic_socket);
+
+        log("Created new connection QuicSocket {*} for socket {*}", .{ connection_quic_socket, socket });
+
+        // Call JavaScript onConnection handler with the NEW connection socket
+        if (js.gc.onConnection.get(listen_quic_socket.this_value)) |callback| {
+            log("Calling JavaScript onConnection handler with new connection socket", .{});
+            vm.eventLoop().runCallback(callback, globalObject, listen_quic_socket.this_value, &.{connection_quic_socket.this_value});
             log("onConnection handler called successfully", .{});
         } else {
-            log("No onConnection handler registered", .{});
+            log("No onConnection handler registered on listen socket", .{});
         }
     }
 
@@ -996,7 +1031,7 @@ pub const QuicSocket = struct {
             log("ERROR: Could not find QuicSocket instance for stream {*}", .{stream});
             return;
         };
-        
+
         // For server-side connections, the is_client flag is inverted
         // is_client=0 means this is a server-initiated stream on a client connection
         // We should skip these for now as they're likely protocol streams
@@ -1020,44 +1055,44 @@ pub const QuicSocket = struct {
         // Try to get a pending QuicStream that's waiting to be connected
         const quic_stream = if (this.popPendingStream()) |pending_stream| blk: {
             log("Using pending QuicStream {*} (ID {}) for lsquic stream {*}", .{ pending_stream, pending_stream.stream_id, stream });
-            
+
             // Connect the pending QuicStream to the actual lsquic stream
             pending_stream.stream = stream;
-            
+
             // Keep the original stream ID assigned by the QuicSocket
             log("Connected stream with ID: {}", .{pending_stream.stream_id});
-            
+
             // Flush any buffered writes now that the stream is connected
             pending_stream.flushBufferedWrites();
-            
+
             // The pending stream was ref'd when added to pending queue,
             // but now we transfer that ref to the stream_map, so we deref here
             // to balance the ref from addPendingStream
             pending_stream.deref();
-            
+
             break :blk pending_stream;
         } else blk: {
             // No pending stream available - this must be a server-initiated stream
             log("No pending stream available, creating new QuicStream for server-initiated stream", .{});
-            
+
             // Use socket's next stream ID for consistency
             const stream_id: u64 = this.next_stream_id.fetchAdd(1, .monotonic);
-            
+
             // Create QuicStream object for server-initiated stream
             const new_stream = QuicStream.init(bun.default_allocator, this, stream_id, .zero) catch |err| {
                 log("ERROR: Failed to create QuicStream: {}", .{err});
                 return;
             };
-            
+
             // Connect the QuicStream to the actual lsquic stream
             new_stream.stream = stream;
-            
+
             // Flush any buffered writes now that the stream is connected
             new_stream.flushBufferedWrites();
-            
+
             break :blk new_stream;
         };
-        
+
         // Add to stream mapping
         this.addStreamMapping(stream, quic_stream);
 
@@ -1140,7 +1175,7 @@ pub const QuicSocket = struct {
         // Mark the QuicStream as closed
         quic_stream.flags.is_closed = true;
         quic_stream.stream = null; // Disconnect from lsquic stream
-        
+
         // Update socket stream counter
         _ = this.stream_counter.fetchSub(1, .monotonic);
 
@@ -1223,14 +1258,14 @@ pub const QuicSocket = struct {
             log("QUIC socket-level error occurred but no error handler registered", .{});
         }
     }
-    
+
     // Stream-level error helper
     fn dispatchStreamError(this: *This, quic_stream: *QuicStream, error_value: jsc.JSValue) void {
         if (js.gc.onStreamError.get(this.this_value)) |callback| {
             const vm = jsc.VirtualMachine.get();
             const globalObject = vm.global;
             const js_stream = quic_stream.toJS(globalObject);
-            vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{js_stream, error_value});
+            vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{ js_stream, error_value });
         } else {
             log("QUIC stream error occurred but no stream error handler registered", .{});
         }
@@ -1280,7 +1315,7 @@ fn addToGlobalSocketMap(socket_ptr: anytype, quic_socket: *QuicSocket) void {
     ensureGlobalSocketMap();
     global_socket_mutex.lock();
     defer global_socket_mutex.unlock();
-    
+
     if (global_socket_map) |*map| {
         const key = @intFromPtr(socket_ptr);
         map.put(key, quic_socket) catch |err| {
@@ -1295,7 +1330,7 @@ fn removeFromGlobalSocketMap(socket_ptr: anytype) void {
     if (!global_socket_map_init) return;
     global_socket_mutex.lock();
     defer global_socket_mutex.unlock();
-    
+
     if (global_socket_map) |*map| {
         const key = @intFromPtr(socket_ptr);
         _ = map.remove(key);
@@ -1307,7 +1342,7 @@ fn findQuicSocketByType(_: *uws.quic.Stream, want_server: bool) ?*QuicSocket {
     if (!global_socket_map_init) return null;
     global_socket_mutex.lock();
     defer global_socket_mutex.unlock();
-    
+
     if (global_socket_map) |*map| {
         // First pass: try to find a socket with the right type and pending streams
         var iterator = map.iterator();
@@ -1331,7 +1366,7 @@ fn findQuicSocketByType(_: *uws.quic.Stream, want_server: bool) ?*QuicSocket {
                 }
             }
         }
-        
+
         // Second pass: return any socket with the right type
         var iter2 = map.iterator();
         while (iter2.next()) |entry| {
@@ -1343,7 +1378,7 @@ fn findQuicSocketByType(_: *uws.quic.Stream, want_server: bool) ?*QuicSocket {
             }
         }
     }
-    
+
     return null;
 }
 
@@ -1351,13 +1386,13 @@ fn findQuicSocketByType(_: *uws.quic.Stream, want_server: bool) ?*QuicSocket {
 fn safelyDereferenceExtData(ext_data: *anyopaque) ?*QuicSocket {
     const this_ptr: **QuicSocket = @ptrCast(@alignCast(ext_data));
     const quic_socket = this_ptr.*;
-    
+
     // Check validity marker to ensure this is a valid QuicSocket instance
     if (quic_socket.validity_marker != 0xDEADBEEF) {
         log("ERROR: Invalid QuicSocket instance detected (freed or corrupted memory)", .{});
         return null;
     }
-    
+
     return quic_socket;
 }
 
@@ -1401,4 +1436,3 @@ fn findQuicSocketForStream(stream: *uws.quic.Stream) ?*QuicSocket {
     log("ERROR: Could not find QuicSocket for stream {*}", .{stream});
     return null;
 }
-

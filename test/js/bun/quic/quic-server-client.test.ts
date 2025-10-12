@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls } from "harness";
 
 // Disable TLS verification for testing
@@ -11,7 +11,7 @@ test("QUIC server and client integration", async () => {
 
   // Create QUIC server
   const server = Bun.quic({
-    hostname: "localhost",
+    hostname: "127.0.0.1", // Use explicit IPv4 to avoid IPv4/IPv6 mismatch
     port: 9443,
     server: true,
     tls: {
@@ -32,7 +32,7 @@ test("QUIC server and client integration", async () => {
     data(stream, buffer) {
       messagesReceived++;
       console.log("Server received on stream:", buffer.toString());
-      
+
       // Echo the message back on the same stream
       stream.write(`Echo: ${buffer}`);
     },
@@ -50,7 +50,7 @@ test("QUIC server and client integration", async () => {
   // Create QUIC client
   let clientStream;
   const client = Bun.quic({
-    hostname: "localhost", 
+    hostname: "127.0.0.1", // Use explicit IPv4 to match server
     port: 9443,
     server: false,
     tls: {
@@ -61,7 +61,7 @@ test("QUIC server and client integration", async () => {
     socketOpen(socket) {
       clientConnections++;
       console.log("QUIC client connected");
-      
+
       // Create a stream and send test message
       clientStream = socket.stream({ type: "test" });
       clientStream.write("Hello from QUIC client!");
@@ -71,7 +71,7 @@ test("QUIC server and client integration", async () => {
     },
     data(stream, buffer) {
       console.log("Client received on stream:", buffer.toString());
-      
+
       if (buffer.toString().includes("Echo:")) {
         // Test complete, close stream
         stream.close();
@@ -102,7 +102,7 @@ test("QUIC server and client integration", async () => {
 test("QUIC multi-stream creation and management", async () => {
   let serverStreamCount = 0;
   let clientStreamCount = 0;
-  
+
   const server = Bun.quic({
     hostname: "localhost",
     port: 9444,
@@ -114,17 +114,17 @@ test("QUIC multi-stream creation and management", async () => {
     },
     connection(socket) {
       console.log("Server: New connection");
-      
+
       // Test initial stream count (should be 0 initially)
       expect(socket.streamCount).toBe(0);
-      
-      // Create multiple streams  
+
+      // Create multiple streams
       const stream1 = socket.stream({ purpose: "test1" });
       const stream2 = socket.stream({ purpose: "test2" });
       const stream3 = socket.stream({ purpose: "test3" });
-      
+
       console.log(`Server created streams: ${stream1.id}, ${stream2.id}, ${stream3.id}`);
-      
+
       // Verify streams are different objects
       expect(stream1).toBeDefined();
       expect(stream2).toBeDefined();
@@ -132,7 +132,7 @@ test("QUIC multi-stream creation and management", async () => {
       expect(stream1.id).not.toBe(stream2.id);
       expect(stream2.id).not.toBe(stream3.id);
       expect(stream1.id).not.toBe(stream3.id);
-      
+
       serverStreamCount = socket.streamCount;
       console.log(`Server total streams: ${serverStreamCount}`);
     },
@@ -165,16 +165,16 @@ test("QUIC multi-stream creation and management", async () => {
       // Client can also create multiple streams
       const clientStream1 = socket.stream({ purpose: "client1" });
       const clientStream2 = socket.stream({ purpose: "client2" });
-      
+
       console.log(`Client created streams: ${clientStream1.id}, ${clientStream2.id}`);
-      
+
       expect(clientStream1).toBeDefined();
       expect(clientStream2).toBeDefined();
       expect(clientStream1.id).not.toBe(clientStream2.id);
-      
+
       clientStreamCount = socket.streamCount;
       console.log(`Client total streams: ${clientStreamCount}`);
-      
+
       // Test stream closing functionality
       clientStream2.close();
       console.log(`Client streams after closing one: ${socket.streamCount}`);
@@ -239,7 +239,7 @@ test("QUIC connection states and properties", async () => {
       expect(socket.readyState).toBe("open");
       expect(socket.serverName).toBe("localhost");
       expect(socket.streamCount).toBe(0);
-      
+
       // Test stats object
       const stats = socket.stats;
       expect(typeof stats).toBe("object");
@@ -263,7 +263,7 @@ test("QUIC connection states and properties", async () => {
 
   server.close();
   client.close();
-  
+
   // Test closed state
   expect(server.readyState).toBe("closed");
   expect(client.readyState).toBe("closed");

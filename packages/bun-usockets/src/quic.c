@@ -772,16 +772,9 @@ int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_
                     offset += specs[i].iov[j].iov_len;
                 }
                 
-                // Debug: print destination address
-                if (specs[i].dest_sa->sa_family == AF_INET) {
-                    // struct sockaddr_in *sin = (struct sockaddr_in *)specs[i].dest_sa;
-                    // printf("  Sending %zu bytes to %s:%d\n", total_len,
-                    //        inet_ntoa(sin->sin_addr), ntohs(sin->sin_port));
-                }
-                
-                ssize_t ret = sendto(fd, buffer, total_len, MSG_DONTWAIT, 
-                                   specs[i].dest_sa, 
-                                   (specs[i].dest_sa->sa_family == AF_INET) ? 
+                ssize_t ret = sendto(fd, buffer, total_len, MSG_DONTWAIT,
+                                   specs[i].dest_sa,
+                                   (specs[i].dest_sa->sa_family == AF_INET) ?
                                    sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
                 if (ret > 0) {
                     sent++;
@@ -790,7 +783,7 @@ int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         return sent;
                     }
-                    printf("  sendto error: %s (errno: %d)\n", strerror(errno), errno);
+                    // printf("sendto error: %s (errno: %d)\n", strerror(errno), errno);
                     return -1;
                 }
             }
@@ -961,8 +954,6 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
         /* Call the on_connection callback with the connection-specific socket */
         if (context->on_connection) {
             context->on_connection(conn_socket);  // Pass connection socket, not listen socket!
-        } else {
-            printf("WARNING: on_connection callback is NULL for server connection\n");
         }
 
         /* CRITICAL FIX: Do NOT auto-create streams on connection establishment.
@@ -1791,24 +1782,16 @@ int hsi_process_header(void *hdr_set, struct lsxpack_header *hdr) {
 //extern us_quic_socket_context_t *context;
 
 void timer_cb(struct us_timer_t *t) {
-    static int count = 0;
-    
     // Get the loop and its data
     struct us_loop_t *loop = us_timer_loop(t);
     struct us_internal_loop_data_t *loop_data = (struct us_internal_loop_data_t *)loop;
-    
-    // if (count++ < 10) {
-    //     printf("Timer tick %d - processing connections\n", count);
-    // }
-    // count++; // No longer needed
-    (void)count; // Suppress unused variable warning
-    
+
     // Process the loop's shared engines
     if (loop_data->quic_server_engine) {
         lsquic_engine_process_conns(loop_data->quic_server_engine);
         lsquic_engine_send_unsent_packets(loop_data->quic_server_engine);
     }
-    
+
     if (loop_data->quic_client_engine) {
         lsquic_engine_process_conns(loop_data->quic_client_engine);
         lsquic_engine_send_unsent_packets(loop_data->quic_client_engine);
@@ -2187,10 +2170,8 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(us_quic_socket_context_t 
     listen_socket->is_client = 0;  // This is a server/listen socket
     listen_socket->next = NULL;
 
-    // printf("Creating server UDP socket: host=%s, port=%d\n", host, port);
     // Create the UDP socket with extension space for peer context
     struct us_udp_socket_t *udp_socket = us_create_udp_socket_with_ext(context->loop, on_udp_socket_data_wrapper, on_udp_socket_writable, NULL, host, port, 0, &err, listen_socket, sizeof(struct quic_peer_ctx));
-    // printf("Server UDP socket created: %p, err=%d\n", udp_socket, err);
     
     if (udp_socket) {
         // Set the UDP socket in the structure

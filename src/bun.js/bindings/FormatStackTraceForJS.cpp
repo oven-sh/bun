@@ -25,7 +25,7 @@
 
 #include "root.h"
 
-#include "JSErrorInfo.h"
+#include "FormatStackTraceForJS.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 

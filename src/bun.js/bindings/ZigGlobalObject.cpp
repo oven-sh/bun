@@ -66,7 +66,7 @@
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
-#include "JSErrorInfo.h"
+#include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
 #include "ConsoleObject.h"

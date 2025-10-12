@@ -540,7 +540,18 @@ pub fn migrateYarnLockfile(
                     real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
                     real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
                 }
-                res = .init(.{ .remote_tarball = try string_buf.append(entry.resolved) });
+                const version_str = try string_buf.append(entry.version);
+                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid or parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    skipped_other += 1;
+                    continue;
+                }
+
+                res = .init(.{ .npm = .{
+                    .version = parsed.version.min(),
+                    .url = try string_buf.append(url_after_at),
+                } });
             } else if (entry.resolved.len == 0) {
                 if (strings.containsComptime(first_spec, "@file:")) {
                     const at_file_idx = strings.indexOf(first_spec, "@file:") orelse {

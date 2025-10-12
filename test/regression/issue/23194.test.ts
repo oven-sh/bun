@@ -2,11 +2,14 @@
 // Test that MessagePort doesn't crash when postMessage is called
 // after the script execution context is destroyed
 import { expect, test } from "bun:test";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("comlink worker communication doesn't segfault", async () => {
+  const comlinkSource = readFileSync(join(__dirname, "23194", "comlink.js"), "utf-8");
   using testDir = tempDir("comlink-test", {
+    "comlink.js": comlinkSource,
     "worker.js": `
 import * as Comlink from './comlink.js';
 
@@ -48,9 +51,6 @@ const
 })();
 `,
   });
-
-  // Copy vendored comlink
-  await Bun.write(join(String(testDir), "comlink.js"), Bun.file(join(import.meta.dir, "23194", "comlink.js")));
 
   // Run the test
   await using proc = Bun.spawn({

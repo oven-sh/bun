@@ -190,6 +190,7 @@
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
 #include <exception>
+#include <mutex>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -261,12 +262,10 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
-    static bool has_loaded_jsc = false;
+    static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    if (has_loaded_jsc)
-        return;
-    has_loaded_jsc = true;
-    JSC::Config::enableRestrictedOptions();
+    std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
+        JSC::Config::enableRestrictedOptions();
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
@@ -311,8 +310,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
 
         if (envc > 0) [[likely]] {
-            while (envc--) {
-                const char* env = (const char*)envp[envc];
+            auto envc_copy = envc;
+            while (envc_copy--) {
+                const char* env = (const char*)envp[envc_copy];
                 // need to check for \0 so we might as well make this single pass
                 // strlen would check the end of the string
                 if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
@@ -326,6 +326,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
         JSC::Options::assertOptionsAreCoherent();
     }
+    }); // end std::call_once lambda
 
     // NOLINTEND
 }

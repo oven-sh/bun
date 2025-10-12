@@ -1958,7 +1958,8 @@ pub fn printException(
         .stack_check = bun.StackCheck.init(),
     };
     defer formatter.deinit();
-    if (Output.enable_ansi_colors) {
+    // Disable ANSI colors in AI agent mode to ensure grep '^error:' works reliably
+    if (Output.enable_ansi_colors and !Output.isAIAgent()) {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
     } else {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
@@ -1997,7 +1998,8 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
             .error_display_level = .full,
         };
         defer formatter.deinit();
-        switch (Output.enable_ansi_colors) {
+        // Disable ANSI colors in AI agent mode to ensure grep '^error:' works reliably
+        switch (Output.enable_ansi_colors and !Output.isAIAgent()) {
             inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
         }
     }
@@ -3306,7 +3308,7 @@ fn printErrorNameAndMessage(
     comptime allow_ansi_color: bool,
     error_display_level: ConsoleObject.FormatOptions.ErrorDisplayLevel,
 ) !void {
-    if (is_browser_error) {
+    if (is_browser_error and !Output.isAIAgent()) {
         try writer.writeAll(Output.prettyFmt("<red>frontend<r> ", true));
     }
     if (!name.isEmpty() and !message.isEmpty()) {

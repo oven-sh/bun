@@ -1,0 +1,15 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "dependencies": {
+    "lib-a": "^1.0.0",
+    "lib-b": "^1.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "webpack": "^5.88.0"
+  }
+}

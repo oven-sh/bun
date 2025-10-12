@@ -1,0 +1,11 @@
+{
+  "name": "yarn-test-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

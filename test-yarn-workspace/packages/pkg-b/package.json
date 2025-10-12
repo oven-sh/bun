@@ -1,0 +1,7 @@
+{
+  "name": "pkg-b",
+  "version": "2.0.0",
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}

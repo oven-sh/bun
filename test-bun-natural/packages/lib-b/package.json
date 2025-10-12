@@ -1,0 +1,8 @@
+{
+  "name": "@test/lib-b",
+  "version": "1.0.0",
+  "dependencies": {
+    "@test/lib-a": "workspace:*",
+    "lodash": "^3.10.0"
+  }
+}

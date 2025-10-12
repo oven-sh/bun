@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "custom-registry-test",
+      "dependencies": {
+        "another-pkg": "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz",
+        "my-package": "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz",
+      },
+    },
+  },
+  "packages": {
+    "another-pkg": ["another-pkg@https://packages.example.com/tarballs/another-pkg-2.1.0.tgz#abc123def456", {}],
+
+    "my-package": ["my-package@https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz#deadbeef", {}],
+  }
+}

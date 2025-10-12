@@ -112,7 +112,7 @@ pub const LoadResult = union(enum) {
     ok: struct {
         lockfile: *Lockfile,
         loaded_from_binary_lockfile: bool,
-        migrated: enum { none, npm, yarn, pnpm } = .none,
+        migrated: enum { none, npm, yarn, yarn_berry, pnpm } = .none,
         serializer_result: Serializer.SerializerLoadResult,
         format: LockfileFormat,
     },

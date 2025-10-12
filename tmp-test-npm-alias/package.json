@@ -1,0 +1,8 @@
+{
+  "name": "test-aliases",
+  "version": "1.0.0",
+  "dependencies": {
+    "@types/bun": "npm:bun-types@1.2.19",
+    "my-lodash": "npm:lodash@4.17.21"
+  }
+}

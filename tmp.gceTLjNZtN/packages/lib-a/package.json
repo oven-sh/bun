@@ -1,0 +1,14 @@
+{
+  "name": "lib-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "axios": "^1.4.0"
+  },
+  "peerDependencies": {
+    "react": ">=16.8.0"
+  },
+  "devDependencies": {
+    "jest": "^29.5.0"
+  }
+}

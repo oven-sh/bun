@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test",
+      "dependencies": {
+        "is-number": "^7.0.0",
+      },
+    },
+  },
+  "packages": {
+    "is-number": ["is-number@7.0.0", "", {}, ""],
+  }
+}

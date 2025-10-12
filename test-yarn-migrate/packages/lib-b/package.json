@@ -1,0 +1,8 @@
+{
+  "name": "@test/lib-b",
+  "version": "1.0.0",
+  "dependencies": {
+    "@test/lib-a": "1.0.0",
+    "lodash": "^3.10.0"
+  }
+}

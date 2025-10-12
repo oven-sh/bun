@@ -1,0 +1,40 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-monorepo",
+      "dependencies": {
+        "lodash": "^4.17.0",
+      },
+    },
+    "packages/lib-a": {
+      "name": "@test/lib-a",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-number": "^7.0.0",
+      },
+    },
+    "packages/lib-b": {
+      "name": "@test/lib-b",
+      "version": "1.0.0",
+      "dependencies": {
+        "@test/lib-a": "workspace:*",
+        "lodash": "^3.10.0",
+      },
+    },
+  },
+  "overrides": {
+    "semver": "7.5.0",
+  },
+  "packages": {
+    "@test/lib-a": ["@test/lib-a@workspace:packages/lib-a"],
+
+    "@test/lib-b": ["@test/lib-b@workspace:packages/lib-b"],
+
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "@test/lib-b/lodash": ["lodash@3.10.1", "", {}, "sha512-9mDDwqVIma6OZX79ZlDACZl8sBm0TEnkf99zV3iMA4GzkIT/9hiqP5mY0HoT1iNLCrKc/R1HByV+yJfRWVJryQ=="],
+  }
+}

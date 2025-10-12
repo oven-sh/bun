@@ -1,0 +1,8 @@
+{
+  "name": "@workspace/a",
+  "version": "1.0.0",
+  "dependencies": {
+    "@workspace/b": "workspace:*",
+    "is-number": "^7.0.0"
+  }
+}

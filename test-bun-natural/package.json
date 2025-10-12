@@ -1,0 +1,10 @@
+{
+  "name": "test-monorepo",
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "lodash": "^4.17.0"
+  },
+  "resolutions": {
+    "semver": "7.5.0"
+  }
+}

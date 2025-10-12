@@ -1,0 +1,11 @@
+{
+  "name": "monorepo-root",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "typescript": "5.3.3",
+    "prettier": "3.1.1"
+  }
+}

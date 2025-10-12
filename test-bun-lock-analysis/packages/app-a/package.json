@@ -1,0 +1,14 @@
+{
+  "name": "@monorepo/app-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "@monorepo/shared": "workspace:*",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "lodash": "4.17.21"
+  },
+  "devDependencies": {
+    "@types/react": "18.2.45",
+    "@types/lodash": "4.14.202"
+  }
+}

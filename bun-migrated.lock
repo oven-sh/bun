@@ -1,0 +1,29 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-monorepo",
+      "dependencies": {
+        "lodash": "^4.17.0",
+      },
+    },
+    "packages/lib-a": {
+      "name": "@test/lib-a",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-number": "^7.0.0",
+      },
+    },
+    "packages/lib-b": {
+      "name": "@test/lib-b",
+      "version": "1.0.0",
+      "dependencies": {
+        "@test/lib-a": "1.0.0",
+        "lodash": "^3.10.0",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "custom-registry-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "my-package": "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz",
+    "another-pkg": "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz"
+  }
+}

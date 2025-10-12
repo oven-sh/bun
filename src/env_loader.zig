@@ -1074,7 +1074,6 @@ const Parser = struct {
                 this.skipLine();
                 continue;
             };
-            this.skipWhitespaces();
             const is_backtick_quoted = expand and this.pos < this.src.len and this.src[this.pos] == '`';
             const value = try this.parseValue(is_process);
             const entry = try map.map.getOrPut(key);

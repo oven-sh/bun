@@ -12,13 +12,13 @@ _bun_escape_bash_specials() {
 
     if ((escape_all)); then
         # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
-        re_exp='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]'
-        re_sed='[]~$"'\''`><()[{}=|*?;&#\]'
+        re_exp='[]:~$\"'"\'"'\`><\()[{\}=|*?;&#\\]'
+        re_sed='[]:~$"'\''`><()[{}=|*?;&#\]'
     else
         # escape all bash specials _except_ " (quote) and \ (backslash)
         # since they are already escaped in package.json: ]~$'`><()[{}=|*?;&#
-        re_exp='[]~$'"\'"'\`><\()[{\}=|*?;&#]'
-        re_sed='[]~$'\''`><()[{}=|*?;&#]'
+        re_exp='[]:~$'"\'"'\`><\()[{\}=|*?;&#]'
+        re_sed='[]:~$'\''`><()[{}=|*?;&#]'
     fi
 
     local has_patsub=0

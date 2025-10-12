@@ -864,15 +864,13 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
         
         /* For client connections, we can't add to tracking table yet as we don't have peer address
          * The peer address will be available during packet processing */
-        
-        /* Call the on_open callback immediately for client connections.
-         * The connection object exists, so the user can create streams.
-         * If the connection fails, the error callback will be invoked. */
-        if (context->on_open) {
-            // printf("Calling on_open callback for client socket %p\n", socket);
-            context->on_open(socket, 1); // is_client = 1
-        }
-        
+
+        /* DON'T call on_open here - wait for on_hsk_done when handshake completes!
+         * Calling it here means the connection isn't ready yet and avail_streams=0 */
+        // if (context->on_open) {
+        //     context->on_open(socket, 1); // is_client = 1
+        // }
+
         /* Let the user explicitly create streams via socket.createStream() calls */
         // printf("Client connection established, ready for stream creation\n");
         
@@ -972,14 +970,34 @@ void us_quic_socket_create_stream(us_quic_socket_t *s, int ext_size) {
         return;
     }
 
+    printf("DEBUG: create_stream called on socket %p\n", s);
+
     // Check if this socket has a connection
     if (!s->lsquic_conn) {
         printf("ERROR: No connection associated with socket %p\n", s);
         return;
     }
 
+    lsquic_conn_t *conn = (lsquic_conn_t *)s->lsquic_conn;
+    unsigned avail = lsquic_conn_n_avail_streams(conn);
+    unsigned pending = lsquic_conn_n_pending_streams(conn);
+    printf("DEBUG: Connection %p, avail_streams=%u, pending_streams=%u\n", conn, avail, pending);
+
+    // Check if we can actually create a stream on this connection
+    if (avail == 0) {
+        printf("WARNING: Connection %p has no available streams, stream creation may fail\n", conn);
+    }
+
+    printf("DEBUG: Calling lsquic_conn_make_stream on connection %p\n", conn);
+
     // Trigger stream creation - this will call on_new_stream callback asynchronously
-    lsquic_conn_make_stream((lsquic_conn_t *)s->lsquic_conn);
+    lsquic_conn_make_stream(conn);
+    printf("DEBUG: lsquic_conn_make_stream triggered (stream will be created asynchronously via on_new_stream callback)\n");
+
+    // After requesting stream creation, check availability again
+    avail = lsquic_conn_n_avail_streams(conn);
+    pending = lsquic_conn_n_pending_streams(conn);
+    printf("DEBUG: After make_stream - avail_streams=%u, pending_streams=%u\n", avail, pending);
 
     // Mark the connection as having unsent packets so the engine will process it
     // Don't call lsquic_engine_process_conns here - it can free the connection!
@@ -1030,6 +1048,48 @@ void on_conn_closed(lsquic_conn_t *c) {
     }
     
     // printf("Connection %p closed, but not found in tracking table\n", c);
+}
+
+void on_hsk_done(lsquic_conn_t *c, enum lsquic_hsk_status status) {
+    printf("DEBUG: on_hsk_done called for connection %p, status=%d\n", c, status);
+
+    /* Get the connection from lsquic context */
+    us_quic_connection_t *conn = (us_quic_connection_t *)lsquic_conn_get_ctx(c);
+    if (!conn) {
+        printf("ERROR: No connection found in on_hsk_done\n");
+        return;
+    }
+
+    us_quic_socket_t *socket = conn->socket;
+    if (!socket) {
+        printf("ERROR: No socket found in on_hsk_done\n");
+        return;
+    }
+
+    us_quic_socket_context_t *context = socket->context;
+    if (!context) {
+        printf("ERROR: No context found in on_hsk_done\n");
+        return;
+    }
+
+    // Only proceed if handshake succeeded
+    // LSQ_HSK_FAIL=0, LSQ_HSK_OK=1, LSQ_HSK_RESUMED_OK=2, LSQ_HSK_RESUMED_FAIL=3
+    if (status != 1 && status != 2) {  // Not OK or RESUMED_OK
+        printf("WARNING: Handshake failed with status %d\n", status);
+        return;
+    }
+
+    printf("DEBUG: Handshake SUCCESS! Connection %p is ready, calling on_open\n", c);
+
+    // Check stream availability now that handshake is complete
+    unsigned avail = lsquic_conn_n_avail_streams(c);
+    printf("DEBUG: After handshake complete - avail_streams=%u\n", avail);
+
+    // NOW call the on_open callback - the connection is truly ready!
+    if (context->on_open) {
+        printf("DEBUG: Calling on_open callback for socket %p, is_client=%d\n", socket, socket->is_client);
+        context->on_open(socket, socket->is_client);
+    }
 }
 
 lsquic_stream_ctx_t *on_new_stream(void *stream_if_ctx, lsquic_stream_t *s) {
@@ -1993,7 +2053,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
         .on_write = on_write,
         .on_read = on_read,
         .on_new_stream = on_new_stream,
-        .on_new_conn = on_new_conn
+        .on_new_conn = on_new_conn,
+        .on_hsk_done = on_hsk_done  // NEW: Call when handshake completes
     };
 
     //memset(&stream_callbacks, 13, sizeof(struct lsquic_stream_if));
@@ -2012,9 +2073,16 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     // Use only IETF QUIC versions (not gQUIC which has crypto issues with BoringSSL)
     server_settings.es_versions = LSQUIC_IETF_VERSIONS;
     // printf("Server QUIC versions: 0x%x\n", server_settings.es_versions);
-    
+
     // Set max packet size for UDP (0 means use default)
     server_settings.es_max_udp_payload_size_rx = 0;
+
+    // CRITICAL: Set initial max streams so clients can actually create streams!
+    // Default is often 0 which blocks all stream creation
+    server_settings.es_init_max_streams_bidi = 100;  // Allow 100 bidirectional streams
+    server_settings.es_init_max_streams_uni = 100;   // Allow 100 unidirectional streams
+    printf("DEBUG: Server max streams - bidi: %u, uni: %u\n",
+           server_settings.es_init_max_streams_bidi, server_settings.es_init_max_streams_uni);
 
     struct lsquic_engine_api engine_api = {
         .ea_packets_out     = send_packets_out,

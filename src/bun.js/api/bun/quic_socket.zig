@@ -1289,7 +1289,7 @@ const jsc = bun.jsc;
 const SocketAddress = @import("./socket/SocketAddress.zig");
 const Handlers = @import("./socket/Handlers.zig");
 const uws = @import("../../../deps/uws.zig");
-const log = bun.Output.scoped(.QuicSocket, .hidden);
+const log = bun.Output.scoped(.QuicSocket, .visible);
 const SSLConfig = @import("../server/SSLConfig.zig");
 const QuicStream = @import("quic_stream.zig").QuicStream;
 

@@ -1103,6 +1103,7 @@ const Parser = struct {
                             .value = try allocator.dupe(u8, value),
                             .conditional = false,
                         };
+                        entry.value_ptr.conditional = false;
                     }
                 }
             }

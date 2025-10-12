@@ -266,7 +266,19 @@ pub const RekorClient = struct {
         defer tree.deinit();
 
         if (tree.root != .object) return RekorError.InvalidResponse;
-        const obj = tree.root.object;
+        const root_obj = tree.root.object;
+
+        // Detect response shape: if has direct "uuid" field, use flat format
+        // Otherwise, expect map format keyed by UUID
+        const obj = if (root_obj.get("uuid") != null) 
+            root_obj
+        else blk: {
+            // Map format: get first entry
+            var iterator = root_obj.iterator();
+            const first_entry = iterator.next() orelse return RekorError.InvalidResponse;
+            if (first_entry.value_ptr.* != .object) return RekorError.InvalidResponse;
+            break :blk first_entry.value_ptr.object;
+        };
 
         // Extract required fields
         const uuid_obj = obj.get("uuid") orelse return RekorError.InvalidResponse;
@@ -479,5 +491,3 @@ pub fn submitDSSEToRekor(
     var client = RekorClient.init(allocator, rekor_url);
     return client.submitDSSEEntry(dsse_envelope, certificate_chain);
 }
-
-@import("bun")

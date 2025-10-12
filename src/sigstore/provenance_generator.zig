@@ -357,9 +357,6 @@ pub const SigstoreProvenanceGenerator = struct {
             \\        "version": "0.0.1"
             \\      }},
             \\      "integratedTime": "{d}",
-            \\      "inclusionPromise": {{
-            \\        "signedEntryTimestamp": "{s}"
-            \\      }},
             \\      "canonicalizedBody": "{s}"
             \\    }}]
             \\  }},
@@ -370,7 +367,6 @@ pub const SigstoreProvenanceGenerator = struct {
             log_entry.log_index,
             log_entry.log_id,
             log_entry.integrated_time,
-            log_entry.uuid,
             log_entry.body,
             dsse_json,
         });

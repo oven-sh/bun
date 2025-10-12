@@ -3791,17 +3791,20 @@ pub const Resolver = struct {
         };
 
         if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
-            if (dir_entry.err.original_err != error.ENOENT) {
-                r.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    r.allocator,
-                    "Cannot read directory \"{s}\": {s}",
-                    .{
-                        dir_path,
-                        @errorName(dir_entry.err.original_err),
-                    },
-                ) catch {};
+            switch (dir_entry.err.original_err) {
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir => {},
+                else => {
+                    r.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        r.allocator,
+                        "Cannot read directory \"{s}\": {s}",
+                        .{
+                            dir_path,
+                            @errorName(dir_entry.err.original_err),
+                        },
+                    ) catch {};
+                },
             }
             return null;
         }

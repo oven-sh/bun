@@ -10,6 +10,7 @@ const LoadResult = Lockfile.LoadResult;
 const bun = @import("bun");
 const logger = bun.logger;
 const strings = bun.strings;
+const Npm = bun.install.Npm;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
@@ -709,11 +710,16 @@ fn migrateYarnBerry(
     log: *logger.Log,
     data: []const u8,
 ) MigrateYarnLockfileError!LoadResult {
+    var yaml_arena = bun.ArenaAllocator.init(allocator);
+    defer yaml_arena.deinit();
+
     const yaml_source = logger.Source.initPathString("yarn.lock", data);
-    const json = YAML.parse(&yaml_source, log, allocator) catch {
+    const _root = YAML.parse(&yaml_source, log, yaml_arena.allocator()) catch {
         try log.addError(null, logger.Loc.Empty, "Failed to parse yarn.lock as YAML");
         return error.YarnBerryParseError;
     };
+
+    const json = try _root.deepClone(allocator);
 
     if (json.data != .e_object) {
         try log.addError(null, logger.Loc.Empty, "Yarn Berry lockfile root is not an object");
@@ -1130,9 +1136,9 @@ fn migrateYarnBerry(
                         for (bin_obj.properties.slice()) |bin_prop| {
                             const bin_name_str = bin_prop.key.?.asString(allocator) orelse break;
                             const bin_path_str = bin_prop.value.?.asString(allocator) orelse break;
-                            extern_strings[i] = try string_buf.appendExternal( bin_name_str);
+                            extern_strings[i] = try string_buf.appendExternal(bin_name_str);
                             i += 1;
-                            extern_strings[i] = try string_buf.appendExternal( bin_path_str);
+                            extern_strings[i] = try string_buf.appendExternal(bin_path_str);
                             i += 1;
                         }
                         pkg.bin = .{
@@ -1156,6 +1162,59 @@ fn migrateYarnBerry(
         pkg.dependencies = .{ .off = @intCast(deps_off), .len = @intCast(deps_end - deps_off) };
         pkg.resolutions = .{ .off = @intCast(deps_off), .len = @intCast(deps_end - deps_off) };
 
+        if (entry_obj.get("conditions")) |conditions_node| {
+            if (conditions_node.asString(allocator)) |conditions_str| {
+                var os_negatable = Npm.OperatingSystem.none.negatable();
+                var arch_negatable = Npm.Architecture.none.negatable();
+
+                var iter = std.mem.splitSequence(u8, conditions_str, " & ");
+                while (iter.next()) |condition| {
+                    const trimmed = strings.trim(condition, " \t");
+                    if (strings.indexOfChar(trimmed, '=')) |eq_idx| {
+                        const cond_key = trimmed[0..eq_idx];
+                        const cond_value = trimmed[eq_idx + 1 ..];
+
+                        if (strings.eqlComptime(cond_key, "os")) {
+                            os_negatable.apply(cond_value);
+                        } else if (strings.eqlComptime(cond_key, "cpu")) {
+                            arch_negatable.apply(cond_value);
+                        }
+                    }
+                }
+
+                pkg.meta.os = os_negatable.combine();
+                pkg.meta.arch = arch_negatable.combine();
+            }
+        }
+
+        if (pkg.meta.os == .all) {
+            if (entry_obj.get("os")) |os_node| {
+                if (os_node.data == .e_array) {
+                    var os_negatable = Npm.OperatingSystem.none.negatable();
+                    for (os_node.data.e_array.slice()) |os_item| {
+                        if (os_item.asString(allocator)) |os_str| {
+                            os_negatable.apply(os_str);
+                        }
+                    }
+                    pkg.meta.os = os_negatable.combine();
+                }
+            }
+        }
+
+        if (pkg.meta.arch == .all) {
+            if (entry_obj.get("cpu")) |cpu_node| {
+                if (cpu_node.data == .e_array) {
+                    var arch_negatable = Npm.Architecture.none.negatable();
+                    for (cpu_node.data.e_array.slice()) |cpu_item| {
+                        if (cpu_item.asString(allocator)) |cpu_str| {
+                            arch_negatable.apply(cpu_str);
+                        }
+                    }
+                    pkg.meta.arch = arch_negatable.combine();
+                }
+            }
+        }
+
         if (entry_obj.get("checksum")) |checksum_node| {
             if (checksum_node.asString(allocator)) |checksum_str| {
                 const maybe_integrity = convertBerryChecksum(checksum_str, allocator) catch null;
@@ -1169,12 +1228,40 @@ fn migrateYarnBerry(
 
         var spec_iter = std.mem.splitSequence(u8, key_str, ", ");
         while (spec_iter.next()) |spec_raw| {
-            const spec = strings.trim(spec_raw, " \t\"");
-            const spec_copy = try allocator.dupe(u8, spec);
-            try spec_to_pkg_id.put(spec_copy, pkg_id);
+            var spec = strings.trim(spec_raw, " \t\"");
+            // Normalize: "fsevents@npm:^2.3.2" -> "fsevents@^2.3.2"
+            if (strings.indexOf(spec, "@npm:")) |npm_idx| {
+                var normalized_buf: [1024]u8 = undefined;
+                const normalized = std.fmt.bufPrint(&normalized_buf, "{s}@{s}", .{
+                    spec[0..npm_idx],
+                    spec[npm_idx + 5 ..],
+                }) catch spec;
+                const spec_copy = try allocator.dupe(u8, normalized);
+                try spec_to_pkg_id.put(spec_copy, pkg_id);
+            } else {
+                const spec_copy = try allocator.dupe(u8, spec);
+                try spec_to_pkg_id.put(spec_copy, pkg_id);
+            }
         }
 
         added_count += 1;
+    }
+
+    try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(lockfile.allocator, lockfile.buffers.dependencies.items.len);
+    lockfile.buffers.resolutions.items.len = lockfile.buffers.dependencies.items.len;
+    @memset(lockfile.buffers.resolutions.items, invalid_package_id);
+
+    const string_buf_bytes = lockfile.buffers.string_bytes.items;
+    for (lockfile.buffers.dependencies.items, 0..) |dep, dep_id| {
+        const dep_name = dep.name.slice(string_buf_bytes);
+        const version_str = dep.version.literal.slice(string_buf_bytes);
+
+        var res_buf: [1024]u8 = undefined;
+        const key = std.fmt.bufPrint(&res_buf, "{s}@{s}", .{ dep_name, version_str }) catch continue;
+
+        if (spec_to_pkg_id.get(key)) |pkg_id| {
+            lockfile.buffers.resolutions.items[dep_id] = pkg_id;
+        }
     }
 
     try lockfile.resolve(log);

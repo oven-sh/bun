@@ -1,0 +1,120 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Yarn Berry migration simple package with conditions (v8 format) 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-conditions",
+      "dependencies": {
+        "@esbuild/darwin-arm64": "^0.21.5",
+        "fsevents": "^2.3.2",
+      },
+    },
+  },
+  "packages": {
+    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.21.5", "", { "os": "darwin", "cpu": "arm64" }, ""],
+
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, ""],
+  }
+}
+"
+`;
+
+exports[`Yarn Berry migration optional peer dependencies 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-peer-meta",
+      "dependencies": {
+        "react": "^18.0.0",
+      },
+    },
+  },
+  "packages": {
+    "loose-envify": ["loose-envify@1.4.0", "", { "peerDependencies": { "typescript": "*" }, "bin": { "loose-envify": "cli.js" } }, ""],
+
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "^1.1.0" } }, ""],
+  }
+}
+"
+`;
+
+exports[`Yarn Berry migration optional dependencies via dependenciesMeta 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-deps-meta",
+      "dependencies": {
+        "sharp": "^0.32.0",
+      },
+    },
+  },
+  "packages": {
+    "@img/sharp-darwin-arm64": ["@img/sharp-darwin-arm64@0.32.6", "", { "os": "darwin", "cpu": "arm64" }, ""],
+
+    "@img/sharp-linux-x64": ["@img/sharp-linux-x64@0.32.6", "", { "os": "linux", "cpu": "x64" }, ""],
+
+    "sharp": ["sharp@0.32.6", "", { "dependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" }, "optionalDependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" } }, ""],
+  }
+}
+"
+`;
+
+exports[`Yarn Berry migration bin definitions 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-bins",
+      "dependencies": {
+        "typescript": "^5.9.2",
+      },
+    },
+  },
+  "packages": {
+    "typescript": ["typescript@5.9.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, ""],
+  }
+}
+"
+`;
+
+exports[`Yarn Berry migration workspace:* protocol 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-workspaces",
+      "dependencies": {
+        "lib-a": "workspace:*",
+      },
+    },
+    "packages/lib-a": {
+      "name": "lib-a",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {}
+}
+"
+`;
+
+exports[`Yarn Berry migration v6 format fallback with os/cpu arrays 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-v6",
+      "dependencies": {
+        "fsevents": "^2.3.2",
+      },
+    },
+  },
+  "packages": {
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, ""],
+  }
+}
+"
+`;

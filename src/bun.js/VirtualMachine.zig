@@ -1677,7 +1677,7 @@ fn _resolve(
                         );
                     };
 
-                    // Only re-query if we previously had something cached, or if it's main.
+                    // Only re-query if we previously had something cached.
                     if (jsc_vm.transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                         continue;
                     }

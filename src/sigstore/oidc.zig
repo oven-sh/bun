@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const http = bun.http;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-
 pub const OIDCError = error{
     TokenAcquisitionFailed,
     InvalidToken,
@@ -433,3 +427,9 @@ pub fn createDefaultTokenManager(allocator: std.mem.Allocator) !OIDCTokenManager
     
     return manager;
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const http = bun.http;
+const MutableString = bun.MutableString;
+const URL = bun.URL;

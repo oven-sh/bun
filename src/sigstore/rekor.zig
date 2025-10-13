@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const crypto = @import("bun_crypto.zig");
-const fulcio = @import("fulcio.zig");
-const http = bun.http;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-
 pub const RekorError = error{
     SubmissionFailed,
     InvalidResponse,
@@ -23,12 +15,16 @@ pub const LogEntry = struct {
     integrated_time: i64,
     inclusion_proof: ?InclusionProof,
     body: []const u8, // Base64 encoded entry body
+    signed_entry_timestamp: ?[]const u8, // SET from response headers
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *LogEntry) void {
         self.allocator.free(self.uuid);
         self.allocator.free(self.log_id);
         self.allocator.free(self.body);
+        if (self.signed_entry_timestamp) |set| {
+            self.allocator.free(set);
+        }
         if (self.inclusion_proof) |*proof| {
             proof.deinit();
         }
@@ -89,31 +85,36 @@ pub const DSSEEntry = struct {
     verifiers: []const []const u8, // PEM encoded certificates
 
     pub fn toJSON(self: *const DSSEEntry, allocator: std.mem.Allocator) RekorError![]const u8 {
-        // Build verifiers array JSON
-        var verifiers_json = std.ArrayList(u8).init(allocator);
-        defer verifiers_json.deinit();
+        // Create JSON value structure
+        var verifiers_array = std.ArrayList(std.json.Value).init(allocator);
+        defer verifiers_array.deinit();
         
-        try verifiers_json.append('[');
-        for (self.verifiers, 0..) |verifier, i| {
-            if (i > 0) try verifiers_json.appendSlice(",");
-            try verifiers_json.appendSlice("\"");
-            
-            // Escape the PEM content for JSON
-            for (verifier) |c| {
-                switch (c) {
-                    '\n' => try verifiers_json.appendSlice("\\n"),
-                    '"' => try verifiers_json.appendSlice("\\\""),
-                    '\\' => try verifiers_json.appendSlice("\\\\"),
-                    else => try verifiers_json.append(c),
-                }
-            }
-            try verifiers_json.appendSlice("\"");
+        // Add verifiers to array
+        for (self.verifiers) |verifier| {
+            const verifier_owned = allocator.dupe(u8, verifier) catch return RekorError.OutOfMemory;
+            try verifiers_array.append(std.json.Value{ .string = verifier_owned });
         }
-        try verifiers_json.append(']');
-
-        return std.fmt.allocPrint(allocator,
-            \\{{"apiVersion":"0.0.1","kind":"dsse","spec":{{"envelope":"{s}","verifiers":{s}}}}}
-        , .{ self.envelope, verifiers_json.items });
+        
+        // Build spec object
+        var spec_map = std.json.ObjectMap.init(allocator);
+        spec_map.put("envelope", std.json.Value{ .string = allocator.dupe(u8, self.envelope) catch return RekorError.OutOfMemory }) catch return RekorError.OutOfMemory;
+        spec_map.put("verifiers", std.json.Value{ .array = std.json.Array.fromOwnedSlice(allocator, verifiers_array.toOwnedSlice() catch return RekorError.OutOfMemory) }) catch return RekorError.OutOfMemory;
+        
+        // Build main object
+        var main_map = std.json.ObjectMap.init(allocator);
+        main_map.put("apiVersion", std.json.Value{ .string = allocator.dupe(u8, "0.0.1") catch return RekorError.OutOfMemory }) catch return RekorError.OutOfMemory;
+        main_map.put("kind", std.json.Value{ .string = allocator.dupe(u8, "dsse") catch return RekorError.OutOfMemory }) catch return RekorError.OutOfMemory;
+        main_map.put("spec", std.json.Value{ .object = spec_map }) catch return RekorError.OutOfMemory;
+        
+        const root_value = std.json.Value{ .object = main_map };
+        
+        // Serialize to JSON string
+        var json_string = std.ArrayList(u8).init(allocator);
+        defer json_string.deinit();
+        
+        std.json.stringify(root_value, .{}, json_string.writer()) catch return RekorError.OutOfMemory;
+        
+        return json_string.toOwnedSlice() catch return RekorError.OutOfMemory;
     }
 };
 
@@ -243,22 +244,22 @@ pub const RekorClient = struct {
             return RekorError.SubmissionFailed;
         }
 
-        return self.parseLogEntryResponse(response_buf.list.items);
-    }
-    
-    fn createMockLogEntry(self: *RekorClient) RekorError!LogEntry {
-        return LogEntry{
-            .uuid = try self.allocator.dupe(u8, "24296fb24b8ad77a7c26e1234567890abcdef1234567890abcdef"),
-            .log_index = 1234567,
-            .log_id = try self.allocator.dupe(u8, "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"),
-            .integrated_time = 1721826600,
-            .inclusion_proof = null,
-            .body = try self.allocator.dupe(u8, "test-entry-body"),
-            .allocator = self.allocator,
-        };
+        // Extract SignedEntryTimestamp from response headers
+        const set = if (res.headers) |headers| blk: {
+            // Look for x-rekor-signed-entry-timestamp header
+            var it = headers.iterator();
+            while (it.next()) |entry| {
+                if (std.ascii.eqlIgnoreCase(entry.name, "x-rekor-signed-entry-timestamp")) {
+                    break :blk try self.allocator.dupe(u8, entry.value);
+                }
+            }
+            break :blk null;
+        } else null;
+
+        return self.parseLogEntryResponse(response_buf.list.items, set);
     }
 
-    fn parseLogEntryResponse(self: *RekorClient, response_body: []const u8) RekorError!LogEntry {
+    fn parseLogEntryResponse(self: *RekorClient, response_body: []const u8, signed_entry_timestamp: ?[]const u8) RekorError!LogEntry {
         var parser = std.json.Parser.init(self.allocator, .alloc_if_needed);
         defer parser.deinit();
 
@@ -270,23 +271,31 @@ pub const RekorClient = struct {
 
         // Detect response shape: if has direct "uuid" field, use flat format
         // Otherwise, expect map format keyed by UUID
+        var uuid_from_key: ?[]const u8 = null;
         const obj = if (root_obj.get("uuid") != null) 
             root_obj
         else blk: {
-            // Map format: get first entry
+            // Map format: get first entry and capture UUID from key
             var iterator = root_obj.iterator();
             const first_entry = iterator.next() orelse return RekorError.InvalidResponse;
             if (first_entry.value_ptr.* != .object) return RekorError.InvalidResponse;
+            uuid_from_key = first_entry.key_ptr.*;
             break :blk first_entry.value_ptr.object;
         };
 
-        // Extract required fields
-        const uuid_obj = obj.get("uuid") orelse return RekorError.InvalidResponse;
+        // Extract UUID (either from object field or from map key)
+        const uuid_str = if (uuid_from_key) |key_uuid|
+            key_uuid
+        else blk: {
+            const uuid_obj = obj.get("uuid") orelse return RekorError.InvalidResponse;
+            if (uuid_obj != .string) return RekorError.InvalidResponse;
+            break :blk uuid_obj.string;
+        };
         const log_index_obj = obj.get("logIndex") orelse return RekorError.InvalidResponse;
         const log_id_obj = obj.get("logID") orelse return RekorError.InvalidResponse;
         const integrated_time_obj = obj.get("integratedTime") orelse return RekorError.InvalidResponse;
 
-        if (uuid_obj != .string or log_id_obj != .string) return RekorError.InvalidResponse;
+        if (log_id_obj != .string) return RekorError.InvalidResponse;
 
         const log_index = switch (log_index_obj) {
             .integer => @as(u64, @intCast(log_index_obj.integer)),
@@ -310,12 +319,13 @@ pub const RekorClient = struct {
         } else try self.allocator.dupe(u8, "");
 
         return LogEntry{
-            .uuid = try self.allocator.dupe(u8, uuid_obj.string),
+            .uuid = try self.allocator.dupe(u8, uuid_str),
             .log_index = log_index,
             .log_id = try self.allocator.dupe(u8, log_id_obj.string),
             .integrated_time = integrated_time,
             .inclusion_proof = null, // Not included in submission response
             .body = body,
+            .signed_entry_timestamp = signed_entry_timestamp,
             .allocator = self.allocator,
         };
     }
@@ -365,7 +375,7 @@ pub const RekorClient = struct {
             return RekorError.InvalidResponse;
         }
 
-        return self.parseLogEntryResponse(response_buf.list.items);
+        return self.parseLogEntryResponse(response_buf.list.items, null);
     }
 
     /// Get inclusion proof for a log entry
@@ -476,8 +486,8 @@ pub const RekorClient = struct {
         _ = self;
         _ = proof;
         _ = leaf_hash;
-        // Simplified verification - in production this would implement full Merkle tree verification
-        return true;
+        // TODO: Implement RFC 6962 Merkle tree verification
+        return RekorError.VerificationFailed;
     }
 };
 
@@ -491,3 +501,11 @@ pub fn submitDSSEToRekor(
     var client = RekorClient.init(allocator, rekor_url);
     return client.submitDSSEEntry(dsse_envelope, certificate_chain);
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const crypto = @import("bun_crypto.zig");
+const fulcio = @import("fulcio.zig");
+const http = bun.http;
+const MutableString = bun.MutableString;
+const URL = bun.URL;

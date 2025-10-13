@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const crypto = @import("bun_crypto.zig");
-const oidc = @import("oidc.zig");
-const http = bun.http;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-
 pub const FulcioError = error{
     CertificateRequestFailed,
     InvalidResponse,
@@ -43,6 +35,11 @@ pub const CertificateChain = struct {
     pub fn getSigningCertPEM(self: *const CertificateChain) FulcioError![]const u8 {
         const parser = crypto.CertificateParser.init(self.allocator);
         return parser.getCertificatePEM(self.signing_cert) catch FulcioError.InvalidResponse;
+    }
+
+    pub fn getSigningCertDER(self: *const CertificateChain) FulcioError![]const u8 {
+        const parser = crypto.CertificateParser.init(self.allocator);
+        return parser.getCertificateDER(self.signing_cert) catch FulcioError.InvalidResponse;
     }
 };
 
@@ -334,3 +331,11 @@ pub fn requestSigningCertificate(
 
     return chain;
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const crypto = @import("bun_crypto.zig");
+const oidc = @import("oidc.zig");
+const http = bun.http;
+const MutableString = bun.MutableString;
+const URL = bun.URL;

@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const crypto = @import("bun_crypto.zig");
-const oidc = @import("oidc.zig");
-const fulcio = @import("fulcio.zig");
-const rekor = @import("rekor.zig");
-const dsse = @import("dsse.zig");
-
 pub const ProvenanceError = error{
     UnsupportedCIProvider,
     MissingCIEnvironment,
@@ -320,56 +312,111 @@ pub const SigstoreProvenanceGenerator = struct {
         dsse_envelope: *const dsse.Envelope,
         log_entry: *const rekor.LogEntry,
     ) ProvenanceError![]const u8 {
-        // Get certificate PEM
-        const cert_pem = cert_chain.getSigningCertPEM() catch return ProvenanceError.OutOfMemory;
-        defer self.allocator.free(cert_pem);
+        // Get certificate DER bytes and base64 encode them
+        const cert_der = cert_chain.getSigningCertDER() catch return ProvenanceError.OutOfMemory;
+        defer self.allocator.free(cert_der);
+        
+        const cert_base64_len = std.base64.standard.Encoder.calcSize(cert_der.len);
+        const cert_base64 = try self.allocator.alloc(u8, cert_base64_len);
+        defer self.allocator.free(cert_base64);
+        _ = std.base64.standard.Encoder.encode(cert_base64, cert_der);
 
         // Get DSSE envelope JSON
         const dsse_json = dsse_envelope.toJSON() catch return ProvenanceError.SigningFailed;
         defer self.allocator.free(dsse_json);
 
-        // Escape certificate PEM for JSON
-        var escaped_cert = std.ArrayList(u8).init(self.allocator);
-        defer escaped_cert.deinit();
+        // Parse DSSE JSON to embed as raw JSON value
+        var dsse_parser = std.json.Parser.init(self.allocator, .alloc_if_needed);
+        defer dsse_parser.deinit();
+        var dsse_tree = dsse_parser.parse(dsse_json) catch return ProvenanceError.SigningFailed;
+        defer dsse_tree.deinit();
+
+        // Create JSON writer with buffer
+        var json_buffer = std.ArrayList(u8).init(self.allocator);
+        defer json_buffer.deinit();
         
-        for (cert_pem) |c| {
-            switch (c) {
-                '\n' => try escaped_cert.appendSlice("\\n"),
-                '"' => try escaped_cert.appendSlice("\\\""),
-                '\\' => try escaped_cert.appendSlice("\\\\"),
-                else => try escaped_cert.append(c),
-            }
+        var json_writer = std.json.Writer(@TypeOf(json_buffer.writer())).init(json_buffer.writer());
+
+        // Write the Sigstore bundle structure
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+
+        // mediaType
+        json_writer.objectField("mediaType") catch return ProvenanceError.OutOfMemory;
+        json_writer.write("application/vnd.dev.sigstore.bundle+json;version=0.2") catch return ProvenanceError.OutOfMemory;
+
+        // content object
+        json_writer.objectField("content") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        
+        json_writer.objectField("dsseEnvelope") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(dsse_tree.root) catch return ProvenanceError.OutOfMemory;
+        
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory; // end content
+
+        // verificationMaterial object
+        json_writer.objectField("verificationMaterial") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        
+        // x509CertificateChain
+        json_writer.objectField("x509CertificateChain") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        
+        json_writer.objectField("certificates") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginArray() catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        json_writer.objectField("rawBytes") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(cert_base64) catch return ProvenanceError.OutOfMemory;
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory;
+        json_writer.endArray() catch return ProvenanceError.OutOfMemory;
+        
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory; // end x509CertificateChain
+
+        // tlogEntries array
+        json_writer.objectField("tlogEntries") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginArray() catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+
+        // logIndex as number
+        json_writer.objectField("logIndex") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(log_entry.log_index) catch return ProvenanceError.OutOfMemory;
+
+        // logId object
+        json_writer.objectField("logId") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        json_writer.objectField("keyId") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(log_entry.log_id) catch return ProvenanceError.OutOfMemory;
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory;
+
+        // kindVersion object
+        json_writer.objectField("kindVersion") catch return ProvenanceError.OutOfMemory;
+        json_writer.beginObject() catch return ProvenanceError.OutOfMemory;
+        json_writer.objectField("kind") catch return ProvenanceError.OutOfMemory;
+        json_writer.write("dsse") catch return ProvenanceError.OutOfMemory;
+        json_writer.objectField("version") catch return ProvenanceError.OutOfMemory;
+        json_writer.write("0.0.1") catch return ProvenanceError.OutOfMemory;
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory;
+
+        // integratedTime as number
+        json_writer.objectField("integratedTime") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(log_entry.integrated_time) catch return ProvenanceError.OutOfMemory;
+
+        // canonicalizedBody as string
+        json_writer.objectField("canonicalizedBody") catch return ProvenanceError.OutOfMemory;
+        json_writer.write(log_entry.body) catch return ProvenanceError.OutOfMemory;
+
+        // signedEntryTimestamp if available
+        if (log_entry.signed_entry_timestamp) |set| {
+            json_writer.objectField("signedEntryTimestamp") catch return ProvenanceError.OutOfMemory;
+            json_writer.write(set) catch return ProvenanceError.OutOfMemory;
         }
 
-        // Create Sigstore bundle with real data
-        return std.fmt.allocPrint(self.allocator,
-            \\{{
-            \\  "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.2",
-            \\  "verificationMaterial": {{
-            \\    "certificate": "{s}",
-            \\    "tlogEntries": [{{
-            \\      "logIndex": "{d}",
-            \\      "logId": {{
-            \\        "keyId": "{s}"
-            \\      }},
-            \\      "kindVersion": {{
-            \\        "kind": "dsse",
-            \\        "version": "0.0.1"
-            \\      }},
-            \\      "integratedTime": "{d}",
-            \\      "canonicalizedBody": "{s}"
-            \\    }}]
-            \\  }},
-            \\  "dsseEnvelope": {s}
-            \\}}
-        , .{
-            escaped_cert.items,
-            log_entry.log_index,
-            log_entry.log_id,
-            log_entry.integrated_time,
-            log_entry.body,
-            dsse_json,
-        });
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory; // end tlog entry
+        json_writer.endArray() catch return ProvenanceError.OutOfMemory; // end tlogEntries
+        
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory; // end verificationMaterial
+        json_writer.endObject() catch return ProvenanceError.OutOfMemory; // end root object
+
+        return json_buffer.toOwnedSlice() catch return ProvenanceError.OutOfMemory;
     }
 };
 
@@ -381,3 +428,11 @@ pub fn createProvenanceGenerator(
 ) !SigstoreProvenanceGenerator {
     return SigstoreProvenanceGenerator.init(allocator, fulcio_url, rekor_url);
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const crypto = @import("bun_crypto.zig");
+const oidc = @import("oidc.zig");
+const fulcio = @import("fulcio.zig");
+const rekor = @import("rekor.zig");
+const dsse = @import("dsse.zig");

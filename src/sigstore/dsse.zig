@@ -15,10 +15,13 @@ pub const Signature = struct {
     pub fn init(allocator: std.mem.Allocator, signature_bytes: []const u8, keyid: ?[]const u8) !Signature {
         const sig_encoded_len = std.base64.standard.Encoder.calcSize(signature_bytes.len);
         const sig_encoded = try allocator.alloc(u8, sig_encoded_len);
+        errdefer allocator.free(sig_encoded);
         _ = std.base64.standard.Encoder.encode(sig_encoded, signature_bytes);
 
+        const duplicated_keyid = if (keyid) |kid| try allocator.dupe(u8, kid) else null;
+        
         return Signature{
-            .keyid = if (keyid) |kid| try allocator.dupe(u8, kid) else null,
+            .keyid = duplicated_keyid,
             .sig = sig_encoded,
             .allocator = allocator,
         };

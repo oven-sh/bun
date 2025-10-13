@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const crypto = @import("bun_crypto.zig");
-const fulcio = @import("fulcio.zig");
-const rekor = @import("rekor.zig");
-const dsse = @import("dsse.zig");
-
 pub const BundleError = error{
     InvalidBundle,
     VerificationFailed,
@@ -489,3 +482,10 @@ pub const BundleBuilder = struct {
         return SigstoreBundle.init(self.allocator, verification_material, dsse_envelope, null);
     }
 };
+
+const std = @import("std");
+const bun = @import("bun");
+const crypto = @import("bun_crypto.zig");
+const fulcio = @import("fulcio.zig");
+const rekor = @import("rekor.zig");
+const dsse = @import("dsse.zig");

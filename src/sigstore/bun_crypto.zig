@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const BoringSSL = bun.BoringSSL.c;
-
 pub const SigstoreError = error{
     KeyGenerationFailed,
     SigningFailed,
@@ -132,6 +128,20 @@ pub const CertificateParser = struct {
         @memcpy(result, cert_data[0..@intCast(cert_len)]);
         return result;
     }
+
+    pub fn getCertificateDER(self: *const CertificateParser, cert: *BoringSSL.X509) SigstoreError![]const u8 {
+        const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse return SigstoreError.OutOfMemory;
+        defer BoringSSL.BIO_free(bio);
+
+        if (BoringSSL.i2d_X509_bio(bio, cert) != 1) return SigstoreError.CertificateParsingFailed;
+
+        var cert_data: [*c]u8 = undefined;
+        const cert_len = BoringSSL.BIO_get_mem_data(bio, &cert_data);
+
+        const result = try self.allocator.alloc(u8, @intCast(cert_len));
+        @memcpy(result, cert_data[0..@intCast(cert_len)]);
+        return result;
+    }
 };
 
 /// Generate CSR for certificate request
@@ -170,4 +180,6 @@ pub fn generateCSR(allocator: std.mem.Allocator, keypair: *const EphemeralKeyPai
     return result;
 }
 
-@import("bun")
+const std = @import("std");
+const bun = @import("bun");
+const BoringSSL = bun.BoringSSL.c;

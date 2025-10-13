@@ -42,14 +42,14 @@ describe("Sigstore SLSA Tests", () => {
               configSource: {
                 uri: "git+https://github.com/example/repo@refs/heads/main",
                 digest: {
-                  sha1: "1234567890abcdef1234567890abcdef12345678"
+                  sha256: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
                 },
                 entryPoint: ".github/workflows/publish.yml"
               },
               parameters: {},
               environment: {
                 "GITHUB_ACTOR": "github-actions[bot]",
-                "GITHUB_SHA": "1234567890abcdef1234567890abcdef12345678"
+                "GITHUB_SHA": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
               }
             },
             metadata: {
@@ -65,7 +65,7 @@ describe("Sigstore SLSA Tests", () => {
               {
                 uri: "git+https://github.com/example/repo@refs/heads/main",
                 digest: {
-                  sha1: "1234567890abcdef1234567890abcdef12345678"
+                  sha256: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
                 }
               }
             ]
@@ -165,7 +165,7 @@ describe("Sigstore SLSA Tests", () => {
           {
             uri: "git+https://github.com/example/repo@refs/heads/main",
             digest: {
-              sha1: "1234567890abcdef1234567890abcdef12345678"
+              sha256: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
             }
           },
           {
@@ -280,7 +280,7 @@ describe("Sigstore SLSA Tests", () => {
           GITHUB_WORKFLOW: "Build and Publish",
           GITHUB_RUN_ID: "123456789",
           GITHUB_RUN_NUMBER: "42",
-          GITHUB_SHA: "1234567890abcdef1234567890abcdef12345678",
+          GITHUB_SHA: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
           GITHUB_REF: "refs/heads/main",
           GITHUB_REPOSITORY: "example/repo",
           GITHUB_ACTOR: "github-actions[bot]",

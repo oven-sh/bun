@@ -16,9 +16,9 @@ pub const ProvenanceGenerator = struct {
     sigstore_generator: sigstore.SigstoreProvenanceGenerator,
 
     pub fn init(allocator: std.mem.Allocator) ProvenanceGenerator {
-        const sigstore_generator = sigstore.createProvenanceGenerator(allocator, null, null) catch {
-            // This should only fail if the allocator is out of memory
-            @panic("Failed to create provenance generator");
+        const sigstore_generator = sigstore.createProvenanceGenerator(allocator, null, null) catch |err| {
+            // This may fail for various reasons: network errors, provider initialization failures, OOM, etc.
+            std.debug.panic("Failed to create provenance generator: {}", .{err});
         };
         
         return .{

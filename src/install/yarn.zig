@@ -140,13 +140,7 @@ fn migrateYarnV1(
 
             const workspace_deps_start = lockfile.buffers.dependencies.items.len;
             for (lockfile.workspace_paths.values()) |workspace_path| {
-                var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-                defer ws_pkg_json_path.deinit();
-
-                ws_pkg_json_path.append(workspace_path.slice(string_buf.bytes.items));
-                ws_pkg_json_path.append("package.json");
-
-                const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+                const ws_pkg_json = loadWorkspacePackageJson(manager, allocator, log, workspace_path.slice(string_buf.bytes.items)) orelse continue;
                 const ws_json = ws_pkg_json.root;
 
                 const ws_name, _ = try ws_json.getString(allocator, "name") orelse continue;
@@ -172,13 +166,7 @@ fn migrateYarnV1(
             root_pkg.meta.id = 0;
             root_pkg.resolution = .init(.{ .root = {} });
 
-            if (root_json.get("bin")) |bin_expr| {
-                root_pkg.bin = try Bin.parseAppend(allocator, bin_expr, &string_buf, &lockfile.buffers.extern_strings);
-            } else if (root_json.get("directories")) |directories_expr| {
-                if (directories_expr.get("bin")) |bin_expr| {
-                    root_pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_expr, &string_buf);
-                }
-            }
+            try parseBinFromJson(&root_json, &root_pkg, allocator, &string_buf, &lockfile.buffers.extern_strings);
 
             try lockfile.packages.append(allocator, root_pkg);
             try lockfile.getOrPutID(0, root_pkg.name_hash);
@@ -236,14 +224,13 @@ fn migrateYarnV1(
         const workspace_pkgs_off = lockfile.packages.len;
 
         for (lockfile.workspace_paths.values()) |workspace_path| {
-            var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-            defer ws_pkg_json_path.deinit();
+            const ws_path_str = workspace_path.slice(string_buf.bytes.items);
+            var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+            defer path_buf.deinit();
+            path_buf.append(ws_path_str);
+            const abs_path = try allocator.dupe(u8, path_buf.slice());
 
-            ws_pkg_json_path.append(workspace_path.slice(string_buf.bytes.items));
-            const abs_path = try allocator.dupe(u8, ws_pkg_json_path.slice());
-            ws_pkg_json_path.append("package.json");
-
-            const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+            const ws_pkg_json = loadWorkspacePackageJson(manager, allocator, log, ws_path_str) orelse continue;
             const ws_json = ws_pkg_json.root;
 
             const name, _ = try ws_json.getString(allocator, "name") orelse continue;
@@ -267,13 +254,7 @@ fn migrateYarnV1(
             pkg.dependencies = .{ .off = deps_off, .len = deps_len };
             pkg.resolutions = .{ .off = deps_off, .len = deps_len };
 
-            if (ws_json.get("bin")) |bin_expr| {
-                pkg.bin = try Bin.parseAppend(allocator, bin_expr, &string_buf, &lockfile.buffers.extern_strings);
-            } else if (ws_json.get("directories")) |directories_expr| {
-                if (directories_expr.get("bin")) |bin_expr| {
-                    pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_expr, &string_buf);
-                }
-            }
+            try parseBinFromJson(&ws_json, &pkg, allocator, &string_buf, &lockfile.buffers.extern_strings);
 
             const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
@@ -368,9 +349,7 @@ fn migrateYarnV1(
 
                 if (repo.committish.len() > 0) {
                     const committish = repo.committish.slice(string_buf.bytes.items);
-                    if (committish.len > 7) {
-                        repo.committish = try string_buf.append(committish[0..7]);
-                    }
+                    repo.committish = try shortenCommittish(committish, &string_buf);
                 }
 
                 res = .init(.{ .github = repo });
@@ -422,13 +401,11 @@ fn migrateYarnV1(
 
                     if (hash_idx != 0) {
                         const committish = path[hash_idx + 1 ..];
-                        const short_hash = if (committish.len > 7) committish[0..7] else committish;
-                        repo_result.committish = try string_buf.append(short_hash);
+                        repo_result.committish = try shortenCommittish(committish, &string_buf);
                     } else if (entry.resolved.len > 0) {
                         if (strings.indexOfChar(entry.resolved, '#')) |resolved_hash_idx| {
                             const committish = entry.resolved[resolved_hash_idx + 1 ..];
-                            const short_hash = if (committish.len > 7) committish[0..7] else committish;
-                            repo_result.committish = try string_buf.append(short_hash);
+                            repo_result.committish = try shortenCommittish(committish, &string_buf);
                         }
                     }
 
@@ -533,10 +510,8 @@ fn migrateYarnV1(
                         var repo = res.value.github;
                         if (repo.committish.len() > 0) {
                             const committish = repo.committish.slice(string_buf.bytes.items);
-                            if (committish.len > 7) {
-                                repo.committish = try string_buf.append(committish[0..7]);
-                                res = .init(.{ .github = repo });
-                            }
+                            repo.committish = try shortenCommittish(committish, &string_buf);
+                            res = .init(.{ .github = repo });
                         }
                         const repo_name = repo.repo.slice(string_buf.bytes.items);
                         real_name_hash = String.Builder.stringHash(repo_name);
@@ -703,6 +678,100 @@ fn migrateYarnV1(
     };
 }
 
+inline fn shortenCommittish(committish: []const u8, string_buf: *String.Buf) !String {
+    if (committish.len > 7) {
+        return try string_buf.append(committish[0..7]);
+    }
+    return try string_buf.append(committish);
+}
+
+fn loadWorkspacePackageJson(
+    manager: *PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    workspace_path: []const u8,
+) ?*const PackageJSON {
+    var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
+    defer ws_pkg_json_path.deinit();
+    ws_pkg_json_path.append(workspace_path);
+    ws_pkg_json_path.append("package.json");
+    return manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch null;
+}
+
+fn parseBinFromJson(
+    json_obj: *const JSAst.Expr,
+    pkg: *Lockfile.Package,
+    allocator: Allocator,
+    string_buf: *String.Buf,
+    extern_strings: *std.ArrayList(ExternalString),
+) !void {
+    if (json_obj.get("bin")) |bin_expr| {
+        pkg.bin = try Bin.parseAppend(allocator, bin_expr, string_buf, extern_strings);
+    } else if (json_obj.get("directories")) |directories_expr| {
+        if (directories_expr.get("bin")) |bin_expr| {
+            pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_expr, string_buf);
+        }
+    }
+}
+
+fn parseBerryDependencies(
+    entry_obj: JSAst.Expr,
+    group_name: []const u8,
+    behavior: Dependency.Behavior,
+    optional_peer_set: ?*const std.AutoHashMap(u64, void),
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    string_buf: *String.Buf,
+    log: *logger.Log,
+    manager: *PackageManager,
+) MigrateYarnLockfileError!void {
+    if (entry_obj.get(group_name)) |deps_node| {
+        if (deps_node.data == .e_object) {
+            for (deps_node.data.e_object.properties.slice()) |dep_prop| {
+                const dep_key = dep_prop.key orelse continue;
+                const dep_value = dep_prop.value orelse continue;
+
+                const dep_name_str = dep_key.asString(allocator) orelse continue;
+                var dep_version_raw = dep_value.asString(allocator) orelse continue;
+
+                if (strings.hasPrefixComptime(dep_version_raw, "npm:")) {
+                    dep_version_raw = dep_version_raw[4..];
+                }
+
+                const dep_name_hash = String.Builder.stringHash(dep_name_str);
+                const dep_name = try string_buf.appendExternalWithHash(dep_name_str, dep_name_hash);
+
+                const dep_version = try string_buf.append(dep_version_raw);
+                const dep_version_sliced = dep_version.sliced(string_buf.bytes.items);
+
+                var actual_behavior = behavior;
+                if (optional_peer_set) |peer_set| {
+                    if (peer_set.contains(dep_name_hash)) {
+                        actual_behavior.optional = true;
+                    }
+                }
+
+                const dep: Dependency = .{
+                    .name = dep_name.value,
+                    .name_hash = dep_name.hash,
+                    .behavior = actual_behavior,
+                    .version = Dependency.parse(
+                        allocator,
+                        dep_name.value,
+                        dep_name.hash,
+                        dep_version_sliced.slice,
+                        &dep_version_sliced,
+                        log,
+                        manager,
+                    ) orelse continue,
+                };
+
+                try lockfile.buffers.dependencies.append(allocator, dep);
+            }
+        }
+    }
+}
+
 fn migrateYarnBerry(
     lockfile: *Lockfile,
     manager: *PackageManager,
@@ -810,13 +879,7 @@ fn migrateYarnBerry(
 
         const workspace_deps_start = lockfile.buffers.dependencies.items.len;
         for (lockfile.workspace_paths.values()) |workspace_path| {
-            var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-            defer ws_pkg_json_path.deinit();
-
-            ws_pkg_json_path.append(workspace_path.slice(string_buf.bytes.items));
-            ws_pkg_json_path.append("package.json");
-
-            const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+            const ws_pkg_json = loadWorkspacePackageJson(manager, allocator, log, workspace_path.slice(string_buf.bytes.items)) orelse continue;
             const ws_json = ws_pkg_json.root;
 
             const ws_name, _ = try ws_json.getString(allocator, "name") orelse continue;
@@ -842,13 +905,7 @@ fn migrateYarnBerry(
         root_pkg.meta.id = 0;
         root_pkg.resolution = .init(.{ .root = {} });
 
-        if (root_json.get("bin")) |bin_expr| {
-            root_pkg.bin = try Bin.parseAppend(allocator, bin_expr, &string_buf, &lockfile.buffers.extern_strings);
-        } else if (root_json.get("directories")) |directories_expr| {
-            if (directories_expr.get("bin")) |bin_expr| {
-                root_pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_expr, &string_buf);
-            }
-        }
+        try parseBinFromJson(&root_json, &root_pkg, allocator, &string_buf, &lockfile.buffers.extern_strings);
 
         try lockfile.packages.append(allocator, root_pkg);
         try lockfile.getOrPutID(0, root_pkg.name_hash);
@@ -864,14 +921,12 @@ fn migrateYarnBerry(
         const ws_path_str = workspace_path.slice(string_buf.bytes.items);
         if (strings.eqlComptime(ws_path_str, ".")) continue;
 
-        var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
-        defer ws_pkg_json_path.deinit();
+        var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+        defer path_buf.deinit();
+        path_buf.append(ws_path_str);
+        const abs_path = try allocator.dupe(u8, path_buf.slice());
 
-        ws_pkg_json_path.append(ws_path_str);
-        const abs_path = try allocator.dupe(u8, ws_pkg_json_path.slice());
-        ws_pkg_json_path.append("package.json");
-
-        const ws_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, ws_pkg_json_path.slice(), .{}).unwrap() catch continue;
+        const ws_pkg_json = loadWorkspacePackageJson(manager, allocator, log, ws_path_str) orelse continue;
         const ws_json = ws_pkg_json.root;
 
         const name, _ = try ws_json.getString(allocator, "name") orelse continue;
@@ -895,13 +950,7 @@ fn migrateYarnBerry(
         pkg.dependencies = .{ .off = deps_off, .len = deps_len };
         pkg.resolutions = .{ .off = deps_off, .len = deps_len };
 
-        if (ws_json.get("bin")) |bin_expr| {
-            pkg.bin = try Bin.parseAppend(allocator, bin_expr, &string_buf, &lockfile.buffers.extern_strings);
-        } else if (ws_json.get("directories")) |directories_expr| {
-            if (directories_expr.get("bin")) |bin_expr| {
-                pkg.bin = try Bin.parseAppendFromDirectories(allocator, bin_expr, &string_buf);
-            }
-        }
+        try parseBinFromJson(&ws_json, &pkg, allocator, &string_buf, &lockfile.buffers.extern_strings);
 
         const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
@@ -966,44 +1015,7 @@ fn migrateYarnBerry(
 
         const deps_off = lockfile.buffers.dependencies.items.len;
 
-        if (entry_obj.get("dependencies")) |deps_node| {
-            if (deps_node.data == .e_object) {
-                for (deps_node.data.e_object.properties.slice()) |dep_prop| {
-                    const dep_key = dep_prop.key orelse continue;
-                    const dep_value = dep_prop.value orelse continue;
-
-                    const dep_name_str = dep_key.asString(allocator) orelse continue;
-                    var dep_version_raw = dep_value.asString(allocator) orelse continue;
-
-                    if (strings.hasPrefixComptime(dep_version_raw, "npm:")) {
-                        dep_version_raw = dep_version_raw[4..];
-                    }
-
-                    const dep_name_hash = String.Builder.stringHash(dep_name_str);
-                    const dep_name = try string_buf.appendExternalWithHash(dep_name_str, dep_name_hash);
-
-                    const dep_version = try string_buf.append(dep_version_raw);
-                    const dep_version_sliced = dep_version.sliced(string_buf.bytes.items);
-
-                    const dep: Dependency = .{
-                        .name = dep_name.value,
-                        .name_hash = dep_name.hash,
-                        .behavior = .{ .prod = true },
-                        .version = Dependency.parse(
-                            allocator,
-                            dep_name.value,
-                            dep_name.hash,
-                            dep_version_sliced.slice,
-                            &dep_version_sliced,
-                            log,
-                            manager,
-                        ) orelse continue,
-                    };
-
-                    try lockfile.buffers.dependencies.append(allocator, dep);
-                }
-            }
-        }
+        try parseBerryDependencies(entry_obj, "dependencies", .{ .prod = true }, null, lockfile, allocator, &string_buf, log, manager);
 
         // Parse peerDependenciesMeta first to know which peers are optional
         var optional_peer_set = std.AutoHashMap(u64, void).init(allocator);
@@ -1029,46 +1041,7 @@ fn migrateYarnBerry(
             }
         }
 
-        if (entry_obj.get("peerDependencies")) |peers_node| {
-            if (peers_node.data == .e_object) {
-                for (peers_node.data.e_object.properties.slice()) |peer_prop| {
-                    const peer_key = peer_prop.key orelse continue;
-                    const peer_value = peer_prop.value orelse continue;
-
-                    const peer_name_str = peer_key.asString(allocator) orelse continue;
-                    var peer_version_raw = peer_value.asString(allocator) orelse continue;
-
-                    if (strings.hasPrefixComptime(peer_version_raw, "npm:")) {
-                        peer_version_raw = peer_version_raw[4..];
-                    }
-
-                    const peer_name_hash = String.Builder.stringHash(peer_name_str);
-                    const peer_name = try string_buf.appendExternalWithHash(peer_name_str, peer_name_hash);
-
-                    const peer_version = try string_buf.append(peer_version_raw);
-                    const peer_version_sliced = peer_version.sliced(string_buf.bytes.items);
-
-                    const is_optional = optional_peer_set.contains(peer_name_hash);
-
-                    const peer_dep: Dependency = .{
-                        .name = peer_name.value,
-                        .name_hash = peer_name.hash,
-                        .behavior = .{ .peer = true, .optional = is_optional },
-                        .version = Dependency.parse(
-                            allocator,
-                            peer_name.value,
-                            peer_name.hash,
-                            peer_version_sliced.slice,
-                            &peer_version_sliced,
-                            log,
-                            manager,
-                        ) orelse continue,
-                    };
-
-                    try lockfile.buffers.dependencies.append(allocator, peer_dep);
-                }
-            }
-        }
+        try parseBerryDependencies(entry_obj, "peerDependencies", .{ .peer = true }, &optional_peer_set, lockfile, allocator, &string_buf, log, manager);
 
         if (entry_obj.get("dependenciesMeta")) |deps_meta_node| {
             if (deps_meta_node.data == .e_object) {

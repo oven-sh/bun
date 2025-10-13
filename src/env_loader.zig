@@ -1358,6 +1358,96 @@ test "loadFromString with template expansion" {
     try std.testing.expectEqualStrings("helloworld", result.?);
 }
 
+test "loadFromString without backtick or quotes expansion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with backtick expansion
+    const test_content = "KEY=hello$VAR\n";
+    
+    // Load with expansion disabled (expand = false)
+    try loader.loadFromString(test_content, true, false);
+
+    // Verify that no expansion occurred
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello$VAR", result.?);
+}
+
+test "loadFromString with quoted value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with quoted value and spaces
+    const test_content = "KEY=\"hello $VAR\"\n";
+    
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that expansion occurred within quotes
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello world", result.?);
+}
+
+test "loadFromString with single quoted value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with single quoted value and spaces
+    const test_content = "KEY='hello $VAR'\n";
+    
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that no expansion occurred within single quotes
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello $VAR", result.?);
+}
+
+test "loadFromString with random string containing a dollar sign" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // Test string with random characters and a dollar sign 
+    // that represent a typical password 
+    const test_content = "RANDOM_STRING=abc$123!@#\n";
+    
+    // Load with expansion disabled (expand = false)
+    try loader.loadFromString(test_content, true, false);
+
+    // Verify that the value is stored correctly without expansion
+    const result = loader.get("RANDOM_STRING");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("abc$123!@#", result.?);
+}
+
 const string = []const u8;
 
 const Fs = @import("./fs.zig");

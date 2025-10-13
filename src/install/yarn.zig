@@ -1281,6 +1281,21 @@ fn migrateYarnBerry(
 
         if (spec_to_pkg_id.get(key)) |pkg_id| {
             lockfile.buffers.resolutions.items[dep_id] = pkg_id;
+        } else if (dep.version.tag == .workspace or strings.hasPrefixComptime(version_str, "workspace:")) {
+            // Fallback for workspace: protocol without explicit lockfile entry (e.g. workspace:*)
+            const dep_name_hash = String.Builder.stringHash(dep_name);
+            if (lockfile.workspace_paths.get(dep_name_hash)) |_| {
+                // Find the workspace package by name
+                const pkg_names = lockfile.packages.items(.name);
+                const pkg_name_hashes = lockfile.packages.items(.name_hash);
+                const pkg_resolutions = lockfile.packages.items(.resolution);
+                for (pkg_names, pkg_name_hashes, pkg_resolutions, 0..) |_, pkg_name_hash, pkg_res, pkg_idx| {
+                    if (pkg_name_hash == dep_name_hash and pkg_res.tag == .workspace) {
+                        lockfile.buffers.resolutions.items[dep_id] = @intCast(pkg_idx);
+                        break;
+                    }
+                }
+            }
         }
     }
 

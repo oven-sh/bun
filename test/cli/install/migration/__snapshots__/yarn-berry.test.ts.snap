@@ -96,7 +96,9 @@ exports[`Yarn Berry migration workspace:* protocol 1`] = `
       "version": "1.0.0",
     },
   },
-  "packages": {}
+  "packages": {
+    "lib-a": ["lib-a@workspace:packages/lib-a"],
+  }
 }
 "
 `;

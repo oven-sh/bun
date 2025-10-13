@@ -677,11 +677,20 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
-pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
+pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
         this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
+    }
+
+    this.addMainToWatcherIfNeeded();
+}
+
+pub fn addMainToWatcherIfNeeded(this: *jsc.VirtualMachine) void {
+    if (this.isWatcherEnabled()) {
+        const main = this.main;
+        _ = this.bun_watcher.addFileByPathSlow(main, this.transpiler.options.loader(std.fs.path.extension(main)));
     }
 }
 
@@ -1668,7 +1677,7 @@ fn _resolve(
                         );
                     };
 
-                    // Only re-query if we previously had something cached.
+                    // Only re-query if we previously had something cached, or if it's main.
                     if (jsc_vm.transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                         continue;
                     }

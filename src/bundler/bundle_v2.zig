@@ -935,7 +935,7 @@ pub const BundleV2 = struct {
 
         const pool = try this.allocator().create(ThreadPool);
         if (cli_watch_flag) {
-            Watcher.enableHotModuleReloading(this);
+            Watcher.enableHotModuleReloading(this, null);
         }
         // errdefer pool.destroy();
         errdefer this.graph.heap.deinit();

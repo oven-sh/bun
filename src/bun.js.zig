@@ -311,8 +311,8 @@ pub const Run = struct {
         }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, this.entry_path),
+            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.entry_path),
             else => {},
         }
 
@@ -328,6 +328,7 @@ pub const Run = struct {
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
+                    vm.addMainToWatcherIfNeeded();
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
@@ -389,21 +390,21 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                vm.handlePendingInternalPromiseRejection();
+                vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        vm.handlePendingInternalPromiseRejection();
+                        vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
-                    vm.handlePendingInternalPromiseRejection();
+                    vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                     vm.eventLoop().tickPossiblyForever();
                 }

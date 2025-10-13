@@ -416,6 +416,47 @@ describe("isolated workspaces", () => {
       version: "1.0.0",
     });
   });
+
+  test("workspace self dependencies create symlinks", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-workspace-self-dep",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "workspace:*",
+            "pkg2": "workspace:*",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        file(join(packageDir, "packages", "pkg1", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg2", "package.json")).json(),
+      ]),
+    ).toEqual([
+      [".bun"],
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
+    ]);
+  });
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

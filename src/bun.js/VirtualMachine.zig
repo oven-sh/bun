@@ -3866,7 +3866,6 @@ const ConsoleObject = jsc.ConsoleObject;
 const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
 const ErrorableString = jsc.ErrorableString;
 const EventLoop = jsc.EventLoop;
-const EventLoopTimer = jsc.API.Timer.EventLoopTimer;
 const Exception = jsc.Exception;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSInternalPromise = jsc.JSInternalPromise;
@@ -3880,6 +3879,7 @@ const ZigException = jsc.ZigException;
 const ZigStackTrace = jsc.ZigStackTrace;
 const ZigString = jsc.ZigString;
 const Bun = jsc.API.Bun;
+const EventLoopTimer = jsc.API.Timer.EventLoopTimer;
 
 const ModuleLoader = jsc.ModuleLoader;
 const FetchFlags = ModuleLoader.FetchFlags;

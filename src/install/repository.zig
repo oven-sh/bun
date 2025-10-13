@@ -2,6 +2,7 @@ threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
+threadlocal var temp_path_buf: bun.PathBuffer = undefined;
 
 const SloppyGlobalGitConfig = struct {
     has_askpass: bool = false,
@@ -480,6 +481,7 @@ pub const Repository = extern struct {
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
+        temp_dir: std.fs.Dir,
         task_id: Install.Task.Id,
         name: string,
         url: string,
@@ -511,7 +513,11 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            // Clone to temp directory first
+            var tmpname_buf: bun.PathBuffer = undefined;
+            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
+            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
+            const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -520,7 +526,7 @@ pub const Repository = extern struct {
                 "--quiet",
                 "--bare",
                 url,
-                target,
+                temp_target_full,
             }) catch |err| {
                 if (err == error.RepositoryNotFound or attempt > 1) {
                     log.addErrorFmt(
@@ -533,6 +539,24 @@ pub const Repository = extern struct {
                 }
                 return err;
             };
+
+            // Move from temp to cache atomically
+            if (bun.sys.renameatConcurrently(
+                .fromStdDir(temp_dir),
+                tmpname,
+                .fromStdDir(cache_dir),
+                folder_name,
+                .{ .move_fallback = true },
+            ).asErr()) |err| {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                    .{ name, err, tmpname, folder_name },
+                ) catch unreachable;
+                return error.InstallFailed;
+            }
 
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };
@@ -577,6 +601,7 @@ pub const Repository = extern struct {
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
+        temp_dir: std.fs.Dir,
         repo_dir: std.fs.Dir,
         name: string,
         url: string,
@@ -588,7 +613,11 @@ pub const Repository = extern struct {
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            // Clone to temp directory first
+            var tmpname_buf: bun.PathBuffer = undefined;
+            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
+            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
+            const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -597,7 +626,7 @@ pub const Repository = extern struct {
                 "--quiet",
                 "--no-checkout",
                 try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
-                target,
+                temp_target_full,
             }) catch |err| {
                 log.addErrorFmt(
                     null,
@@ -609,9 +638,7 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+            _ = exec(allocator, env, &[_]string{ "git", "-C", temp_target_full, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -621,18 +648,38 @@ pub const Repository = extern struct {
                 ) catch unreachable;
                 return err;
             };
-            var dir = try bun.openDir(cache_dir, folder_name);
-            dir.deleteTree(".git") catch {};
+
+            var temp_pkg_dir = try bun.openDir(temp_dir, tmpname);
+            temp_pkg_dir.deleteTree(".git") catch {};
 
             if (resolved.len > 0) insert_tag: {
-                const git_tag = dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+                const git_tag = temp_pkg_dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
                 defer git_tag.close();
                 git_tag.writeAll(resolved) catch {
-                    dir.deleteFileZ(".bun-tag") catch {};
+                    temp_pkg_dir.deleteFileZ(".bun-tag") catch {};
                 };
             }
+            temp_pkg_dir.close();
 
-            break :brk dir;
+            // Move from temp to cache atomically
+            if (bun.sys.renameatConcurrently(
+                .fromStdDir(temp_dir),
+                tmpname,
+                .fromStdDir(cache_dir),
+                folder_name,
+                .{ .move_fallback = true },
+            ).asErr()) |err| {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                    .{ name, err, tmpname, folder_name },
+                ) catch unreachable;
+                return error.InstallFailed;
+            }
+
+            break :brk try bun.openDir(cache_dir, folder_name);
         };
         defer package_dir.close();
 

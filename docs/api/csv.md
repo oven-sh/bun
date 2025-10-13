@@ -134,7 +134,7 @@ try {
     delimiter: "",
   });
 } catch (e) {
-  console.error("Failed to parse CSV:", error.message);
+  console.error("Failed to parse CSV:", e.message);
   // Preview value must be a positive integer
   // Delimiter cannot be empty
 }
@@ -253,15 +253,23 @@ import { data, rows, columns, errors } from "./data.csv";
 Both the default export and the named `data` export point to the same object.
 Also, `comments` export is available, but is always `undefined` as the comments are disabled by default.
 
-Both `errors` and `comments` have the following structure:
+`errors` and `comments` have the following structures:
 
 ```ts
-[
-  {
-    line: 4,
-    message: "Field count mismatch: expected 4, got 3",
-  },
-];
+{
+errors: [
+    {
+      line: 5,
+      message: "Field count mismatch: expected 3, got 2",
+    }
+  ],
+  comments: [
+    {
+      line: 4,
+      text: "this is a comment",
+    }
+  ]
+}
 ```
 
 The `line` is the line in the original CSV file.

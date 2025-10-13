@@ -768,7 +768,7 @@ declare module "bun" {
        */
       errors?: {
         line: number;
-        text: string;
+        message: string;
       }[];
       /**
        * The comments encountered during parsing.

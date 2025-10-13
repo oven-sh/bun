@@ -144,7 +144,6 @@ pub const BuildCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
                     Output.flush();
                     Global.exit(1);
-                    return;
                 }
             }
         }

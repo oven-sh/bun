@@ -139,9 +139,8 @@ pub fn deinit(this: *MissingModulePollTimer, vm: *VirtualMachine) void {
 
 const log = bun.Output.scoped(.MissingModulePollTimer, .hidden);
 
-const std = @import("std");
-
 const bun = @import("bun");
+const std = @import("std");
 
 const jsc = bun.jsc;
 const VirtualMachine = jsc.VirtualMachine;

@@ -210,6 +210,13 @@ fn doStat(this: *CondExpr) Yield {
     return .suspended;
 }
 
+pub fn kill(this: *CondExpr, signal: i32) void {
+    log("CondExpr(0x{x}) kill sig={d}", .{ @intFromPtr(this), signal });
+    if (this.state == .expanding_args) {
+        this.state.expanding_args.expansion.kill(signal);
+    }
+}
+
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
     for (this.args.items) |item| {

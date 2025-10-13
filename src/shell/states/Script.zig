@@ -7,6 +7,7 @@ base: State,
 node: *const ast.Script,
 io: IO,
 parent: ParentPtr,
+currently_executing: ?*Stmt = null,
 state: union(enum) {
     normal: struct {
         idx: usize = 0,
@@ -69,6 +70,7 @@ pub fn next(this: *Script) Yield {
             this.state.normal.idx += 1;
             var io = this.getIO();
             var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, io.ref().*);
+            this.currently_executing = stmt;
             return stmt.start();
         },
     }
@@ -85,10 +87,18 @@ fn finish(this: *Script, exit_code: ExitCode) Yield {
 
 pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
     child.deinit();
+    this.currently_executing = null;
     if (this.state.normal.idx >= this.node.stmts.len) {
         return this.finish(exit_code);
     }
     return this.next();
+}
+
+pub fn kill(this: *Script, signal: i32) void {
+    log("Script(0x{x}) kill sig={d}", .{ @intFromPtr(this), signal });
+    if (this.currently_executing) |stmt| {
+        stmt.kill(signal);
+    }
 }
 
 pub fn deinit(this: *Script) void {

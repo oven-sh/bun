@@ -988,7 +988,6 @@ const Parser = struct {
 
     fn parseValue(this: *Parser, comptime is_process: bool) OOM!string {
         const start = this.pos;
-        this.skipWhitespaces();
         var end = this.pos;
         if (end >= this.src.len) return this.src[this.src.len..];
         switch (this.src[end]) {
@@ -1074,6 +1073,7 @@ const Parser = struct {
                 this.skipLine();
                 continue;
             };
+            this.skipWhitespaces();
             const should_expand = expand and this.pos < this.src.len and this.src[this.pos] == '`';
             const value = try this.parseValue(is_process);
             const entry = try map.map.getOrPut(key);
@@ -1334,6 +1334,29 @@ pub const Map = struct {
 pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
+
+test "loadFromString with template expansion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with backtick expansion
+    const test_content = "KEY=`hello$VAR`\n";
+    
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that expansion occurred
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("helloworld", result.?);
+}
 
 const string = []const u8;
 

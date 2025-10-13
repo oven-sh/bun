@@ -644,6 +644,51 @@ pub fn handledPromise(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, 
     return Bun__emitHandledPromiseEvent(globalObject, promise);
 }
 
+/// Check if an error is a module-not-found error and start polling for it in watch mode
+fn tryHandleMissingModuleInWatchMode(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue) void {
+    // Only poll in watch mode
+    if (this.hot_reload != .watch) return;
+
+    if (!err.isObject()) return;
+
+    const error_obj = err.uncheckedPtrCast(jsc.JSObject);
+
+    // Get the error code without triggering getters
+    const code_value = error_obj.getCodePropertyVMInquiry(globalObject) orelse return;
+
+    if (!code_value.isString()) return;
+
+    const code_str = code_value.toBunString(globalObject) catch return;
+    defer code_str.deref();
+
+    // Check if it's a module-not-found error code
+    const is_module_not_found = code_str.eqlComptime("ERR_MODULE_NOT_FOUND") or
+        code_str.eqlComptime("MODULE_NOT_FOUND");
+
+    if (!is_module_not_found) return;
+
+    // Try to extract the specifier
+    const specifier_value = (err.get(globalObject, "specifier") catch return) orelse return;
+
+    if (!specifier_value.isString()) return;
+
+    const specifier = specifier_value.toBunString(globalObject) catch return;
+    defer specifier.deref();
+
+    // Convert to a slice
+    const specifier_slice = specifier.toUTF8(bun.default_allocator);
+    defer specifier_slice.deinit();
+
+    // Start polling for this path
+    this.timer.missing_module_poll_timer.startPolling(this, specifier_slice.slice()) catch {
+        // If we can't start polling, just continue normally
+        return;
+    };
+
+    Output.prettyErrorln("<r><yellow>Waiting for module to exist:<r> {s}", .{specifier_slice.slice()});
+    Output.flush();
+}
+
 pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {
     if (this.isShuttingDown()) {
         return true;
@@ -665,6 +710,10 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
         bun.api.node.process.exit(globalObject, 1);
         @panic("made it past Bun__Process__exit");
     }
+
+    // Try to handle missing module in watch mode before exiting
+    this.tryHandleMissingModuleInWatchMode(globalObject, err);
+
     this.is_handling_uncaught_exception = true;
     defer this.is_handling_uncaught_exception = false;
     const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
@@ -680,7 +729,12 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
 pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+        const rejection_value = promise.result(this.global.vm());
+
+        // Try to handle missing module in watch mode
+        this.tryHandleMissingModuleInWatchMode(this.global, rejection_value);
+
+        this.unhandledRejection(this.global, rejection_value, promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }

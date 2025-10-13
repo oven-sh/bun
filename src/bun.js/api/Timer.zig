@@ -52,6 +52,9 @@ pub const All = struct {
     /// Updates the "Date" header.
     date_header_timer: DateHeaderTimer = .{},
 
+    /// Polls for missing modules in watch mode
+    missing_module_poll_timer: MissingModulePollTimer = MissingModulePollTimer.init(),
+
     pub fn init() @This() {
         return .{
             .thread_id = std.Thread.getCurrentId(),
@@ -601,6 +604,8 @@ pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
 
 pub const EventLoopDelayMonitor = @import("./Timer/EventLoopDelayMonitor.zig");
+
+pub const MissingModulePollTimer = @import("./Timer/MissingModulePollTimer.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

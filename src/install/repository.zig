@@ -518,6 +518,8 @@ pub const Repository = extern struct {
             const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
             const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
+            var moved = false;
+            errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -548,15 +550,22 @@ pub const Repository = extern struct {
                 folder_name,
                 .{ .move_fallback = true },
             ).asErr()) |err| {
+                // If destination exists, another process likely completed the work
+                if (cache_dir.openDirZ(folder_name, .{})) |dir2| {
+                    // Best-effort cleanup of our temp path
+                    temp_dir.deleteTree(tmpname) catch {};
+                    break :clone dir2;
+                } else |_| {}
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                    .{ name, err, tmpname, folder_name },
+                    .{ name, err, temp_target_full, folder_name },
                 ) catch unreachable;
                 return error.InstallFailed;
             }
+            moved = true;
 
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };
@@ -618,6 +627,8 @@ pub const Repository = extern struct {
             const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
             const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
+            var moved = false;
+            errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -669,15 +680,22 @@ pub const Repository = extern struct {
                 folder_name,
                 .{ .move_fallback = true },
             ).asErr()) |err| {
+                // If destination exists, another process likely completed the work
+                if (bun.openDir(cache_dir, folder_name)) |_| {
+                    // Best-effort cleanup of our temp path
+                    temp_dir.deleteTree(tmpname) catch {};
+                    break :brk try bun.openDir(cache_dir, folder_name);
+                } else |_| {}
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                    .{ name, err, tmpname, folder_name },
+                    .{ name, err, temp_target_full, folder_name },
                 ) catch unreachable;
                 return error.InstallFailed;
             }
+            moved = true;
 
             break :brk try bun.openDir(cache_dir, folder_name);
         };

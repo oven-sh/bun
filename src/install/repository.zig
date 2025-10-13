@@ -513,6 +513,8 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
+            const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+
             // Clone to temp directory first
             var tmpname_buf: bun.PathBuffer = undefined;
             const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
@@ -520,6 +522,11 @@ pub const Repository = extern struct {
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
             var moved = false;
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
+
+            if (PackageManager.verbose_install) {
+                Output.prettyErrorln("[{s}] Cloning git repository (bare) to {s}<r>", .{ name, tmpname });
+                Output.flush();
+            }
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -554,6 +561,10 @@ pub const Repository = extern struct {
                 if (cache_dir.openDirZ(folder_name, .{})) |dir2| {
                     // Best-effort cleanup of our temp path
                     temp_dir.deleteTree(tmpname) catch {};
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("[{s}] Cache dir already exists (another process completed first)<r>", .{name});
+                        Output.flush();
+                    }
                     break :clone dir2;
                 } else |_| {}
                 log.addErrorFmt(
@@ -566,6 +577,12 @@ pub const Repository = extern struct {
                 return error.InstallFailed;
             }
             moved = true;
+
+            if (PackageManager.verbose_install) {
+                const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+                Output.prettyErrorln("[{s}] Cloned bare repository to cache ({})<r>", .{ name, std.fmt.fmtDuration(elapsed) });
+                Output.flush();
+            }
 
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };
@@ -622,6 +639,8 @@ pub const Repository = extern struct {
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
 
+            const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+
             // Clone to temp directory first
             var tmpname_buf: bun.PathBuffer = undefined;
             const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
@@ -629,6 +648,11 @@ pub const Repository = extern struct {
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
             var moved = false;
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
+
+            if (PackageManager.verbose_install) {
+                Output.prettyErrorln("[{s}] Cloning git repository to {s}<r>", .{ name, tmpname });
+                Output.flush();
+            }
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -648,6 +672,11 @@ pub const Repository = extern struct {
                 ) catch unreachable;
                 return err;
             };
+
+            if (PackageManager.verbose_install) {
+                Output.prettyErrorln("[{s}] Checking out {s}<r>", .{ name, resolved });
+                Output.flush();
+            }
 
             _ = exec(allocator, env, &[_]string{ "git", "-C", temp_target_full, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
@@ -684,6 +713,10 @@ pub const Repository = extern struct {
                 if (bun.openDir(cache_dir, folder_name)) |_| {
                     // Best-effort cleanup of our temp path
                     temp_dir.deleteTree(tmpname) catch {};
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("[{s}] Cache dir already exists (another process completed first)<r>", .{name});
+                        Output.flush();
+                    }
                     break :brk try bun.openDir(cache_dir, folder_name);
                 } else |_| {}
                 log.addErrorFmt(
@@ -696,6 +729,12 @@ pub const Repository = extern struct {
                 return error.InstallFailed;
             }
             moved = true;
+
+            if (PackageManager.verbose_install) {
+                const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+                Output.prettyErrorln("[{s}] Checked out to cache ({})<r>", .{ name, std.fmt.fmtDuration(elapsed) });
+                Output.flush();
+            }
 
             break :brk try bun.openDir(cache_dir, folder_name);
         };
@@ -760,6 +799,7 @@ const PackageManager = Install.PackageManager;
 
 const bun = @import("bun");
 const OOM = bun.OOM;
+const Output = bun.Output;
 const Path = bun.path;
 const logger = bun.logger;
 const strings = bun.strings;

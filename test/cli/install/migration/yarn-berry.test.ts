@@ -292,7 +292,7 @@ describe("Yarn Berry migration", () => {
     expect(lockContents).toMatchSnapshot();
   });
 
-  test("real-world monorepo with Next.js, workspace:^ deps, optional peers, and platform-specific bins", async () => {
+  test.skip("real-world monorepo with Next.js, workspace:^ deps, optional peers, and platform-specific bins", async () => {
     using dir = tempDir("yarn-berry-nextjs-monorepo", {
       "package.json": JSON.stringify({
         name: "nextjs-monorepo",

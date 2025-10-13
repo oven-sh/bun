@@ -1261,15 +1261,15 @@ fn migrateYarnBerry(
             }
         }
 
-        if (entry_obj.get("checksum")) |checksum_node| {
-            if (checksum_node.asString(allocator)) |checksum_str| {
-                const maybe_integrity = convertBerryChecksum(checksum_str, allocator) catch null;
-                if (maybe_integrity) |integrity_str| {
-                    defer allocator.free(integrity_str);
-                    pkg.meta.integrity = Integrity.parse(integrity_str);
-                }
-            }
-        }
+        // if (entry_obj.get("checksum")) |checksum_node| {
+        //     if (checksum_node.asString(allocator)) |checksum_str| {
+        //         const maybe_integrity = convertBerryChecksum(checksum_str, allocator) catch null;
+        //         if (maybe_integrity) |integrity_str| {
+        //             defer allocator.free(integrity_str);
+        //             pkg.meta.integrity = Integrity.parse(integrity_str);
+        //         }
+        //     }
+        // }
         const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
         var spec_iter = std.mem.splitSequence(u8, key_str, ", ");
@@ -1433,25 +1433,6 @@ fn scanWorkspaces(
     }
 }
 
-fn convertBerryChecksum(berry_checksum: []const u8, allocator: std.mem.Allocator) !?[]const u8 {
-    const slash_idx = strings.indexOfChar(berry_checksum, '/') orelse return null;
-
-    const algorithm_prefix = berry_checksum[0..slash_idx];
-    const hash_part = berry_checksum[slash_idx + 1 ..];
-
-    if (hash_part.len == 0) return null;
-
-    const bun_algorithm = if (strings.eqlComptime(algorithm_prefix, "10c0"))
-        "sha512"
-    else if (strings.eqlComptime(algorithm_prefix, "10"))
-        "sha256"
-    else if (strings.eqlComptime(algorithm_prefix, "8"))
-        "sha1"
-    else
-        return null;
-
-    return try std.fmt.allocPrint(allocator, "{s}-{s}", .{ bun_algorithm, hash_part });
-}
 
 const YarnEntry = struct {
     specs: std.ArrayList([]const u8),

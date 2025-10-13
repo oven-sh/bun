@@ -677,6 +677,57 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
         // TODO maybe we want a separate code path for uncaught exceptions
         this.unhandled_error_counter += 1;
         this.exit_handler.exit_code = 1;
+
+        // Check if this is a missing module error in watch/hot mode
+        if (this.isWatcherEnabled() and this.hot_reload != .none) {
+            if (bun.api.ResolveMessage.fromJS(err)) |resolve_msg| {
+                if (resolve_msg.msg.metadata == .resolve) {
+                    const resolve_data = resolve_msg.msg.metadata.resolve;
+                    if (resolve_data.err == error.ModuleNotFound) {
+                        const specifier = resolve_data.specifier.slice(resolve_msg.msg.data.text);
+                        const referrer = if (resolve_msg.referrer) |ref| ref.text else this.main;
+                        const referrer_dir = std.fs.path.dirname(referrer) orelse std.fs.path.dirname(this.main) orelse this.transpiler.fs.top_level_dir;
+
+                        const absolute_path = if (std.fs.path.isAbsolute(specifier))
+                            specifier
+                        else blk: {
+                            var path_buf: bun.PathBuffer = undefined;
+                            const resolved = bun.path.joinAbsStringBuf(
+                                referrer_dir,
+                                &path_buf,
+                                &.{specifier},
+                                .auto,
+                            );
+                            break :blk this.allocator.dupe(u8, resolved) catch break :blk specifier;
+                        };
+
+                        if (std.fs.path.isAbsolute(absolute_path)) {
+                            Output.prettyErrorln("<cyan>watcher<r>: <d>Module not found:<r> {s}", .{absolute_path});
+                            Output.prettyErrorln("<cyan>watcher<r>: <d>Polling every 50ms for file creation...<r>", .{});
+                            Output.flush();
+
+                            if (this.missing_module_poll_timer) |existing_timer| {
+                                existing_timer.deinit(true);
+                            }
+                            if (this.missing_module_path) |existing_path| {
+                                existing_path.deref();
+                            }
+
+                            this.missing_module_path = bun.String.init(absolute_path);
+                            this.missing_module_poll_timer = bun.uws.Timer.createFallthrough(
+                                this.event_loop_handle.?,
+                                this,
+                            );
+                            this.missing_module_poll_timer.?.set(this, pollForMissingModule, 50, 50);
+
+                            // Don't call the normal error handler since we're polling
+                            return handled;
+                        }
+                    }
+                }
+            }
+        }
+
         this.onUnhandledRejection(this, globalObject, err);
     }
     return handled;

@@ -623,16 +623,18 @@ pub fn addFileByPathSlow(
 ) bool {
     const hash = getHash(file_path);
 
-    // Fast path: check if already watching without opening the file
+    // Check if already watched (with lock to avoid race with removal)
     {
         this.mutex.lock();
-        defer this.mutex.unlock();
+        const already_watched = this.indexOf(hash) != null;
+        this.mutex.unlock();
 
-        if (this.indexOf(hash) != null) {
+        if (already_watched) {
             return true;
         }
     }
 
+    // Only open fd if we might need it
     var fd: bun.FileDescriptor = bun.invalid_fd;
     if (Environment.isMac) {
         const path_z = std.posix.toPosixPath(file_path) catch return false;
@@ -641,9 +643,31 @@ pub fn addFileByPathSlow(
             .err => return false,
         }
     }
+
     const res = this.addFile(fd, file_path, hash, loader, bun.invalid_fd, null, true);
     switch (res) {
-        .result => return true,
+        .result => {
+            // On macOS, addFile may have found the file already watched (race)
+            // and returned success without using our fd. Close it if unused.
+            if (comptime Environment.isMac) {
+                if (fd.isValid()) {
+                    this.mutex.lock();
+                    const maybe_idx = this.indexOf(hash);
+                    const stored_fd = if (maybe_idx) |idx|
+                        this.watchlist.items(.fd)[idx]
+                    else
+                        bun.invalid_fd;
+                    this.mutex.unlock();
+
+                    // Only close if entry exists and stored fd differs from ours
+                    // If entry is null, it was removed and fd already closed by flushEvictions
+                    if (maybe_idx != null and stored_fd.native() != fd.native()) {
+                        fd.close();
+                    }
+                }
+            }
+            return true;
+        },
         .err => {
             if (fd.isValid()) fd.close();
             return false;

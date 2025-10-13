@@ -662,7 +662,21 @@ pub const Installer = struct {
                                             FD.cwd().makePath(u8, parent_dest_dir) catch {};
                                             switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
                                                 .result => {},
-                                                .err => |clonefile_err2| return .failure(.{ .link_package = clonefile_err2 }),
+                                                .err => |clonefile_err2| {
+                                                    switch (clonefile_err2.getErrno()) {
+                                                        .XDEV => {
+                                                            installer.supported_backend.store(.copyfile, .monotonic);
+                                                            continue :backend .copyfile;
+                                                        },
+                                                        .OPNOTSUPP => {
+                                                            installer.supported_backend.store(.hardlink, .monotonic);
+                                                            continue :backend .hardlink;
+                                                        },
+                                                        else => {
+                                                            return .failure(.{ .link_package = clonefile_err2 });
+                                                        },
+                                                    }
+                                                },
                                             }
                                         },
                                         else => {

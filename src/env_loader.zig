@@ -1494,7 +1494,9 @@ test "loadFromString prevents expansion if expand is false" {
     // Verify that expansion did NOT occur (expand = false)
     const result = loader.get("KEY");
     try std.testing.expect(result != null);
-    try std.testing.expectEqualStrings("KEY=`hello$VAR`\n", result.?);
+
+    // The newline is trimmed, so we expect "hello$VAR" exactly
+    try std.testing.expectEqualStrings("hello$VAR", result.?);
 }
 
 const string = []const u8;

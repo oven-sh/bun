@@ -511,20 +511,25 @@ pub fn installIsolatedPackages(
             var new_entry_parents: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, 1);
             new_entry_parents.appendAssumeCapacity(entry.entry_parent_id);
 
-            // defaults to true
-            var hoisted = manager.options.hoist_pattern == null;
-            if (entry.entry_parent_id != .root and new_entry_dep_id != invalid_dependency_id) {
-                // transitive dependencies (also direct dependencies of workspaces!)
-                const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                if (manager.options.hoist_pattern) |hoist_pattern| {
-                    if (hoist_pattern.isMatch(dep_name)) {
-                        const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
-                        if (!hoist_entry.found_existing) {
-                            hoisted = true;
-                        }
-                    }
+            const hoisted = hoisted: {
+                if (new_entry_dep_id == invalid_dependency_id) {
+                    break :hoisted false;
                 }
-            }
+
+                const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+
+                const hoist_pattern = manager.options.hoist_pattern orelse {
+                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                    break :hoisted !hoist_entry.found_existing;
+                };
+
+                if (hoist_pattern.isMatch(dep_name)) {
+                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                    break :hoisted !hoist_entry.found_existing;
+                }
+
+                break :hoisted false;
+            };
 
             const new_entry: Store.Entry = .{
                 .node_id = entry.node_id,

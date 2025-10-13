@@ -53,6 +53,11 @@ counters: Counters = .{},
 hot_reload: bun.cli.Command.HotReload = .none,
 jsc_vm: *VM = undefined,
 
+/// When watch/hot mode has an unhandled rejection for a missing module,
+/// poll for the file's existence instead of crashing immediately
+missing_module_poll_timer: ?*bun.uws.Timer = null,
+missing_module_path: ?bun.String = null,
+
 /// hide bun:wrap from stack traces
 /// bun:wrap is very noisy
 hide_bun_stackframes: bool = true,
@@ -677,10 +682,106 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
+fn pollForMissingModule(timer: *bun.uws.Timer) callconv(.C) void {
+    const this: *VirtualMachine = @ptrCast(@alignCast(timer.ext(VirtualMachine)));
+
+    if (this.missing_module_path) |path| {
+        const path_slice = path.byteSlice();
+
+        // Check if file now exists
+        if (bun.sys.exists(path_slice)) {
+            // File exists! Stop polling and trigger reload
+            if (this.missing_module_poll_timer) |t| {
+                t.deinit(true);
+                this.missing_module_poll_timer = null;
+            }
+            path.deref();
+            this.missing_module_path = null;
+
+            // Trigger reload
+            Output.prettyErrorln("<cyan>watcher<r>: <d>File<r> {s} <d>now exists, reloading...<r>", .{path_slice});
+            Output.flush();
+
+            if (this.hot_reload == .watch) {
+                const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+                bun.reloadProcess(bun.default_allocator, should_clear_terminal, false);
+            } else if (this.hot_reload == .hot) {
+                // For hot reload, we need to trigger a reload through the proper channels
+                // This will be handled when the process restarts
+            }
+        }
+    }
+}
+
 pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+        const result = promise.result(this.global.vm());
+
+        // Check if this is a ResolveMessage for a missing module in watch/hot mode
+        if (this.isWatcherEnabled() and this.hot_reload != .none) {
+            if (bun.api.ResolveMessage.fromJS(result)) |resolve_msg| {
+                if (resolve_msg.msg.metadata == .resolve) {
+                    const resolve_data = resolve_msg.msg.metadata.resolve;
+
+                    // Only handle MODULE_NOT_FOUND / ENOENT errors
+                    if (resolve_data.err == error.ModuleNotFound) {
+                        const specifier = resolve_data.specifier.slice(resolve_msg.msg.data.text);
+
+                        // Try to resolve the specifier to an absolute path
+                        const referrer = if (resolve_msg.referrer) |ref| ref.text else this.main;
+                        const referrer_dir = std.fs.path.dirname(referrer) orelse std.fs.path.dirname(this.main) orelse this.transpiler.fs.top_level_dir;
+
+                        // If it's already an absolute path, use it
+                        const absolute_path = if (std.fs.path.isAbsolute(specifier))
+                            specifier
+                        else blk: {
+                            // Resolve relative path
+                            var path_buf: bun.PathBuffer = undefined;
+                            const resolved = bun.path.joinAbsStringBuf(
+                                referrer_dir,
+                                &path_buf,
+                                &.{specifier},
+                                .auto,
+                            );
+                            break :blk this.allocator.dupe(u8, resolved) catch break :blk specifier;
+                        };
+
+                        // Only poll if it's an absolute path
+                        if (std.fs.path.isAbsolute(absolute_path)) {
+                            Output.prettyErrorln("<cyan>watcher<r>: <d>Module not found:<r> {s}", .{absolute_path});
+                            Output.prettyErrorln("<cyan>watcher<r>: <d>Polling every 50ms for file creation...<r>", .{});
+                            Output.flush();
+
+                            // Clean up any existing poll timer
+                            if (this.missing_module_poll_timer) |existing_timer| {
+                                existing_timer.deinit(true);
+                            }
+                            if (this.missing_module_path) |existing_path| {
+                                existing_path.deref();
+                            }
+
+                            // Store the path
+                            this.missing_module_path = bun.String.init(absolute_path);
+
+                            // Start polling timer (50ms interval)
+                            this.missing_module_poll_timer = bun.uws.Timer.createFallthrough(
+                                this.event_loop_handle.?,
+                                this,
+                            );
+                            this.missing_module_poll_timer.?.set(this, pollForMissingModule, 50, 50);
+
+                            // Mark as handled so we don't also print the error
+                            promise.setHandled(this.global.vm());
+                            this.addMainToWatcherIfNeeded();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        this.unhandledRejection(this.global, result, promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -1928,6 +2029,16 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
+
+    // Clean up missing module poll timer
+    if (this.missing_module_poll_timer) |timer| {
+        timer.deinit(true);
+        this.missing_module_poll_timer = null;
+    }
+    if (this.missing_module_path) |path| {
+        path.deref();
+        this.missing_module_path = null;
+    }
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();

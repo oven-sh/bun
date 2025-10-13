@@ -160,7 +160,6 @@ pub fn createParsedShellScript(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         .jsobjs = jsobjs,
     });
     parsed_shell_script.this_jsvalue = jsc.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
-
     bun.analytics.Features.shell += 1;
     return parsed_shell_script.this_jsvalue;
 }

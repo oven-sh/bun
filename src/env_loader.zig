@@ -1381,7 +1381,7 @@ test "loadFromString without backtick or quotes expansion" {
     try std.testing.expectEqualStrings("hello$VAR", result.?);
 }
 
-test "loadFromString with quoted value" {
+test "loadFromString with double-quoted value (no expansion without backticks)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1392,16 +1392,16 @@ test "loadFromString with quoted value" {
     // First set a variable that will be used in expansion
     try loader.map.put("VAR", "world");
 
-    // Test string with quoted value and spaces
+    // Test string with double-quoted value (should NOT expand without backticks)
     const test_content = "KEY=\"hello $VAR\"\n";
     
     // Load with expansion enabled (expand = true)
     try loader.loadFromString(test_content, true, true);
 
-    // Verify that expansion occurred within quotes
+    // Verify that NO expansion occurred (double quotes don't trigger expansion)
     const result = loader.get("KEY");
     try std.testing.expect(result != null);
-    try std.testing.expectEqualStrings("hello world", result.?);
+    try std.testing.expectEqualStrings("hello $VAR", result.?);
 }
 
 test "loadFromString with single quoted value" {
@@ -1421,7 +1421,7 @@ test "loadFromString with single quoted value" {
     // Load with expansion enabled (expand = true)
     try loader.loadFromString(test_content, true, true);
 
-    // Verify that no expansion occurred within single quotes
+    // Verify that NO expansion occurred (only backticks trigger expansion)
     const result = loader.get("KEY");
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("hello $VAR", result.?);
@@ -1446,6 +1446,29 @@ test "loadFromString with random string containing a dollar sign" {
     const result = loader.get("RANDOM_STRING");
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("abc$123!@#", result.?);
+}
+
+test "loadFromString prevents expansion without backticks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // Set a variable that could be expanded
+    try loader.map.put("DZ6Pz", "EXPANDED");
+
+    // Test the PR's example: password with $ should NOT expand
+    const test_content = "DB_PASSWORD=uiA$DZ6Pz@YGBU\n";
+    
+    // Load with expansion enabled but NO backticks
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that expansion did NOT occur (no backticks = no expansion)
+    const result = loader.get("DB_PASSWORD");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("uiA$DZ6Pz@YGBU", result.?);
 }
 
 const string = []const u8;

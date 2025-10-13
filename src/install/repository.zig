@@ -524,7 +524,7 @@ pub const Repository = extern struct {
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
 
             if (PackageManager.verbose_install) {
-                Output.prettyErrorln("[{s}] Cloning git repository (bare) to {s}<r>", .{ name, tmpname });
+                Output.prettyErrorln("[{s}] Cloning git repository (bare) to {s}<r>", .{ name, temp_target_full });
                 Output.flush();
             }
 
@@ -561,18 +561,21 @@ pub const Repository = extern struct {
                 if (cache_dir.openDirZ(folder_name, .{})) |dir2| {
                     // Best-effort cleanup of our temp path
                     temp_dir.deleteTree(tmpname) catch {};
+                    moved = true; // cancel errdefer; already cleaned up
                     if (PackageManager.verbose_install) {
                         Output.prettyErrorln("[{s}] Cache dir already exists (another process completed first)<r>", .{name});
                         Output.flush();
                     }
                     break :clone dir2;
                 } else |_| {}
+                const cache_target = try bun.getFdPath(.fromStdDir(cache_dir), &final_path_buf);
+                const dest_full = Path.joinAbsString(cache_target, &.{folder_name}, .auto);
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                    .{ name, err, temp_target_full, folder_name },
+                    .{ name, err, temp_target_full, dest_full },
                 ) catch unreachable;
                 return error.InstallFailed;
             }
@@ -650,7 +653,7 @@ pub const Repository = extern struct {
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
 
             if (PackageManager.verbose_install) {
-                Output.prettyErrorln("[{s}] Cloning git repository to {s}<r>", .{ name, tmpname });
+                Output.prettyErrorln("[{s}] Cloning git repository to {s}<r>", .{ name, temp_target_full });
                 Output.flush();
             }
 
@@ -713,18 +716,21 @@ pub const Repository = extern struct {
                 if (bun.openDir(cache_dir, folder_name)) |_| {
                     // Best-effort cleanup of our temp path
                     temp_dir.deleteTree(tmpname) catch {};
+                    moved = true; // cancel errdefer; already cleaned up
                     if (PackageManager.verbose_install) {
                         Output.prettyErrorln("[{s}] Cache dir already exists (another process completed first)<r>", .{name});
                         Output.flush();
                     }
                     break :brk try bun.openDir(cache_dir, folder_name);
                 } else |_| {}
+                const cache_target = try bun.getFdPath(.fromStdDir(cache_dir), &final_path_buf);
+                const dest_full = Path.joinAbsString(cache_target, &.{folder_name}, .auto);
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                    .{ name, err, temp_target_full, folder_name },
+                    .{ name, err, temp_target_full, dest_full },
                 ) catch unreachable;
                 return error.InstallFailed;
             }

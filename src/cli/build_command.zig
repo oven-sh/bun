@@ -143,6 +143,7 @@ pub const BuildCommand = struct {
                 if (strings.hasSuffixComptime(entry_point, ".html")) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
                     Global.exit(1);
+                    return;
                 }
             }
         }

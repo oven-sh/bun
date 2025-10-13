@@ -1472,6 +1472,31 @@ test "loadFromString prevents expansion without backticks" {
     try std.testing.expectEqualStrings("uiA$DZ6Pz@YGBU", result.?);
 }
 
+test "loadFromString prevents expansion if expand is false" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with backtick expansion
+    const test_content = "KEY=`hello$VAR`\n";
+    
+    // Load with expansion disabled (expand = false)
+    // This wont usually be done in practice, but we want to test it
+    // to ensure that the expand flag works as intended
+    try loader.loadFromString(test_content, true, false);
+
+    // Verify that expansion did NOT occur (expand = false)
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("KEY=`hello$VAR`\n", result.?);
+}
+
 const string = []const u8;
 
 const Fs = @import("./fs.zig");

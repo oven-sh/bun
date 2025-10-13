@@ -944,9 +944,6 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
 fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
     var cmds_array = try args.arrayIterator(globalThis);
-    // + 1 for argv0
-    // + 1 for null terminator
-    argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
 
     if (args.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
@@ -955,6 +952,18 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
     if (cmds_array.len == 0) {
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
+
+    // Check for integer overflow when adding 2 (for argv0 and null terminator)
+    // Also enforce a reasonable limit to prevent excessive memory allocation
+    const max_args = 1024 * 1024; // 1 million args should be more than enough
+    if (cmds_array.len > max_args) {
+        return globalThis.throwInvalidArguments("cmd array is too large (max {d} arguments)", .{max_args});
+    }
+
+    // + 1 for argv0
+    // + 1 for null terminator
+    // We've already checked that cmds_array.len + 2 won't overflow
+    argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
 
     const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 

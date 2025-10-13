@@ -7,16 +7,13 @@ import { bunExe } from "harness";
 // If cmds_array.len is close to max integer, this overflows
 
 test("spawnSync should not panic on extremely large cmd array", () => {
-  // Try to create an array large enough to cause integer overflow when adding 2
-  // For a 32-bit length field, values near 2^32 - 1 would overflow
-  // For practical purposes, we'll try a reasonably large array that might trigger the issue
-
-  // This should throw an error (like ENOMEM or "too many args"), NOT panic
+  // The limit is 1024*1024 = 1048576 arguments
+  // This should throw an error "cmd array is too large", NOT panic
   expect(() => {
     spawnSync({
-      cmd: [bunExe(), ...Array(1000000).fill("-e")],
+      cmd: [bunExe(), ...Array(1048577).fill("-e")],
     });
-  }).toThrow();
+  }).toThrow(/too large/);
 });
 
 test("spawnSync should handle empty cmd array gracefully", () => {

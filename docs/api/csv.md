@@ -104,7 +104,7 @@ Here is a detailed breakdown of each option:
 | `comments`       | `boolean` | `false`     | Instructs the parser to ignore lines representing comments in a CSV file, denoted by `commentChar`.                                                                                       |
 | `commentChar`    | `string`  | `#`         | Defines which character(s) identify comment lines in a CSV file.                                                                                                                          |
 | `trimWhitespace` | `boolean` | `false`     | Removes leading and trailing whitespace from field names and data values.                                                                                                                 |
-| `dynamicTyping`  | `boolean` | `false`     | Automatically converts string values to appropriate JavaScript types (numbers, booleans) during parsing.                                                                                  |
+| `dynamicTyping`  | `boolean` | `false`     | Automatically converts numeric and boolean strings to their JavaScript types and converts the literal "null" to `null` during parsing.                                                    |
 | `quote`          | `string`  | `"`         | Character used to enclose fields containing special characters (like delimiters or newlines). Allows text containing delimiters to be properly parsed without breaking the row structure. |
 | `preview`        | `number`  | `undefined` | Parses only the specified number of rows. Useful for quickly analyzing file structure, validating headers, or showing sample data before processing the entire file.                      |
 | `skipEmptyLines` | `boolean` | `false`     | Skips empty lines when parsing.                                                                                                                                                           |
@@ -129,7 +129,7 @@ rather than throwing an error.
 
 ```ts
 try {
-  const parsed = await Bun.CSV.parse(data, {
+  const parsed = Bun.CSV.parse(data, {
     preview: -42, //
     delimiter: "",
   });
@@ -205,7 +205,7 @@ console.log(csv_data);
 The output type of `Bun.CSV.parse` depends on two options: `header` and `dynamicTyping`.
 
 `header` decides between `Record<string, T>` and `T[]`,
-wehre `T` depends on `dynamicTyping`: `string` if `false` and `string | number | boolean | null` otherwise.
+where `T` depends on `dynamicTyping`: `string` if `false` and `string | number | boolean | null` otherwise.
 
 Additionally, the `Bun.CSV.parse` function accepts a generic type parameter that overrides the `T` type.
 

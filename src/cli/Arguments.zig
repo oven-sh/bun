@@ -1325,7 +1325,6 @@ const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const RegularExpression = bun.jsc.RegularExpression;
 const clap = bun.clap;
 const js_ast = bun.ast;
 const logger = bun.logger;
@@ -1333,6 +1332,7 @@ const options = bun.options;
 const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
+const RegularExpression = bun.jsc.RegularExpression;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

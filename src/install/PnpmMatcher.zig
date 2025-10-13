@@ -187,11 +187,12 @@ pub fn isMatch(this: *const PnpmMatcher, name: []const u8) bool {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
+const OOM = bun.OOM;
+const String = bun.String;
 const ast = bun.ast;
 const collections = bun.collections;
-const strings = bun.strings;
-const String = bun.String;
-const OOM = bun.OOM;
+const jsc = bun.jsc;
 const logger = bun.logger;
+const strings = bun.strings;

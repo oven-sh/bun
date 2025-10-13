@@ -72,5 +72,5 @@ pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: anytype) @T
 }
 
 const bun = @import("bun");
-const strings = bun.strings;
 const Environment = bun.Environment;
+const strings = bun.strings;

@@ -3219,5 +3219,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const OOM = bun.OOM;
-const js_ast = bun.ast;
 const install = bun.install;
+const js_ast = bun.ast;

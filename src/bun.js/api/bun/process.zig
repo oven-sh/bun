@@ -1804,6 +1804,9 @@ pub const sync = struct {
         use_execve_on_macos: bool = false,
         argv0: ?[*:0]const u8 = null,
 
+        /// Optional buffer to write to stdin after spawn
+        stdin_buffer: ?[]const u8 = null,
+
         windows: if (Environment.isWindows) WindowsSpawnOptions.WindowsOptions else void = if (Environment.isWindows) .{},
 
         pub const Stdio = enum {
@@ -2152,7 +2155,12 @@ pub const sync = struct {
             out_fds_to_wait_for[1] = bun.invalid_fd;
         }
 
-        while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
+        // Track stdin writing if stdin_buffer is set
+        var stdin_fd = process.stdin orelse bun.invalid_fd;
+        var stdin_buffer_written: usize = 0;
+        const stdin_buffer = options.stdin_buffer orelse &[_]u8{};
+
+        while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd or stdin_fd != bun.invalid_fd) {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
                 while (true) {
@@ -2179,6 +2187,31 @@ pub const sync = struct {
                 }
             }
 
+            // Try to write stdin buffer if we have data remaining
+            if (stdin_fd != bun.invalid_fd and stdin_buffer_written < stdin_buffer.len) {
+                const remaining = stdin_buffer[stdin_buffer_written..];
+                switch (bun.sys.write(stdin_fd, remaining)) {
+                    .err => |err| {
+                        // EAGAIN/EWOULDBLOCK means we should wait for writability
+                        if (err.isRetry()) {
+                            // Continue to poll, will wait for writability below
+                        } else {
+                            // Other errors - close stdin and stop trying to write
+                            stdin_fd.close();
+                            stdin_fd = bun.invalid_fd;
+                        }
+                    },
+                    .result => |bytes_written| {
+                        stdin_buffer_written += bytes_written;
+                        // If we wrote all data, close stdin
+                        if (stdin_buffer_written >= stdin_buffer.len) {
+                            stdin_fd.close();
+                            stdin_fd = bun.invalid_fd;
+                        }
+                    },
+                }
+            }
+
             var poll_fds_buf = [_]std.c.pollfd{
                 .{
                     .fd = 0,
@@ -2188,6 +2221,11 @@ pub const sync = struct {
                 .{
                     .fd = 0,
                     .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
+                    .revents = 0,
+                },
+                .{
+                    .fd = 0,
+                    .events = std.posix.POLL.OUT | std.posix.POLL.ERR | std.posix.POLL.HUP,
                     .revents = 0,
                 },
             };
@@ -2202,6 +2240,13 @@ pub const sync = struct {
             if (out_fds_to_wait_for[1] != bun.invalid_fd) {
                 poll_fds.len += 1;
                 poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
+            }
+
+            // Add stdin to poll if we still have data to write
+            if (stdin_fd != bun.invalid_fd and stdin_buffer_written < stdin_buffer.len) {
+                poll_fds.len += 1;
+                poll_fds[poll_fds.len - 1].fd = @intCast(stdin_fd.cast());
+                poll_fds[poll_fds.len - 1].events = std.posix.POLL.OUT | std.posix.POLL.ERR | std.posix.POLL.HUP;
             }
 
             if (poll_fds.len == 0) {

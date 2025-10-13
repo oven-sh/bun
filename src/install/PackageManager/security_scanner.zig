@@ -754,21 +754,31 @@ pub const SecurityScanSubprocess = struct {
         pipe_fds[1].close();
         stdin_fds[0].close();
 
-        // Write JSON data to stdin
+        // Make stdin non-blocking to prevent hanging on large writes
+        _ = bun.sys.setNonblocking(stdin_fds[1]);
+
+        // Write JSON data to stdin with backpressure handling
         var remaining = this.json_data;
         while (remaining.len > 0) {
             const write_result = bun.sys.write(stdin_fds[1], remaining);
             switch (write_result) {
                 .err => |err| {
+                    // EAGAIN/EWOULDBLOCK means the buffer is full, need to retry
+                    if (err.isRetry()) {
+                        // Sleep briefly and retry
+                        std.time.sleep(std.time.ns_per_ms);
+                        continue;
+                    }
                     stdin_fds[1].close();
                     Output.errGeneric("Failed to write JSON to security scanner stdin: {}", .{err});
                     return error.StdinWriteFailed;
                 },
                 .result => |written| {
                     if (written == 0) {
-                        stdin_fds[1].close();
-                        Output.errGeneric("Failed to write JSON to security scanner stdin: wrote 0 bytes", .{});
-                        return error.StdinWriteFailed;
+                        // For non-blocking writes, 0 can mean EAGAIN on some systems
+                        // Sleep briefly and retry
+                        std.time.sleep(std.time.ns_per_ms);
+                        continue;
                     }
                     remaining = remaining[written..];
                 },

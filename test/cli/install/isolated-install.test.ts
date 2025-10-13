@@ -438,6 +438,12 @@ describe("isolated workspaces", () => {
             "pkg2": "workspace:*",
           },
         }),
+        "packages/pkg3/package.json": JSON.stringify({
+          name: "pkg3",
+          dependencies: {
+            "different-name": "workspace:.",
+          },
+        }),
       },
     });
 
@@ -449,12 +455,14 @@ describe("isolated workspaces", () => {
         file(join(packageDir, "packages", "pkg1", "node_modules", "pkg1", "package.json")).json(),
         file(join(packageDir, "packages", "pkg2", "node_modules", "pkg1", "package.json")).json(),
         file(join(packageDir, "packages", "pkg2", "node_modules", "pkg2", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg3", "node_modules", "different-name", "package.json")).json(),
       ]),
     ).toEqual([
       [".bun"],
       { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
       { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
       { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
+      { name: "pkg3", dependencies: { "different-name": "workspace:." } },
     ]);
   });
 });

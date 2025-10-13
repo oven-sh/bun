@@ -728,10 +728,14 @@ pub const Bunfig = struct {
                     }
 
                     if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
-                        const matchers = try bun.install.PnpmMatcher.fromExpr(public_hoist_pattern_expr) orelse {
-                            return this.addError(public_hoist_pattern_expr.loc, "Expected a string or an array of strings");
+                        install.public_hoist_patterns = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch {
+                            return error.@"Invalid Bunfig";
                         };
-                        install.public_hoist_patterns = matchers;
                     }
                 }
 

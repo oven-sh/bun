@@ -1070,7 +1070,18 @@ pub fn loadNpmrc(
     }
 
     if (out.get("public-hoist-pattern")) |public_hoist_pattern_expr| {
-        install.public_hoist_patterns = try .fromExpr(public_hoist_pattern_expr);
+        install.public_hoist_patterns = bun.install.PnpmMatcher.fromExpr(
+            allocator,
+            public_hoist_pattern_expr,
+            log,
+            source,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => |oom| return oom,
+            error.InvalidRegExp, error.UnexpectedExpr => patterns: {
+                log.reset();
+                break :patterns null;
+            },
+        };
     }
 
     var registry_map = install.scoped orelse bun.schema.api.NpmRegistryMap{};

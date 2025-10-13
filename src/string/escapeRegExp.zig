@@ -20,9 +20,14 @@ pub fn escapeRegExp(input: []const u8, writer: anytype) @TypeOf(writer).Error!vo
             '*',
             '?',
             '.',
-            => |c| try writer.writeByte(c),
+            => |c| try writer.writeAll(&.{ '\\', c }),
             '-' => try writer.writeAll("\\x2d"),
-            else => unreachable,
+            else => |c| {
+                if (comptime Environment.isDebug) {
+                    unreachable;
+                }
+                try writer.writeByte(c);
+            },
         }
         remain = remain[i + 1 ..];
     }
@@ -50,10 +55,15 @@ pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: anytype) @T
             '+',
             '?',
             '.',
-            => |c| try writer.writeByte(c),
+            => |c| try writer.writeAll(&.{ '\\', c }),
             '*' => try writer.writeAll(".*"),
             '-' => try writer.writeAll("\\x2d"),
-            else => unreachable,
+            else => |c| {
+                if (comptime Environment.isDebug) {
+                    unreachable;
+                }
+                try writer.writeByte(c);
+            },
         }
         remain = remain[i + 1 ..];
     }

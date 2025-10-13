@@ -60,7 +60,8 @@ describe("yarn berry (v2+) migration", () => {
     
     const lockContent = readFileSync(join(String(temp), "bun.lock"), "utf-8");
     expect(lockContent).toContain("workspace");
-  }, 30000);
+    expect(lockContent).toMatchSnapshot("workspace-yarn-migration");
+  });
   
   test("multi-spec packages", async () => {
     using temp = tempDir("yarn-berry-multispec", join(import.meta.dir, "yarn-berry/multi-spec"));
@@ -76,5 +77,7 @@ describe("yarn berry (v2+) migration", () => {
     
     expect(exitCode).toBe(0);
     expect(existsSync(join(String(temp), "bun.lock"))).toBe(true);
-  }, 30000);
+    const lockContent = readFileSync(join(String(temp), "bun.lock"), "utf-8");
+    expect(lockContent).toMatchSnapshot("multi-spec-yarn-migration");
+  });
 });

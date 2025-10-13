@@ -1,0 +1,49 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`yarn berry (v2+) migration workspace packages: workspace-yarn-migration 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "my-app",
+      "dependencies": {
+        "my-lib": "workspace:*",
+      },
+    },
+    "packages/lib": {
+      "name": "my-lib",
+      "version": "1.0.0",
+      "dependencies": {
+        "lodash": "^4.17.21",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "my-lib": ["my-lib@workspace:packages/lib"],
+  }
+}
+"
+`;
+
+exports[`yarn berry (v2+) migration multi-spec packages: multi-spec-yarn-migration 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-multi-spec",
+      "dependencies": {
+        "lodash": "^4.17.0",
+      },
+      "devDependencies": {
+        "lodash": "~4.17.21",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+  }
+}
+"
+`;

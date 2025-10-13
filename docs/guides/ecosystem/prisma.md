@@ -27,7 +27,7 @@ $ bun add @prisma/client @prisma/adapter-pg
 
 ---
 
-We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory with Prisma Postgres.
+We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory with [Prisma Postgres](https://www.prisma.io/docs/postgres?utm_source=bun_docs).
 
 ```bash
 $ bunx prisma init --db

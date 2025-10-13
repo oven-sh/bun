@@ -216,6 +216,32 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 
     return std::nullopt;
 }
+
+extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    JSC::JSUint8Array* buffer = nullptr;
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
+
+    if (length > 0) [[likely]] {
+        auto arrayBuffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
+            mi_free(p);
+        }));
+
+        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    } else {
+        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
+    }
+
+    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
+    scope.assertNoException();
+    ASSERT(buffer);
+
+    return JSC::JSValue::encode(buffer);
+}
+
 }
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
@@ -363,26 +389,6 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
-}
-
-extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
-{
-    JSC::JSUint8Array* buffer = nullptr;
-
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-
-    if (length > 0) [[likely]] {
-        auto arrayBuffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            mi_free(p);
-        }));
-
-        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
-    } else {
-        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
-    }
-
-    return JSC::JSValue::encode(buffer);
 }
 
 namespace WebCore {

@@ -592,9 +592,12 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__fromDefaultAllocator(*JSGlobalObject, [*]u8, usize) JSValue;
     /// Creates a Buffer from bytes allocated with bun.default_allocator.
     /// Takes ownership of the bytes and will free them when the Buffer is garbage collected.
-    pub fn createBufferFromDefaultAllocator(globalObject: *JSGlobalObject, bytes: []u8) JSValue {
+    /// SAFETY: The bytes pointer must have been allocated with bun.default_allocator.
+    /// The finalizer will use mi_free, which will cause undefined behavior with other allocators.
+    /// The caller must not mutate or free the bytes after calling this function.
+    pub fn createBufferFromDefaultAllocator(globalObject: *JSGlobalObject, bytes: []const u8) JSValue {
         jsc.markBinding(@src());
-        return JSBuffer__fromDefaultAllocator(globalObject, bytes.ptr, bytes.len);
+        return JSBuffer__fromDefaultAllocator(globalObject, @constCast(bytes.ptr), bytes.len);
     }
 
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {

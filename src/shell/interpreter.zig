@@ -1110,7 +1110,7 @@ pub const Interpreter = struct {
         buf.* = .{};
         // Use createBufferFromDefaultAllocator which properly sets up a finalizer
         // to free the memory when the Buffer is garbage collected
-        return JSValue.createBufferFromDefaultAllocator(globalThis, @constCast(bytelist.slice()));
+        return JSValue.createBufferFromDefaultAllocator(globalThis, bytelist.slice());
     }
 
     pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {

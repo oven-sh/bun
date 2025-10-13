@@ -15,10 +15,6 @@ pub fn clone(this: *FileCloner) sys.Maybe(void) {
         .result => return .success,
         .err => |err| {
             switch (err.getErrno()) {
-                .XDEV,
-                .OPNOTSUPP,
-                => return .initErr(err),
-
                 .EXIST => {
                     FD.cwd().deleteTree(this.dest_subpath.slice()) catch {};
                     return this.clonefileat();

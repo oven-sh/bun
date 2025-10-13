@@ -210,7 +210,6 @@ pub const PackCommand = struct {
     const PackListEntry = struct {
         subpath: stringZ,
         size: usize = 0,
-        optional: bool = false,
     };
     const PackList = std.ArrayListUnmanaged(PackListEntry);
 
@@ -225,7 +224,6 @@ pub const PackCommand = struct {
         optional: bool = false,
     };
 
-    // bool for optional
     const PackQueue = std.PriorityQueue(PackQueueItem, void, PackQueueContext.lessThan);
 
     const DirInfo = struct {

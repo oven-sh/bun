@@ -434,7 +434,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var affected_i: usize = 0;
 
                                 // if a file descriptor is stale, we need to close it
-                                if ((event.op.delete) and entries_option != null) {
+                                if (event.op.delete and entries_option != null) {
                                     for (parents, 0..) |parent_hash, entry_id| {
                                         if (parent_hash == current_hash) {
                                             const affected_path = file_paths[entry_id];

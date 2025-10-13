@@ -312,6 +312,39 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
+pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
+    const KEvent = std.c.Kevent;
+
+    // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
+    var event = std.mem.zeroes(KEvent);
+
+    event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
+    // we want to know about the vnode
+    event.filter = std.c.EVFILT.VNODE;
+
+    event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
+
+    // id
+    event.ident = @intCast(fd.native());
+
+    // Store the hash for fast filtering later
+    event.udata = watchlist_id;
+    var events: [1]KEvent = .{event};
+
+    // This took a lot of work to figure out the right permutation
+    // Basically:
+    // - We register the event here.
+    // our while(true) loop above receives notification of changes to any of the events created here.
+    _ = std.posix.system.kevent(
+        this.platform.fd.unwrap().?.native(),
+        @as([]KEvent, events[0..1]).ptr,
+        1,
+        @as([]KEvent, events[0..1]).ptr,
+        0,
+        null,
+    );
+}
+
 fn appendFileAssumeCapacity(
     this: *Watcher,
     fd: bun.FileDescriptor,
@@ -350,36 +383,7 @@ fn appendFileAssumeCapacity(
     };
 
     if (comptime Environment.isMac) {
-        const KEvent = std.c.Kevent;
-
-        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-        var event = std.mem.zeroes(KEvent);
-
-        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
-        // we want to know about the vnode
-        event.filter = std.c.EVFILT.VNODE;
-
-        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
-
-        // id
-        event.ident = @intCast(fd.native());
-
-        // Store the hash for fast filtering later
-        event.udata = @as(usize, @intCast(watchlist_id));
-        var events: [1]KEvent = .{event};
-
-        // This took a lot of work to figure out the right permutation
-        // Basically:
-        // - We register the event here.
-        // our while(true) loop above receives notification of changes to any of the events created here.
-        _ = std.posix.system.kevent(
-            this.platform.fd.unwrap().?.native(),
-            @as([]KEvent, events[0..1]).ptr,
-            1,
-            @as([]KEvent, events[0..1]).ptr,
-            0,
-            null,
-        );
+        this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (comptime Environment.isLinux) {
         // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
         // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
@@ -610,6 +614,40 @@ pub fn addDirectory(
     bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1));
 
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
+}
+
+pub fn addFileByPathSlow(
+    this: *Watcher,
+    file_path: string,
+    loader: options.Loader,
+) bool {
+    const hash = getHash(file_path);
+
+    {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        if (this.indexOf(hash) != null) {
+            return true;
+        }
+    }
+
+    const fd: bun.FileDescriptor = if (Environment.isMac) switch (bun.sys.open(
+        &(std.posix.toPosixPath(file_path) catch return false),
+        bun.c.O_EVTONLY,
+        0,
+    )) {
+        .result => |fd| fd,
+        .err => return false,
+    } else bun.invalid_fd;
+
+    return switch (this.appendFileMaybeLock(fd, file_path, hash, loader, bun.invalid_fd, null, true, true)) {
+        .err => {
+            fd.close();
+            return false;
+        },
+        .result => true,
+    };
 }
 
 pub fn addFile(

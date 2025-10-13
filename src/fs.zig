@@ -1562,6 +1562,11 @@ pub const PathName = struct {
     ext: string,
     filename: string,
 
+    pub fn findExtname(_path: string) string {
+        const dot = bun.strings.lastIndexOfChar(_path, '.') orelse return "";
+        return _path[dot..];
+    }
+
     pub fn extWithoutLeadingDot(self: *const PathName) string {
         return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;
     }

@@ -1059,6 +1059,30 @@ fn migrateYarnBerry(
             }
         }
 
+        // Parse peerDependenciesMeta first to know which peers are optional
+        var optional_peer_set = std.AutoHashMap(u64, void).init(allocator);
+        defer optional_peer_set.deinit();
+
+        if (entry_obj.get("peerDependenciesMeta")) |peer_meta_node| {
+            if (peer_meta_node.data == .e_object) {
+                for (peer_meta_node.data.e_object.properties.slice()) |meta_prop| {
+                    const meta_key = meta_prop.key orelse continue;
+                    const meta_value = meta_prop.value orelse continue;
+
+                    if (meta_value.data != .e_object) continue;
+
+                    // Check if this peer dep is marked as optional
+                    if (meta_value.data.e_object.get("optional")) |opt_node| {
+                        if (opt_node.data == .e_boolean and opt_node.data.e_boolean.value) {
+                            const peer_name_str = meta_key.asString(allocator) orelse continue;
+                            const peer_name_hash = String.Builder.stringHash(peer_name_str);
+                            try optional_peer_set.put(peer_name_hash, {});
+                        }
+                    }
+                }
+            }
+        }
+
         if (entry_obj.get("peerDependencies")) |peers_node| {
             if (peers_node.data == .e_object) {
                 for (peers_node.data.e_object.properties.slice()) |peer_prop| {
@@ -1078,10 +1102,12 @@ fn migrateYarnBerry(
                     const peer_version = try string_buf.append(peer_version_raw);
                     const peer_version_sliced = peer_version.sliced(string_buf.bytes.items);
 
+                    const is_optional = optional_peer_set.contains(peer_name_hash);
+
                     const peer_dep: Dependency = .{
                         .name = peer_name.value,
                         .name_hash = peer_name.hash,
-                        .behavior = .{ .peer = true },
+                        .behavior = .{ .peer = true, .optional = is_optional },
                         .version = Dependency.parse(
                             allocator,
                             peer_name.value,

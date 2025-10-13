@@ -1416,10 +1416,10 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const Symlinker = @import("./Symlinker.zig").Symlinker;
-const FileCloner = @import("./FileCloner.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

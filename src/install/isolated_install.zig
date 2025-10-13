@@ -555,22 +555,24 @@ pub fn installIsolatedPackages(
                     &ctx,
                 );
 
-                if (entry.entry_parent_id == .root) {
-                    // make sure direct dependencies are not replaced
-                    const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                    try public_hoisted.put(dep_name, {});
-                } else if (new_entry_dep_id != invalid_dependency_id) {
-                    // transitive dependencies (also direct dependencies of workspaces!)
-                    const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                    if (manager.options.public_hoist_pattern) |public_hoist_pattern| {
-                        if (public_hoist_pattern.isMatch(dep_name)) {
-                            const hoist_entry = try public_hoisted.getOrPut(dep_name);
-                            if (!hoist_entry.found_existing) {
-                                try entry_dependencies[0].insert(
-                                    lockfile.allocator,
-                                    .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
-                                    &ctx,
-                                );
+                if (new_entry_dep_id != invalid_dependency_id) {
+                    if (entry.entry_parent_id == .root) {
+                        // make sure direct dependencies are not replaced
+                        const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                        try public_hoisted.put(dep_name, {});
+                    } else {
+                        // transitive dependencies (also direct dependencies of workspaces!)
+                        const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                        if (manager.options.public_hoist_pattern) |public_hoist_pattern| {
+                            if (public_hoist_pattern.isMatch(dep_name)) {
+                                const hoist_entry = try public_hoisted.getOrPut(dep_name);
+                                if (!hoist_entry.found_existing) {
+                                    try entry_dependencies[0].insert(
+                                        lockfile.allocator,
+                                        .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
+                                        &ctx,
+                                    );
+                                }
                             }
                         }
                     }

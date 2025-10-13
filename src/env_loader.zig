@@ -1369,13 +1369,13 @@ test "loadFromString without backtick or quotes expansion" {
     // First set a variable that will be used in expansion
     try loader.map.put("VAR", "world");
 
-    // Test string with backtick expansion
+    // Test string with no backticks, quotes, or anything (should NOT expand)
     const test_content = "KEY=hello$VAR\n";
-    
-    // Load with expansion disabled (expand = false)
-    try loader.loadFromString(test_content, true, false);
 
-    // Verify that no expansion occurred
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that NO expansion occurred (no backticks = no expansion)
     const result = loader.get("KEY");
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("hello$VAR", result.?);
@@ -1438,9 +1438,9 @@ test "loadFromString with random string containing a dollar sign" {
     // Test string with random characters and a dollar sign 
     // that represent a typical password 
     const test_content = "RANDOM_STRING=abc$123!@#\n";
-    
-    // Load with expansion disabled (expand = false)
-    try loader.loadFromString(test_content, true, false);
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
 
     // Verify that the value is stored correctly without expansion
     const result = loader.get("RANDOM_STRING");
@@ -1457,6 +1457,7 @@ test "loadFromString prevents expansion without backticks" {
     var loader = Loader.init(&map, allocator);
 
     // Set a variable that could be expanded
+    // that appears in the password
     try loader.map.put("DZ6Pz", "EXPANDED");
 
     // Test the PR's example: password with $ should NOT expand

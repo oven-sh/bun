@@ -142,7 +142,6 @@ pub const BuildCommand = struct {
             for (this_transpiler.options.entry_points) |entry_point| {
                 if (strings.hasSuffixComptime(entry_point, ".html")) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
-                    Output.flush();
                     Global.exit(1);
                 }
             }

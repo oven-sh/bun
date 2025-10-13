@@ -33,6 +33,8 @@ We'll use the Prisma CLI with `bunx` to initialize our schema and migration dire
 $ bunx prisma init --db
 ```
 
+Make sure to set the `DATABASE_URL` in `.env` with your PostgreSQL connection string.
+
 ---
 
 The `prisma init --db` command creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.

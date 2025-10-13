@@ -370,29 +370,17 @@ pub const Repository = extern struct {
         defer std_map.deinit();
 
         const result = if (comptime Environment.isWindows)
-            std.process.Child.run(.{
+            try std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
-            }) catch |err| {
-                // FileNotFound means git executable wasn't found
-                if (err == error.FileNotFound and argv.len > 0 and strings.eqlComptime(argv[0], "git")) {
-                    return error.GitNotFound;
-                }
-                return err;
-            }
+            })
         else
-            std.process.Child.run(.{
+            try std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
-            }) catch |err| {
-                // FileNotFound means git executable wasn't found
-                if (err == error.FileNotFound and argv.len > 0 and strings.eqlComptime(argv[0], "git")) {
-                    return error.GitNotFound;
-                }
-                return err;
-            };
+            });
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout else if (
@@ -510,13 +498,23 @@ pub const Repository = extern struct {
                 env,
                 &[_]string{ "git", "-C", path, "fetch", "--quiet" },
             ) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git fetch\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Git is not installed. Install Git to clone repository for \"{s}\"\n\n  Learn more: https://git-scm.com/downloads",
+                        .{name},
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git fetch\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
             break :fetch dir;
@@ -534,7 +532,15 @@ pub const Repository = extern struct {
                 url,
                 target,
             }) catch |err| {
-                if (err == error.RepositoryNotFound or attempt > 1) {
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Git is not installed. Install Git to clone repository for \"{s}\"\n\n  Learn more: https://git-scm.com/downloads",
+                        .{name},
+                    ) catch unreachable;
+                } else if (err == error.RepositoryNotFound or attempt > 1) {
                     log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
@@ -573,13 +579,23 @@ pub const Repository = extern struct {
             else
                 &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
         ) catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
-                .{ committish, name },
-            ) catch unreachable;
+            if (err == error.FileNotFound) {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "Git is not installed. Install Git to use git dependencies\n\n  Learn more: https://git-scm.com/downloads",
+                    .{},
+                ) catch unreachable;
+            } else {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
+                    .{ committish, name },
+                ) catch unreachable;
+            }
             return err;
         }, " \t\r\n");
     }
@@ -611,26 +627,46 @@ pub const Repository = extern struct {
                 try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
                 target,
             }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Git is not installed. Install Git to use git dependencies\n\n  Learn more: https://git-scm.com/downloads",
+                        .{},
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
 
             const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Git is not installed. Install Git to use git dependencies\n\n  Learn more: https://git-scm.com/downloads",
+                        .{},
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git checkout\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
             var dir = try bun.openDir(cache_dir, folder_name);

@@ -11,6 +11,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "BufferEncodingType.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "mimalloc.h"
 
 #include "JSBuffer.h"
 
@@ -362,6 +363,26 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
+}
+
+extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    JSC::JSUint8Array* buffer = nullptr;
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    if (length > 0) [[likely]] {
+        auto arrayBuffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
+            mi_free(p);
+        }));
+
+        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    } else {
+        buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
+    }
+
+    return JSC::JSValue::encode(buffer);
 }
 
 namespace WebCore {

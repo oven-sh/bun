@@ -1108,11 +1108,9 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const buffer: jsc.Node.Buffer = .{
-            .allocator = bun.default_allocator,
-            .buffer = jsc.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
-        };
-        return buffer.toNodeBuffer(globalThis);
+        // Use createBufferFromDefaultAllocator which properly sets up a finalizer
+        // to free the memory when the Buffer is garbage collected
+        return JSValue.createBufferFromDefaultAllocator(globalThis, @constCast(bytelist.slice()));
     }
 
     pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {

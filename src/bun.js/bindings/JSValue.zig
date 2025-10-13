@@ -589,6 +589,14 @@ pub const JSValue = enum(i64) {
 
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, jsc.C.JSTypedArrayBytesDeallocator) JSValue;
 
+    extern fn JSBuffer__fromDefaultAllocator(*JSGlobalObject, [*]u8, usize) JSValue;
+    /// Creates a Buffer from bytes allocated with bun.default_allocator.
+    /// Takes ownership of the bytes and will free them when the Buffer is garbage collected.
+    pub fn createBufferFromDefaultAllocator(globalObject: *JSGlobalObject, bytes: []u8) JSValue {
+        jsc.markBinding(@src());
+        return JSBuffer__fromDefaultAllocator(globalObject, bytes.ptr, bytes.len);
+    }
+
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
         if (@typeInfo(Number) == .@"enum") {
             return jsNumberWithType(@typeInfo(Number).@"enum".tag_type, @intFromEnum(number));

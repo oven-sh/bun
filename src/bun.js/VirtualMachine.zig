@@ -735,10 +735,7 @@ pub fn pollForMissingModule(this: *VirtualMachine) EventLoopTimer.Arm {
         // Check if file now exists
         if (bun.sys.exists(path_slice)) {
             // File exists! Stop polling and trigger reload
-            if (this.missing_module_poll_timer.state == .ACTIVE) {
-                this.timer.remove(&this.missing_module_poll_timer);
-                this.timer.incrementTimerRef(-1);
-            }
+            this.timer.incrementTimerRef(-1);
             path.deref();
             this.missing_module_path = null;
 

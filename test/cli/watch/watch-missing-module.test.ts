@@ -117,3 +117,38 @@ test("watch mode should handle deeply nested missing imports", async () => {
   const successContent = fs.readFileSync(successPath, "utf-8");
   expect(successContent).toContain("RESULT: level3 -> level2 -> level1");
 });
+
+test("watch mode should handle top-level await dynamic imports", async () => {
+  using dir = tempDir("watch-tla-missing", {
+    "index.ts": `
+      const { data } = await import("./data.ts");
+      Bun.write("success.txt", "TLA: " + data);
+    `,
+  });
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  await Bun.sleep(200);
+
+  fs.writeFileSync(join(String(dir), "data.ts"), `export const data = "from TLA";\n`);
+
+  const successPath = join(String(dir), "success.txt");
+  let attempts = 0;
+  while (!fs.existsSync(successPath) && attempts < 100) {
+    await Bun.sleep(50);
+    attempts++;
+  }
+
+  proc.kill();
+
+  expect(fs.existsSync(successPath)).toBe(true);
+  const successContent = fs.readFileSync(successPath, "utf-8");
+  expect(successContent).toContain("TLA: from TLA");
+});

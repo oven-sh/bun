@@ -898,40 +898,7 @@ pub const Installer = struct {
                             if (!entry_hoisted[this.entry_id.get()]) {
                                 continue :next_step this.nextStep(current_step);
                             }
-                            const string_buf = lockfile.buffers.string_bytes.items;
-
-                            var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();
-                            defer hidden_hoisted_node_modules.deinit();
-
-                            hidden_hoisted_node_modules.append(
-                                "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
-                            );
-                            hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
-
-                            var target: bun.RelPath(.{ .sep = .auto }) = .init();
-                            defer target.deinit();
-
-                            target.append("..");
-                            if (strings.containsChar(pkg_name.slice(installer.lockfile.buffers.string_bytes.items), '/')) {
-                                target.append("..");
-                            }
-
-                            target.appendFmt("{}/node_modules/{s}", .{
-                                Store.Entry.fmtStorePath(this.entry_id, installer.store, installer.lockfile),
-                                pkg_name.slice(string_buf),
-                            });
-
-                            var full_target: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
-                            defer full_target.deinit();
-
-                            installer.appendStorePath(&full_target, this.entry_id);
-
-                            const symlinker: Symlinker = .{
-                                .dest = hidden_hoisted_node_modules,
-                                .target = target,
-                                .fallback_junction_target = full_target,
-                            };
-                            _ = symlinker.ensureSymlink(.ignore_failure);
+                            installer.linkToHiddenNodeModules(this.entry_id);
                         },
                     }
 
@@ -1230,6 +1197,47 @@ pub const Installer = struct {
         }
 
         return .none;
+    }
+
+    pub fn linkToHiddenNodeModules(this: *const Installer, entry_id: Store.Entry.Id) void {
+        const string_buf = this.lockfile.buffers.string_bytes.items;
+
+        const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+        const pkg_id = this.store.nodes.items(.pkg_id)[node_id.get()];
+        const pkg_name = this.lockfile.packages.items(.name)[pkg_id];
+
+        var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();
+        defer hidden_hoisted_node_modules.deinit();
+
+        hidden_hoisted_node_modules.append(
+            "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
+        );
+        hidden_hoisted_node_modules.append(pkg_name.slice(string_buf));
+
+        var target: bun.RelPath(.{ .sep = .auto }) = .init();
+        defer target.deinit();
+
+        target.append("..");
+        if (strings.containsChar(pkg_name.slice(string_buf), '/')) {
+            target.append("..");
+        }
+
+        target.appendFmt("{}/node_modules/{s}", .{
+            Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
+            pkg_name.slice(string_buf),
+        });
+
+        var full_target: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+        defer full_target.deinit();
+
+        this.appendStorePath(&full_target, entry_id);
+
+        const symlinker: Symlinker = .{
+            .dest = hidden_hoisted_node_modules,
+            .target = target,
+            .fallback_junction_target = full_target,
+        };
+        _ = symlinker.ensureSymlink(.expect_existing);
     }
 
     pub fn linkDependencyBins(this: *const Installer, parent_entry_id: Store.Entry.Id) !void {

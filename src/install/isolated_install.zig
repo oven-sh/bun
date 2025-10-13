@@ -636,6 +636,7 @@ pub fn installIsolatedPackages(
         const entry_node_ids = entries.items(.node_id);
         const entry_steps = entries.items(.step);
         const entry_dependencies = entries.items(.dependencies);
+        const entry_hoisted = entries.items(.hoisted);
 
         const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -937,6 +938,9 @@ pub fn installIsolatedPackages(
 
                     if (!needs_install) {
                         // .monotonic is okay because the task isn't running on another thread.
+                        if (entry_hoisted[entry_id.get()]) {
+                            installer.linkToHiddenNodeModules(entry_id);
+                        }
                         entry_steps[entry_id.get()].store(.done, .monotonic);
                         installer.onTaskComplete(entry_id, .skipped);
                         continue;

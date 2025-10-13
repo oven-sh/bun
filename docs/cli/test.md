@@ -111,6 +111,28 @@ Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a t
 $ bun test --timeout 20
 ```
 
+### Per-test timeout
+You can override the global timeout for individual tests using either Jest-style or Vitest-style syntax:
+
+```ts
+import { test, expect } from "bun:test";
+
+// Jest-style: third argument as timeout in milliseconds
+test("slow test", () => {
+  // test code
+}, 10_000);
+
+// Vitest-style: options object with timeout property
+test("another slow test", () => {
+  // test code
+}, { timeout: 10_000 });
+
+// Works with async tests too
+test("async slow test", async () => {
+  await someSlowOperation();
+}, 15_000);
+```
+
 ## Concurrent test execution
 
 By default, Bun runs all tests sequentially within each test file. You can enable concurrent execution to run async tests in parallel, significantly speeding up test suites with independent tests.

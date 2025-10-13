@@ -112,6 +112,7 @@ $ bun test --timeout 20
 ```
 
 ### Per-test timeout
+
 You can override the global timeout for individual tests using either Jest-style or Vitest-style syntax:
 
 ```ts

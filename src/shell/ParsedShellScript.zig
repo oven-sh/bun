@@ -41,9 +41,6 @@ pub fn finalize(
 
     if (this.export_env) |*env| env.deinit();
     if (this.cwd) |*cwd| cwd.deref();
-    for (this.jsobjs.items) |jsobj| {
-        jsobj.unprotect();
-    }
     if (this.args) |a| a.deinit();
     bun.destroy(this);
 }
@@ -102,8 +99,12 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-pub fn createParsedShellScript(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub const createParsedShellScript = jsc.MarkedArgumentBuffer.wrap(createParsedShellScriptImpl);
+
+fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, marked_argument_buffer: *jsc.MarkedArgumentBuffer) bun.JSError!JSValue {
     var shargs = ShellArgs.init();
+    var needs_to_free_shargs = true;
+    defer if (needs_to_free_shargs) shargs.deinit();
 
     const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
@@ -124,7 +125,7 @@ pub fn createParsedShellScript(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     }
     var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
     var script = std.ArrayList(u8).init(shargs.arena_allocator());
-    try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
+    try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
     var parser: ?bun.shell.Parser = null;
     var lex_result: ?shell.LexResult = null;
@@ -159,9 +160,10 @@ pub fn createParsedShellScript(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         .args = shargs,
         .jsobjs = jsobjs,
     });
-    parsed_shell_script.this_jsvalue = jsc.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
+    parsed_shell_script.this_jsvalue = jsc.Codegen.JSParsedShellScript.toJSWithValues(parsed_shell_script, globalThis, marked_argument_buffer);
 
     bun.analytics.Features.shell += 1;
+    needs_to_free_shargs = false;
     return parsed_shell_script.this_jsvalue;
 }
 

@@ -137,6 +137,18 @@ pub const BuildCommand = struct {
             }
         }
 
+        if (ctx.bundler_options.transform_only) {
+            // Check if any entry point is an HTML file
+            for (this_transpiler.options.entry_points) |entry_point| {
+                if (strings.hasSuffixComptime(entry_point, ".html")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
+                    Output.flush();
+                    Global.exit(1);
+                    return;
+                }
+            }
+        }
+
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});

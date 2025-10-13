@@ -2306,6 +2306,9 @@ pub const visibleCodepointWidthType = visible_.visibleCodepointWidthType;
 pub const escapeHTMLForLatin1Input = escapeHTML_.escapeHTMLForLatin1Input;
 pub const escapeHTMLForUTF16Input = escapeHTML_.escapeHTMLForUTF16Input;
 
+pub const escapeRegExp = escapeRegExp_.escapeRegExp;
+pub const escapeRegExpForPackageNameMatching = escapeRegExp_.escapeRegExpForPackageNameMatching;
+
 pub const addNTPathPrefix = paths_.addNTPathPrefix;
 pub const addNTPathPrefixIfNeeded = paths_.addNTPathPrefixIfNeeded;
 pub const addLongPathPrefix = paths_.addLongPathPrefix;
@@ -2347,6 +2350,7 @@ pub const CodePoint = i32;
 const string = []const u8;
 
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
+const escapeRegExp_ = @import("./escapeRegExp.zig");
 const paths_ = @import("./immutable/paths.zig");
 const std = @import("std");
 const unicode = @import("./immutable/unicode.zig");

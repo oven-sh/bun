@@ -545,17 +545,7 @@ pub fn installIsolatedPackages(
                 if (new_entry_dep_id != invalid_dependency_id and entry.entry_parent_id != .root) {
                     const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
                     if (manager.options.public_hoist_patterns) |public_hoist_patterns| {
-                        var match = false;
-                        for (public_hoist_patterns) |pattern| {
-                            switch (bun.glob.match(pattern, dep_name)) {
-                                .match => match = true,
-                                .no_match => {},
-                                .negate_match => {},
-                                .negate_no_match => match = false,
-                            }
-                        }
-
-                        if (match) {
+                        if (public_hoist_patterns.isMatch(dep_name)) {
                             const hoisted_entry = try publicly_hoisted.getOrPut(dep_name);
                             if (!hoisted_entry.found_existing) {
                                 try entry_dependencies[0].insert(

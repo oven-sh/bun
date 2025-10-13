@@ -3056,7 +3056,7 @@ pub const api = struct {
         minimum_release_age_ms: ?f64 = null,
         minimum_release_age_excludes: ?[]const []const u8 = null,
 
-        public_hoist_patterns: ?[]const []const u8 = null,
+        public_hoist_patterns: ?install.PnpmMatcher = null,
     };
 
     pub const ClientServerModule = struct {
@@ -3220,3 +3220,4 @@ const std = @import("std");
 const bun = @import("bun");
 const OOM = bun.OOM;
 const js_ast = bun.ast;
+const install = bun.install;

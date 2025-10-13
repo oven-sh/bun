@@ -1989,8 +1989,6 @@ pub const WTF = struct {
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
 const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {

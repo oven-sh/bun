@@ -71,7 +71,7 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
-public_hoist_patterns: ?[]const []const u8 = null,
+public_hoist_patterns: ?bun.install.PnpmMatcher = null,
 
 // Security scanner module path
 security_scanner: ?[]const u8 = null,

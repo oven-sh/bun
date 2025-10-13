@@ -504,7 +504,7 @@ const ExpectTypeOf = expect.ExpectTypeOf;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
+const RegularExpression = jsc.RegularExpression;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 

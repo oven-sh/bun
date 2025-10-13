@@ -160,7 +160,7 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         .args = shargs,
         .jsobjs = jsobjs,
     });
-    const this_jsvalue = jsc.Codegen.JSParsedShellScript.toJSWithValues(parsed_shell_script, globalThis, marked_argument_buffer);;
+    const this_jsvalue = jsc.Codegen.JSParsedShellScript.toJSWithValues(parsed_shell_script, globalThis, marked_argument_buffer);
     parsed_shell_script.this_jsvalue = this_jsvalue;
 
     bun.analytics.Features.shell += 1;

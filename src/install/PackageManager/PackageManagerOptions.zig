@@ -71,7 +71,8 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
-public_hoist_patterns: ?bun.install.PnpmMatcher = null,
+public_hoist_pattern: ?bun.install.PnpmMatcher = null,
+hoist_pattern: ?bun.install.PnpmMatcher = null,
 
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
@@ -388,8 +389,12 @@ pub fn load(
             this.minimum_release_age_excludes = exclusions;
         }
 
-        if (config.public_hoist_patterns) |public_hoist_patterns| {
-            this.public_hoist_patterns = public_hoist_patterns;
+        if (config.public_hoist_pattern) |public_hoist_pattern| {
+            this.public_hoist_pattern = public_hoist_pattern;
+        }
+
+        if (config.hoist_pattern) |hoist_pattern| {
+            this.hoist_pattern = hoist_pattern;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;

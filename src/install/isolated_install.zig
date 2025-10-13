@@ -412,8 +412,11 @@ pub fn installIsolatedPackages(
             .entry_parent_id = .invalid,
         });
 
-        var publicly_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
-        defer publicly_hoisted.deinit();
+        var public_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        defer public_hoisted.deinit();
+
+        var hidden_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        defer hidden_hoisted.deinit();
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (entry_queue.readItem()) |entry| {
@@ -508,11 +511,27 @@ pub fn installIsolatedPackages(
             var new_entry_parents: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, 1);
             new_entry_parents.appendAssumeCapacity(entry.entry_parent_id);
 
+            // defaults to true
+            var hoisted = manager.options.hoist_pattern == null;
+            if (entry.entry_parent_id != .root and new_entry_dep_id != invalid_dependency_id) {
+                // transitive dependencies (also direct dependencies of workspaces!)
+                const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                if (manager.options.hoist_pattern) |hoist_pattern| {
+                    if (hoist_pattern.isMatch(dep_name)) {
+                        const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                        if (!hoist_entry.found_existing) {
+                            hoisted = true;
+                        }
+                    }
+                }
+            }
+
             const new_entry: Store.Entry = .{
                 .node_id = entry.node_id,
                 .dependencies = new_entry_dependencies,
                 .parents = new_entry_parents,
                 .peer_hash = new_entry_peer_hash,
+                .hoisted = hoisted,
             };
 
             const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
@@ -539,15 +558,14 @@ pub fn installIsolatedPackages(
                 if (entry.entry_parent_id == .root) {
                     // make sure direct dependencies are not replaced
                     const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                    try publicly_hoisted.put(dep_name, {});
-                }
-
-                if (new_entry_dep_id != invalid_dependency_id and entry.entry_parent_id != .root) {
+                    try public_hoisted.put(dep_name, {});
+                } else if (new_entry_dep_id != invalid_dependency_id) {
+                    // transitive dependencies (also direct dependencies of workspaces!)
                     const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                    if (manager.options.public_hoist_patterns) |public_hoist_patterns| {
-                        if (public_hoist_patterns.isMatch(dep_name)) {
-                            const hoisted_entry = try publicly_hoisted.getOrPut(dep_name);
-                            if (!hoisted_entry.found_existing) {
+                    if (manager.options.public_hoist_pattern) |public_hoist_pattern| {
+                        if (public_hoist_pattern.isMatch(dep_name)) {
+                            const hoist_entry = try public_hoisted.getOrPut(dep_name);
+                            if (!hoist_entry.found_existing) {
                                 try entry_dependencies[0].insert(
                                     lockfile.allocator,
                                     .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },

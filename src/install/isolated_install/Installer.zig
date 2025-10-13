@@ -442,6 +442,7 @@ pub const Installer = struct {
             const entry_dependencies = entries.items(.dependencies);
             const entry_steps = entries.items(.step);
             const entry_scripts = entries.items(.scripts);
+            const entry_hoisted = entries.items(.hoisted);
 
             const nodes = installer.store.nodes.slice();
             const node_pkg_ids = nodes.items(.pkg_id);
@@ -894,6 +895,9 @@ pub const Installer = struct {
                         .local_tarball,
                         .remote_tarball,
                         => {
+                            if (!entry_hoisted[this.entry_id.get()]) {
+                                continue :next_step this.nextStep(current_step);
+                            }
                             const string_buf = lockfile.buffers.string_bytes.items;
 
                             var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();

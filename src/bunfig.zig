@@ -728,9 +728,21 @@ pub const Bunfig = struct {
                     }
 
                     if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
-                        install.public_hoist_patterns = bun.install.PnpmMatcher.fromExpr(
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
                             allocator,
                             public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
                             this.log,
                             this.source,
                         ) catch |err| switch (err) {

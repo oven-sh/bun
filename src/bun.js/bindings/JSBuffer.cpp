@@ -11,7 +11,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "BufferEncodingType.h"
 #include "JavaScriptCore/JSCJSValue.h"
-#include "mimalloc.h"
+#include <mimalloc.h>
 
 #include "JSBuffer.h"
 
@@ -228,14 +228,22 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObjec
     if (length > 0) [[likely]] {
         ASSERT(ptr);
         auto arrayBuffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
+#if USE(MIMALLOC)
             mi_free(p);
+#else
+            std::free(p);
+#endif
         }));
 
         buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
     } else {
         // We took ownership from Zig regardless of length; ensure we don't leak.
         if (ptr) {
+#if USE(MIMALLOC)
             mi_free(ptr);
+#else
+            std::free(ptr);
+#endif
         }
         buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }

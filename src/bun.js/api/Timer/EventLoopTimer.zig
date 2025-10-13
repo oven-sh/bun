@@ -69,6 +69,7 @@ pub const Tag = enum {
     DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,
+    MissingModulePoll,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -94,6 +95,7 @@ pub const Tag = enum {
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
+            .MissingModulePoll => VirtualMachine,
         };
     }
 };
@@ -187,6 +189,9 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
             monitor.onFire(vm, now);
             return .disarm;
+        },
+        .MissingModulePoll => {
+            return vm.pollForMissingModule();
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {

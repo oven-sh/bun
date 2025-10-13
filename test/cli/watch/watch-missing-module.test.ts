@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import fs from "fs";
+import * as fs from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -11,8 +11,7 @@ test("watch mode should poll and reload when a missing required file is created"
     `,
   });
 
-  // Start bun in watch mode (file2.ts doesn't exist yet)
-  await using proc = Bun.spawn({
+  const proc = Bun.spawn({
     cmd: [bunExe(), "--watch", "file1.ts"],
     cwd: String(dir),
     env: bunEnv,
@@ -21,49 +20,30 @@ test("watch mode should poll and reload when a missing required file is created"
     stdin: "ignore",
   });
 
-  let stdout = "";
-  let stderr = "";
+  // Wait for initial error, then create the missing file
+  const decoder = new TextDecoder();
+  let output = "";
 
-  const stdoutReader = (async () => {
-    for await (const chunk of proc.stdout) {
-      stdout += new TextDecoder().decode(chunk);
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      // Now create the missing file
+      fs.writeFileSync(join(String(dir), "file2.ts"), `export const message = "Hello from file2!";\n`);
+      break;
     }
-  })();
+  }
 
-  const stderrReader = (async () => {
-    for await (const chunk of proc.stderr) {
-      stderr += new TextDecoder().decode(chunk);
+  // Now read stdout for success
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("SUCCESS: Hello from file2!")) {
+      proc.kill();
+      break;
     }
-  })();
+  }
 
-  // Wait for polling to start and for output to be captured
-  await Bun.sleep(1500);
-
-  const combined1 = stdout + stderr;
-
-  // Should see the polling message
-  expect(combined1).toContain("Module not found");
-  expect(combined1).toContain("Polling every 50ms");
-
-  // Now create the missing file
-  fs.writeFileSync(join(String(dir), "file2.ts"), `export const message = "Hello from file2!";\n`);
-
-  // Wait for polling to detect it and reload
-  await Bun.sleep(300);
-
-  proc.kill();
-  await Promise.race([proc.exited, Bun.sleep(2000)]);
-
-  await Promise.race([Promise.all([stdoutReader, stderrReader]), Bun.sleep(500)]);
-
-  const combined2 = stdout + stderr;
-
-  // Should see the reload message
-  // Note: The actual "SUCCESS" output happens after the process restart,
-  // which creates a new process that we can't capture in this test.
-  // But we can verify that the polling detected the file and triggered reload.
-  expect(combined2).toContain("now exists, reloading");
-}, 10000);
+  expect(output).toContain("SUCCESS: Hello from file2!");
+});
 
 test("watch mode should handle relative path imports that don't exist", async () => {
   using dir = tempDir("watch-missing-relative", {
@@ -73,7 +53,7 @@ test("watch mode should handle relative path imports that don't exist", async ()
     `,
   });
 
-  await using proc = Bun.spawn({
+  const proc = Bun.spawn({
     cmd: [bunExe(), "--watch", "index.ts"],
     cwd: String(dir),
     env: bunEnv,
@@ -82,35 +62,186 @@ test("watch mode should handle relative path imports that don't exist", async ()
     stdin: "ignore",
   });
 
+  const decoder = new TextDecoder();
   let output = "";
 
-  const reader = (async () => {
-    for await (const chunk of proc.stdout) {
-      output += new TextDecoder().decode(chunk);
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      fs.mkdirSync(join(String(dir), "lib"), { recursive: true });
+      fs.writeFileSync(join(String(dir), "lib", "helper.ts"), `export const data = 42;\n`);
+      break;
     }
-  })();
+  }
 
-  const errReader = (async () => {
-    for await (const chunk of proc.stderr) {
-      output += new TextDecoder().decode(chunk);
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("LOADED: 42")) {
+      proc.kill();
+      break;
     }
-  })();
+  }
 
-  await Bun.sleep(1500);
+  expect(output).toContain("LOADED: 42");
+});
 
-  // Should be polling for the missing file
-  expect(output).toContain("Polling every 50ms");
+test("watch mode should handle deeply nested missing imports", async () => {
+  using dir = tempDir("watch-nested-missing", {
+    "index.ts": `
+      import { level1 } from "./level1/level2.ts";
+      console.log("RESULT:", level1);
+    `,
+    "level1/level2.ts": `
+      import { level3 } from "./level2/level3.ts";
+      export const level2 = level3 + " -> level2";
+      export const level1 = level2 + " -> level1";
+    `,
+    "level1/level2": {},
+  });
 
-  // Create the directory and file
-  fs.mkdirSync(join(String(dir), "lib"), { recursive: true });
-  fs.writeFileSync(join(String(dir), "lib", "helper.ts"), `export const data = 42;\n`);
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
 
-  await Bun.sleep(300);
+  const decoder = new TextDecoder();
+  let output = "";
 
-  proc.kill();
-  await Promise.race([proc.exited, Bun.sleep(2000)]);
-  await Promise.race([Promise.all([reader, errReader]), Bun.sleep(500)]);
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      fs.writeFileSync(join(String(dir), "level1", "level2", "level3.ts"), `export const level3 = "level3";`);
+      break;
+    }
+  }
 
-  // Should see the reload message
-  expect(output).toContain("now exists, reloading");
-}, 10000);
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("RESULT: level3 -> level2 -> level1")) {
+      proc.kill();
+      break;
+    }
+  }
+
+  expect(output).toContain("RESULT: level3 -> level2 -> level1");
+});
+
+test("watch mode should handle absolute path imports that don't exist", async () => {
+  using dir = tempDir("watch-absolute-missing", {});
+
+  const absolutePath = join(String(dir), "absolute.ts");
+
+  fs.writeFileSync(join(String(dir), "index.ts"), `import { data } from "${absolutePath}";\nconsole.log(data);\n`);
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const decoder = new TextDecoder();
+  let output = "";
+
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      fs.writeFileSync(absolutePath, `export const data = "absolute import works";`);
+      break;
+    }
+  }
+
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("absolute import works")) {
+      proc.kill();
+      break;
+    }
+  }
+
+  expect(output).toContain("absolute import works");
+});
+
+test("watch mode should handle missing CSS imports", async () => {
+  using dir = tempDir("watch-css-missing", {
+    "index.ts": `
+      import "./styles.css";
+      console.log("CSS imported");
+    `,
+  });
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const decoder = new TextDecoder();
+  let output = "";
+
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      fs.writeFileSync(join(String(dir), "styles.css"), `body { color: red; }`);
+      break;
+    }
+  }
+
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("CSS imported")) {
+      proc.kill();
+      break;
+    }
+  }
+
+  expect(output).toContain("CSS imported");
+});
+
+test("watch mode should handle missing JSON imports", async () => {
+  using dir = tempDir("watch-json-missing", {
+    "index.ts": `
+      import data from "./data.json";
+      console.log(data.message);
+    `,
+  });
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const decoder = new TextDecoder();
+  let output = "";
+
+  for await (const chunk of proc.stderr) {
+    output += decoder.decode(chunk);
+    if (output.includes("Module not found") || output.includes("Cannot find module")) {
+      fs.writeFileSync(join(String(dir), "data.json"), JSON.stringify({ message: "hello from JSON" }));
+      break;
+    }
+  }
+
+  for await (const chunk of proc.stdout) {
+    output += decoder.decode(chunk);
+    if (output.includes("hello from JSON")) {
+      proc.kill();
+      break;
+    }
+  }
+
+  expect(output).toContain("hello from JSON");
+});

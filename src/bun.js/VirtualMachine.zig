@@ -55,7 +55,7 @@ jsc_vm: *VM = undefined,
 
 /// When watch/hot mode has an unhandled rejection for a missing module,
 /// poll for the file's existence instead of crashing immediately
-missing_module_poll_timer: ?*bun.uws.Timer = null,
+missing_module_poll_timer: EventLoopTimer = EventLoopTimer.initPaused(.MissingModulePoll),
 missing_module_path: ?bun.String = null,
 
 /// hide bun:wrap from stack traces
@@ -702,23 +702,16 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
                         };
 
                         if (std.fs.path.isAbsolute(absolute_path)) {
-                            Output.prettyErrorln("<cyan>watcher<r>: <d>Module not found:<r> {s}", .{absolute_path});
-                            Output.prettyErrorln("<cyan>watcher<r>: <d>Polling every 50ms for file creation...<r>", .{});
-                            Output.flush();
-
-                            if (this.missing_module_poll_timer) |existing_timer| {
-                                existing_timer.deinit(true);
+                            // Clean up any existing poll timer
+                            if (this.missing_module_poll_timer.state == .ACTIVE) {
+                                this.timer.remove(&this.missing_module_poll_timer);
                             }
                             if (this.missing_module_path) |existing_path| {
                                 existing_path.deref();
                             }
 
                             this.missing_module_path = bun.String.init(absolute_path);
-                            this.missing_module_poll_timer = bun.uws.Timer.createFallthrough(
-                                this.event_loop_handle.?,
-                                this,
-                            );
-                            this.missing_module_poll_timer.?.set(this, pollForMissingModule, 50, 50);
+                            this.timer.update(&this.missing_module_poll_timer, &bun.timespec.msFromNow(50));
 
                             // Don't call the normal error handler since we're polling
                             return handled;
@@ -733,35 +726,30 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
-fn pollForMissingModule(timer: *bun.uws.Timer) callconv(.C) void {
-    const this: *VirtualMachine = @ptrCast(@alignCast(timer.ext(VirtualMachine)));
-
+pub fn pollForMissingModule(this: *VirtualMachine) EventLoopTimer.Arm {
     if (this.missing_module_path) |path| {
         const path_slice = path.byteSlice();
 
         // Check if file now exists
         if (bun.sys.exists(path_slice)) {
             // File exists! Stop polling and trigger reload
-            if (this.missing_module_poll_timer) |t| {
-                t.deinit(true);
-                this.missing_module_poll_timer = null;
+            if (this.missing_module_poll_timer.state == .ACTIVE) {
+                this.timer.remove(&this.missing_module_poll_timer);
             }
             path.deref();
             this.missing_module_path = null;
 
-            // Trigger reload
-            Output.prettyErrorln("<cyan>watcher<r>: <d>File<r> {s} <d>now exists, reloading...<r>", .{path_slice});
-            Output.flush();
-
             if (this.hot_reload == .watch) {
                 const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
                 bun.reloadProcess(bun.default_allocator, should_clear_terminal, false);
-            } else if (this.hot_reload == .hot) {
-                // For hot reload, we need to trigger a reload through the proper channels
-                // This will be handled when the process restarts
             }
+
+            return .disarm;
         }
     }
+
+    // Continue polling
+    return .{ .rearm = bun.timespec.msFromNow(50) };
 }
 
 pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
@@ -800,13 +788,9 @@ pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
 
                         // Only poll if it's an absolute path
                         if (std.fs.path.isAbsolute(absolute_path)) {
-                            Output.prettyErrorln("<cyan>watcher<r>: <d>Module not found:<r> {s}", .{absolute_path});
-                            Output.prettyErrorln("<cyan>watcher<r>: <d>Polling every 50ms for file creation...<r>", .{});
-                            Output.flush();
-
                             // Clean up any existing poll timer
-                            if (this.missing_module_poll_timer) |existing_timer| {
-                                existing_timer.deinit(true);
+                            if (this.missing_module_poll_timer.state == .ACTIVE) {
+                                this.timer.remove(&this.missing_module_poll_timer);
                             }
                             if (this.missing_module_path) |existing_path| {
                                 existing_path.deref();
@@ -816,11 +800,7 @@ pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
                             this.missing_module_path = bun.String.init(absolute_path);
 
                             // Start polling timer (50ms interval)
-                            this.missing_module_poll_timer = bun.uws.Timer.createFallthrough(
-                                this.event_loop_handle.?,
-                                this,
-                            );
-                            this.missing_module_poll_timer.?.set(this, pollForMissingModule, 50, 50);
+                            this.timer.update(&this.missing_module_poll_timer, &bun.timespec.msFromNow(50));
 
                             // Mark as handled so we don't also print the error
                             promise.setHandled(this.global.vm());
@@ -2081,9 +2061,8 @@ pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
 
     // Clean up missing module poll timer
-    if (this.missing_module_poll_timer) |timer| {
-        timer.deinit(true);
-        this.missing_module_poll_timer = null;
+    if (this.missing_module_poll_timer.state == .ACTIVE) {
+        this.timer.remove(&this.missing_module_poll_timer);
     }
     if (this.missing_module_path) |path| {
         path.deref();
@@ -3884,6 +3863,7 @@ const ConsoleObject = jsc.ConsoleObject;
 const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
 const ErrorableString = jsc.ErrorableString;
 const EventLoop = jsc.EventLoop;
+const EventLoopTimer = jsc.API.Timer.EventLoopTimer;
 const Exception = jsc.Exception;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSInternalPromise = jsc.JSInternalPromise;

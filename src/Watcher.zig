@@ -625,11 +625,23 @@ pub fn addDirectory(
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
 }
 
+/// Lazily watch a file by path (slow path).
+///
+/// This function is used when a file needs to be watched but was not
+/// encountered during the normal import graph traversal. On macOS, it
+/// opens a file descriptor with O_EVTONLY to obtain an inode reference.
+///
+/// Thread-safe: uses internal locking to prevent race conditions.
+///
+/// Returns:
+/// - true if the file is successfully added to the watchlist or already watched
+/// - false if the file cannot be opened or added to the watchlist
 pub fn addFileByPathSlow(
     this: *Watcher,
     file_path: string,
     loader: options.Loader,
 ) bool {
+    if (file_path.len == 0) return false;
     const hash = getHash(file_path);
 
     // Check if already watched (with lock to avoid race with removal)

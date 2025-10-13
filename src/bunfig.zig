@@ -733,8 +733,9 @@ pub const Bunfig = struct {
                             public_hoist_pattern_expr,
                             this.log,
                             this.source,
-                        ) catch {
-                            return error.@"Invalid Bunfig";
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
                         };
                     }
                 }

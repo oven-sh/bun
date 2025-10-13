@@ -100,6 +100,61 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             };
         }
 
+        const FromYarnBerryLockfileError = OOM || error{InvalidYarnBerryLockfile};
+
+        /// Parse Yarn Berry resolution: "package@protocol:details" or "package@protocol:details::metadata"
+        pub fn fromYarnBerryLockfile(res_str: []const u8, string_buf: *String.Buf) FromYarnBerryLockfileError!Resolution {
+            const at_idx = strings.lastIndexOfChar(res_str, '@') orelse return error.InvalidYarnBerryLockfile;
+            var protocol_part = res_str[at_idx + 1 ..];
+
+            // Strip ::metadata if present
+            if (strings.indexOf(protocol_part, "::")) |idx| {
+                protocol_part = protocol_part[0..idx];
+            }
+
+            // npm:version
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "npm:")) |version_str| {
+                const version_literal = try string_buf.append(version_str);
+                const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+                if (!parsed.valid or parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    return error.InvalidYarnBerryLockfile;
+                }
+                return This.init(.{ .npm = .{ .version = parsed.version.min(), .url = .{} } });
+            }
+
+            // link:path -> symlink
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "link:")) |path| {
+                return This.init(.{ .symlink = try string_buf.append(path) });
+            }
+
+            // file:path -> folder
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "file:")) |path| {
+                return This.init(.{ .folder = try string_buf.append(path) });
+            }
+
+            // portal:path -> folder
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "portal:")) |path| {
+                return This.init(.{ .folder = try string_buf.append(path) });
+            }
+
+            // github:owner/repo#ref
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "github:")) |github_spec| {
+                return This.init(.{ .github = try Repository.parseAppendGithub(github_spec, string_buf) });
+            }
+
+            // git:url or git+protocol:url
+            if (strings.hasPrefixComptime(protocol_part, "git:") or strings.hasPrefixComptime(protocol_part, "git+")) {
+                return This.init(.{ .git = try Repository.parseAppendGit(protocol_part, string_buf) });
+            }
+
+            // https:url or http:url
+            if (strings.hasPrefixComptime(protocol_part, "https:") or strings.hasPrefixComptime(protocol_part, "http:")) {
+                return This.init(.{ .remote_tarball = try string_buf.append(protocol_part) });
+            }
+
+            return error.InvalidYarnBerryLockfile;
+        }
+
         const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
 
         pub fn fromPnpmLockfile(res_str: []const u8, string_buf: *String.Buf) FromPnpmLockfileError!Resolution {

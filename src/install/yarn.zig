@@ -914,13 +914,6 @@ fn migrateYarnBerry(
         entry.value_ptr.* = pkg_id;
     }
 
-    var skipped_virtual: usize = 0;
-    var skipped_patch: usize = 0;
-    var skipped_link: usize = 0;
-    var skipped_file: usize = 0;
-    var skipped_portal: usize = 0;
-    var skipped_exec: usize = 0;
-    var skipped_other: usize = 0;
     var added_count: usize = 0;
 
     var spec_to_pkg_id = std.StringHashMap(PackageID).init(allocator);
@@ -940,77 +933,30 @@ fn migrateYarnBerry(
         const resolution_node = entry_obj.get("resolution") orelse continue;
         const resolution_str = resolution_node.asString(allocator) orelse continue;
 
-        if (strings.contains(resolution_str, "@workspace:")) continue;
-
-        if (strings.contains(resolution_str, "@virtual:")) {
-            skipped_virtual += 1;
-            continue;
-        }
-
-        if (strings.contains(resolution_str, "@patch:")) {
-            skipped_patch += 1;
-            continue;
-        }
-
-        if (strings.contains(resolution_str, "@link:")) {
-            skipped_link += 1;
-            continue;
-        }
-
-        if (strings.contains(resolution_str, "@file:")) {
-            skipped_file += 1;
-            continue;
-        }
-
-        if (strings.contains(resolution_str, "@portal:")) {
-            skipped_portal += 1;
-            continue;
-        }
-
-        if (strings.contains(resolution_str, "@exec:")) {
-            skipped_exec += 1;
-            continue;
-        }
-
-        if (!strings.contains(resolution_str, "@npm:")) {
-            skipped_other += 1;
-            continue;
-        }
-
         const version_node = entry_obj.get("version") orelse continue;
-        const version_str = version_node.asString(allocator) orelse continue;
+        _ = version_node.asString(allocator) orelse continue;
 
-        const at_npm_idx = strings.indexOf(resolution_str, "@npm:") orelse continue;
-        const pkg_name = if (at_npm_idx == 0) blk: {
-            const after_npm = resolution_str[5..];
-            if (strings.indexOfChar(after_npm, '@')) |at_idx| {
-                break :blk after_npm[0..at_idx];
-            }
-            break :blk after_npm;
-        } else resolution_str[0..at_npm_idx];
+        // Extract package name (before last @)
+        const at_idx = strings.lastIndexOfChar(resolution_str, '@') orelse continue;
+        const pkg_name = resolution_str[0..at_idx];
 
         const name_hash = String.Builder.stringHash(pkg_name);
         const name = try string_buf.appendWithHash(pkg_name, name_hash);
 
-        const version_string = try string_buf.append(version_str);
-        const sliced_version = version_string.sliced(string_buf.bytes.items);
-        const parsed = Semver.Version.parse(sliced_version);
-        if (!parsed.valid) continue;
+        // Parse resolution (like pnpm does)
+        var res = Resolution.fromYarnBerryLockfile(resolution_str, &string_buf) catch continue;
 
-        const scope = manager.scopeForPackageName(name.slice(string_buf.bytes.items));
-        const url = try ExtractTarball.buildURL(
-            scope.url.href,
-            strings.StringOrTinyString.init(pkg_name),
-            parsed.version.min(),
-            string_buf.bytes.items,
-        );
-
-        const res = Resolution.init(.{
-            .npm = .{
-                .version = parsed.version.min(),
-                .url = try string_buf.append(url),
-            },
-        });
+        // Build npm URL (like pnpm does)
+        if (res.tag == .npm) {
+            const scope = manager.scopeForPackageName(pkg_name);
+            const url = try ExtractTarball.buildURL(
+                scope.url.href,
+                strings.StringOrTinyString.init(pkg_name),
+                res.value.npm.version,
+                string_buf.bytes.items,
+            );
+            res.value.npm.url = try string_buf.append(url);
+        }
 
         var pkg: Lockfile.Package = .{
             .name = name,
@@ -1432,7 +1378,6 @@ fn scanWorkspaces(
         }
     }
 }
-
 
 const YarnEntry = struct {
     specs: std.ArrayList([]const u8),

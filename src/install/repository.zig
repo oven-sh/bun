@@ -370,17 +370,29 @@ pub const Repository = extern struct {
         defer std_map.deinit();
 
         const result = if (comptime Environment.isWindows)
-            try std.process.Child.run(.{
+            std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
-            })
+            }) catch |err| {
+                // FileNotFound means git executable wasn't found
+                if (err == error.FileNotFound and argv.len > 0 and strings.eqlComptime(argv[0], "git")) {
+                    return error.GitNotFound;
+                }
+                return err;
+            }
         else
-            try std.process.Child.run(.{
+            std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .env_map = std_map.get(),
-            });
+            }) catch |err| {
+                // FileNotFound means git executable wasn't found
+                if (err == error.FileNotFound and argv.len > 0 and strings.eqlComptime(argv[0], "git")) {
+                    return error.GitNotFound;
+                }
+                return err;
+            };
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout else if (

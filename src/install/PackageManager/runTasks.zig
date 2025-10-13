@@ -724,16 +724,26 @@ pub fn runTasks(
                             url,
                         );
                     } else if (log_level != .silent) {
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "{s} cloning repository for <b>{s}<r>",
-                            .{
-                                @errorName(err),
-                                name,
-                            },
-                        ) catch |e| bun.handleOom(e);
+                        if (err == error.GitNotFound) {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "Git is not installed. Install Git to clone repository for <b>{s}<r>\n\n  Learn more: https://git-scm.com/downloads",
+                                .{name},
+                            ) catch |e| bun.handleOom(e);
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} cloning repository for <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    name,
+                                },
+                            ) catch |e| bun.handleOom(e);
+                        }
                     }
                     continue;
                 }
@@ -798,16 +808,26 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.Failed;
 
-                    manager.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        manager.allocator,
-                        "{s} checking out repository for <b>{s}<r>",
-                        .{
-                            @errorName(err),
-                            alias.slice(),
-                        },
-                    ) catch |e| bun.handleOom(e);
+                    if (err == error.GitNotFound) {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "Git is not installed. Install Git to checkout repository for <b>{s}<r>\n\n  Learn more: https://git-scm.com/downloads",
+                            .{alias.slice()},
+                        ) catch |e| bun.handleOom(e);
+                    } else {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} checking out repository for <b>{s}<r>",
+                            .{
+                                @errorName(err),
+                                alias.slice(),
+                            },
+                        ) catch |e| bun.handleOom(e);
+                    }
 
                     continue;
                 }

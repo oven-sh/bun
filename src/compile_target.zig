@@ -233,7 +233,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                     // Return error without printing - let caller handle the messaging
                     return error.InvalidResponse;
                 };
-                gunzip.readAll() catch {
+                gunzip.readAll(true) catch {
                     node.end();
                     // Return error without printing - let caller handle the messaging
                     return error.InvalidResponse;
@@ -248,7 +248,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
                 const libarchive = bun.libarchive;
                 var tmpname_buf: [1024]u8 = undefined;
-                const tempdir_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
+                const tempdir_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
                 var tmpdir = try std.fs.cwd().makeOpenPath(tempdir_name, .{});
                 defer tmpdir.close();
                 defer std.fs.cwd().deleteTree(tempdir_name) catch {};

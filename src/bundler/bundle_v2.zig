@@ -145,6 +145,9 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.safety.ThreadLock,
 
+    // if false we can skip TLA validation and propagation
+    has_any_top_level_await_modules: bool = false,
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -175,7 +178,9 @@ pub const BundleV2 = struct {
 
     fn ensureClientTranspiler(this: *BundleV2) void {
         if (this.client_transpiler == null) {
-            _ = bun.handleOom(this.initializeClientTranspiler());
+            _ = this.initializeClientTranspiler() catch |e| {
+                std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+            };
         }
     }
 
@@ -230,7 +235,9 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse bun.handleOom(this.initializeClientTranspiler());
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch |e| {
+                    std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+                };
             }
 
             return this.transpiler;
@@ -758,7 +765,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = .no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -824,7 +831,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1138,8 +1145,8 @@ pub const BundleV2 = struct {
         bun.safety.alloc.assertEq(this.allocator(), this.transpiler.allocator);
         bun.safety.alloc.assertEq(this.allocator(), this.linker.graph.allocator);
         this.linker.graph.ast = try this.graph.ast.clone(this.allocator());
-        var ast = this.linker.graph.ast.slice();
-        for (ast.items(.module_scope)) |*module_scope| {
+
+        for (this.linker.graph.ast.items(.module_scope)) |*module_scope| {
             for (module_scope.children.slice()) |child| {
                 child.parent = module_scope;
             }
@@ -1150,6 +1157,10 @@ pub const BundleV2 = struct {
 
             module_scope.generated = try module_scope.generated.clone(this.allocator());
         }
+
+        // Some parts of the AST are owned by worker allocators at this point.
+        // Transfer ownership to the graph heap.
+        this.linker.graph.takeAstOwnership();
     }
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
@@ -1249,7 +1260,7 @@ pub const BundleV2 = struct {
                 try client_manifest_props.append(alloc, .{
                     .key = client_path,
                     .value = server.newExpr(E.Object{
-                        .properties = G.Property.List.init(client_manifest_items),
+                        .properties = G.Property.List.fromOwnedSlice(client_manifest_items),
                     }),
                 });
             } else {
@@ -1264,7 +1275,7 @@ pub const BundleV2 = struct {
                     .ref = try server.newSymbol(.other, "serverManifest"),
                 }, Logger.Loc.Empty),
                 .value = server.newExpr(E.Object{
-                    .properties = G.Property.List.fromList(server_manifest_props),
+                    .properties = G.Property.List.moveFromList(&server_manifest_props),
                 }),
             }}),
             .is_export = true,
@@ -1276,7 +1287,7 @@ pub const BundleV2 = struct {
                     .ref = try server.newSymbol(.other, "ssrManifest"),
                 }, Logger.Loc.Empty),
                 .value = server.newExpr(E.Object{
-                    .properties = G.Property.List.fromList(client_manifest_props),
+                    .properties = G.Property.List.moveFromList(&client_manifest_props),
                 }),
             }}),
             .is_export = true,
@@ -1316,7 +1327,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1370,7 +1381,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1679,9 +1690,9 @@ pub const BundleV2 = struct {
                         .entry_point_index = null,
                         .is_executable = false,
                     })) catch unreachable;
-                    additional_files[index].push(this.allocator(), AdditionalFile{
+                    additional_files[index].append(this.allocator(), AdditionalFile{
                         .output_file = @as(u32, @truncate(additional_output_files.items.len - 1)),
-                    }) catch unreachable;
+                    }) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -1797,6 +1808,9 @@ pub const BundleV2 = struct {
         ) !void {
             const config = &completion.config;
 
+            // JSX config is already in API format
+            const jsx_api = config.jsx;
+
             transpiler.* = try bun.Transpiler.init(
                 alloc,
                 &completion.log,
@@ -1817,6 +1831,7 @@ pub const BundleV2 = struct {
                     .ignore_dce_annotations = transpiler.options.ignore_dce_annotations,
                     .drop = config.drop.map.keys(),
                     .bunfig_path = transpiler.options.bunfig_path,
+                    .jsx = jsx_api,
                 },
                 completion.env,
             );
@@ -1827,23 +1842,58 @@ pub const BundleV2 = struct {
             }
 
             transpiler.options.entry_points = config.entry_points.keys();
-            transpiler.options.jsx = config.jsx;
+            // Convert API JSX config back to options.JSX.Pragma
+            transpiler.options.jsx = options.JSX.Pragma{
+                .factory = if (config.jsx.factory.len > 0)
+                    try options.JSX.Pragma.memberListToComponentsIfDifferent(alloc, &.{}, config.jsx.factory)
+                else
+                    options.JSX.Pragma.Defaults.Factory,
+                .fragment = if (config.jsx.fragment.len > 0)
+                    try options.JSX.Pragma.memberListToComponentsIfDifferent(alloc, &.{}, config.jsx.fragment)
+                else
+                    options.JSX.Pragma.Defaults.Fragment,
+                .runtime = config.jsx.runtime,
+                .development = config.jsx.development,
+                .package_name = if (config.jsx.import_source.len > 0) config.jsx.import_source else "react",
+                .classic_import_source = if (config.jsx.import_source.len > 0) config.jsx.import_source else "react",
+                .side_effects = config.jsx.side_effects,
+                .parse = true,
+                .import_source = .{
+                    .development = if (config.jsx.import_source.len > 0)
+                        try std.fmt.allocPrint(alloc, "{s}/jsx-dev-runtime", .{config.jsx.import_source})
+                    else
+                        "react/jsx-dev-runtime",
+                    .production = if (config.jsx.import_source.len > 0)
+                        try std.fmt.allocPrint(alloc, "{s}/jsx-runtime", .{config.jsx.import_source})
+                    else
+                        "react/jsx-runtime",
+                },
+            };
             transpiler.options.no_macros = config.no_macros;
             transpiler.options.loaders = try options.loadersFromTransformOptions(alloc, config.loaders, config.target);
             transpiler.options.entry_naming = config.names.entry_point.data;
             transpiler.options.chunk_naming = config.names.chunk.data;
             transpiler.options.asset_naming = config.names.asset.data;
 
-            transpiler.options.public_path = config.public_path.list.items;
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
             transpiler.options.compile = config.compile != null;
+
+            // For compile mode, set the public_path to the target-specific base path
+            // This ensures embedded resources like yoga.wasm are correctly found
+            if (config.compile) |compile_opts| {
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_opts.compile_target.os, "root/");
+                transpiler.options.public_path = base_public_path;
+            } else {
+                transpiler.options.public_path = config.public_path.list.items;
+            }
 
             transpiler.options.output_dir = config.outdir.slice();
             transpiler.options.root_dir = config.rootdir.slice();
             transpiler.options.minify_syntax = config.minify.syntax;
             transpiler.options.minify_whitespace = config.minify.whitespace;
             transpiler.options.minify_identifiers = config.minify.identifiers;
+            transpiler.options.keep_names = config.minify.keep_names;
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;
@@ -1896,18 +1946,25 @@ pub const BundleV2 = struct {
                         break :brk i;
                     }
                 }
-                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+                return bun.StandaloneModuleGraph.CompileResult.fail(.no_entry_point);
             };
 
             const output_file = &output_files.items[entry_point_index];
             const outbuf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(outbuf);
 
+            // Always get an absolute path for the outfile to ensure it works correctly with PE metadata operations
             var full_outfile_path = if (this.config.outdir.slice().len > 0) brk: {
                 const outdir_slice = this.config.outdir.slice();
                 const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
                 break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{ outdir_slice, compile_options.outfile.slice() }, .auto);
-            } else compile_options.outfile.slice();
+            } else if (std.fs.path.isAbsolute(compile_options.outfile.slice()))
+                compile_options.outfile.slice()
+            else brk: {
+                // For relative paths, ensure we make them absolute relative to the current working directory
+                const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
+                break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{compile_options.outfile.slice()}, .auto);
+            };
 
             // Add .exe extension for Windows targets if not already present
             if (compile_options.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {
@@ -1926,19 +1983,32 @@ pub const BundleV2 = struct {
                 }
             }
 
-            if (!(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+            // On Windows, don't change root_dir, just pass the full relative path
+            // On POSIX, change root_dir to the target directory and pass basename
+            const outfile_for_executable = if (Environment.isWindows) full_outfile_path else basename;
+
+            if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On POSIX, makeOpenPath and change root_dir
                 root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) });
+                };
+            } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On Windows, ensure directories exist but don't change root_dir
+                _ = bun.makePath(root_dir, dirname) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             }
+
+            // Use the target-specific base path for compile mode, not the user-configured public_path
+            const module_prefix = bun.StandaloneModuleGraph.targetBasePublicPath(compile_options.compile_target.os, "root/");
 
             const result = bun.StandaloneModuleGraph.toExecutable(
                 &compile_options.compile_target,
                 bun.default_allocator,
                 output_files.items,
                 root_dir,
-                this.config.public_path.slice(),
-                basename,
+                module_prefix,
+                outfile_for_executable,
                 this.env,
                 this.config.format,
                 .{
@@ -1974,7 +2044,7 @@ pub const BundleV2 = struct {
                 else
                     null,
             ) catch |err| {
-                return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)})));
+                return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
 
             if (result == .success) {
@@ -2069,7 +2139,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.err.slice()))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }
@@ -2231,7 +2301,7 @@ pub const BundleV2 = struct {
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                    additional_files.push(this.allocator(), .{ .source_index = source_index.get() }) catch unreachable;
+                    bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = source_index.get() }));
                     this.graph.input_files.items(.side_effects)[source_index.get()] = .no_side_effects__pure_data;
                     this.graph.estimated_file_loader_count += 1;
                 }
@@ -2430,7 +2500,7 @@ pub const BundleV2 = struct {
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
                             if (loader.shouldCopyForBundling()) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -2464,7 +2534,7 @@ pub const BundleV2 = struct {
                             if (!entry.found_existing) {
                                 entry.value_ptr.* = .{};
                             }
-                            entry.value_ptr.push(
+                            entry.value_ptr.append(
                                 this.allocator(),
                                 .{
                                     .to_source_index = source_index,
@@ -3501,7 +3571,7 @@ pub const BundleV2 = struct {
 
         import_record.source_index = fake_input_file.source.index;
         try this.pathToSourceIndexMap(target).put(this.allocator(), path_text, fake_input_file.source.index.get());
-        try graph.html_imports.server_source_indices.push(this.allocator(), fake_input_file.source.index.get());
+        try graph.html_imports.server_source_indices.append(this.allocator(), fake_input_file.source.index.get());
         this.ensureClientTranspiler();
     }
 
@@ -3590,6 +3660,8 @@ pub const BundleV2 = struct {
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.transpiler.log, true) catch unreachable;
+
+                this.has_any_top_level_await_modules = this.has_any_top_level_await_modules or !result.ast.top_level_await_keyword.isEmpty();
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.
@@ -3682,7 +3754,7 @@ pub const BundleV2 = struct {
 
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.allocator(), .{ .source_index = new_task.source_index.get() }) catch unreachable;
+                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = new_task.source_index.get() }));
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
                             graph.estimated_file_loader_count += 1;
                         }
@@ -3691,7 +3763,7 @@ pub const BundleV2 = struct {
                     } else {
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.allocator(), .{ .source_index = existing.value_ptr.* }) catch unreachable;
+                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = existing.value_ptr.* }));
                             graph.estimated_file_loader_count += 1;
                         }
 
@@ -3707,16 +3779,15 @@ pub const BundleV2 = struct {
                     result.loader.isCSS();
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
-                    for (pending_entry.value.slice()) |to_assign| {
+                    var value = pending_entry.value;
+                    for (value.slice()) |to_assign| {
                         if (save_import_record_source_index or
                             input_file_loaders[to_assign.to_source_index.get()].isCSS())
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
                         }
                     }
-
-                    var list = pending_entry.value.list();
-                    list.deinit(this.allocator());
+                    value.deinit(this.allocator());
                 }
 
                 if (result.ast.css != null) {

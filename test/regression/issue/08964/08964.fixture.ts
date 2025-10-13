@@ -12,15 +12,17 @@ function makeTest(yes = false) {
 }
 
 describe("Outer", () => {
+  makeTest();
   describe.only("Inner", () => {
-    describe("Inside Only", () => {
-      makeTest(true);
-    });
     makeTest(true);
 
     expected.push(997, 998, 999);
     test.each([997, 998, 999])("test %i", i => {
       runs.push(i);
+    });
+
+    describe("Inside Only", () => {
+      makeTest(true);
     });
   });
 
@@ -37,7 +39,6 @@ describe("Outer", () => {
       });
     });
   });
-  makeTest();
 });
 
 afterAll(() => {

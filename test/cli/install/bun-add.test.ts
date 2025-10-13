@@ -1064,6 +1064,9 @@ it("should add dependency alongside workspaces", async () => {
       name: "foo",
       version: "0.0.1",
       workspaces: ["packages/*"],
+      "dependencies": {
+        "bar": "workspace:*",
+      },
     }),
   );
   await mkdir(join(package_dir, "packages", "bar"), { recursive: true });
@@ -1097,7 +1100,14 @@ it("should add dependency alongside workspaces", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+    "bar",
+    "baz",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
@@ -1117,6 +1127,7 @@ it("should add dependency alongside workspaces", async () => {
         version: "0.0.1",
         workspaces: ["packages/*"],
         dependencies: {
+          bar: "workspace:*",
           baz: "^0.0.3",
         },
       },
@@ -2124,9 +2135,7 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
   if (process.platform === "win32") {
-    expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
-      fooPackage,
-    );
+    expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
   } else {
     expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
   }
@@ -2137,7 +2146,11 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+  ]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {
@@ -2323,4 +2336,95 @@ it("should add multiple dependencies specified on command line", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should install tarball with tarball dependencies", async () => {
+  // This test verifies that tarballs containing dependencies that are also tarballs
+  // can be installed correctly. Regression test for URL corruption bug where
+  // URLs like https://example.com/pkg.tgz get mangled with cache folder patterns.
+
+  // Create simple test tarballs
+  const tmpDir = tmpdirSync();
+
+  // Create child package
+  const childDir = join(tmpDir, "child");
+  await mkdir(childDir, { recursive: true });
+  await writeFile(join(childDir, "package.json"), JSON.stringify({ name: "test-child", version: "1.0.0" }));
+
+  // Create child tarball
+  const { exited: childTarExited } = spawn({
+    cmd: ["tar", "-czf", join(tmpDir, "child.tgz"), "-C", tmpDir, "child"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await childTarExited).toBe(0);
+
+  // Set up server first to get the port
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/child.tgz") {
+        return new Response(Bun.file(join(tmpDir, "child.tgz")));
+      } else if (url.pathname === "/parent.tgz") {
+        return new Response(Bun.file(join(tmpDir, "parent.tgz")));
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const server_url = server.url.href.replace(/\/+$/, "");
+
+  // Create parent package that depends on child via URL
+  const parentDir = join(tmpDir, "parent");
+  await mkdir(parentDir, { recursive: true });
+  await writeFile(
+    join(parentDir, "package.json"),
+    JSON.stringify({
+      name: "test-parent",
+      version: "1.0.0",
+      dependencies: {
+        "test-child": `${server_url}/child.tgz`,
+      },
+    }),
+  );
+
+  // Create parent tarball
+  const { exited: parentTarExited } = spawn({
+    cmd: ["tar", "-czf", join(tmpDir, "parent.tgz"), "-C", tmpDir, "parent"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await parentTarExited).toBe(0);
+
+  // Now test adding the parent tarball
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+    }),
+  );
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
+    cwd: add_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("HttpNotFound");
+  expect(err).not.toContain("404");
+
+  expect(await exited).toBe(0);
+
+  // Verify both packages were installed
+  await access(join(add_dir, "node_modules", "test-parent"));
+  await access(join(add_dir, "node_modules", "test-child"));
 });

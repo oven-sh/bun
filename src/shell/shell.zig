@@ -17,7 +17,7 @@ pub const IOReader = Interpreter.IOReader;
 pub const Yield = @import("./Yield.zig").Yield;
 pub const unreachableState = interpret.unreachableState;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
@@ -3059,7 +3059,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     if (non_ascii_idx > 0) {
                         try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
                     }
-                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
+                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, bytes[non_ascii_idx..]);
                 }
             }
             const end = self.strpool.items.len;
@@ -3929,7 +3929,7 @@ pub const ShellSrcBuilder = struct {
             try this.appendUTF8Impl(latin1[0..non_ascii_idx]);
         }
 
-        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, []const u8, latin1);
+        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, latin1);
     }
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {
@@ -3993,7 +3993,7 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
 pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
-    const non_ascii = bun.strings.firstNonASCII16([]const u16, str) orelse 0;
+    const non_ascii = bun.strings.firstNonASCII16(str) orelse 0;
     var cp_buf: [4]u8 = undefined;
 
     var i: usize = 0;
@@ -4003,7 +4003,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
                 defer i += 1;
                 break :brk str[i];
             }
-            const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
+            const ret = bun.strings.utf16Codepoint(str[i..]);
             if (ret.fail) return .{ .is_invalid = true };
             i += ret.len;
             break :brk ret.code_point;
@@ -4098,8 +4098,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
                 var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
-                bun.handleOom(list.append(bun.default_allocator, this.items[0..INLINED_MAX]));
-                bun.handleOom(list.push(bun.default_allocator, new));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4244,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    bun.handleOom(this.heap.push(bun.default_allocator, new));
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }
@@ -4429,7 +4429,6 @@ pub const TestingAPIs = struct {
 
 pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
-const Glob = @import("../glob.zig");
 const Syscall = @import("../sys.zig");
 const builtin = @import("builtin");
 

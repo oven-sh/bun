@@ -152,7 +152,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsEmptyString(vm);
     }
     case DataCellTag::Double:
-        return jsDoubleNumber(cell.value.number);
+        return jsNumber(cell.value.number);
         break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);
@@ -161,10 +161,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsNumber(cell.value.unsigned_integer);
         break;
     case DataCellTag::Bigint:
-        return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);
+        RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.bigint));
         break;
     case DataCellTag::UnsignedBigint:
-        return JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint);
+        RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint));
         break;
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
@@ -189,6 +189,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         if (cell.value.json) {
             auto str = WTF::String(cell.value.json);
             JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            RETURN_IF_EXCEPTION(scope, {});
             return json;
         }
         return jsNull();
@@ -198,14 +199,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         uint32_t length = cell.value.array.length;
         for (uint32_t i = 0; i < length; i++) {
             JSValue result = toJS(vm, globalObject, cell.value.array.cells[i]);
-            if (result.isEmpty()) [[unlikely]] {
-                return {};
-            }
-
+            RETURN_IF_EXCEPTION(scope, {});
             args.append(result);
         }
-
-        return JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+        RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
     }
     case DataCellTag::TypedArray: {
         JSC::JSType type = static_cast<JSC::JSType>(cell.value.typed_array.type);
@@ -343,6 +340,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 //   -> { "8": 1, "2": 2, "3": 3 }
                 //  8 > count
                 object->putDirectIndex(globalObject, cell.index, value);
+                RETURN_IF_EXCEPTION(scope, {});
             }
         } else {
             uint32_t structureOffsetIndex = 0;
@@ -356,6 +354,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                     ASSERT(!cell.isNamedColumn());
                     ASSERT(!cell.isDuplicateColumn());
                     object->putDirectIndex(globalObject, cell.index, value);
+                    RETURN_IF_EXCEPTION(scope, {});
                 } else if (cell.isNamedColumn()) {
                     JSValue value = toJS(vm, globalObject, cell);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -387,6 +386,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
             JSValue value = toJS(vm, globalObject, cell);
             RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i, value);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return array;
     }
@@ -399,20 +399,22 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
 }
 static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = toJS(structure, cells, count, globalObject, flags, result_mode, namesPtr, namesCount);
-    if (value.isEmpty())
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (array) {
         array->push(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
         return array;
     }
 
     auto* newArray = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
-    if (!newArray)
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
     newArray->putDirectIndex(globalObject, 0, value);
+    RETURN_IF_EXCEPTION(scope, {});
     return newArray;
 }
 
@@ -486,4 +488,56 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
+
+// PostgreSQL time formatting helpers - following WebKit's pattern
+extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
+{
+    // Convert microseconds since midnight to time components
+    int64_t totalSeconds = microseconds / 1000000;
+
+    int hours = static_cast<int>(totalSeconds / 3600);
+    int minutes = static_cast<int>((totalSeconds % 3600) / 60);
+    int seconds = static_cast<int>(totalSeconds % 60);
+
+    // Format following SQL standard time format
+    int charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d", hours, minutes, seconds);
+
+    // Add fractional seconds if present (PostgreSQL supports microsecond precision)
+    if (microseconds % 1000000 != 0) {
+        // PostgreSQL displays fractional seconds only when non-zero
+        int us = microseconds % 1000000;
+        charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d.%06d",
+            hours, minutes, seconds, us);
+        // Trim trailing zeros for cleaner output
+        while (buffer[charactersWritten - 1] == '0')
+            charactersWritten--;
+        if (buffer[charactersWritten - 1] == '.')
+            charactersWritten--;
+        buffer[charactersWritten] = '\0';
+    }
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < bufferSize);
+    return charactersWritten;
+}
+
+extern "C" size_t Postgres__formatTimeTz(int64_t microseconds, int32_t tzOffsetSeconds, char* buffer, size_t bufferSize)
+{
+    // Format time part first
+    size_t timeLen = Postgres__formatTime(microseconds, buffer, bufferSize);
+
+    // PostgreSQL convention: negative offset means positive UTC offset
+    // Add timezone in ±HH or ±HH:MM format
+    int tzHours = abs(tzOffsetSeconds) / 3600;
+    int tzMinutes = (abs(tzOffsetSeconds) % 3600) / 60;
+
+    int tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d",
+        tzOffsetSeconds <= 0 ? '+' : '-', tzHours);
+
+    if (tzMinutes != 0) {
+        tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d:%02d",
+            tzOffsetSeconds <= 0 ? '+' : '-', tzHours, tzMinutes);
+    }
+
+    return timeLen + tzLen;
+}
 }

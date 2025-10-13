@@ -128,8 +128,8 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn runFromJSThread(this: *T) void {
             const global: *jsc.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
-            this.poll_ref.unref(vm);
             defer this.deref();
+            defer this.poll_ref.unref(vm);
 
             this.write_in_progress = false;
 
@@ -265,7 +265,9 @@ pub fn CompressionStream(comptime T: type) type {
 
             const callback: jsc.JSValue = T.js.errorCallbackGetCached(this_value) orelse
                 Output.panic("Assertion failure: cachedErrorCallback is null in node:zlib binding", .{});
-            _ = try callback.call(globalThis, this_value, &.{ msg_value, err_value, code_value });
+
+            const vm = globalThis.bunVM();
+            vm.eventLoop().runCallback(callback, globalThis, this_value, &.{ msg_value, err_value, code_value });
 
             this.write_in_progress = false;
             if (this.pending_close) _ = closeInternal(this);

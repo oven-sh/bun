@@ -108,7 +108,7 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.write(dep.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("catalog:{s}", .{info.fmtJson(sb, .{ .quote = false })});
+            try w.print("\"catalog:{s}\"", .{info.fmtJson(sb, .{ .quote = false })});
         },
     }
 

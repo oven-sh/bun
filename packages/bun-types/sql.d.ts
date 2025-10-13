@@ -12,6 +12,68 @@ declare module "bun" {
     release(): void;
   }
 
+  type ArrayType =
+    | "BOOLEAN"
+    | "BYTEA"
+    | "CHAR"
+    | "NAME"
+    | "TEXT"
+    | "CHAR"
+    | "VARCHAR"
+    | "SMALLINT"
+    | "INT2VECTOR"
+    | "INTEGER"
+    | "INT"
+    | "BIGINT"
+    | "REAL"
+    | "DOUBLE PRECISION"
+    | "NUMERIC"
+    | "MONEY"
+    | "OID"
+    | "TID"
+    | "XID"
+    | "CID"
+    | "JSON"
+    | "JSONB"
+    | "JSONPATH"
+    | "XML"
+    | "POINT"
+    | "LSEG"
+    | "PATH"
+    | "BOX"
+    | "POLYGON"
+    | "LINE"
+    | "CIRCLE"
+    | "CIDR"
+    | "MACADDR"
+    | "INET"
+    | "MACADDR8"
+    | "DATE"
+    | "TIME"
+    | "TIMESTAMP"
+    | "TIMESTAMPTZ"
+    | "INTERVAL"
+    | "TIMETZ"
+    | "BIT"
+    | "VARBIT"
+    | "ACLITEM"
+    | "PG_DATABASE"
+    | (string & {});
+
+  /**
+   * Represents a SQL array parameter
+   */
+  interface SQLArrayParameter {
+    /**
+     * The serialized values of the array parameter
+     */
+    serializedValues: string;
+    /**
+     * The type of the array parameter
+     */
+    arrayType: ArrayType;
+  }
+
   /**
    * Represents a client within a transaction context Extends SQL with savepoint
    * functionality
@@ -41,22 +103,22 @@ declare module "bun" {
 
     class PostgresError extends SQLError {
       public readonly code: string;
-      public readonly errno: string | undefined;
-      public readonly detail: string | undefined;
-      public readonly hint: string | undefined;
-      public readonly severity: string | undefined;
-      public readonly position: string | undefined;
-      public readonly internalPosition: string | undefined;
-      public readonly internalQuery: string | undefined;
-      public readonly where: string | undefined;
-      public readonly schema: string | undefined;
-      public readonly table: string | undefined;
-      public readonly column: string | undefined;
-      public readonly dataType: string | undefined;
-      public readonly constraint: string | undefined;
-      public readonly file: string | undefined;
-      public readonly line: string | undefined;
-      public readonly routine: string | undefined;
+      public readonly errno?: string | undefined;
+      public readonly detail?: string | undefined;
+      public readonly hint?: string | undefined;
+      public readonly severity?: string | undefined;
+      public readonly position?: string | undefined;
+      public readonly internalPosition?: string | undefined;
+      public readonly internalQuery?: string | undefined;
+      public readonly where?: string | undefined;
+      public readonly schema?: string | undefined;
+      public readonly table?: string | undefined;
+      public readonly column?: string | undefined;
+      public readonly dataType?: string | undefined;
+      public readonly constraint?: string | undefined;
+      public readonly file?: string | undefined;
+      public readonly line?: string | undefined;
+      public readonly routine?: string | undefined;
 
       constructor(
         message: string,
@@ -84,8 +146,8 @@ declare module "bun" {
 
     class MySQLError extends SQLError {
       public readonly code: string;
-      public readonly errno: number | undefined;
-      public readonly sqlState: string | undefined;
+      public readonly errno?: number | undefined;
+      public readonly sqlState?: string | undefined;
       constructor(message: string, options: { code: string; errno: number | undefined; sqlState: string | undefined });
     }
 
@@ -143,13 +205,13 @@ declare module "bun" {
 
       /**
        * Database server hostname
+       * @deprecated Prefer {@link hostname}
        * @default "localhost"
        */
       host?: string | undefined;
 
       /**
-       * Database server hostname (alias for host)
-       * @deprecated Prefer {@link host}
+       * Database server hostname
        * @default "localhost"
        */
       hostname?: string | undefined;
@@ -264,13 +326,14 @@ declare module "bun" {
        * Whether to use TLS/SSL for the connection
        * @default false
        */
-      tls?: TLSOptions | boolean | undefined;
+      tls?: Bun.BunFile | TLSOptions | boolean | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
+       * @deprecated Prefer {@link tls}
        * @default false
        */
-      ssl?: TLSOptions | boolean | undefined;
+      ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
 
       /**
        * Unix domain socket path for connection
@@ -628,6 +691,21 @@ declare module "bun" {
      * ```
      */
     reserve(): Promise<ReservedSQL>;
+
+    /**
+     * Creates a new SQL array parameter
+     * @param values - The values to create the array parameter from
+     * @param typeNameOrTypeID - The type name or type ID to create the array parameter from, if omitted it will default to JSON
+     * @returns A new SQL array parameter
+     *
+     * @example
+     * ```ts
+     * const array = sql.array([1, 2, 3], "INT");
+     * await sql`CREATE TABLE users_posts (user_id INT, posts_id INT[])`;
+     * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
+     * ```
+     */
+    array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
      * Begins a new transaction.

@@ -128,11 +128,11 @@ bool isValidHTTPHeaderValue(const StringView& value)
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {
-        const LChar* begin = value.span8().data();
-        const LChar* end = begin + value.length();
-        for (const LChar* p = begin; p != end; ++p) {
+        const Latin1Character* begin = value.span8().data();
+        const Latin1Character* end = begin + value.length();
+        for (const Latin1Character* p = begin; p != end; ++p) {
             if (*p <= 13) [[unlikely]] {
-                LChar c = *p;
+                Latin1Character c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
                     return false;
             }
@@ -201,8 +201,8 @@ bool isValidHTTPToken(const StringView& value)
         return false;
 
     if (value.is8Bit()) {
-        const LChar* characters = value.span8().data();
-        const LChar* end = characters + value.length();
+        const Latin1Character* characters = value.span8().data();
+        const Latin1Character* end = characters + value.length();
         while (characters < end) {
             if (!RFC7230::isTokenCharacter(*characters++))
                 return false;
@@ -338,7 +338,7 @@ static String trimInputSample(CharType* p, size_t length)
 std::optional<WallTime> parseHTTPDate(const String& value)
 {
     auto utf8Data = value.utf8();
-    double dateInMillisecondsSinceEpoch = parseDate({ reinterpret_cast<const LChar*>(utf8Data.data()), utf8Data.length() });
+    double dateInMillisecondsSinceEpoch = parseDate({ reinterpret_cast<const Latin1Character*>(utf8Data.data()), utf8Data.length() });
     if (!std::isfinite(dateInMillisecondsSinceEpoch))
         return std::nullopt;
     // This assumes system_clock epoch equals Unix epoch which is true for all implementations but unspecified.

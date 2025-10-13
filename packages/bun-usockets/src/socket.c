@@ -142,6 +142,12 @@ void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // instead, we move it to a close list and free it after the iteration
     us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
 
+    // Free duplicated local_host string if present
+    if (c->local_host) {
+        free((void*)c->local_host);
+        c->local_host = NULL;
+    }
+
     c->next = c->context->loop->data.closed_connecting_head;
     c->context->loop->data.closed_connecting_head = c;
 }
@@ -329,7 +335,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     bsd_socket_nodelay(fd, 1);
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
-    us_internal_socket_context_link_socket(ctx, s);
+    us_internal_socket_context_link_socket(0, ctx, s);
 
     return s;
 #endif

@@ -67,7 +67,7 @@ pub const WorkPool = jsc.WorkPool;
 pub const Pipe = [2]bun.FileDescriptor;
 pub const SmolList = shell.SmolList;
 
-pub const GlobWalker = Glob.BunGlobWalkerZ;
+pub const GlobWalker = bun.glob.BunGlobWalkerZ;
 
 pub const stdin_no = 0;
 pub const stdout_no = 1;
@@ -417,10 +417,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinit(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinit(bun.default_allocator);
                 }
             }
 
@@ -1181,10 +1181,10 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
@@ -1957,7 +1957,6 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
     return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }
 
-const Glob = @import("../glob.zig");
 const builtin = @import("builtin");
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 

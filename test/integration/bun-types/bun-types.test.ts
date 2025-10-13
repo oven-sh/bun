@@ -40,7 +40,7 @@ beforeAll(async () => {
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install
+      bun install --no-cache
       cp package.json package.json.backup
     `;
 
@@ -70,7 +70,7 @@ beforeAll(async () => {
         "private": true,
         "name": "@types/bun",
         "version": BUN_VERSION,
-        "projects": ["https://bun.sh"],
+        "projects": ["https://bun.com"],
         "dependencies": {
           "bun-types": BUN_VERSION,
         },
@@ -120,6 +120,7 @@ async function diagnose(
     // always check lib files for this integration test
     // (prevent https://github.com/oven-sh/bun/issues/8761 ever happening again)
     skipLibCheck: false,
+    skipDefaultLibCheck: false,
   };
 
   const host: ts.LanguageServiceHost = {
@@ -178,6 +179,141 @@ async function diagnose(
   };
 }
 
+const expectedEmptyInterfacesWhenNoDOM = new Set([
+  "ThisType",
+  "Document",
+  "DataTransfer",
+  "StyleMedia",
+  "Element",
+  "DocumentFragment",
+  "HTMLElement",
+  "HTMLAnchorElement",
+  "HTMLAreaElement",
+  "HTMLAudioElement",
+  "HTMLBaseElement",
+  "HTMLBodyElement",
+  "HTMLBRElement",
+  "HTMLButtonElement",
+  "HTMLCanvasElement",
+  "HTMLDataElement",
+  "HTMLDataListElement",
+  "HTMLDetailsElement",
+  "HTMLDialogElement",
+  "HTMLDivElement",
+  "HTMLDListElement",
+  "HTMLEmbedElement",
+  "HTMLFieldSetElement",
+  "HTMLFormElement",
+  "HTMLHeadingElement",
+  "HTMLHeadElement",
+  "HTMLHRElement",
+  "HTMLHtmlElement",
+  "HTMLIFrameElement",
+  "HTMLImageElement",
+  "HTMLInputElement",
+  "HTMLModElement",
+  "HTMLLabelElement",
+  "HTMLLegendElement",
+  "HTMLLIElement",
+  "HTMLLinkElement",
+  "HTMLMapElement",
+  "HTMLMetaElement",
+  "HTMLMeterElement",
+  "HTMLObjectElement",
+  "HTMLOListElement",
+  "HTMLOptGroupElement",
+  "HTMLOptionElement",
+  "HTMLOutputElement",
+  "HTMLParagraphElement",
+  "HTMLParamElement",
+  "HTMLPreElement",
+  "HTMLProgressElement",
+  "HTMLQuoteElement",
+  "HTMLSlotElement",
+  "HTMLScriptElement",
+  "HTMLSelectElement",
+  "HTMLSourceElement",
+  "HTMLSpanElement",
+  "HTMLStyleElement",
+  "HTMLTableElement",
+  "HTMLTableColElement",
+  "HTMLTableDataCellElement",
+  "HTMLTableHeaderCellElement",
+  "HTMLTableRowElement",
+  "HTMLTableSectionElement",
+  "HTMLTemplateElement",
+  "HTMLTextAreaElement",
+  "HTMLTimeElement",
+  "HTMLTitleElement",
+  "HTMLTrackElement",
+  "HTMLUListElement",
+  "HTMLVideoElement",
+  "HTMLWebViewElement",
+  "SVGElement",
+  "SVGSVGElement",
+  "SVGCircleElement",
+  "SVGClipPathElement",
+  "SVGDefsElement",
+  "SVGDescElement",
+  "SVGEllipseElement",
+  "SVGFEBlendElement",
+  "SVGFEColorMatrixElement",
+  "SVGFEComponentTransferElement",
+  "SVGFECompositeElement",
+  "SVGFEConvolveMatrixElement",
+  "SVGFEDiffuseLightingElement",
+  "SVGFEDisplacementMapElement",
+  "SVGFEDistantLightElement",
+  "SVGFEDropShadowElement",
+  "SVGFEFloodElement",
+  "SVGFEFuncAElement",
+  "SVGFEFuncBElement",
+  "SVGFEFuncGElement",
+  "SVGFEFuncRElement",
+  "SVGFEGaussianBlurElement",
+  "SVGFEImageElement",
+  "SVGFEMergeElement",
+  "SVGFEMergeNodeElement",
+  "SVGFEMorphologyElement",
+  "SVGFEOffsetElement",
+  "SVGFEPointLightElement",
+  "SVGFESpecularLightingElement",
+  "SVGFESpotLightElement",
+  "SVGFETileElement",
+  "SVGFETurbulenceElement",
+  "SVGFilterElement",
+  "SVGForeignObjectElement",
+  "SVGGElement",
+  "SVGImageElement",
+  "SVGLineElement",
+  "SVGLinearGradientElement",
+  "SVGMarkerElement",
+  "SVGMaskElement",
+  "SVGMetadataElement",
+  "SVGPathElement",
+  "SVGPatternElement",
+  "SVGPolygonElement",
+  "SVGPolylineElement",
+  "SVGRadialGradientElement",
+  "SVGRectElement",
+  "SVGSetElement",
+  "SVGStopElement",
+  "SVGSwitchElement",
+  "SVGSymbolElement",
+  "SVGTextElement",
+  "SVGTextPathElement",
+  "SVGTSpanElement",
+  "SVGUseElement",
+  "SVGViewElement",
+  "Text",
+  "TouchList",
+  "WebGLRenderingContext",
+  "WebGL2RenderingContext",
+  "TrustedHTML",
+  "MediaStream",
+  "MediaSource",
+]);
+
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
 
@@ -193,12 +329,6 @@ function checkForEmptyInterfaces(program: ts.Program) {
   for (const symbol of globalSymbols) {
     // find only globals
     const declarations = symbol.declarations ?? [];
-
-    const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
-
-    if (!concernsBun) {
-      continue;
-    }
 
     const isGlobal = declarations.some(decl => {
       const sourceFile = decl.getSourceFile();
@@ -254,7 +384,7 @@ describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([]);
   });
 
@@ -282,7 +412,7 @@ describe("@types/bun integration test", () => {
         },
       });
 
-      expect(emptyInterfaces).toEqual(new Set());
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
       expect(diagnostics).toEqual([]);
     });
 
@@ -291,7 +421,7 @@ describe("@types/bun integration test", () => {
         files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
-      expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM); // should still have no empty interfaces
       expect(diagnostics).toEqual([
         {
           "code": 2582,
@@ -367,7 +497,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([]);
   });
 
@@ -380,7 +510,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
       // This is expected because we, of course, can't check that our tsx file is passing
       // when tsx is turned off...
@@ -399,7 +529,41 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(
+      new Set([
+        "ThisType",
+        "RTCAnswerOptions",
+        "RTCOfferAnswerOptions",
+        "RTCSetParameterOptions",
+        "EXT_color_buffer_float",
+        "EXT_float_blend",
+        "EXT_frag_depth",
+        "EXT_shader_texture_lod",
+        "FragmentDirective",
+        "MediaSourceHandle",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_texture_float",
+        "OES_texture_float_linear",
+        "OES_texture_half_float_linear",
+        "PeriodicWave",
+        "RTCRtpScriptTransform",
+        "WebGLBuffer",
+        "WebGLFramebuffer",
+        "WebGLProgram",
+        "WebGLQuery",
+        "WebGLRenderbuffer",
+        "WebGLSampler",
+        "WebGLShader",
+        "WebGLSync",
+        "WebGLTexture",
+        "WebGLTransformFeedback",
+        "WebGLUniformLocation",
+        "WebGLVertexArrayObject",
+        "WebGLVertexArrayObjectOES",
+        "TrustedHTML",
+      ]),
+    );
     expect(diagnostics).toEqual([
       {
         code: 2769,
@@ -417,173 +581,173 @@ describe("@types/bun integration test", () => {
         message: "No overload matches this call.",
       },
       {
+        code: 2353,
         line: "globals.ts:307:5",
         message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2345,
         line: "http.ts:43:24",
         message:
           "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | \"hey\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-        code: 2345,
       },
       {
+        code: 2345,
         line: "http.ts:55:24",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-        code: 2345,
       },
       {
-        line: "index.ts:193:14",
+        code: 2345,
+        line: "index.ts:196:14",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-        code: 2345,
       },
       {
-        line: "index.ts:323:29",
+        code: 2345,
+        line: "index.ts:322:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
-        code: 2345,
       },
       {
+        code: 2339,
         line: "spawn.ts:62:38",
         message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "spawn.ts:107:38",
         message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-        code: 2339,
       },
       {
-        line: "streams.ts:18:3",
-        message: "No overload matches this call.",
-        code: 2769,
+        "code": 2769,
+        "line": "streams.ts:18:3",
+        "message": "No overload matches this call.",
       },
       {
-        line: "streams.ts:20:16",
-        message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
-        code: 2339,
+        "code": 2339,
+        "line": "streams.ts:20:16",
+        "message": "Property 'write' does not exist on type 'ReadableByteStreamController'.",
       },
       {
-        line: "streams.ts:46:19",
-        message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        code: 2339,
+        "code": 2339,
+        "line": "streams.ts:46:19",
+        "message": "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
       },
       {
-        line: "streams.ts:47:19",
-        message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        code: 2339,
+        "code": 2339,
+        "line": "streams.ts:47:19",
+        "message": "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
       },
       {
-        line: "streams.ts:48:19",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        code: 2339,
+        "code": 2339,
+        "line": "streams.ts:48:19",
+        "message": "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
       },
       {
-        line: "streams.ts:49:19",
-        message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        code: 2339,
+        "code": 2339,
+        "line": "streams.ts:49:19",
+        "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
       },
       {
+        code: 2353,
         line: "websocket.ts:25:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2353,
         line: "websocket.ts:30:5",
         message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2353,
         line: "websocket.ts:35:5",
         message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2353,
         line: "websocket.ts:43:5",
         message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2353,
         line: "websocket.ts:51:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        code: 2353,
       },
       {
+        code: 2554,
         line: "websocket.ts:185:29",
         message: "Expected 2 arguments, but got 0.",
-        code: 2554,
       },
       {
+        code: 2551,
         line: "websocket.ts:192:17",
         message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
-        code: 2551,
       },
       {
+        code: 2322,
         line: "websocket.ts:196:3",
         message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
-        code: 2322,
       },
       {
+        code: 2339,
         line: "websocket.ts:242:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:245:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:249:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:253:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:256:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:259:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:263:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:267:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "websocket.ts:270:6",
         message: "Property 'terminate' does not exist on type 'WebSocket'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "worker.ts:23:11",
         message: "Property 'ref' does not exist on type 'Worker'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "worker.ts:24:11",
         message: "Property 'unref' does not exist on type 'Worker'.",
-        code: 2339,
       },
       {
+        code: 2339,
         line: "worker.ts:25:11",
         message: "Property 'threadId' does not exist on type 'Worker'.",
-        code: 2339,
       },
     ]);
   });

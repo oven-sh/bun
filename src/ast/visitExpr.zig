@@ -64,7 +64,7 @@ pub fn VisitExpr(
             }
             pub fn e_import_meta(p: *P, expr: Expr, in: ExprIn) Expr {
                 // TODO: delete import.meta might not work
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta;
+                const is_delete_target = p.delete_target == .e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
@@ -228,26 +228,30 @@ pub fn VisitExpr(
                         // That would reduce the amount of allocations a little
                         if (runtime == .classic or is_key_after_spread) {
                             // Arguments to createElement()
-                            const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
-                            // There are at least two args:
-                            // - name of the tag
-                            // - props
-                            var i: usize = 2;
-                            args[0] = tag;
+                            var args = bun.BabyList(Expr).initCapacity(
+                                p.allocator,
+                                2 + children_count,
+                            ) catch |err| bun.handleOom(err);
+                            args.appendAssumeCapacity(tag);
 
                             const num_props = e_.properties.len;
                             if (num_props > 0) {
                                 const props = p.allocator.alloc(G.Property, num_props) catch unreachable;
                                 bun.copy(G.Property, props, e_.properties.slice());
-                                args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
+                                args.appendAssumeCapacity(p.newExpr(
+                                    E.Object{ .properties = G.Property.List.fromOwnedSlice(props) },
+                                    expr.loc,
+                                ));
                             } else {
-                                args[1] = p.newExpr(E.Null{}, expr.loc);
+                                args.appendAssumeCapacity(p.newExpr(E.Null{}, expr.loc));
                             }
 
                             const children_elements = e_.children.slice()[0..children_count];
                             for (children_elements) |child| {
-                                args[i] = p.visitExpr(child);
-                                i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
+                                const arg = p.visitExpr(child);
+                                if (arg.data != .e_missing) {
+                                    args.appendAssumeCapacity(arg);
+                                }
                             }
 
                             const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
@@ -255,7 +259,7 @@ pub fn VisitExpr(
                             // Call createElement()
                             return p.newExpr(E.Call{
                                 .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
-                                .args = ExprNodeList.init(args[0..i]),
+                                .args = args,
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .close_paren_loc = e_.close_tag_loc,
@@ -265,7 +269,7 @@ pub fn VisitExpr(
                         else if (runtime == .automatic) {
                             // --- These must be done in all cases --
                             const allocator = p.allocator;
-                            var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
+                            var props = &e_.properties;
 
                             const maybe_key_value: ?ExprNodeIndex =
                                 if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
@@ -296,8 +300,8 @@ pub fn VisitExpr(
                             // ->
                             // <div {{...foo}} />
                             // jsx("div", {...foo})
-                            while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
-                                props = props.items[0].value.?.data.e_object.properties.list();
+                            while (props.len == 1 and props.at(0).kind == .spread and props.at(0).value.?.data == .e_object) {
+                                props = &props.at(0).value.?.data.e_object.properties;
                             }
 
                             // Typescript defines static jsx as children.len > 1 or single spread
@@ -326,7 +330,7 @@ pub fn VisitExpr(
                             args[0] = tag;
 
                             args[1] = p.newExpr(E.Object{
-                                .properties = G.Property.List.fromList(props),
+                                .properties = props.*,
                             }, expr.loc);
 
                             if (maybe_key_value) |key| {
@@ -360,7 +364,7 @@ pub fn VisitExpr(
 
                             return p.newExpr(E.Call{
                                 .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
-                                .args = ExprNodeList.init(args),
+                                .args = ExprNodeList.fromOwnedSlice(args),
                                 // Enable tree shaking
                                 .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .was_jsx_element = true,
@@ -605,7 +609,8 @@ pub fn VisitExpr(
                                     p.delete_target = dot.data;
                                 }
 
-                                return p.visitExprInOut(dot, in);
+                                // don't call visitExprInOut on `dot` because we've already visited `target` above!
+                                return dot;
                             }
 
                             // Handle property rewrites to ensure things
@@ -804,6 +809,7 @@ pub fn VisitExpr(
                                                     E.Unary{
                                                         .op = e_.op,
                                                         .value = comma.right,
+                                                        .flags = e_.flags,
                                                     },
                                                     comma.right.loc,
                                                 ),
@@ -1278,7 +1284,7 @@ pub fn VisitExpr(
                     // the try/catch statement is there to handle the potential run-time
                     // error from the unbundled require() call failing.
                     if (e_.args.len == 1) {
-                        const first = e_.args.first_();
+                        const first = e_.args.slice()[0];
                         const state = TransposeState{
                             .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and
                                 first.data == .e_string,
@@ -1323,7 +1329,7 @@ pub fn VisitExpr(
                     }
 
                     if (e_.args.len == 1) {
-                        const first = e_.args.first_();
+                        const first = e_.args.slice()[0];
                         switch (first.data) {
                             .e_string => {
                                 // require.resolve(FOO) => require.resolve(FOO)
@@ -1439,9 +1445,20 @@ pub fn VisitExpr(
                     // Why? Because we *don't* want to check for uses of
                     // `useState` _inside_ React, and we know React uses
                     // commonjs so it will never be `.e_import_identifier`.
-                    e_.target.data == .e_import_identifier) {
+                    check_for_usestate: {
+                        if (e_.target.data == .e_import_identifier) break :check_for_usestate true;
+                        // Also check for `React.useState(...)`
+                        if (e_.target.data == .e_dot and e_.target.data.e_dot.target.data == .e_import_identifier) {
+                            const id = e_.target.data.e_dot.target.data.e_import_identifier;
+                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                            break :check_for_usestate bun.strings.eqlComptime(name, "React");
+                        }
+                        break :check_for_usestate false;
+                    }) {
                         bun.assert(p.options.features.server_components.isServerSide());
-                        if (bun.strings.eqlComptime(original_name, "useState")) {
+                        if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
+                            bun.strings.eqlComptime(original_name, "useState"))
+                        {
                             p.log.addError(
                                 p.source,
                                 expr.loc,
@@ -1491,7 +1508,9 @@ pub fn VisitExpr(
                 }
 
                 if (p.options.features.minify_syntax) {
-                    KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
+                    if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc, p.options.features.minify_whitespace)) |minified| {
+                        return minified;
+                    }
                 }
                 return expr;
             }
@@ -1564,6 +1583,18 @@ pub fn VisitExpr(
 
                 e_.func = p.visitFunc(e_.func, expr.loc);
 
+                // Remove unused function names when minifying (only when bundling is enabled)
+                // unless --keep-names is specified
+                if (p.options.features.minify_syntax and p.options.bundle and
+                    !p.options.features.minify_keep_names and
+                    !p.current_scope.contains_direct_eval and
+                    e_.func.name != null and
+                    e_.func.name.?.ref != null and
+                    p.symbols.items[e_.func.name.?.ref.?.innerIndex()].use_count_estimate == 0)
+                {
+                    e_.func.name = null;
+                }
+
                 var final_expr = expr;
 
                 if (react_hook_data) |*hook| try_mark_hook: {
@@ -1585,6 +1616,19 @@ pub fn VisitExpr(
                 }
 
                 _ = p.visitClass(expr.loc, e_, Ref.None);
+
+                // Remove unused class names when minifying (only when bundling is enabled)
+                // unless --keep-names is specified
+                if (p.options.features.minify_syntax and p.options.bundle and
+                    !p.options.features.minify_keep_names and
+                    !p.current_scope.contains_direct_eval and
+                    e_.class_name != null and
+                    e_.class_name.?.ref != null and
+                    p.symbols.items[e_.class_name.?.ref.?.innerIndex()].use_count_estimate == 0)
+                {
+                    e_.class_name = null;
+                }
+
                 return expr;
             }
         };

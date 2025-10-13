@@ -147,21 +147,13 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
-            const fmt = "\n\nErrors occurred while calculating hash for <b>{s}<r>:\n\n";
-            const args = .{this.callback.calc_hash.patchfile_path};
-            if (log_level.showProgress()) {
-                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-            } else {
-                Output.prettyErrorln(
-                    fmt,
-                    args,
-                );
+            if (log_level != .silent) {
+                if (calc_hash.logger.hasErrors()) {
+                    calc_hash.logger.print(Output.errorWriter()) catch {};
+                } else {
+                    Output.errGeneric("Failed to calculate hash for patch <b>{s}<r>", .{this.callback.calc_hash.patchfile_path});
+                }
             }
-            if (calc_hash.logger.errors > 0) {
-                Output.prettyErrorln("\n\n", .{});
-                calc_hash.logger.print(Output.errorWriter()) catch {};
-            }
-            Output.flush();
             Global.crash();
         };
 
@@ -233,7 +225,7 @@ pub const PatchTask = struct {
     // 4. Apply patches to pkg in temp dir
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
-    pub fn apply(this: *PatchTask) !void {
+    pub fn apply(this: *PatchTask) bun.OOM!void {
         var log = &this.callback.apply.logger;
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);
@@ -280,12 +272,11 @@ pub const PatchTask = struct {
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
-        const tempdir_name = bun.span(
-            bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |err| switch (err) {
-                // max len is 1+16+1+8+3, well below 1024
-                error.NoSpaceLeft => unreachable,
-            },
-        );
+        const tempdir_name = bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |err| switch (err) {
+            // max len is 1+16+1+8+3, well below 1024
+            error.NoSpaceLeft => unreachable,
+        };
+
         const system_tmpdir = this.tempdir;
 
         const pkg_name = this.callback.apply.pkgname;
@@ -428,12 +419,10 @@ pub const PatchTask = struct {
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
                 if (e.getErrno() == .NOENT) {
-                    const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
-                    const args = .{
+                    bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, "Couldn't find patch file: '{s}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>", .{
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
-                    };
-                    bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args));
+                    }));
                     return null;
                 }
                 log.addWarningFmt(
@@ -522,7 +511,7 @@ pub const PatchTask = struct {
         const patchfile_path = bun.handleOom(manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = manager.getTemporaryDirectory(),
+            .tempdir = manager.getTemporaryDirectory().handle,
             .callback = .{
                 .calc_hash = .{
                     .state = state,
@@ -559,7 +548,7 @@ pub const PatchTask = struct {
         const patchfilepath = bun.handleOom(pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = pkg_manager.getTemporaryDirectory(),
+            .tempdir = pkg_manager.getTemporaryDirectory().handle,
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,
@@ -596,7 +585,6 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const PackageManager = bun.PackageManager;
-const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
 const String = bun.Semver.String;
 const Task = bun.install.Task;

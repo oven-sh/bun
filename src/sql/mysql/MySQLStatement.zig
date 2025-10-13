@@ -55,7 +55,7 @@ pub fn deinit(this: *MySQLStatement) void {
     this.cached_structure.deinit();
     this.error_response.deinit();
     this.signature.deinit();
-    bun.default_allocator.destroy(this);
+    bun.destroy(this);
 }
 
 pub fn checkForDuplicateFields(this: *@This()) void {

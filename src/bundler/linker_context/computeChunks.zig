@@ -286,7 +286,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator(), html_chunks.values());
+        try sorted_chunks.appendSlice(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };
@@ -389,7 +389,10 @@ pub noinline fn computeChunks(
                 };
                 defer dir.close();
 
-                break :dir try dir.getFdPath(&real_path_buf);
+                break :dir dir.getFdPath(&real_path_buf) catch |err| {
+                    try this.log.addErrorFmt(null, .Empty, this.allocator(), "{s}: Failed to get full path for directory '{s}'", .{ @errorName(err), dir_path });
+                    return error.BuildFailed;
+                };
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);

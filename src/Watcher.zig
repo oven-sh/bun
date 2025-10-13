@@ -312,6 +312,15 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
+/// Register a file descriptor with kqueue on macOS without validation.
+///
+/// Preconditions (caller must ensure):
+/// - `fd` is a valid, open file descriptor
+/// - `fd` is not already registered with this kqueue
+/// - `watchlist_id` matches the entry's index in the watchlist
+///
+/// Note: This function does not propagate kevent registration errors.
+/// If registration fails, the file will not be watched but no error is returned.
 pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 
@@ -659,8 +668,11 @@ pub fn addFileByPathSlow(
                         bun.invalid_fd;
                     this.mutex.unlock();
 
-                    // Only close if entry exists and stored fd differs from ours
-                    // If entry is null, it was removed and fd already closed by flushEvictions
+                    // Only close if entry exists and stored fd differs from ours.
+                    // Race scenarios:
+                    // 1. Entry removed (maybe_idx == null): our fd was stored then closed by flushEvictions → don't close
+                    // 2. Entry exists with different fd: another thread added entry, addFile didn't use our fd → close ours
+                    // 3. Entry exists with same fd: our fd was stored → don't close
                     if (maybe_idx != null and stored_fd.native() != fd.native()) {
                         fd.close();
                     }

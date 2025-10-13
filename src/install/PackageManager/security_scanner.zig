@@ -639,16 +639,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.ArrayList(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
-        temp_source = code.items;
-    }
+    // No longer embed JSON in code - it will be passed via stdin instead
 
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
@@ -710,10 +701,22 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
+        // Create IPC pipe for reading results
         const pipe_result = bun.sys.pipe();
         const pipe_fds = switch (pipe_result) {
             .err => {
                 return error.IPCPipeFailed;
+            },
+            .result => |fds| fds,
+        };
+
+        // Create stdin pipe for writing JSON data
+        const stdin_pipe_result = bun.sys.pipe();
+        const stdin_fds = switch (stdin_pipe_result) {
+            .err => {
+                pipe_fds[0].close();
+                pipe_fds[1].close();
+                return error.StdinPipeFailed;
             },
             .result => |fds| fds,
         };
@@ -737,7 +740,7 @@ pub const SecurityScanSubprocess = struct {
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
-            .stdin = .inherit,
+            .stdin = .{ .pipe = stdin_fds[0] },
             .cwd = spawn_cwd,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
             .windows = if (Environment.isWindows) .{
@@ -747,7 +750,33 @@ pub const SecurityScanSubprocess = struct {
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
+        // Close pipe ends that the child process now owns
         pipe_fds[1].close();
+        stdin_fds[0].close();
+
+        // Write JSON data to stdin
+        var remaining = this.json_data;
+        while (remaining.len > 0) {
+            const write_result = bun.sys.write(stdin_fds[1], remaining);
+            switch (write_result) {
+                .err => |err| {
+                    stdin_fds[1].close();
+                    Output.errGeneric("Failed to write JSON to security scanner stdin: {}", .{err});
+                    return error.StdinWriteFailed;
+                },
+                .result => |written| {
+                    if (written == 0) {
+                        stdin_fds[1].close();
+                        Output.errGeneric("Failed to write JSON to security scanner stdin: wrote 0 bytes", .{});
+                        return error.StdinWriteFailed;
+                    }
+                    remaining = remaining[written..];
+                },
+            }
+        }
+
+        // Close stdin write end to signal EOF
+        stdin_fds[1].close();
 
         if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(pipe_fds[0]);

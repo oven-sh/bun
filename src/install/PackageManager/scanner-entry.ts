@@ -1,8 +1,16 @@
 import fs from "node:fs";
 
 const scannerModuleName = "__SCANNER_MODULE__";
-const packages = __PACKAGES_JSON__;
 const suppressError = __SUPPRESS_ERROR__;
+
+// Read packages JSON from stdin
+let packages: any[];
+try {
+  packages = await Bun.stdin.json();
+} catch (error) {
+  console.error("Failed to read packages from stdin:", error);
+  process.exit(1);
+}
 
 type IPCMessage =
   | { type: "result"; advisories: Bun.Security.Advisory[] }

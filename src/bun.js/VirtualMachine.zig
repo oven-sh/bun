@@ -824,7 +824,6 @@ pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
 
                             // Mark as handled so we don't also print the error
                             promise.setHandled(this.global.vm());
-                            this.addMainToWatcherIfNeeded();
                             return;
                         }
                     }

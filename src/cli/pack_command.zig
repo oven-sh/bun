@@ -271,7 +271,7 @@ pub const PackCommand = struct {
             }
 
             var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
-            while (dir_iter.next().unwrap() catch null) |entry| {
+            next_entry: while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
                 const entry_name = entry.name.slice();
@@ -326,6 +326,11 @@ pub const PackCommand = struct {
                 // excluding all files within them (e.g. `!test/**`)
                 if (!included) {
                     if (entry.kind == .directory) {
+                        for (bins) |bin| {
+                            if (bin.type == .dir and strings.eqlLong(bin.path, entry_subpath, true)) {
+                                continue :next_entry;
+                            }
+                        }
                         const subdir = openSubdir(dir, entry_name, entry_subpath);
                         try dirs.append(allocator, .{ subdir, entry_subpath, dir_depth + 1 });
                     }
@@ -337,7 +342,7 @@ pub const PackCommand = struct {
                     .directory => {
                         for (bins) |bin| {
                             if (bin.type == .dir and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
                         const subdir = openSubdir(dir, entry_name, entry_subpath);
@@ -350,7 +355,7 @@ pub const PackCommand = struct {
 
                         for (bins) |bin| {
                             if (bin.type == .file and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
 
@@ -436,7 +441,7 @@ pub const PackCommand = struct {
             }
 
             var iter = DirIterator.iterate(.fromStdDir(dir), .u8);
-            while (iter.next().unwrap() catch null) |entry| {
+            next_entry: while (iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
                 const entry_name = entry.name.slice();
@@ -466,7 +471,7 @@ pub const PackCommand = struct {
                         if (dedupe_entry.found_existing) continue;
                         for (bins) |bin| {
                             if (bin.type == .file and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
                         try pack_queue.add(.{ .path = entry_subpath });
@@ -474,7 +479,7 @@ pub const PackCommand = struct {
                     .directory => {
                         for (bins) |bin| {
                             if (bin.type == .dir and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
 
@@ -800,7 +805,7 @@ pub const PackCommand = struct {
         allocator: std.mem.Allocator,
         pack_queue: *PackQueue,
         bins: []const BinInfo,
-        root_dir: std.fs.Dir,
+        root_dir: DirInfo,
         log_level: LogLevel,
     ) OOM!void {
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
@@ -811,7 +816,7 @@ pub const PackCommand = struct {
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(allocator);
 
-        try dirs.append(allocator, .{ root_dir, "", 1 });
+        try dirs.append(allocator, root_dir);
 
         while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
@@ -843,7 +848,7 @@ pub const PackCommand = struct {
             }
 
             var dir_iter = DirIterator.iterate(.fromStdDir(dir), .u8);
-            while (dir_iter.next().unwrap() catch null) |entry| {
+            next_entry: while (dir_iter.next().unwrap() catch null) |entry| {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
                 const entry_name = entry.name.slice();
@@ -879,7 +884,7 @@ pub const PackCommand = struct {
                         bun.assertWithLocation(entry_subpath.len > 0, @src());
                         for (bins) |bin| {
                             if (bin.type == .file and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
                         try pack_queue.add(.{ .path = entry_subpath });
@@ -887,7 +892,7 @@ pub const PackCommand = struct {
                     .directory => {
                         for (bins) |bin| {
                             if (bin.type == .dir and strings.eqlLong(bin.path, entry_subpath, true)) {
-                                continue;
+                                continue :next_entry;
                             }
                         }
 
@@ -1390,7 +1395,7 @@ pub const PackCommand = struct {
                     };
                     defer bin_dir.close();
 
-                    try iterateProjectTree(ctx.allocator, &pack_queue, &.{}, bin_dir, log_level);
+                    try iterateProjectTree(ctx.allocator, &pack_queue, &.{}, .{ bin_dir, bin.path, 2 }, log_level);
                 },
             }
         }
@@ -1446,7 +1451,7 @@ pub const PackCommand = struct {
                     ctx.allocator,
                     &pack_queue,
                     bins,
-                    root_dir,
+                    .{ root_dir, "", 1 },
                     log_level,
                 );
             }

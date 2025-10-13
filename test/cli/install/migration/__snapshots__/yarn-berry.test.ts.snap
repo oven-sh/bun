@@ -13,9 +13,9 @@ exports[`Yarn Berry migration simple package with conditions (v8 format) 1`] = `
     },
   },
   "packages": {
-    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.21.5", "", { "os": "darwin", "cpu": "arm64" }, ""],
+    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.21.5", "", { "os": "darwin", "cpu": "arm64" }, "sha512-DwqXqZyuk5AiWWf3UfLiRDJ5EDd49zg6O9wclZ7kUMv2WRFr4HKjXp/5t8JZ11QbQfUS6/cRCKGwYhtNAY88kQ=="],
 
-    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, ""],
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
   }
 }
 "
@@ -33,9 +33,9 @@ exports[`Yarn Berry migration optional peer dependencies 1`] = `
     },
   },
   "packages": {
-    "loose-envify": ["loose-envify@1.4.0", "", { "peerDependencies": { "typescript": "*" }, "bin": { "loose-envify": "cli.js" } }, ""],
+    "loose-envify": ["loose-envify@1.4.0", "", { "peerDependencies": { "typescript": "*" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
 
-    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "^1.1.0" } }, ""],
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "^1.1.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
   }
 }
 "
@@ -57,7 +57,7 @@ exports[`Yarn Berry migration optional dependencies via dependenciesMeta 1`] = `
 
     "@img/sharp-linux-x64": ["@img/sharp-linux-x64@0.32.6", "", { "os": "linux", "cpu": "x64" }, ""],
 
-    "sharp": ["sharp@0.32.6", "", { "dependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" }, "optionalDependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" } }, ""],
+    "sharp": ["sharp@0.32.6", "", { "dependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" }, "optionalDependencies": { "@img/sharp-darwin-arm64": "0.32.6", "@img/sharp-linux-x64": "0.32.6" } }, "sha512-KyLTWwgcR9Oe4d9HwCwNM2l7+J0dUQwn/yf7S0EnTtb0eVS4RxO0eUSvxPtzT4F3SY+C4K6fqdv/DO27sJ/v/w=="],
   }
 }
 "
@@ -75,7 +75,7 @@ exports[`Yarn Berry migration bin definitions 1`] = `
     },
   },
   "packages": {
-    "typescript": ["typescript@5.9.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, ""],
+    "typescript": ["typescript@5.9.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-CWBzXQrc/qOkhidw1OzBTQuYRbfyxDXJMVJ1XNwUHGROVmuaeiEm3OslpZ1RV96d7SKKjZKrSJu3+t/xlw3R9A=="],
   }
 }
 "
@@ -113,7 +113,7 @@ exports[`Yarn Berry migration v6 format fallback with os/cpu arrays 1`] = `
     },
   },
   "packages": {
-    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, ""],
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
   }
 }
 "

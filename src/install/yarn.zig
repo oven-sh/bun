@@ -690,7 +690,7 @@ fn migrateYarnV1(
 
     try lockfile.resolve(log);
 
-    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, true);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, .yarn_classic);
 
     return .{
         .ok = .{
@@ -783,6 +783,20 @@ fn migrateYarnBerry(
             const name_hash = String.Builder.stringHash(name);
             root_pkg.name = try string_buf.appendWithHash(name, name_hash);
             root_pkg.name_hash = name_hash;
+
+            const root_path = try string_buf.append(".");
+            try lockfile.workspace_paths.put(allocator, name_hash, root_path);
+
+            if (try root_json.getString(allocator, "version")) |version_info| {
+                const version, _ = version_info;
+                const version_str = try string_buf.append(version);
+                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+                if (parsed.valid) {
+                    try lockfile.workspace_versions.put(allocator, name_hash, parsed.version.min());
+                }
+            } else {
+                try lockfile.workspace_versions.put(allocator, name_hash, Semver.Version{});
+            }
         }
 
         const root_deps_off, var root_deps_len = try parsePackageJsonDependencies(
@@ -843,11 +857,17 @@ fn migrateYarnBerry(
     var pkg_map = std.StringHashMap(PackageID).init(allocator);
     defer pkg_map.deinit();
 
+    const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
+    try pkg_map.put(top_level_dir, 0);
+
     for (lockfile.workspace_paths.values()) |workspace_path| {
+        const ws_path_str = workspace_path.slice(string_buf.bytes.items);
+        if (strings.eqlComptime(ws_path_str, ".")) continue;
+
         var ws_pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
         defer ws_pkg_json_path.deinit();
 
-        ws_pkg_json_path.append(workspace_path.slice(string_buf.bytes.items));
+        ws_pkg_json_path.append(ws_path_str);
         const abs_path = try allocator.dupe(u8, ws_pkg_json_path.slice());
         ws_pkg_json_path.append("package.json");
 
@@ -1266,7 +1286,7 @@ fn migrateYarnBerry(
 
     try lockfile.resolve(log);
 
-    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, true);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, .yarn_berry);
 
     return .{
         .ok = .{

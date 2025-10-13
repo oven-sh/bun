@@ -226,12 +226,17 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObjec
     auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
+        ASSERT(ptr);
         auto arrayBuffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
             mi_free(p);
         }));
 
         buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
     } else {
+        // We took ownership from Zig regardless of length; ensure we don't leak.
+        if (ptr) {
+            mi_free(ptr);
+        }
         buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 

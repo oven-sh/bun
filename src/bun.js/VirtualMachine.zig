@@ -674,11 +674,7 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     defer this.is_handling_uncaught_exception = false;
     const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
     if (!handled) {
-        // TODO maybe we want a separate code path for uncaught exceptions
-        this.unhandled_error_counter += 1;
-        this.exit_handler.exit_code = 1;
-
-        // Check if this is a missing module error in watch/hot mode
+        // Check if this is a missing module error in watch/hot mode BEFORE marking as error
         if (this.isWatcherEnabled() and this.hot_reload != .none) {
             if (bun.api.ResolveMessage.fromJS(err)) |resolve_msg| {
                 if (resolve_msg.msg.metadata == .resolve) {
@@ -705,6 +701,7 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
                             // Clean up any existing poll timer
                             if (this.missing_module_poll_timer.state == .ACTIVE) {
                                 this.timer.remove(&this.missing_module_poll_timer);
+                                this.timer.incrementTimerRef(-1);
                             }
                             if (this.missing_module_path) |existing_path| {
                                 existing_path.deref();
@@ -712,7 +709,9 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
 
                             this.missing_module_path = bun.String.init(absolute_path);
                             this.timer.update(&this.missing_module_poll_timer, &bun.timespec.msFromNow(50));
+                            this.timer.incrementTimerRef(1);
 
+                            // Don't increment error counter - we're handling this by polling
                             // Don't call the normal error handler since we're polling
                             return handled;
                         }
@@ -721,6 +720,9 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
             }
         }
 
+        // TODO maybe we want a separate code path for uncaught exceptions
+        this.unhandled_error_counter += 1;
+        this.exit_handler.exit_code = 1;
         this.onUnhandledRejection(this, globalObject, err);
     }
     return handled;
@@ -735,6 +737,7 @@ pub fn pollForMissingModule(this: *VirtualMachine) EventLoopTimer.Arm {
             // File exists! Stop polling and trigger reload
             if (this.missing_module_poll_timer.state == .ACTIVE) {
                 this.timer.remove(&this.missing_module_poll_timer);
+                this.timer.incrementTimerRef(-1);
             }
             path.deref();
             this.missing_module_path = null;
@@ -791,6 +794,7 @@ pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
                             // Clean up any existing poll timer
                             if (this.missing_module_poll_timer.state == .ACTIVE) {
                                 this.timer.remove(&this.missing_module_poll_timer);
+                                this.timer.incrementTimerRef(-1);
                             }
                             if (this.missing_module_path) |existing_path| {
                                 existing_path.deref();
@@ -801,6 +805,7 @@ pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
 
                             // Start polling timer (50ms interval)
                             this.timer.update(&this.missing_module_poll_timer, &bun.timespec.msFromNow(50));
+                            this.timer.incrementTimerRef(1);
 
                             // Mark as handled so we don't also print the error
                             promise.setHandled(this.global.vm());
@@ -2063,6 +2068,7 @@ pub fn deinit(this: *VirtualMachine) void {
     // Clean up missing module poll timer
     if (this.missing_module_poll_timer.state == .ACTIVE) {
         this.timer.remove(&this.missing_module_poll_timer);
+        this.timer.incrementTimerRef(-1);
     }
     if (this.missing_module_path) |path| {
         path.deref();

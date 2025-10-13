@@ -1563,8 +1563,15 @@ pub const PathName = struct {
     filename: string,
 
     pub fn findExtname(_path: string) string {
-        const dot = bun.strings.lastIndexOfChar(_path, '.') orelse return "";
-        return _path[dot..];
+        var start: usize = 0;
+        if (bun.path.lastIndexOfSep(_path)) |i| {
+            start = i + 1;
+        }
+        const base = _path[start..];
+        if (bun.strings.lastIndexOfChar(base, '.')) |dot| {
+            if (dot > 0) return base[dot..];
+        }
+        return "";
     }
 
     pub fn extWithoutLeadingDot(self: *const PathName) string {

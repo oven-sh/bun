@@ -327,8 +327,8 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
     // id
     event.ident = @intCast(fd.native());
 
-    // Store the hash for fast filtering later
-    event.udata = watchlist_id;
+    // Store the index for fast filtering later
+    event.udata = @as(usize, @intCast(watchlist_id));
     var events: [1]KEvent = .{event};
 
     // This took a lot of work to figure out the right permutation
@@ -623,6 +623,7 @@ pub fn addFileByPathSlow(
 ) bool {
     const hash = getHash(file_path);
 
+    // Fast path: check if already watching without opening the file
     {
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -632,22 +633,22 @@ pub fn addFileByPathSlow(
         }
     }
 
-    const fd: bun.FileDescriptor = if (Environment.isMac) switch (bun.sys.open(
-        &(std.posix.toPosixPath(file_path) catch return false),
-        bun.c.O_EVTONLY,
-        0,
-    )) {
-        .result => |fd| fd,
-        .err => return false,
-    } else bun.invalid_fd;
-
-    return switch (this.appendFileMaybeLock(fd, file_path, hash, loader, bun.invalid_fd, null, true, true)) {
+    var fd: bun.FileDescriptor = bun.invalid_fd;
+    if (Environment.isMac) {
+        const path_z = std.posix.toPosixPath(file_path) catch return false;
+        switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
+            .result => |opened| fd = opened,
+            .err => return false,
+        }
+    }
+    const res = this.addFile(fd, file_path, hash, loader, bun.invalid_fd, null, true);
+    switch (res) {
+        .result => return true,
         .err => {
-            fd.close();
+            if (fd.isValid()) fd.close();
             return false;
         },
-        .result => true,
-    };
+    }
 }
 
 pub fn addFile(

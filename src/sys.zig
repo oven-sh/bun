@@ -3183,7 +3183,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
 
     if (comptime !has_sentinel) {
         const path = std.posix.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
-        return faccessat(dir_fd, &path);
+        return faccessat(dir_fd, path);
     }
 
     if (comptime Environment.isLinux) {

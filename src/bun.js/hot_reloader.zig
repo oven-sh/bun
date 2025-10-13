@@ -149,7 +149,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.assert(bun.isSliceInBuffer(dir, file));
                     bun.assert(file.len > dir.len + 1);
                     main.dir = file[0 .. dir.len + 1];
-                    main.dir_hash = Watcher.getHash(dir);
+                    main.dir_hash = Watcher.getHash(main.dir);
                 }
 
                 return main;

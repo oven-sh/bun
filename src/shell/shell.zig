@@ -2661,6 +2661,34 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             }
                             break :escaped;
                         },
+                        'A'...'Z', 'a'...'z', '/', '!', '?', '-', '_', '.' => if (comptime encoding == .ascii) {
+                            // Append the CURRENT character first
+                            try self.strpool.append(char);
+                            self.j += 1;
+
+                            // Then skip ahead for more matching chars
+                            const remaining = self.chars.src.remainingBytes();
+                            var len: usize = 0;
+                            for (remaining) |c| {
+                                len += switch (c) {
+                                    'A'...'Z', 'a'...'z', '/', '!', '?', '-', '_', '.' => 1,
+                                    else => break,
+                                };
+                            }
+
+                            if (len > 0) {
+                                if (len >= 2) {
+                                    self.chars.prev = .{ .char = @intCast(remaining[len - 2]), .escaped = false };
+                                } else {
+                                    self.chars.prev = self.chars.current;
+                                }
+                                self.chars.current = .{ .char = @intCast(remaining[len - 1]), .escaped = false };
+                                self.chars.src.i += len;
+                                self.j += @intCast(len);
+                                try self.strpool.appendSlice(remaining[0..len]);
+                            }
+                            continue;
+                        } else break :escaped,
 
                         else => break :escaped,
                     }
@@ -3316,6 +3344,10 @@ const SrcAscii = struct {
             .bytes = bytes,
             .i = 0,
         };
+    }
+
+    pub fn remainingBytes(this: *const SrcAscii) []const u8 {
+        return this.bytes[this.i..];
     }
 
     inline fn index(this: *const SrcAscii) ?IndexValue {

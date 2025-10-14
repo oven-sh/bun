@@ -117,7 +117,7 @@ The parser returns an object with the following properties:
 
 - `data`: An array of objects (when `header: true`) or an array of arrays (when `header: false`) representing the rows of the CSV file.
 - `rows`: The number of rows in the CSV file.
-- `columns`: The number of columns in the CSV file.
+- `columns`: The number of columns in the CSV file (this is the length of the longest row).
 - `errors`: An array of objects representing any errors encountered during parsing. `undefined` if no errors occurred.
 - `comments`: An array of objects representing any comments encountered during parsing. Only available if `comments` option is set to `true`.
 
@@ -130,13 +130,13 @@ rather than throwing an error.
 ```ts
 try {
   const parsed = Bun.CSV.parse(data, {
-    preview: -42, //
+    preview: -42,
     delimiter: "",
   });
 } catch (e) {
   console.error("Failed to parse CSV:", e.message);
-  // Preview value must be a positive integer
-  // Delimiter cannot be empty
+  // Failed to parse CSV: Preview value must be a positive integer
+  // Failed to parse CSV: Delimiter cannot be empty
 }
 ```
 
@@ -258,20 +258,18 @@ Also, `comments` export is available, but is always `undefined` as the comments 
 `errors` and `comments` have the following structures:
 
 ```ts
-{
 errors: [
-    {
-      line: 5,
-      message: "Field count mismatch: expected 3, got 2",
-    }
-  ],
-  comments: [
-    {
-      line: 4,
-      text: "this is a comment",
-    }
-  ]
-}
+  {
+    line: 5,
+    message: "Field count mismatch: expected 3, got 2",
+  }
+],
+comments: [
+  {
+    line: 4,
+    text: "this is a comment",
+  }
+]
 ```
 
 The `line` is the line in the original CSV file.
@@ -308,7 +306,6 @@ bun build script.ts --outdir=dist
 This means:
 
 - Zero runtime CSV parsing overhead in production
-- Smaller bundle sizes
 - Tree-shaking support for unused results (named imports)
 
 {% codetabs %}
@@ -370,11 +367,13 @@ that accepts a filename as a command-line argument.
 ```ts
 const filename = Bun.argv[1];
 if (!filename?.endsWith(".csv")) throw new Error("Invalid file");
+
 const dynamic_csv = await import(`./${filename}`);
+
 console.log(dynamic_csv);
 ```
 
 ```bash
 bun build ./csv-cli.ts --compile --outfile csv_cli
-./csv_cli ./test.csv
+./csv_cli test.csv
 ```

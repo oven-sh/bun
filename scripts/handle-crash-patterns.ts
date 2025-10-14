@@ -26,8 +26,8 @@ We are tracking worker stability issues in https://github.com/oven-sh/bun/issues
 
 // Check for better-sqlite3 with RunCommand or AutoCommand
 else if (
-  (body.includes("better-sqlite3") || body.toLowerCase().includes("better-sqlite3")) &&
-  (body.includes("RunCommand") || body.includes("AutoCommand"))
+  body.toLowerCase().includes("better-sqlite3") &&
+  (body.toLowerCase().includes("runcommand") || body.toLowerCase().includes("autocommand"))
 ) {
   closeAction = {
     reason: "not_planned",
@@ -38,10 +38,10 @@ better-sqlite3 is not supported yet in Bun due to missing V8 C++ APIs. For now, 
 
 // Check for ENOTCONN with Transport and standalone_executable on v1.2.23
 else if (
-  body.includes("ENOTCONN") &&
-  body.includes("Transport") &&
-  body.includes("standalone_executable") &&
-  (body.includes("1.2.23") || body.includes("v1.2.23"))
+  body.toLowerCase().includes("enotconn") &&
+  body.toLowerCase().includes("transport") &&
+  body.toLowerCase().includes("standalone_executable") &&
+  /\bv?1\.2\.23\b/i.test(body)
 ) {
   closeAction = {
     reason: "completed",

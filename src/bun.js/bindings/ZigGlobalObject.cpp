@@ -3761,7 +3761,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 #endif
 
     // Do not use JSCell* here because the GC will try to visit it.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
     globalObject->vm().queueMicrotask(WTFMove(task));
 }
 

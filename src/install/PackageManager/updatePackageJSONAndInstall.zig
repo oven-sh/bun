@@ -484,6 +484,184 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         }
     }
+
+    // Handle prune cleanup - must run AFTER install but OUTSIDE write_package_json conditional
+    prune_cleanup: {
+        if (subcommand != .prune) break :prune_cleanup;
+
+        var cwd = std.fs.cwd();
+        // Open node_modules directory - skip cleanup if it doesn't exist
+        var node_modules_dir = cwd.openDir("node_modules", .{ .iterate = true }) catch {
+            // node_modules doesn't exist - nothing to clean up
+            break :prune_cleanup;
+        };
+        defer node_modules_dir.close();
+
+        const name_hashes = manager.lockfile.packages.items(.name_hash);
+        const package_metas = manager.lockfile.packages.items(.meta);
+        const package_resolutions = manager.lockfile.packages.items(.resolution);
+        const is_dry_run = manager.options.dry_run;
+        const workspace_paths = &manager.lockfile.workspace_paths;
+        const is_production = !manager.options.local_package_features.dev_dependencies;
+
+        // Parse package.json fresh for production mode checks (avoid stale pointers)
+        // Hold onto the contents until we're done with prune cleanup
+        const pkg_json_contents_for_prune = if (is_production)
+            std.fs.cwd().readFileAlloc(manager.allocator, manager.original_package_json_path, 1024 * 1024 * 16) catch break :prune_cleanup
+        else
+            null;
+        defer if (pkg_json_contents_for_prune) |contents| manager.allocator.free(contents);
+
+        const pkg_json_for_prune = if (pkg_json_contents_for_prune) |contents| blk: {
+            const source = logger.Source.initPathString(manager.original_package_json_path, contents);
+            const parsed = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch break :prune_cleanup;
+            break :blk parsed;
+        } else null;
+
+        // Helper to check if package is in dependencies or optionalDependencies
+        const isInProductionDeps = struct {
+            fn check(pkg_json: JSON.Expr, pkg_name: []const u8) bool {
+                // Check dependencies
+                if (pkg_json.asProperty("dependencies")) |deps_prop| {
+                    if (deps_prop.expr.data == .e_object) {
+                        for (deps_prop.expr.data.e_object.properties.slice()) |prop| {
+                            if (prop.key) |key| {
+                                if (key.data == .e_string and key.data.e_string.eql(string, pkg_name)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Check optionalDependencies
+                if (pkg_json.asProperty("optionalDependencies")) |opt_deps_prop| {
+                    if (opt_deps_prop.expr.data == .e_object) {
+                        for (opt_deps_prop.expr.data.e_object.properties.slice()) |prop| {
+                            if (prop.key) |key| {
+                                if (key.data == .e_string and key.data.e_string.eql(string, pkg_name)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+        }.check;
+
+        // Iterate through node_modules and check each package
+        var iter = node_modules_dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (entry.kind != .directory) continue;
+
+            // Skip .bin and other special directories
+            if (entry.name[0] == '.') continue;
+
+            // Handle scoped packages (@org/package)
+            if (entry.name[0] == '@') {
+                var scope_dir = node_modules_dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+                defer scope_dir.close();
+
+                var scope_iter = scope_dir.iterate();
+                while (scope_iter.next() catch null) |scoped_entry| {
+                    if (scoped_entry.kind != .directory) continue;
+
+                    // Build full scoped package name
+                    var scoped_name_buf: bun.PathBuffer = undefined;
+                    const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
+                    const pkg_hash = String.Builder.stringHash(scoped_name);
+
+                    // Find package in lockfile
+                    const pkg_index = std.mem.indexOfScalar(PackageNameHash, name_hashes, pkg_hash);
+
+                    // Skip workspace packages (check workspace_paths or if it's a symlink)
+                    if (workspace_paths.contains(pkg_hash)) {
+                        continue;
+                    }
+
+                    // Check if this is a symlink (workspace packages are symlinked into node_modules)
+                    const scoped_stat = std.posix.fstatat(scope_dir.fd, scoped_entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
+                    if (scoped_stat) |stat| {
+                        if (stat.mode & std.posix.S.IFLNK == std.posix.S.IFLNK) {
+                            // It's a symlink, likely a workspace package - skip it
+                            continue;
+                        }
+                    }
+
+                    if (pkg_index) |idx| {
+                        // Skip workspace packages (check resolution tag or origin)
+                        if (package_resolutions[idx].tag == .workspace or package_metas[idx].origin == .local) {
+                            continue;
+                        }
+                    }
+
+                    // Determine if package should be removed
+                    var should_remove = pkg_index == null;
+
+                    // In production mode, also remove devDependencies
+                    if (!should_remove and is_production and pkg_json_for_prune != null) {
+                        // Package is in lockfile, but check if it's a devDependency
+                        if (pkg_index != null and !isInProductionDeps(pkg_json_for_prune.?, scoped_name)) {
+                            should_remove = true;
+                        }
+                    }
+
+                    // Remove if marked for removal
+                    if (should_remove and !is_dry_run) {
+                        var path_buf: bun.PathBuffer = undefined;
+                        const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{scoped_name}) catch continue;
+                        cwd.deleteTree(path) catch {};
+                    }
+                }
+                continue;
+            }
+
+            // Regular package
+            const pkg_hash = String.Builder.stringHash(entry.name);
+
+            // Find package in lockfile
+            const pkg_index = std.mem.indexOfScalar(PackageNameHash, name_hashes, pkg_hash);
+
+            // Skip workspace packages (check if it's a symlink - workspace packages are symlinked)
+            if (workspace_paths.contains(pkg_hash)) {
+                continue;
+            }
+
+            // Check if this is a symlink (workspace packages are symlinked into node_modules)
+            const stat_result = std.posix.fstatat(node_modules_dir.fd, entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
+            if (stat_result) |stat| {
+                if (stat.mode & std.posix.S.IFLNK == std.posix.S.IFLNK) {
+                    // It's a symlink, likely a workspace package - skip it
+                    continue;
+                }
+            }
+
+            if (pkg_index) |idx| {
+                // Skip workspace packages (check resolution tag or origin)
+                if (package_resolutions[idx].tag == .workspace or package_metas[idx].origin == .local) {
+                    continue;
+                }
+            }
+
+            // Determine if package should be removed
+            var should_remove = pkg_index == null;
+
+            // In production mode, also remove devDependencies
+            if (!should_remove and is_production and pkg_json_for_prune != null) {
+                // Package is in lockfile, but check if it's a devDependency
+                if (pkg_index != null and !isInProductionDeps(pkg_json_for_prune.?, entry.name)) {
+                    should_remove = true;
+                }
+            }
+
+            // Remove if marked for removal
+            if (should_remove and !is_dry_run) {
+                var path_buf: bun.PathBuffer = undefined;
+                const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{entry.name}) catch continue;
+                cwd.deleteTree(path) catch {};
+            }
+        }
+    }
 }
 
 pub fn updatePackageJSONAndInstallCatchError(
@@ -519,6 +697,10 @@ fn updatePackageJSONAndInstallAndCLI(
                 },
                 .remove => {
                     Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
+                    Global.crash();
+                },
+                .prune => {
+                    Output.prettyErrorln("<r>No package.json, so nothing to prune", .{});
                     Global.crash();
                 },
                 .patch, .@"patch-commit" => {

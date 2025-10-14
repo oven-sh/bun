@@ -1360,3 +1360,127 @@ test("$npm_lifecycle_event is accurate", async () => {
   ]);
   expect(p.err).toEqual(`$ echo $npm_lifecycle_event\n`);
 });
+
+describe("publishConfig.directory", () => {
+  test("basic directory change", async () => {
+    await mkdir(join(packageDir, "src"), { recursive: true });
+    await mkdir(join(packageDir, "dist"), { recursive: true });
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-directory",
+          version: "1.0.0",
+          publishConfig: {
+            directory: "dist",
+          },
+        }),
+      ),
+      write(join(packageDir, "src", "index.js"), "console.log('src');"),
+      write(join(packageDir, "dist", "index.js"), "console.log('dist');"),
+      write(join(packageDir, "dist", "other.js"), "console.log('other');"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-publishconfig-directory-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/index.js" },
+      { pathname: "package/other.js" },
+    ]);
+
+    // src/index.js should not be included, only dist files
+    expect(tarball.entries.length).toBe(3);
+  });
+
+  test("directory with ./ prefix", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-dir-prefix",
+          version: "2.0.0",
+          publishConfig: {
+            directory: "./build",
+          },
+        }),
+      ),
+      mkdir(join(packageDir, "build"), { recursive: true }),
+      write(join(packageDir, "build", "main.js"), "console.log('main');"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-publishconfig-dir-prefix-2.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/main.js" }]);
+  });
+
+  test("nested directory", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-nested",
+          version: "3.0.0",
+          publishConfig: {
+            directory: "output/final",
+          },
+        }),
+      ),
+      mkdir(join(packageDir, "output", "final"), { recursive: true }),
+      write(join(packageDir, "output", "final", "result.js"), "console.log('result');"),
+      write(join(packageDir, "output", "temp.js"), "console.log('temp');"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-publishconfig-nested-3.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/result.js" }]);
+    // temp.js should not be included
+    expect(tarball.entries.find(e => e.pathname === "package/temp.js")).toBeUndefined();
+  });
+
+  test("directory does not exist", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-publishconfig-missing",
+        version: "1.0.0",
+        publishConfig: {
+          directory: "nonexistent",
+        },
+      }),
+    );
+
+    // packExpectError verifies exit code is > 0
+    await packExpectError(packageDir, bunEnv);
+  });
+
+  test("with files field", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-with-files",
+          version: "1.0.0",
+          files: ["lib/**/*"],
+          publishConfig: {
+            directory: "dist",
+          },
+        }),
+      ),
+      mkdir(join(packageDir, "dist", "lib"), { recursive: true }),
+      mkdir(join(packageDir, "dist", "other"), { recursive: true }),
+      write(join(packageDir, "dist", "lib", "main.js"), "console.log('lib');"),
+      write(join(packageDir, "dist", "other", "other.js"), "console.log('other');"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-publishconfig-with-files-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/lib/main.js" }]);
+    // other.js should not be included
+    expect(tarball.entries.find(e => e.pathname === "package/other/other.js")).toBeUndefined();
+  });
+});

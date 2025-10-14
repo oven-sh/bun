@@ -1148,8 +1148,14 @@ pub const PackCommand = struct {
             .entry => |entry| entry,
         };
 
-        if (comptime for_publish) {
-            if (json.root.get("publishConfig")) |config| {
+        var publish_config_directory: ?string = null;
+        if (json.root.get("publishConfig")) |config| {
+            // Read directory for both pack and publish
+            if (try config.getString(ctx.allocator, "directory")) |directory| {
+                publish_config_directory = directory[0];
+            }
+
+            if (comptime for_publish) {
                 if (manager.options.publish_config.tag.len == 0) {
                     if (try config.getStringCloned(ctx.allocator, "tag")) |tag| {
                         manager.options.publish_config.tag = tag;
@@ -1321,16 +1327,54 @@ pub const PackCommand = struct {
             break :post_scripts .{ postpack_script, null, null };
         };
 
-        var root_dir = root_dir: {
+        // Keep track of the workspace directory for package.json
+        var workspace_dir = workspace_dir: {
             var path_buf: PathBuffer = undefined;
             @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
             path_buf[abs_workspace_path.len] = 0;
-            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
+            break :workspace_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
                 .iterate = true,
             }) catch |err| {
-                Output.err(err, "failed to open root directory: {s}\n", .{abs_workspace_path});
+                Output.err(err, "failed to open workspace directory: {s}\n", .{abs_workspace_path});
                 Global.crash();
             };
+        };
+        defer workspace_dir.close();
+
+        var root_dir = root_dir: {
+            if (publish_config_directory) |directory| {
+                // Use publishConfig.directory if specified
+                var path_buf: PathBuffer = undefined;
+                const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(
+                    bun.path.normalizeBuf(directory, &path_buf, .posix),
+                    "./",
+                ));
+
+                const root_path = bun.path.joinAbsStringBufZ(
+                    abs_workspace_path,
+                    &path_buf,
+                    &[_]string{normalized_dir},
+                    .auto,
+                );
+
+                break :root_dir std.fs.openDirAbsoluteZ(root_path, .{
+                    .iterate = true,
+                }) catch |err| {
+                    Output.err(err, "failed to open root directory: {s}\n", .{root_path});
+                    Global.crash();
+                };
+            } else {
+                // Use the same directory as workspace_dir
+                var path_buf: PathBuffer = undefined;
+                @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
+                path_buf[abs_workspace_path.len] = 0;
+                break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
+                    .iterate = true,
+                }) catch |err| {
+                    Output.err(err, "failed to open root directory: {s}\n", .{abs_workspace_path});
+                    Global.crash();
+                };
+            }
         };
         defer root_dir.close();
 
@@ -1579,7 +1623,7 @@ pub const PackCommand = struct {
             }
             defer if (log_level.showProgress()) node.end();
 
-            entry = try archivePackageJSON(ctx, archive, entry, root_dir, edited_package_json);
+            entry = try archivePackageJSON(ctx, archive, entry, workspace_dir, edited_package_json);
             if (log_level.showProgress()) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {

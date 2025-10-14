@@ -205,9 +205,18 @@ pub const SideEffects = enum(u1) {
                     .bin_ge,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
+                            const left_simplified = simplifyUnusedExpr(p, bin.left);
+                            const right_simplified = simplifyUnusedExpr(p, bin.right);
+
+                            // If both sides would be removed entirely, we can return null to remove the whole expression
+                            if (left_simplified == null and right_simplified == null) {
+                                return null;
+                            }
+
+                            // Otherwise, preserve at least the structure
                             return Expr.joinWithComma(
-                                simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-                                simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+                                left_simplified orelse bin.left.toEmpty(),
+                                right_simplified orelse bin.right.toEmpty(),
                                 p.allocator,
                             );
                         }

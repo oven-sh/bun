@@ -252,7 +252,7 @@ pub const Report = struct {
             }
 
             // LF: lines found
-            try writer.print("LF:{d}\n", .{report.total_lines});
+            try writer.print("LF:{d}\n", .{report.executable_lines.count()});
 
             // LH: lines hit
             try writer.print("LH:{d}\n", .{report.lines_which_have_executed.count()});

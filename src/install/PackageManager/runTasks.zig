@@ -6,7 +6,7 @@ pub fn runTasks(
     comptime callbacks: anytype,
     install_peer: bool,
     log_level: Options.LogLevel,
-) anyerror!void {
+) !void {
     var has_updated_this_run = false;
     var has_network_error = false;
 
@@ -284,6 +284,9 @@ pub fn runTasks(
                 if (response.status_code == 304) {
                     // The HTTP request was cached
                     if (manifest_req.loaded_manifest) |manifest| {
+                        // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
+                        bun.debugAssert(!manifest_req.is_extended_manifest or manifest.pkg.has_extended_manifest);
+
                         const entry = try manager.manifests.hash_map.getOrPut(manager.allocator, manifest.pkg.name.hash);
                         entry.value_ptr.* = .{ .manifest = manifest };
 

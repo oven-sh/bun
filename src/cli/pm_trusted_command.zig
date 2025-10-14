@@ -343,7 +343,7 @@ pub const TrustCommand = struct {
         const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try pm.root_package_json_file.getEndPos());
         defer ctx.allocator.free(package_json_contents);
 
-        const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
+        const package_json_source = logger.Source.initPathString(PackageManager.root_package_json_path, package_json_contents);
 
         var package_json = bun.json.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};

@@ -408,7 +408,7 @@ pub fn isFilteredDependencyOrWorkspace(
             },
         };
 
-        switch (bun.glob.match(undefined, pattern, name_or_path)) {
+        switch (bun.glob.match(pattern, name_or_path)) {
             .match, .negate_match => workspace_matched = true,
 
             .negate_no_match => {

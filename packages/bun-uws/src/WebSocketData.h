@@ -38,6 +38,7 @@ private:
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
     bool hasTimedOut = false;
+    
     enum CompressionStatus : char {
         DISABLED,
         ENABLED,
@@ -52,7 +53,12 @@ private:
     /* We could be a subscriber */
     Subscriber *subscriber = nullptr;
 public:
-    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    void *socketData = nullptr;
+    /* node http compatibility callbacks */
+    OnSocketClosedCallback onSocketClosed = nullptr;
+
+    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure, void *socketData, OnSocketClosedCallback onSocketClosed) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
         compressionStatus = perMessageDeflate ? ENABLED : DISABLED;
 
         /* Initialize the dedicated sliding window(s) */
@@ -64,6 +70,10 @@ public:
                 inflationStream = new InflationStream(compressOptions);
             }
         }
+        // never close websocket sockets when closing idle connections
+        this->isIdle = false;
+        this->socketData = socketData;
+        this->onSocketClosed = onSocketClosed;
     }
 
     ~WebSocketData() {

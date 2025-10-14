@@ -15,7 +15,7 @@ extern "C" void StringBuilder__deinit(WTF::StringBuilder* builder)
     builder->~StringBuilder();
 }
 
-extern "C" void StringBuilder__appendLatin1(WTF::StringBuilder* builder, LChar const* ptr, size_t len)
+extern "C" void StringBuilder__appendLatin1(WTF::StringBuilder* builder, Latin1Character const* ptr, size_t len)
 {
     builder->append({ ptr, len });
 }
@@ -45,7 +45,7 @@ extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, BunStri
     str.appendToBuilder(*builder);
 }
 
-extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, LChar c)
+extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Character c)
 {
     builder->append(c);
 }

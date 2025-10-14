@@ -919,6 +919,8 @@ pub const Default = struct {
         _ = self;
         return c_allocator;
     }
+
+    pub const deinit = void;
 };
 
 const basic = if (bun.use_mimalloc)

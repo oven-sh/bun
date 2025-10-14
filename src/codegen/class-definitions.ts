@@ -177,6 +177,11 @@ export class ClassDefinition {
   own: Record<string, string>;
   values?: string[];
   /**
+   * When true, the class will accept a MarkedArgumentBuffer* to create a
+   * WTF::FixedVector<JSC::Unknown> jsvalueArray member that will be visited by GC.
+   */
+  valuesArray?: boolean;
+  /**
    * Set this to `"0b11101110"`.
    */
   JSType?: string;
@@ -286,7 +291,7 @@ export function define(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),
@@ -294,7 +299,7 @@ export function define(
       Object.entries(proto)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v.DOMJIT = undefined;
+          v["DOMJIT"] = undefined;
           return [k, v];
         }),
     ),

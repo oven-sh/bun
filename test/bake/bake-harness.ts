@@ -18,9 +18,11 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
+
+const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
 
 const isDebugBuild = Bun.version.includes("debug");
 
@@ -537,13 +539,18 @@ export class Dev extends EventEmitter {
     if (!hasAlreadyExited) {
       this.devProcess.send({ type: "graceful-exit" });
     }
+    // Leak sanitizer takes forever to exit the process
+    const timeout = isASAN ? 30 * 1000 : 2000;
     await Promise.race([
       this.devProcess.exited,
-      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : timeout)),
     ]);
     if (this.output.panicked) {
       await this.devProcess.exited;
       throw new Error("DevServer panicked");
+    }
+    if (this.devProcess.exitCode === null) {
+      throw new Error("Timed out while waiting for dev server process to close");
     }
     if (this.devProcess.exitCode !== 0) {
       const code =
@@ -787,6 +794,7 @@ export class Client extends EventEmitter {
         if (exitCode !== null) {
           this.exitCode = exitCode;
         } else if (signalCode !== null) {
+          console.log("THE SIGNAL CODE IS", signalCode);
           this.exitCode = `${signalCode}`;
         } else {
           this.exitCode = "unknown";
@@ -1845,9 +1853,10 @@ function testImpl<T extends DevServerTest>(
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
-          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
-          BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_QUIET_LOGS: "0",
+          // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),
@@ -1907,6 +1916,9 @@ function testImpl<T extends DevServerTest>(
       return options;
     }
 
+    // asan makes everything slower
+    const asanTimeoutMultiplier = isASAN ? 3 : 1;
+
     (options.only ? jest.test.only : jest.test)(
       name,
       run,
@@ -1914,7 +1926,10 @@ function testImpl<T extends DevServerTest>(
         ? 11 * 60 * 1000
         : interactive
           ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
+          : (options.timeoutMultiplier ?? 1) *
+            (isWindows ? 15_000 : 10_000) *
+            (Bun.version.includes("debug") ? 2 : 1) *
+            asanTimeoutMultiplier,
     );
     return options;
   } catch {

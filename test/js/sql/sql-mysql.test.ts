@@ -287,11 +287,13 @@ if (isDockerEnabled()) {
         });
 
         test("Create table", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table test_my_table(id int)`;
           await sql`drop table test_my_table`;
         });
 
         test("Drop table", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table drop_table_test(id int)`;
           await sql`drop table drop_table_test`;
           // Verify that table is dropped
@@ -411,6 +413,47 @@ if (isDockerEnabled()) {
             expect(result.getTime()).toBe(-251);
           }
         });
+        test("time", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME)`;
+          const times = [
+            { a: "00:00:00" },
+            { a: "01:01:01" },
+            { a: "10:10:10" },
+            { a: "12:12:59" },
+            { a: "-838:59:59" },
+            { a: "838:59:59" },
+            { a: null },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(times)}`;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result).toEqual(times);
+          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+          expect(result2).toEqual(times);
+        });
+
+        test("date", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a DATE)`;
+          const dates = [{ a: "2024-01-01" }, { a: "2024-01-02" }, { a: "2024-01-03" }, { a: null }];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(dates)}`;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result).toEqual([
+            { a: new Date("2024-01-01") },
+            { a: new Date("2024-01-02") },
+            { a: new Date("2024-01-03") },
+            { a: null },
+          ]);
+          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+          expect(result2).toEqual([
+            { a: new Date("2024-01-01") },
+            { a: new Date("2024-01-02") },
+            { a: new Date("2024-01-03") },
+            { a: null },
+          ]);
+        });
 
         test("JSON", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
@@ -498,6 +541,7 @@ if (isDockerEnabled()) {
         });
 
         test("Prepared transaction", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table test_prepared_transaction (a int)`;
 
           try {

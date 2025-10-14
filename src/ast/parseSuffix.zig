@@ -827,24 +827,25 @@ pub fn ParseSuffix(
             const optional_chain = &optional_chain_;
             while (true) {
                 if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
-                    while (true) {
-                        switch (p.lexer.token) {
-                            .t_comma => {
-                                if (level.gte(.comma)) {
-                                    break;
-                                }
+                    defer left_and_out.* = left_value;
+                    next_token: switch (p.lexer.token) {
+                        .t_comma => {
+                            if (level.gte(.comma)) {
+                                return;
+                            }
 
-                                try p.lexer.next();
-                                left.* = p.newExpr(E.Binary{
-                                    .op = .bin_comma,
-                                    .left = left.*,
-                                    .right = try p.parseExpr(.comma),
-                                }, left.loc);
-                            },
-                            else => {
-                                break;
-                            },
-                        }
+                            try p.lexer.next();
+                            left.* = p.newExpr(E.Binary{
+                                .op = .bin_comma,
+                                .left = left.*,
+                                .right = try p.parseExpr(.comma),
+                            }, left.loc);
+
+                            continue :next_token p.lexer.token;
+                        },
+                        else => {
+                            return;
+                        },
                     }
                 }
 

@@ -121,7 +121,6 @@ pub const PackageInstaller = struct {
 
             return (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                 .can_rename_or_delete = false,
-                .create = false,
                 .read_only = false,
             }).unwrap()).stdDir();
         }
@@ -132,11 +131,9 @@ pub const PackageInstaller = struct {
                     break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
                 }
 
-                // TODO: is this `makePath` necessary with `.create = true` below
-                try bun.MakePath.makePath(u8, root, this.path.items);
                 break :brk (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                     .can_rename_or_delete = false,
-                    .create = true,
+                    .op = .open_or_create,
                     .read_only = false,
                 }).unwrap()).stdDir();
             };

@@ -78,8 +78,6 @@ pub fn getWithPath(
         },
     ) catch |err| {
         _ = this.map.remove(key);
-        allocator.free(source.contents);
-        allocator.free(key);
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
         return .{ .parse_err = err };
     };

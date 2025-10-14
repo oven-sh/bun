@@ -84,7 +84,7 @@ describe("basic", () => {
 
   for (const binaryLockfile of [true, false]) {
     test(`detect changes (${binaryLockfile ? "bun.lockb" : "bun.lock"})`, async () => {
-      const { packageDir } = await registry.createTestDir({ saveTextLockfile: !binaryLockfile });
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: !binaryLockfile } });
       const packageJson = await createBasicCatalogMonorepo(packageDir, "catalog-basic-2");
       let { err } = await runBunInstall(bunEnv, packageDir);
       expect(err).toContain("Saved lockfile");

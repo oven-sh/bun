@@ -412,7 +412,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
                 if (strings.eqlLong(socket.hostname_buf[0..socket.hostname_len], hostname, true)) {
                     const http_socket = socket.http_socket;
-                    assert(context().pending_sockets.put(socket));
 
                     if (http_socket.isClosed()) {
                         markSocketAsDead(http_socket);
@@ -424,6 +423,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
+                    assert(context().pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
                     return http_socket;
                 }
@@ -473,6 +473,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false,
+                null,
+                0,
             );
             client.allow_retry = false;
             return socket;

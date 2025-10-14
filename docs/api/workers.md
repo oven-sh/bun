@@ -282,6 +282,31 @@ const worker = new Worker("./i-am-smol.ts", {
 Setting `smol: true` sets `JSC::HeapSize` to be `Small` instead of the default `Large`.
 {% /details %}
 
+## Environment Data
+
+Share data between the main thread and workers using `setEnvironmentData()` and `getEnvironmentData()`.
+
+```js
+import { setEnvironmentData, getEnvironmentData } from "worker_threads";
+
+// In main thread
+setEnvironmentData("config", { apiUrl: "https://api.example.com" });
+
+// In worker
+const config = getEnvironmentData("config");
+console.log(config); // => { apiUrl: "https://api.example.com" }
+```
+
+## Worker Events
+
+Listen for worker creation events using `process.emit()`:
+
+```js
+process.on("worker", worker => {
+  console.log("New worker created:", worker.threadId);
+});
+```
+
 ## `Bun.isMainThread`
 
 You can check if you're in the main thread by checking `Bun.isMainThread`.

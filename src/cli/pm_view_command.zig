@@ -104,6 +104,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         "", // last_modified (not needed for view)
         "", // etag (not needed for view)
         0, // public_max_age (not needed for view)
+        true, // is_extended_manifest (view uses application/json Accept header)
     ) catch |err| {
         Output.err(err, "failed to parse package manifest", .{});
         Global.exit(1);

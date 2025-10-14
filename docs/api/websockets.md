@@ -107,6 +107,8 @@ Bun.serve({
 
 Contextual `data` can be attached to a new WebSocket in the `.upgrade()` call. This data is made available on the `ws.data` property inside the WebSocket handlers.
 
+To strongly type `ws.data`, add a `data` property to the `websocket` handler object. This types `ws.data` across all lifecycle hooks.
+
 ```ts
 type WebSocketData = {
   createdAt: number;
@@ -114,8 +116,7 @@ type WebSocketData = {
   authToken: string;
 };
 
-// TypeScript: specify the type of `data`
-Bun.serve<WebSocketData>({
+Bun.serve({
   fetch(req, server) {
     const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
 
@@ -131,8 +132,12 @@ Bun.serve<WebSocketData>({
     return undefined;
   },
   websocket: {
+    // TypeScript: specify the type of ws.data like this
+    data: {} as WebSocketData,
+
     // handler called when a message is received
     async message(ws, message) {
+      // ws.data is now properly typed as WebSocketData
       const user = getUserFromToken(ws.data.authToken);
 
       await saveMessageToDatabase({
@@ -144,6 +149,10 @@ Bun.serve<WebSocketData>({
   },
 });
 ```
+
+{% callout %}
+**Note:** Previously, you could specify the type of `ws.data` using a type parameter on `Bun.serve`, like `Bun.serve<MyData>({...})`. This pattern was removed due to [a limitation in TypeScript](https://github.com/microsoft/TypeScript/issues/26242) in favor of the `data` property shown above.
+{% /callout %}
 
 To connect to this server from the browser, create a new `WebSocket`.
 
@@ -164,7 +173,7 @@ socket.addEventListener("message", event => {
 Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic (excluding itself). This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
 
 ```ts
-const server = Bun.serve<{ username: string }>({
+const server = Bun.serve({
   fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
@@ -179,6 +188,9 @@ const server = Bun.serve<{ username: string }>({
     return new Response("Hello world");
   },
   websocket: {
+    // TypeScript: specify the type of ws.data like this
+    data: {} as { username: string },
+
     open(ws) {
       const msg = `${ws.data.username} has entered the chat`;
       ws.subscribe("the-group-chat");
@@ -279,6 +291,9 @@ Bun implements the `WebSocket` class. To create a WebSocket client that connects
 
 ```ts
 const socket = new WebSocket("ws://localhost:3000");
+
+// With subprotocol negotiation
+const socket2 = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
 ```
 
 In browsers, the cookies that are currently set on the page will be sent with the WebSocket upgrade request. This is a standard feature of the `WebSocket` API.
@@ -290,6 +305,17 @@ const socket = new WebSocket("ws://localhost:3000", {
   headers: {
     // custom headers
   },
+});
+```
+
+### Client compression
+
+WebSocket clients support permessage-deflate compression. The `extensions` property shows negotiated compression:
+
+```ts
+const socket = new WebSocket("wss://echo.websocket.org");
+socket.addEventListener("open", () => {
+  console.log(socket.extensions); // => "permessage-deflate"
 });
 ```
 

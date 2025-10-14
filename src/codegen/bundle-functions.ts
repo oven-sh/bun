@@ -421,8 +421,8 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "BunBuiltinNames.h"
 
     namespace WebCore {
-        static const LChar combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
-        static const std::span<const LChar> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
+        static const Latin1Character combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
+        static const std::span<const Latin1Character> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {

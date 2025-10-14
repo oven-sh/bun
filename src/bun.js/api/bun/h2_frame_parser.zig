@@ -4270,8 +4270,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn detachNativeSocket(this: *H2FrameParser) void {
-        this.native_socket = .{ .none = {} };
         const native_socket = this.native_socket;
+        this.native_socket = .{ .none = {} };
 
         switch (native_socket) {
             inline .tcp, .tls => |socket| {

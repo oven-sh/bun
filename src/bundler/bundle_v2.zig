@@ -145,6 +145,9 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.safety.ThreadLock,
 
+    // if false we can skip TLA validation and propagation
+    has_any_top_level_await_modules: bool = false,
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -175,7 +178,9 @@ pub const BundleV2 = struct {
 
     fn ensureClientTranspiler(this: *BundleV2) void {
         if (this.client_transpiler == null) {
-            _ = bun.handleOom(this.initializeClientTranspiler());
+            _ = this.initializeClientTranspiler() catch |e| {
+                std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+            };
         }
     }
 
@@ -230,7 +235,9 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse bun.handleOom(this.initializeClientTranspiler());
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch |e| {
+                    std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+                };
             }
 
             return this.transpiler;
@@ -1939,7 +1946,7 @@ pub const BundleV2 = struct {
                         break :brk i;
                     }
                 }
-                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+                return bun.StandaloneModuleGraph.CompileResult.fail(.no_entry_point);
             };
 
             const output_file = &output_files.items[entry_point_index];
@@ -1983,12 +1990,12 @@ pub const BundleV2 = struct {
             if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On POSIX, makeOpenPath and change root_dir
                 root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On Windows, ensure directories exist but don't change root_dir
                 _ = bun.makePath(root_dir, dirname) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             }
 
@@ -2037,7 +2044,7 @@ pub const BundleV2 = struct {
                 else
                     null,
             ) catch |err| {
-                return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)})));
+                return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
 
             if (result == .success) {
@@ -2132,7 +2139,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.err.slice()))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }
@@ -3653,6 +3660,8 @@ pub const BundleV2 = struct {
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.transpiler.log, true) catch unreachable;
+
+                this.has_any_top_level_await_modules = this.has_any_top_level_await_modules or !result.ast.top_level_await_keyword.isEmpty();
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.

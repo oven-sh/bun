@@ -1682,7 +1682,7 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
-pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
+pub fn firstNonASCII16(slice: []const u16) ?u32 {
     var remaining = slice;
     const remaining_start = remaining.ptr;
 
@@ -2244,10 +2244,8 @@ pub const copyLatin1IntoUTF8 = unicode.copyLatin1IntoUTF8;
 pub const copyLatin1IntoUTF8StopOnNonASCII = unicode.copyLatin1IntoUTF8StopOnNonASCII;
 pub const copyU16IntoU8 = unicode.copyU16IntoU8;
 pub const copyU8IntoU16 = unicode.copyU8IntoU16;
-pub const copyU8IntoU16WithAlignment = unicode.copyU8IntoU16WithAlignment;
 pub const copyUTF16IntoUTF8 = unicode.copyUTF16IntoUTF8;
 pub const copyUTF16IntoUTF8Impl = unicode.copyUTF16IntoUTF8Impl;
-pub const copyUTF16IntoUTF8WithBuffer = unicode.copyUTF16IntoUTF8WithBuffer;
 pub const copyUTF16IntoUTF8WithBufferImpl = unicode.copyUTF16IntoUTF8WithBufferImpl;
 pub const decodeCheck = unicode.decodeCheck;
 pub const decodeWTF8RuneT = unicode.decodeWTF8RuneT;
@@ -2264,7 +2262,6 @@ pub const isAllASCII = unicode.isAllASCII;
 pub const isValidUTF8 = unicode.isValidUTF8;
 pub const isValidUTF8WithoutSIMD = unicode.isValidUTF8WithoutSIMD;
 pub const cp1252ToCodepointAssumeNotASCII = unicode.cp1252ToCodepointAssumeNotASCII;
-pub const cp1252ToCodepointBytesAssumeNotASCII = unicode.cp1252ToCodepointBytesAssumeNotASCII;
 pub const cp1252ToCodepointBytesAssumeNotASCII16 = unicode.cp1252ToCodepointBytesAssumeNotASCII16;
 pub const literal = unicode.literal;
 pub const nonASCIISequenceLength = unicode.nonASCIISequenceLength;
@@ -2312,7 +2309,6 @@ pub const escapeHTMLForUTF16Input = escapeHTML_.escapeHTMLForUTF16Input;
 pub const addNTPathPrefix = paths_.addNTPathPrefix;
 pub const addNTPathPrefixIfNeeded = paths_.addNTPathPrefixIfNeeded;
 pub const addLongPathPrefix = paths_.addLongPathPrefix;
-pub const addLongPathPrefixIfNeeded = paths_.addLongPathPrefixIfNeeded;
 pub const charIsAnySlash = paths_.charIsAnySlash;
 pub const cloneNormalizingSeparators = paths_.cloneNormalizingSeparators;
 pub const fromWPath = paths_.fromWPath;

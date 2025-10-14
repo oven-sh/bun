@@ -717,6 +717,25 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
             return LIBUS_SOCKET_ERROR;
         }
 
+#ifdef __APPLE__
+        /* A bug in XNU (the macOS kernel) can cause accept() to return a socket but addrlen=0.
+         * This happens when an IPv4 connection is made to an IPv6 dual-stack listener
+         * and the connection is immediately aborted (sends RST packet).
+         * However, there might be buffered data from connectx() before the abort. */
+        if (addr->len == 0) {
+            /* Check if there's any pending data before discarding the socket */
+            char peek_buf[1];
+            ssize_t has_data = recv(accepted_fd, peek_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+            
+            if (has_data <= 0) {
+                /* No data available, socket is truly dead - discard it */
+                bsd_close_socket(accepted_fd);
+                continue; /* Try to accept the next connection */
+            }
+            /* If has_data > 0, let the socket through - there's buffered data to read */
+        }
+#endif
+
         break;
     }
 
@@ -1448,10 +1467,37 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options, struct sockaddr_storage *local_addr) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
+    }
+
+    // Bind to local address if specified
+    if (local_addr != NULL) {
+        socklen_t addr_len;
+        if (local_addr->ss_family == AF_INET) {
+            addr_len = sizeof(struct sockaddr_in);
+        } else if (local_addr->ss_family == AF_INET6) {
+            addr_len = sizeof(struct sockaddr_in6);
+        } else {
+            bsd_close_socket(fd);
+#ifdef _WIN32
+            WSASetLastError(WSAEAFNOSUPPORT);
+#endif
+            errno = EAFNOSUPPORT;
+            return LIBUS_SOCKET_ERROR;
+        }
+
+        int bind_result;
+        do {
+            bind_result = bind(fd, (struct sockaddr *)local_addr, addr_len);
+        } while (IS_EINTR(bind_result));
+
+        if (bind_result != 0) {
+            bsd_close_socket(fd);
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef _WIN32

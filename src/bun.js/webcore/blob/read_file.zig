@@ -10,8 +10,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
 
         pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) void {
             var promise = handler.promise.swap();
-            var blob = handler.context;
-            blob.allocator = null;
+            var blob = handler.context.takeOwnership();
             const globalThis = handler.globalThis;
             bun.destroy(handler);
             switch (maybe_bytes) {

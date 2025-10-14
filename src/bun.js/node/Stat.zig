@@ -4,10 +4,14 @@ pub fn StatType(comptime big: bool) type {
         pub const new = bun.TrivialNew(@This());
         pub const deinit = bun.TrivialDeinit(@This());
 
-        value: bun.Stat,
+        value: Syscall.PosixStat,
 
-        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
+        const StatTimespec = bun.timespec;
         const Float = if (big) i64 else f64;
+
+        pub inline fn init(stat_: *const Syscall.PosixStat) @This() {
+            return .{ .value = stat_.* };
+        }
 
         inline fn toNanoseconds(ts: StatTimespec) u64 {
             if (ts.sec < 0) {
@@ -29,8 +33,8 @@ pub fn StatType(comptime big: bool) type {
             // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
             // > which causes Y2038 overflow. On the other platforms it is safe to treat
             // > negative values as pre-epoch time.
-            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(ts.sec)) else ts.sec;
-            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(ts.nsec)) else ts.nsec;
+            const tv_sec = if (Environment.isWindows) @as(u32, @bitCast(@as(i32, @truncate(ts.sec)))) else ts.sec;
+            const tv_nsec = if (Environment.isWindows) @as(u32, @bitCast(@as(i32, @truncate(ts.nsec)))) else ts.nsec;
             if (big) {
                 const sec: i64 = tv_sec;
                 const nsec: i64 = tv_nsec;
@@ -42,6 +46,10 @@ pub fn StatType(comptime big: bool) type {
                     .nsec = @intCast(tv_nsec),
                 }));
             }
+        }
+
+        fn getBirthtime(stat_: *const Syscall.PosixStat) StatTimespec {
+            return stat_.birthtim;
         }
 
         pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -56,7 +64,7 @@ pub fn StatType(comptime big: bool) type {
             return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
         }
 
-        fn statToJS(stat_: *const bun.Stat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
@@ -70,14 +78,15 @@ pub fn StatType(comptime big: bool) type {
             const size: i64 = clampedInt64(stat_.size);
             const blksize: i64 = clampedInt64(stat_.blksize);
             const blocks: i64 = clampedInt64(stat_.blocks);
+            const bTime = getBirthtime(stat_);
             const atime_ms: Float = toTimeMS(aTime);
             const mtime_ms: Float = toTimeMS(mTime);
             const ctime_ms: Float = toTimeMS(cTime);
+            const birthtime_ms: Float = toTimeMS(bTime);
             const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
             const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
             const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ms: Float = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
-            const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
+            const birthtime_ns: u64 = if (big) toNanoseconds(bTime) else 0;
 
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
@@ -120,12 +129,6 @@ pub fn StatType(comptime big: bool) type {
                 ctime_ms,
                 birthtime_ms,
             );
-        }
-
-        pub fn init(stat_: *const bun.Stat) @This() {
-            return @This(){
-                .value = stat_.*,
-            };
         }
     };
 }
@@ -180,7 +183,7 @@ pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,
 
-    pub inline fn init(stat_: *const bun.Stat, big: bool) Stats {
+    pub inline fn init(stat_: *const Syscall.PosixStat, big: bool) Stats {
         if (big) {
             return .{ .big = StatsBig.init(stat_) };
         } else {
@@ -207,4 +210,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const Syscall = bun.sys;
 const jsc = bun.jsc;

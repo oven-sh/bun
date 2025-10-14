@@ -77,13 +77,19 @@ fn taskCallback(
         .client_entry_wrapper => |data| try task.generateClientEntryWrapper(data, &ab),
     }
 
+    var bundled_ast = try ab.toBundledAst(switch (task.data) {
+        // Server-side
+        .client_reference_proxy => task.ctx.transpiler.options.target,
+        // Client-side,
+        .client_entry_wrapper => .browser,
+    });
+
+    // `wrapper_ref` is used to hold the HMR api ref (see comment in
+    // `src/ast/Ast.zig`)
+    bundled_ast.wrapper_ref = ab.hmr_api_ref;
+
     return .{
-        .ast = try ab.toBundledAst(switch (task.data) {
-            // Server-side
-            .client_reference_proxy => task.ctx.transpiler.options.target,
-            // Client-side,
-            .client_entry_wrapper => .browser,
-        }),
+        .ast = bundled_ast,
         .source = task.source,
         .loader = .js,
         .log = log.*,

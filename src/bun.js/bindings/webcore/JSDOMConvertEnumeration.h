@@ -28,6 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMGlobalObject.h"
+#include "BunIDLConvertBase.h"
 
 namespace WebCore {
 
@@ -41,7 +42,42 @@ template<typename T> ASCIILiteral expectedEnumerationValues();
 template<typename T> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, T);
 
 template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLEnumeration<T>> {
+    static constexpr bool takesContext = true;
+
+    // `tryConvert` for enumerations is strict: it returns null if the value is not a string.
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<T> tryConvert(
+        JSC::JSGlobalObject& lexicalGlobalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (value.isString()) {
+            return parseEnumeration<T>(lexicalGlobalObject, value);
+        }
+        return std::nullopt;
+    }
+
+    // When converting with Context, the conversion is stricter: non-strings are disallowed.
+    template<Bun::IDLConversionContext Ctx>
+    static T convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        if (!value.isString()) {
+            ctx.throwNotString(lexicalGlobalObject, throwScope);
+            return {};
+        }
+        auto result = parseEnumeration<T>(lexicalGlobalObject, value);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (result.has_value()) {
+            return std::move(*result);
+        }
+        ctx.template throwBadEnumValue<IDLEnumeration<T>>(lexicalGlobalObject, throwScope);
+        return {};
+    }
+
     template<typename ExceptionThrower = DefaultExceptionThrower>
+        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
     static T convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);

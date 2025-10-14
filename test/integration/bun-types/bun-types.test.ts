@@ -605,7 +605,7 @@ describe("@types/bun integration test", () => {
       },
       {
         code: 2345,
-        line: "index.ts:326:29",
+        line: "index.ts:322:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       },

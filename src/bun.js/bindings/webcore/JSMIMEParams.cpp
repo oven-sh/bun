@@ -144,7 +144,7 @@ static String removeBackslashes(const StringView& view)
     if (view.is8Bit()) {
         auto span = view.span8();
         for (size_t i = 0; i < span.size(); ++i) {
-            LChar c = span[i];
+            Latin1Character c = span[i];
             if (c == '\\' && i + 1 < span.size()) {
                 builder.append(span[++i]);
             } else {
@@ -174,7 +174,7 @@ static void escapeQuoteOrBackslash(const StringView& view, StringBuilder& builde
 
     if (view.is8Bit()) {
         auto span = view.span8();
-        for (LChar c : span) {
+        for (Latin1Character c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
             }

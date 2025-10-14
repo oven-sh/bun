@@ -521,6 +521,24 @@ pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
 
+const EnableBufferingScope = struct {
+    prev_buffering: bool,
+    pub fn init() EnableBufferingScope {
+        const prev_buffering = enable_buffering;
+        enable_buffering = true;
+        return .{ .prev_buffering = prev_buffering };
+    }
+
+    /// Does not call Output.flush().
+    pub fn deinit(self: EnableBufferingScope) void {
+        enable_buffering = self.prev_buffering;
+    }
+};
+
+pub fn enableBufferingScope() EnableBufferingScope {
+    return EnableBufferingScope.init();
+}
+
 pub fn disableBuffering() void {
     flush();
     if (comptime Environment.isNative) enable_buffering = false;

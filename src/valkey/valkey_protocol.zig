@@ -656,6 +656,18 @@ pub const Attribute = struct {
     }
 };
 
+pub const SubscriptionPushMessage = enum(u2) {
+    message,
+    subscribe,
+    unsubscribe,
+
+    pub const map = bun.ComptimeStringMap(SubscriptionPushMessage, .{
+        .{ "message", .message },
+        .{ "subscribe", .subscribe },
+        .{ "unsubscribe", .unsubscribe },
+    });
+};
+
 const std = @import("std");
 
 const bun = @import("bun");

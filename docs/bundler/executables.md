@@ -140,6 +140,19 @@ The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that erro
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
 
+## Embedding runtime arguments
+
+**`--compile-exec-argv="args"`** - Embed runtime arguments that are available via `process.execArgv`:
+
+```bash
+bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
+```
+
+```js
+// In the compiled app
+console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
 ## Act as the Bun CLI
 
 {% note %}
@@ -573,12 +586,41 @@ Codesign support requires Bun v1.2.4 or newer.
 
 {% /callout %}
 
+## Code splitting
+
+Standalone executables support code splitting. Use `--compile` with `--splitting` to create an executable that loads code-split chunks at runtime.
+
+```bash
+$ bun build --compile --splitting ./src/entry.ts --outdir ./build
+```
+
+{% codetabs %}
+
+```ts#src/entry.ts
+console.log("Entrypoint loaded");
+const lazy = await import("./lazy.ts");
+lazy.hello();
+```
+
+```ts#src/lazy.ts
+export function hello() {
+  console.log("Lazy module loaded");
+}
+```
+
+{% /codetabs %}
+
+```bash
+$ ./build/entry
+Entrypoint loaded
+Lazy module loaded
+```
+
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
 
-- `--outdir` — use `outfile` instead.
-- `--splitting`
+- `--outdir` — use `outfile` instead (except when using with `--splitting`).
 - `--public-path`
 - `--target=node` or `--target=browser`
 - `--no-bundle` - we always bundle everything into the executable.

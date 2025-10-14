@@ -52,7 +52,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false }));
+  ({ packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } }));
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};

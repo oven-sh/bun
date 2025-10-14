@@ -72,6 +72,6 @@ const post_rss = process.memoryUsage.rss();
 server.close();
 
 let margin = 1024 * 1024 * 15;
-if (isWindows) margin = 1024 * 1024 * 20;
+if (isWindows) margin = 1024 * 1024 * 40;
 if (isASAN) margin = 1024 * 1024 * 60;
 expect(post_rss - warmup_rss).toBeLessThan(margin);

@@ -122,6 +122,7 @@ const data = [
   ["a", true, 5],
   ["b", false, "asdf"],
 ];
+
 test.each(data)("test.each", (a, b, c) => {
   expectType<string | number | boolean | ((err?: unknown) => void)>(a);
   expectType<string | number | boolean | ((err?: unknown) => void)>(b);

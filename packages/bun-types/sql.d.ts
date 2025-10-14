@@ -12,6 +12,68 @@ declare module "bun" {
     release(): void;
   }
 
+  type ArrayType =
+    | "BOOLEAN"
+    | "BYTEA"
+    | "CHAR"
+    | "NAME"
+    | "TEXT"
+    | "CHAR"
+    | "VARCHAR"
+    | "SMALLINT"
+    | "INT2VECTOR"
+    | "INTEGER"
+    | "INT"
+    | "BIGINT"
+    | "REAL"
+    | "DOUBLE PRECISION"
+    | "NUMERIC"
+    | "MONEY"
+    | "OID"
+    | "TID"
+    | "XID"
+    | "CID"
+    | "JSON"
+    | "JSONB"
+    | "JSONPATH"
+    | "XML"
+    | "POINT"
+    | "LSEG"
+    | "PATH"
+    | "BOX"
+    | "POLYGON"
+    | "LINE"
+    | "CIRCLE"
+    | "CIDR"
+    | "MACADDR"
+    | "INET"
+    | "MACADDR8"
+    | "DATE"
+    | "TIME"
+    | "TIMESTAMP"
+    | "TIMESTAMPTZ"
+    | "INTERVAL"
+    | "TIMETZ"
+    | "BIT"
+    | "VARBIT"
+    | "ACLITEM"
+    | "PG_DATABASE"
+    | (string & {});
+
+  /**
+   * Represents a SQL array parameter
+   */
+  interface SQLArrayParameter {
+    /**
+     * The serialized values of the array parameter
+     */
+    serializedValues: string;
+    /**
+     * The type of the array parameter
+     */
+    arrayType: ArrayType;
+  }
+
   /**
    * Represents a client within a transaction context Extends SQL with savepoint
    * functionality
@@ -629,6 +691,21 @@ declare module "bun" {
      * ```
      */
     reserve(): Promise<ReservedSQL>;
+
+    /**
+     * Creates a new SQL array parameter
+     * @param values - The values to create the array parameter from
+     * @param typeNameOrTypeID - The type name or type ID to create the array parameter from, if omitted it will default to JSON
+     * @returns A new SQL array parameter
+     *
+     * @example
+     * ```ts
+     * const array = sql.array([1, 2, 3], "INT");
+     * await sql`CREATE TABLE users_posts (user_id INT, posts_id INT[])`;
+     * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
+     * ```
+     */
+    array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
      * Begins a new transaction.

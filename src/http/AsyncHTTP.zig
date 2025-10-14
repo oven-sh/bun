@@ -68,8 +68,8 @@ pub fn signalHeaderProgress(this: *AsyncHTTP) void {
     progress.store(true, .release);
 }
 
-pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-    var stream = this.signals.body_streaming orelse return;
+pub fn enableResponseBodyStreaming(this: *AsyncHTTP) void {
+    var stream = this.signals.response_body_streaming orelse return;
     stream.store(true, .release);
 }
 

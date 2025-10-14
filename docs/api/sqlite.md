@@ -663,6 +663,8 @@ class Statement<Params, ReturnType> {
   toString(): string; // serialize to SQL
 
   columnNames: string[]; // the column names of the result set
+  columnTypes: string[]; // types based on actual values in first row (call .get()/.all() first)
+  declaredTypes: (string | null)[]; // types from CREATE TABLE schema (call .get()/.all() first)
   paramsCount: number; // the number of parameters expected by the statement
   native: any; // the native object representing the statement
 

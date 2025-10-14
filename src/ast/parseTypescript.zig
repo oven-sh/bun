@@ -210,7 +210,7 @@ pub fn ParseTypescript(
             p.popScope();
 
             if (!opts.is_typescript_declare) {
-                name.ref = bun.handleOom(p.declareSymbol(.ts_namespace, name_loc, name_text));
+                name.ref = try p.declareSymbol(.ts_namespace, name_loc, name_text);
                 try p.ref_to_ts_namespace_member.put(p.allocator, name.ref.?, ns_member_data);
             }
 

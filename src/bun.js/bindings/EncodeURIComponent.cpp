@@ -27,7 +27,7 @@ static WebCore::ExceptionOr<void> encode(VM& vm, const WTF::BitSet<256>& doNotEs
         if (character < doNotEscape.size() && doNotEscape.get(character)) {
             // 4-c-i. Let S be a String containing only the code unit C.
             // 4-c-ii. Let R be a new String value computed by concatenating the previous value of R and S.
-            builder.append(static_cast<LChar>(character));
+            builder.append(static_cast<Latin1Character>(character));
             continue;
         }
 
@@ -61,7 +61,7 @@ static WebCore::ExceptionOr<void> encode(VM& vm, const WTF::BitSet<256>& doNotEs
         }
 
         // 4-d-iv. Let Octets be the array of octets resulting by applying the UTF-8 transformation to V, and let L be the array size.
-        LChar utf8OctetsBuffer[U8_MAX_LENGTH];
+        Latin1Character utf8OctetsBuffer[U8_MAX_LENGTH];
         unsigned utf8Length = 0;
         // We can use U8_APPEND_UNSAFE here since codePoint is either
         // 1. non surrogate one, correct code point.

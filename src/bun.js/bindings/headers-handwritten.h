@@ -183,6 +183,18 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    int32_t jsc_stack_frame_index;
+
+    ZigStackFrame()
+        : function_name {}
+        , source_url {}
+        , position {}
+        , code_type {}
+        , is_async(false)
+        , remapped(false)
+        , jsc_stack_frame_index(-1)
+    {
+    }
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {
@@ -224,10 +236,9 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
-// Must be kept in sync.
+// Must be kept in sync with bun.schema.api.Loader in schema.zig
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
-// Must match api/schema.zig Loader enum values
 const BunLoaderType BunLoaderTypeJSX = 1;
 const BunLoaderType BunLoaderTypeJS = 2;
 const BunLoaderType BunLoaderTypeTS = 3;
@@ -322,11 +333,10 @@ BunString toStringView(WTF::StringView view);
 
 typedef struct {
     char* ptr;
-    size_t offset;
     size_t len;
     size_t byte_len;
-    uint8_t cell_type;
     int64_t _value;
+    uint8_t cell_type;
     bool shared;
 } Bun__ArrayBuffer;
 

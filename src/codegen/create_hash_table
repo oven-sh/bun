@@ -100,6 +100,9 @@ while (<IN>) {
         } elsif ($att =~ m/PropertyCallback/) {
             my $cback = $val;
             push(@values, { "type" => "PropertyAttribute::PropertyCallback", "cback" => $cback });
+        } elsif ($att =~ m/ConstantInteger/) {
+            my $value = $val;
+            push(@values, { "type" => "PropertyAttribute::ConstantInteger", "value" => $value });
         } elsif (length($att)) {
             my $get = $val;
             my $put = "0";
@@ -484,6 +487,10 @@ sub output() {
                 $typeTag = "BuiltinAccessor";
                 $firstValue = $values[$i]{"get"};
                 $secondValue = $values[$i]{"put"};
+            } elsif ($values[$i]{"type"} eq "PropertyAttribute::ConstantInteger") {
+                $typeTag = "Constant";
+                $firstValue = $values[$i]{"value"};
+                $hasSecondValue = 0;
             } elsif ($values[$i]{"type"} eq "PropertyAttribute::Property") {
                 $typeTag = "GetterSetter";
                 $firstValue = $values[$i]{"get"};

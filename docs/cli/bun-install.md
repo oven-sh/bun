@@ -176,7 +176,21 @@ When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads miss
 
 ## Platform-specific dependencies?
 
-bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won’t change between platforms/architectures even if the packages ultimately installed do change.
+bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change.
+
+### `--cpu` and `--os` flags
+
+You can override the target platform for package selection:
+
+```bash
+bun install --cpu=x64 --os=linux
+```
+
+This installs packages for the specified platform instead of the current system. Useful for cross-platform builds or when preparing deployments for different environments.
+
+**Accepted values for `--cpu`**: `arm64`, `x64`, `ia32`, `ppc64`, `s390x`
+
+**Accepted values for `--os`**: `linux`, `darwin`, `win32`, `freebsd`, `openbsd`, `sunos`, `aix`
 
 ## Peer dependencies?
 
@@ -245,3 +259,91 @@ bun uses a binary format for caching NPM registry responses. This loads much fas
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
+
+## pnpm migration
+
+Bun automatically migrates projects from pnpm to bun. When a `pnpm-lock.yaml` file is detected and no `bun.lock` file exists, Bun will automatically migrate the lockfile to `bun.lock` during installation. The original `pnpm-lock.yaml` file remains unmodified.
+
+```bash
+bun install
+```
+
+**Note**: Migration only runs when `bun.lock` is absent. There is currently no opt-out flag for pnpm migration.
+
+The migration process handles:
+
+### Lockfile Migration
+
+- Converts `pnpm-lock.yaml` to `bun.lock` format
+- Preserves package versions and resolution information
+- Maintains dependency relationships and peer dependencies
+- Handles patched dependencies with integrity hashes
+
+### Workspace Configuration
+
+When a `pnpm-workspace.yaml` file exists, Bun migrates workspace settings to your root `package.json`:
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - "apps/*"
+  - "packages/*"
+
+catalog:
+  react: ^18.0.0
+  typescript: ^5.0.0
+
+catalogs:
+  build:
+    webpack: ^5.0.0
+    babel: ^7.0.0
+```
+
+The workspace packages list and catalogs are moved to the `workspaces` field in `package.json`:
+
+```json
+{
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "catalog": {
+      "react": "^18.0.0",
+      "typescript": "^5.0.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "^5.0.0",
+        "babel": "^7.0.0"
+      }
+    }
+  }
+}
+```
+
+### Catalog Dependencies
+
+Dependencies using pnpm's `catalog:` protocol are preserved:
+
+```json
+{
+  "dependencies": {
+    "react": "catalog:",
+    "webpack": "catalog:build"
+  }
+}
+```
+
+### Configuration Migration
+
+The following pnpm configuration is migrated from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
+
+- **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
+- **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
+- **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
+
+### Requirements
+
+- Requires pnpm lockfile version 7 or higher
+- Workspace packages must have a `name` field in their `package.json`
+- All catalog entries referenced by dependencies must exist in the catalogs definition
+
+After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.

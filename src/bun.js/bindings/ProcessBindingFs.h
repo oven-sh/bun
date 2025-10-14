@@ -9,7 +9,6 @@ using namespace JSC;
 class ProcessBindingFs final : public JSC::JSNonFinalObject {
 public:
     DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
 
     using Base = JSC::JSNonFinalObject;
 

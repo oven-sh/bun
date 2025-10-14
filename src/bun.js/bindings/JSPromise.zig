@@ -95,6 +95,14 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
+        pub fn rejectWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.reject(globalThis, val catch globalThis.tryTakeException().?);
+        }
+
+        pub fn resolveWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.resolve(globalThis, val);
+        }
+
         pub fn reject(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
             this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
@@ -151,6 +159,12 @@ pub const JSPromise = opaque {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
+        }
+
+        pub fn take(this: *Strong) Strong {
+            const ret = this.*;
+            this.* = .empty;
+            return ret;
         }
 
         pub fn deinit(this: *Strong) void {
@@ -220,6 +234,9 @@ pub const JSPromise = opaque {
         bun.cpp.JSC__JSPromise__setHandled(this, vm);
     }
 
+    /// Create a new resolved promise resolving to a given value.
+    ///
+    /// Note: If you want the result as a JSValue, use `JSPromise.resolvedPromiseValue` instead.
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return JSC__JSPromise__resolvedPromise(globalThis, value);
     }
@@ -230,6 +247,9 @@ pub const JSPromise = opaque {
         return JSC__JSPromise__resolvedPromiseValue(globalThis, value);
     }
 
+    /// Create a new rejected promise rejecting to a given value.
+    ///
+    /// Note: If you want the result as a JSValue, use `JSPromise.rejectedPromiseValue` instead.
     pub fn rejectedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return JSC__JSPromise__rejectedPromise(globalThis, value);
     }
@@ -275,6 +295,11 @@ pub const JSPromise = opaque {
         bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
+    /// Create a new pending promise.
+    ///
+    /// Note: You should use `JSPromise.resolvedPromise` or
+    ///       `JSPromise.rejectedPromise` if you want to create a promise that
+    ///       is already resolved or rejected.
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {
         return JSC__JSPromise__create(globalThis);
     }

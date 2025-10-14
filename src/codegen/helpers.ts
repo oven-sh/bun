@@ -132,15 +132,20 @@ export function pascalCase(string: string) {
 }
 
 export function argParse(keys: string[]): any {
-  const options = {};
+  const options: { [key: string]: boolean | string } = {};
   for (const arg of process.argv.slice(2)) {
     if (!arg.startsWith("--")) {
-      console.error("Unknown argument " + arg);
+      console.error("error: unknown argument: " + arg);
       process.exit(1);
     }
-    const split = arg.split("=");
-    const value = split[1] || "true";
-    options[split[0].slice(2)] = value;
+    const splitPos = arg.indexOf("=");
+    let name = arg;
+    let value: boolean | string = true;
+    if (splitPos !== -1) {
+      name = arg.slice(0, splitPos);
+      value = arg.slice(splitPos + 1);
+    }
+    options[name.slice(2)] = value;
   }
 
   const unknown = new Set(Object.keys(options));
@@ -148,7 +153,7 @@ export function argParse(keys: string[]): any {
     unknown.delete(key);
   }
   for (const key of unknown) {
-    console.error("Unknown argument: --" + key);
+    console.error("error: unknown argument: --" + key);
   }
   if (unknown.size > 0) process.exit(1);
   return options;

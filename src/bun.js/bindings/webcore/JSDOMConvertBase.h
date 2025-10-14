@@ -268,6 +268,8 @@ template<typename T> struct DefaultConverter {
     // is something having a converter that does JSC::JSValue::toBoolean.
     // toBoolean() in JS can't call arbitrary functions.
     static constexpr bool conversionHasSideEffects = true;
+
+    static constexpr bool takesContext = false;
 };
 
 // Conversion from JSValue -> Implementation for variadic arguments

@@ -61,8 +61,10 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
     const parts = &[_][]const u8{ this.fs.top_level_dir, path_literal };
     const path = this.fs.absBuf(parts, &this.scan_dir_buf);
 
-    var root = this.readDirWithName(path, null) catch |err| {
-        switch (err) {
+    var root = try this.readDirWithName(path, null);
+
+    if (root.* == .err) {
+        switch (root.err.original_err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
                     const rel_path = bun.PathString.init(bun.handleOom(this.fs.filename_store.append([]const u8, path)));
@@ -70,12 +72,9 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
                 }
             },
             error.ENOENT => return error.DoesNotExist,
-            error.OutOfMemory => return error.OutOfMemory,
-            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(err) }),
+            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(root.err.original_err) }),
         }
-
-        return;
-    };
+    }
 
     // you typed "." and we already scanned it
     if (!this.has_iterated) {

@@ -735,3 +735,123 @@ test("can't use bytecode from a different script", () => {
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
 });
+
+describe("codeGeneration options", () => {
+  test("disabling codeGeneration.strings should block eval and Function constructor", () => {
+    const context = createContext(
+      {},
+      {
+        codeGeneration: {
+          strings: false,
+          wasm: true,
+        },
+      },
+    );
+
+    // Test that Function constructor is blocked
+    const functionResult = runInContext(
+      `
+      try {
+        const fn = new Function('return 42');
+        fn();
+      } catch (e) {
+        e.name;
+      }
+    `,
+      context,
+    );
+    expect(functionResult).toBe("EvalError");
+
+    // Test that eval is also blocked
+    const evalResult = runInContext(
+      `
+      try {
+        eval('1 + 1');
+      } catch (e) {
+        e.name;
+      }
+    `,
+      context,
+    );
+    expect(evalResult).toBe("EvalError");
+
+    // Test the specific pattern from jest-worker that was crashing
+    const jestWorkerPattern = runInContext(
+      `
+      try {
+        // This pattern is used by jest-worker to get Function constructor
+        const FuncCtor = eval('Function');
+        'got Function';
+      } catch (e) {
+        e.name;
+      }
+    `,
+      context,
+    );
+    expect(jestWorkerPattern).toBe("EvalError");
+
+    // Test Function constructor as a property getter (the exact crash pattern)
+    const getterResult = runInContext(
+      `
+      try {
+        const obj = {};
+        Object.defineProperty(obj, 'func', {
+          get: Function  // Function constructor IS the getter
+        });
+        // Access the property - this would call Function as a getter
+        // and crash if evalEnabled function pointer was null
+        const result = obj.func;
+        'unexpected success';
+      } catch (e) {
+        e.name || 'error';
+      }
+    `,
+      context,
+    );
+    expect(getterResult).toBe("EvalError");
+  });
+
+  test("enabling codeGeneration.strings should allow eval and Function constructor", () => {
+    const context = createContext(
+      {},
+      {
+        codeGeneration: {
+          strings: true,
+          wasm: true,
+        },
+      },
+    );
+
+    // Test that Function constructor works
+    const functionResult = runInContext(
+      `
+      const fn = new Function('return 42');
+      fn();
+    `,
+      context,
+    );
+    expect(functionResult).toBe(42);
+
+    // Test that eval works
+    const evalResult = runInContext("eval('1 + 1');", context);
+    expect(evalResult).toBe(2);
+  });
+
+  test("default context should allow eval and Function constructor", () => {
+    const context = createContext({});
+
+    // Test that Function constructor works by default
+    const functionResult = runInContext(
+      `
+      const fn = new Function('return 123');
+      fn();
+    `,
+      context,
+    );
+    expect(functionResult).toBe(123);
+
+    // Test that eval works by default
+    const evalResult = runInContext("eval('5 + 5');", context);
+    expect(evalResult).toBe(10);
+  });
+});

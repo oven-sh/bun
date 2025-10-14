@@ -113,8 +113,8 @@ const SloppyGlobalGitConfig = struct {
 pub const Repository = extern struct {
     owner: String = .{},
     repo: String = .{},
-    committish: GitSHA = .{},
-    resolved: GitSHA = .{},
+    committish: String = .{},
+    resolved: String = .{},
     package_name: String = .{},
 
     pub var shared_env: struct {
@@ -261,7 +261,7 @@ pub const Repository = extern struct {
         return .{
             .owner = builder.append(String, this.owner.slice(buf)),
             .repo = builder.append(String, this.repo.slice(buf)),
-            .committish = builder.append(GitSHA, this.committish.slice(buf)),
+            .committish = builder.append(String, this.committish.slice(buf)),
             .resolved = builder.append(String, this.resolved.slice(buf)),
             .package_name = builder.append(String, this.package_name.slice(buf)),
         };
@@ -301,7 +301,7 @@ pub const Repository = extern struct {
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
                 // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
-                try writer.writeAll("ssh:++");
+                try writer.writeAll("ssh++");
             }
 
             try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
@@ -701,5 +701,4 @@ const strings = bun.strings;
 const File = bun.sys.File;
 
 const Semver = bun.Semver;
-const GitSHA = String;
 const String = Semver.String;

@@ -5,8 +5,6 @@
 // /// <reference path="/path/to/bun/src/bake/bake.d.ts" />
 
 declare module "bun" {
-  type Awaitable<T> = T | Promise<T>;
-
   declare namespace Bake {
     interface Options {
       /**
@@ -369,7 +367,7 @@ declare module "bun" {
        * A common pattern would be to enforce the object is
        * `{ default: ReactComponent }`
        */
-      render: (request: Request, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      render: (request: Request, routeMetadata: RouteMetadata) => MaybePromise<Response>;
       /**
        * Prerendering does not use a request, and is allowed to generate
        * multiple responses. This is used for static site generation, but not
@@ -379,7 +377,7 @@ declare module "bun" {
        * Note that `import.meta.env.STATIC` will be inlined to true during
        * a static build.
        */
-      prerender?: (routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
+      prerender?: (routeMetadata: RouteMetadata) => MaybePromise<PrerenderResult | null>;
       // TODO: prerenderWithoutProps (for partial prerendering)
       /**
        * For prerendering routes with dynamic parameters, such as `/blog/:slug`,
@@ -409,7 +407,7 @@ declare module "bun" {
        *         return { exhaustive: false };
        *     }
        */
-      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<GetParamIterator>;
+      getParams?: (paramsMetadata: ParamsMetadata) => MaybePromise<GetParamIterator>;
       /**
        * When a dynamic build uses static assets, Bun can map content types in the
        * user's `Accept` header to the different static files.
@@ -448,7 +446,7 @@ declare module "bun" {
     }
 
     interface DevServerHookEntryPoint {
-      default: (dev: DevServerHookAPI) => Awaitable<void>;
+      default: (dev: DevServerHookAPI) => MaybePromise<void>;
     }
 
     interface DevServerHookAPI {
@@ -505,7 +503,7 @@ declare module "bun" {
     }
   }
 
-  declare interface GenericServeOptions {
+  declare interface BaseServeOptions {
     /** Add a fullstack web app to this server using Bun Bake */
     app?: Bake.Options | undefined;
   }

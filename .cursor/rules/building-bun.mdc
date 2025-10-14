@@ -30,7 +30,7 @@ bun bd <file> <...args>
 Debug logs look like this:
 
 ```zig
-const log = bun.Output.scoped(.${SCOPE}, false);
+const log = bun.Output.scoped(.${SCOPE}, .hidden);
 
 // ...later
 log("MY DEBUG LOG", .{})

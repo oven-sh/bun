@@ -1,7 +1,7 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: []const u8,
+    root_package_json_path: [:0]const u8,
     original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
@@ -38,7 +38,7 @@ pub fn installWithManager(
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
         (load_result == .ok and
             // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+            (load_result.ok.migrated != .none or
 
                 // if loaded from binary and save-text-lockfile is passed
                 (load_result.ok.format == .binary and
@@ -48,9 +48,6 @@ pub fn installWithManager(
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
     manager.progress = .{};
-
-    // Step 2. Parse the package.json file
-    const root_package_json_source = &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents);
 
     switch (load_result) {
         .err => |cause| {
@@ -139,13 +136,38 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
+                const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+                    manager.allocator,
+                    manager.log,
+                    root_package_json_path,
+                    .{},
+                )) {
+                    .entry => |entry| entry,
+                    .read_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                    .parse_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                };
+
+                const source_copy = root_package_json_entry.source;
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    root_package_json_source,
+                    &source_copy,
                     void,
                     &resolver,
                     Features.main,
@@ -403,13 +425,38 @@ pub fn installWithManager(
             Global.crash();
         }
 
+        const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        )) {
+            .entry => |entry| entry,
+            .read_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+            .parse_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+        };
+
+        const source_copy = root_package_json_entry.source;
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            root_package_json_source,
+            &source_copy,
             void,
             &resolver,
             Features.main,
@@ -729,9 +776,29 @@ pub fn installWithManager(
         }
 
         switch (manager.options.node_linker) {
+            .auto => {
+                if (manager.lockfile.workspace_paths.count() > 0 and
+                    !load_result.migratedFromNpm())
+                {
+                    break :install_summary bun.handleOom(installIsolatedPackages(
+                        manager,
+                        ctx,
+                        install_root_dependencies,
+                        workspace_filters,
+                        null,
+                    ));
+                }
+                break :install_summary try installHoistedPackages(
+                    manager,
+                    ctx,
+                    workspace_filters,
+                    install_root_dependencies,
+                    log_level,
+                    null,
+                );
+            },
+
             .hoisted,
-            // TODO
-            .auto,
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
@@ -741,15 +808,14 @@ pub fn installWithManager(
                 null,
             ),
 
-            .isolated => break :install_summary installIsolatedPackages(
+            .isolated,
+            => break :install_summary bun.handleOom(installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
                 workspace_filters,
                 null,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-            },
+            )),
         }
     };
 
@@ -1017,7 +1083,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
                 },
             };
 
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
+            switch (bun.glob.match(pattern, path_or_name)) {
                 .match, .negate_match => install_root_dependencies = true,
 
                 .negate_no_match => {
@@ -1046,7 +1112,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 

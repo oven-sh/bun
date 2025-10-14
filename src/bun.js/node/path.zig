@@ -2767,35 +2767,55 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
     const allocator = stack_fallback.get();
 
-    var paths = try allocator.alloc(string, args_len);
-    defer allocator.free(paths);
-    var path_count: usize = 0;
+    var paths_buf = try allocator.alloc(string, args_len);
+    defer allocator.free(paths_buf);
+    var paths_offset: usize = args_len;
+    var resolved_root = false;
 
-    for (0..args_len, args_ptr) |i, path_ptr| {
-        // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
-        try validateString(globalObject, path_ptr, "paths[{d}]", .{i});
-        const pathZStr = try path_ptr.getZigString(globalObject);
-        if (pathZStr.len > 0) {
-            paths[path_count] = pathZStr.toSlice(allocator).slice();
-            path_count += 1;
+    var i = args_len;
+    while (i > 0) {
+        i -= 1;
+
+        if (resolved_root) {
+            break;
+        }
+
+        const path = args_ptr[i];
+        try validateString(globalObject, path, "paths[{d}]", .{i});
+        const path_str = try path.toBunString(globalObject);
+        defer path_str.deref();
+
+        if (path_str.length() == 0) {
+            continue;
+        }
+
+        paths_offset -= 1;
+        paths_buf[paths_offset] = path_str.toSlice(allocator).slice();
+
+        if (!isWindows) {
+            if (path_str.charAt(0) == CHAR_FORWARD_SLASH) {
+                resolved_root = true;
+            }
         }
     }
+
+    const paths = paths_buf[paths_offset..];
 
     if (comptime Environment.isPosix) {
         if (!isWindows) {
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            if (path_count == 0) {
+            if (paths.len == 0) {
                 return Process__getCachedCwd(globalObject);
             }
 
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            else if (path_count == 1 and (strings.eqlComptime(paths[0], ".") or strings.eqlComptime(paths[0], "./"))) {
+            else if (paths.len == 1 and (strings.eqlComptime(paths[0], ".") or strings.eqlComptime(paths[0], "./"))) {
                 return Process__getCachedCwd(globalObject);
             }
         }
     }
 
-    return resolveJS_T(u8, globalObject, allocator, isWindows, paths[0..path_count]);
+    return resolveJS_T(u8, globalObject, allocator, isWindows, paths);
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:

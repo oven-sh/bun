@@ -11,6 +11,9 @@ pub const ZigStackFrame = extern struct {
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    /// -1 means not set.
+    jsc_stack_frame_index: i32 = -1,
+
     pub fn deinit(this: *ZigStackFrame) void {
         this.function_name.deref();
         this.source_url.deref();
@@ -213,6 +216,7 @@ pub const ZigStackFrame = extern struct {
         .source_url = .empty,
         .position = .invalid,
         .is_async = false,
+        .jsc_stack_frame_index = -1,
     };
 
     pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {

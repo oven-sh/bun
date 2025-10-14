@@ -822,6 +822,28 @@ pub const MatchedParams = struct {
         key: []const u8,
         value: []const u8,
     };
+
+    /// Convert the matched params to a JavaScript object
+    /// Returns null if there are no params
+    pub fn toJS(self: *const MatchedParams, global: *jsc.JSGlobalObject) JSValue {
+        const params_array = self.params.slice();
+
+        if (params_array.len == 0) {
+            return JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.cloneUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.cloneUTF8(param.value);
+            defer value_str.deref();
+
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+        }
+        return obj;
+    }
 };
 
 /// Fast enough for development to be seamless, but avoids building a

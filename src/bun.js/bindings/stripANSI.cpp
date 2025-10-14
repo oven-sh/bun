@@ -251,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
 
     std::optional<WTF::String> result;
     if (view->is8Bit()) {
-        result = stripANSI<LChar>(view->span8());
+        result = stripANSI<Latin1Character>(view->span8());
     } else {
         result = stripANSI<UChar>(view->span16());
     }

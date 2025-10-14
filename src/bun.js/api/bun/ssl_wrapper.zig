@@ -93,7 +93,7 @@ pub fn SSLWrapper(comptime T: type) type {
         pub fn init(ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
             bun.BoringSSL.load();
 
-            const ctx_opts: uws.SocketContext.BunSocketContextOptions = jsc.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
             const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options

@@ -1611,7 +1611,7 @@ describe.concurrent("should error with invalid options", async () => {
           requestCert: "invalid",
         },
       });
-    }).toThrow('The "requestCert" property must be of type boolean, got string');
+    }).toThrow("TLSOptions.requestCert must be a boolean");
   });
   it("rejectUnauthorized", () => {
     expect(() => {
@@ -1624,7 +1624,7 @@ describe.concurrent("should error with invalid options", async () => {
           rejectUnauthorized: "invalid",
         },
       });
-    }).toThrow('The "rejectUnauthorized" property must be of type boolean, got string');
+    }).toThrow("TLSOptions.rejectUnauthorized must be a boolean");
   });
   it("lowMemoryMode", () => {
     expect(() => {
@@ -1638,7 +1638,7 @@ describe.concurrent("should error with invalid options", async () => {
           lowMemoryMode: "invalid",
         },
       });
-    }).toThrow("Expected lowMemoryMode to be a boolean");
+    }).toThrow("TLSOptions.lowMemoryMode must be a boolean");
   });
   it("multiple missing server name", () => {
     expect(() => {

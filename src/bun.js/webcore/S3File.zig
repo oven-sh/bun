@@ -343,9 +343,7 @@ fn constructS3FileInternal(
     path: jsc.Node.PathLike,
     options: ?jsc.JSValue,
 ) bun.JSError!*Blob {
-    var ptr = Blob.new(try constructS3FileInternalStore(globalObject, path, options));
-    ptr.allocator = bun.default_allocator;
-    return ptr;
+    return Blob.new(try constructS3FileInternalStore(globalObject, path, options));
 }
 
 pub const S3BlobStatTask = struct {

@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
@@ -92,5 +92,14 @@ describe("path.resolve", () => {
     //     process.cwd = cwd;
     //   }
     // }
+  });
+
+  test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
+    expect(() => {
+      return path.posix.resolve(undefined, "hi");
+    }).toThrow('The "paths[0]" property must be of type string, got undefined');
+    expect(() => {
+      return path.posix.resolve(undefined, "/hi");
+    }).not.toThrow();
   });
 });

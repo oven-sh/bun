@@ -271,11 +271,11 @@ pub const Tag = enum(short) {
     ) AnyPostgresError!JSValue {
         switch (tag) {
             .numeric => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             .float4, .float8 => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             .json, .jsonb => {
@@ -299,7 +299,7 @@ pub const Tag = enum(short) {
             },
 
             .int4 => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             else => {
@@ -342,8 +342,9 @@ pub const Tag = enum(short) {
                 return .int8;
             }
 
-            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
+            if (tag.isArrayLike()) {
+                // We will JSON.stringify anything else.
+                return .json;
             }
 
             // Ban these types:
@@ -397,7 +398,6 @@ const bun = @import("bun");
 const bytea = @import("./bytea.zig");
 const date = @import("./date.zig");
 const json = @import("./json.zig");
-const numeric = @import("./numeric.zig");
 const std = @import("std");
 const string = @import("./PostgresString.zig");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;

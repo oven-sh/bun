@@ -16,7 +16,7 @@ RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
 # Wait for Redis to start\n\
-until redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key --cacert /etc/redis/certs/server.crt ping; do\n\
+until redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key  ping; do\n\
   echo "Waiting for Redis TLS to start..."\n\
   sleep 1\n\
 done\n\
@@ -24,16 +24,16 @@ done\n\
 echo "Redis TLS is ready!"\n\
 \n\
 # Set up some test data for persistence tests\n\
-redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key --cacert /etc/redis/certs/server.crt set bun_valkey_tls_test_init "initialization_successful"\n\
+redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key  set bun_valkey_tls_test_init "initialization_successful"\n\
 \n\
 # Create test hash\n\
-redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key --cacert /etc/redis/certs/server.crt hset bun_valkey_tls_test_hash name "test_user" age "25" active "true"\n\
+redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key  hset bun_valkey_tls_test_hash name "test_user" age "25" active "true"\n\
 \n\
 # Create test set\n\
-redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key --cacert /etc/redis/certs/server.crt sadd bun_valkey_tls_test_set "red" "green" "blue"\n\
+redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key  sadd bun_valkey_tls_test_set "red" "green" "blue"\n\
 \n\
 # Create test list\n\
-redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key --cacert /etc/redis/certs/server.crt lpush bun_valkey_tls_test_list "first" "second" "third"\n\
+redis-cli --tls --cert /etc/redis/certs/server.crt --key /etc/redis/certs/server.key  lpush bun_valkey_tls_test_list "first" "second" "third"\n\
 ' > /docker-entrypoint-initdb.d/init-redis.sh
 
 # Make the script executable

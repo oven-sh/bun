@@ -642,7 +642,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -654,6 +654,25 @@ function createConvenienceMethod(ctor, sync, methodName) {
       if (typeof opts === "function") {
         callback = opts;
         opts = {};
+      }
+      // For zstd compression, we need to set pledgedSrcSize to the buffer size
+      // so that the content size is included in the frame header
+      if (isZstd) {
+        // Calculate buffer size
+        let bufferSize;
+        if (typeof buffer === "string") {
+          bufferSize = Buffer.byteLength(buffer);
+        } else if (isArrayBufferView(buffer)) {
+          bufferSize = buffer.byteLength;
+        } else if (isAnyArrayBuffer(buffer)) {
+          bufferSize = buffer.byteLength;
+        } else {
+          bufferSize = 0;
+        }
+        // Set pledgedSrcSize if not already set
+        if (!opts.pledgedSrcSize && bufferSize > 0) {
+          opts = { ...opts, pledgedSrcSize: bufferSize };
+        }
       }
       return zlibBuffer(new ctor(opts), buffer, callback);
     };
@@ -813,7 +832,7 @@ const zlib = {
   brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
   brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
-  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress"),
+  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
   zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
   zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),

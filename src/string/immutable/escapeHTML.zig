@@ -433,7 +433,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                                         break :lazy;
                                     },
                                     128...std.math.maxInt(u16) => {
-                                        const cp = utf16Codepoint([]const u16, remaining[i..]);
+                                        const cp = utf16Codepoint(remaining[i..]);
                                         i += @as(u16, cp.len);
                                     },
                                     else => {
@@ -470,7 +470,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                                     i += 1;
                                 },
                                 128...std.math.maxInt(u16) => {
-                                    const cp = utf16Codepoint([]const u16, remaining[i..]);
+                                    const cp = utf16Codepoint(remaining[i..]);
 
                                     buf.appendSlice(remaining[i..][0..@as(usize, cp.len)]) catch unreachable;
                                     i += @as(u16, cp.len);
@@ -528,7 +528,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                                         i += 1;
                                     },
                                     128...std.math.maxInt(u16) => {
-                                        const cp = utf16Codepoint([]const u16, remaining[i..]);
+                                        const cp = utf16Codepoint(remaining[i..]);
 
                                         buf.appendSlice(remaining[i..][0..@as(usize, cp.len)]) catch unreachable;
                                         i += @as(u16, cp.len);
@@ -569,7 +569,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             break :scan_and_allocate_lazily;
                         },
                         128...std.math.maxInt(u16) => {
-                            const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
+                            const cp = utf16Codepoint(ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                             ptr += @as(u16, cp.len);
                         },
@@ -603,7 +603,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         ptr += 1;
                     },
                     128...std.math.maxInt(u16) => {
-                        const cp = utf16Codepoint([]const u16, ptr[0..if (ptr + 1 == end) 1 else 2]);
+                        const cp = utf16Codepoint(ptr[0..if (ptr + 1 == end) 1 else 2]);
 
                         buf.appendSlice(ptr[0..@as(usize, cp.len)]) catch unreachable;
                         ptr += @as(u16, cp.len);

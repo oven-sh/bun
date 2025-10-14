@@ -2563,6 +2563,9 @@ describe("expect()", () => {
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["c"]);
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
     expect({ "": "hello", b: "world" }).toContainAllKeys(["", "b"]);
+
+    expect([1, 2, 3]).toContainAllKeys(["0", "1", "2"]);
+    expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
   });
 
   test("toContainAnyKeys", () => {
@@ -2572,6 +2575,32 @@ describe("expect()", () => {
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["b"]);
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["b", "c"]);
     expect({ a: "hello", b: "world" }).not.toContainAnyKeys(["c"]);
+
+    // Non-object values should not crash
+    expect(null).not.toContainAnyKeys(["a", "b"]);
+    expect(undefined).not.toContainAnyKeys(["a", "b"]);
+    expect(42).not.toContainAnyKeys(["a", "b"]);
+    expect("string").not.toContainAnyKeys(["a", "b"]);
+    expect(true).not.toContainAnyKeys(["a", "b"]);
+    expect(false).not.toContainAnyKeys(["a", "b"]);
+    expect(Symbol("test")).not.toContainAnyKeys(["a", "b"]);
+    expect(BigInt(123)).not.toContainAnyKeys(["a", "b"]);
+
+    // Arrays should work with numeric string keys
+    expect([1, 2, 3]).toContainAnyKeys(["0", "1"]);
+    expect([1, 2, 3]).not.toContainAnyKeys(["a", "b"]);
+
+    // Functions are objects
+    const fn = () => {};
+    fn.customProp = "test";
+    expect(fn).toContainAnyKeys(["customProp"]);
+    expect(fn).not.toContainAnyKeys(["otherProp"]);
+
+    // Object.create(null)
+    const objWithoutProto = Object.create(null);
+    objWithoutProto.a = 1;
+    expect(objWithoutProto).toContainAnyKeys(["a", "b"]);
+    expect(objWithoutProto).not.toContainAnyKeys(["b", "c"]);
   });
 
   test("toContainKeys", () => {
@@ -2581,11 +2610,25 @@ describe("expect()", () => {
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
 
+    // Non-object values
     expect(undefined).not.toContainKeys(["id"]);
+    expect(null).not.toContainKeys(["id"]);
     expect("").toContainKeys([]);
     expect("").not.toContainKeys(["id"]);
     expect(false).toContainKeys([]);
     expect(false).not.toContainKeys(["id"]);
+    expect(42).toContainKeys([]);
+    expect(42).not.toContainKeys(["id"]);
+    expect(true).toContainKeys([]);
+    expect(true).not.toContainKeys(["id"]);
+    expect(Symbol("test")).toContainKeys([]);
+    expect(Symbol("test")).not.toContainKeys(["id"]);
+    expect(BigInt(123)).toContainKeys([]);
+    expect(BigInt(123)).not.toContainKeys(["id"]);
+
+    // Arrays with numeric string keys
+    expect([1, 2, 3]).toContainKeys(["0", "1"]);
+    expect([1, 2, 3]).not.toContainKeys(["0", "1", "3"]);
 
     expect(() => {
       expect(undefined).toContainKeys(["id"]);

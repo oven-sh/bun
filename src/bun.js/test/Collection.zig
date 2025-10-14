@@ -27,7 +27,7 @@ pub fn init(gpa: std.mem.Allocator, bun_test_root: *bun_test.BunTestRoot) Collec
         .name = null,
         .concurrent = false,
         .mode = .normal,
-        .only = .no,
+        .only = if (jsc.Jest.Jest.runner) |runner| if (runner.only) .contains else .no else .no,
         .has_callback = false,
         .test_id_for_debugger = 0,
         .line_no = 0,

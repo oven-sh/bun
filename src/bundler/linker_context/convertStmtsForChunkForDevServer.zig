@@ -54,7 +54,7 @@ pub fn convertStmtsForChunkForDevServer(
 
     // Modules which do not have side effects
     for (part_stmts) |stmt| switch (stmt.data) {
-        else => try stmts.inside_wrapper_suffix.append(stmt),
+        else => try stmts.append(.inside_wrapper_suffix, stmt),
 
         .s_import => |st| {
             const record = ast.import_records.mut(st.import_record_index);
@@ -78,7 +78,7 @@ pub fn convertStmtsForChunkForDevServer(
                     }, stmt.loc);
 
                     // var namespace = ...;
-                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                    try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Local, .{
                         .kind = .k_var, // remove a tdz
                         .decls = try G.Decl.List.fromSlice(allocator, &.{.{
                             .binding = Binding.alloc(
@@ -113,14 +113,14 @@ pub fn convertStmtsForChunkForDevServer(
                     }, .Empty));
                 }
 
-                try stmts.outside_wrapper_prefix.append(stmt);
+                try stmts.append(.outside_wrapper_prefix, stmt);
             }
         },
     };
 
     if (esm_decls.items.len > 0) {
         // var ...;
-        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+        try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Local, .{
             .kind = .k_var, // remove a tdz
             .decls = try .fromSlice(allocator, &.{.{
                 .binding = Binding.alloc(allocator, B.Array{
@@ -135,7 +135,7 @@ pub fn convertStmtsForChunkForDevServer(
             }}),
         }, .Empty));
         // hmr.onUpdate = [ ... ];
-        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
+        try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.SExpr, .{
             .value = Expr.init(E.Binary, .{
                 .op = .bin_assign,
                 .left = Expr.init(E.Dot, .{

@@ -19,7 +19,9 @@ expect.extend({
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 describe("bun install --cpu and --os flags", () => {

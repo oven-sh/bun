@@ -57,8 +57,7 @@ jobs:
           git reset --hard origin/${{ github.event.pull_request.head.ref }}
       - name: Run Claude Code
         id: claude
-        # TODO: switch this out once they merge their v1
-        uses: km-anthropic/claude-code-action@v1-dev
+        uses: anthropics/claude-code-action@v1
         with:
           timeout_minutes: "180"
           claude_args: |

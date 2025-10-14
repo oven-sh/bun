@@ -8,6 +8,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
+    valuesArray: true,
     klass: {},
     proto: {
       setCwd: {

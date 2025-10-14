@@ -2017,6 +2017,16 @@ fn NewPrinter(
                         bun.assert(p.options.hmr_ref.isValid());
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".importMeta");
+                    } else if (p.options.module_type == .cjs) {
+                        // In CJS format, import.meta should be transformed into an object
+                        // with at least the `url` property
+                        if (p.options.import_meta_ref.isValid()) {
+                            // Use the synthetic import.meta ref if available
+                            p.printSymbol(p.options.import_meta_ref);
+                        } else {
+                            // Create import.meta object inline
+                            p.print("{url: require('url').pathToFileURL(__filename).href}");
+                        }
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
@@ -2026,10 +2036,6 @@ fn NewPrinter(
                         //
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
-                        //
-                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
-                        bun.debugAssert(p.options.module_type == .cjs);
-
                         p.printSymbol(p.options.import_meta_ref);
                     }
                 },
@@ -2400,6 +2406,14 @@ fn NewPrinter(
                         // Inline cross-module TypeScript enum references here
                         if (p.tryToGetImportedEnumValue(e.target, e.name)) |inlined| {
                             p.printInlinedEnum(inlined, e.name, level);
+                            return;
+                        }
+
+                        // Handle import.meta.url in CJS format
+                        if (p.options.module_type == .cjs and e.target.data == .e_import_meta and strings.eqlComptime(e.name, "url")) {
+                            p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
+                            p.print("require('url').pathToFileURL(__filename).href");
                             return;
                         }
                     } else {

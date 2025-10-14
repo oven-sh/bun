@@ -170,6 +170,10 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
+const prune_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              ") catch unreachable,
+});
+
 cache_dir: ?string = null,
 lockfile: string = "",
 token: string = "",
@@ -746,6 +750,38 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .prune => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun prune<r> <cyan>[flags]<r>
+                \\
+                \\  Remove extraneous packages not in package.json and optionally devDependencies.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Remove extraneous packages<r>
+                \\  <b><green>bun prune<r>
+                \\
+                \\  <d>Remove devDependencies and extraneous packages<r>
+                \\  <b><green>bun prune<r> <cyan>--production<r>
+                \\
+                \\  <d>Show what would be removed without actually removing<r>
+                \\  <b><green>bun prune<r> <cyan>--dry-run<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/prune<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(prune_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -766,6 +802,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         .pack => pack_params,
         .publish => publish_params,
         .why => why_params,
+        .prune => prune_params,
 
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text

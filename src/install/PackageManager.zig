@@ -141,6 +141,7 @@ pub const Subcommand = enum {
     pm,
     add,
     remove,
+    prune,
     link,
     unlink,
     patch,

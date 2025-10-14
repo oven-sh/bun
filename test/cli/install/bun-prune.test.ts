@@ -1,0 +1,633 @@
+import { file } from "bun";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe } from "bun:test";
+import { existsSync } from "fs";
+import { mkdtemp, rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, tempDir } from "harness";
+import { join } from "path";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
+
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
+
+afterEach(async () => {
+  await dummyAfterEach();
+});
+
+describe("bun prune", () => {
+  it("should show help with --help flag", async () => {
+    using dir = tempDir("prune-help", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--help"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Usage");
+    expect(stdout).toContain("bun prune");
+    expect(stdout).toContain("--production");
+    expect(stdout).toContain("--dry-run");
+  });
+
+  it("should remove extraneous packages", async () => {
+    using dir = tempDir("prune-extraneous", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // First install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Manually add an extra package to node_modules that's not in package.json
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Now remove lodash from package.json but keep it in node_modules
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Verify lodash exists before prune
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+
+    // Run prune
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify lodash was removed but is-number was preserved
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(false);
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+  });
+
+  it("should remove devDependencies with --production flag", async () => {
+    using dir = tempDir("prune-production", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+        devDependencies: {
+          typescript: "^5.0.0",
+        },
+      }),
+    });
+
+    // First install all dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Verify both dependencies and devDependencies are installed
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(true);
+
+    // Run prune with --production
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--production"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify devDependencies were removed but regular dependencies preserved
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
+  });
+
+  it("should show what would be removed with --dry-run", async () => {
+    using dir = tempDir("prune-dry-run", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // First install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove from package.json
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Run prune with --dry-run
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--dry-run"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify output mentions what would be removed or indicates dry-run mode
+    expect(stdout.toLowerCase()).toMatch(/would|dry-run|dry run/);
+  });
+
+  it("should be idempotent", async () => {
+    using dir = tempDir("prune-idempotent", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // First install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Run prune twice
+    await using pruneProc1 = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await pruneProc1.exited).toBe(0);
+
+    await using pruneProc2 = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout2, stderr2, exitCode2] = await Promise.all([
+      pruneProc2.stdout.text(),
+      pruneProc2.stderr.text(),
+      pruneProc2.exited,
+    ]);
+
+    expect(exitCode2).toBe(0);
+    expect(stderr2).not.toContain("error:");
+  });
+
+  it("should work with missing package.json", async () => {
+    using dir = tempDir("prune-no-package-json", {});
+
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await pruneProc.exited;
+
+    // Should fail gracefully when no package.json exists
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("should preserve optionalDependencies", async () => {
+    using dir = tempDir("prune-optional", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+        devDependencies: {
+          typescript: "^5.0.0",
+        },
+        optionalDependencies: {
+          lodash: "^4.17.0",
+        },
+      }),
+    });
+
+    // Install all dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Verify all dependencies are installed
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
+
+    // Run prune with --production
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--production"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify devDependencies removed but regular and optional dependencies preserved
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
+  });
+
+  it("should work in workspaces", async () => {
+    using dir = tempDir("prune-workspace", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+      "packages/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.0",
+        },
+      }),
+    });
+
+    // Install all dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Manually add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "typescript"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove typescript from package.json but keep in node_modules
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.typescript;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Run prune
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify workspace packages still exist
+    const pkg1Exists = await file(join(String(dir), "node_modules", "pkg1", "package.json")).exists();
+    expect(pkg1Exists).toBe(true);
+
+    // Verify workspace dependency still exists
+    const lodashExists = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
+    expect(lodashExists).toBe(true);
+  });
+
+  it("should handle nested dependencies correctly", async () => {
+    using dir = tempDir("prune-nested", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Verify is-number is installed
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+
+    // Run prune (should not remove nested dependencies of declared packages)
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify the main dependency still exists after prune
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+  });
+
+  it("should work with --verbose flag", async () => {
+    using dir = tempDir("prune-verbose", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove from package.json
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Run prune with --verbose
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--verbose"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+    // Verbose output should contain some additional information
+    // The exact format will depend on implementation
+  });
+
+  it("should work with --silent flag", async () => {
+    using dir = tempDir("prune-silent", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove from package.json
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Run prune with --silent
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--silent"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+    // Silent mode should produce minimal output
+    expect(stdout.trim()).toBe("");
+  });
+
+  it("should verify --dry-run does not modify node_modules", async () => {
+    using dir = tempDir("prune-dry-run-verify", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove from package.json
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Verify lodash exists before dry-run
+    const lodashExistsBefore = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
+    expect(lodashExistsBefore).toBe(true);
+
+    // Run prune with --dry-run
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--dry-run"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify lodash still exists after dry-run (should not have been removed)
+    const lodashExistsAfter = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
+    expect(lodashExistsAfter).toBe(true);
+  });
+});

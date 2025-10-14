@@ -1946,7 +1946,7 @@ pub const BundleV2 = struct {
                         break :brk i;
                     }
                 }
-                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+                return bun.StandaloneModuleGraph.CompileResult.fail(.no_entry_point);
             };
 
             const output_file = &output_files.items[entry_point_index];
@@ -1990,12 +1990,12 @@ pub const BundleV2 = struct {
             if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On POSIX, makeOpenPath and change root_dir
                 root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On Windows, ensure directories exist but don't change root_dir
                 _ = bun.makePath(root_dir, dirname) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             }
 
@@ -2044,7 +2044,7 @@ pub const BundleV2 = struct {
                 else
                     null,
             ) catch |err| {
-                return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)})));
+                return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
 
             if (result == .success) {
@@ -2139,7 +2139,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.err.slice()))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }

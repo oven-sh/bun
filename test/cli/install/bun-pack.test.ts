@@ -1376,6 +1376,14 @@ describe("publishConfig.directory", () => {
           },
         }),
       ),
+      // package.json must also be in the dist directory (matches pnpm behavior)
+      write(
+        join(packageDir, "dist", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-directory",
+          version: "1.0.0",
+        }),
+      ),
       write(join(packageDir, "src", "index.js"), "console.log('src');"),
       write(join(packageDir, "dist", "index.js"), "console.log('dist');"),
       write(join(packageDir, "dist", "other.js"), "console.log('other');"),
@@ -1407,6 +1415,13 @@ describe("publishConfig.directory", () => {
         }),
       ),
       mkdir(join(packageDir, "build"), { recursive: true }),
+      write(
+        join(packageDir, "build", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-dir-prefix",
+          version: "2.0.0",
+        }),
+      ),
       write(join(packageDir, "build", "main.js"), "console.log('main');"),
     ]);
 
@@ -1429,6 +1444,13 @@ describe("publishConfig.directory", () => {
         }),
       ),
       mkdir(join(packageDir, "output", "final"), { recursive: true }),
+      write(
+        join(packageDir, "output", "final", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-nested",
+          version: "3.0.0",
+        }),
+      ),
       write(join(packageDir, "output", "final", "result.js"), "console.log('result');"),
       write(join(packageDir, "output", "temp.js"), "console.log('temp');"),
     ]);
@@ -1464,7 +1486,6 @@ describe("publishConfig.directory", () => {
         JSON.stringify({
           name: "pack-publishconfig-with-files",
           version: "1.0.0",
-          files: ["lib/**/*"],
           publishConfig: {
             directory: "dist",
           },
@@ -1472,6 +1493,14 @@ describe("publishConfig.directory", () => {
       ),
       mkdir(join(packageDir, "dist", "lib"), { recursive: true }),
       mkdir(join(packageDir, "dist", "other"), { recursive: true }),
+      write(
+        join(packageDir, "dist", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-with-files",
+          version: "1.0.0",
+          files: ["lib/**/*"],
+        }),
+      ),
       write(join(packageDir, "dist", "lib", "main.js"), "console.log('lib');"),
       write(join(packageDir, "dist", "other", "other.js"), "console.log('other');"),
     ]);

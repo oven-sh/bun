@@ -1174,7 +1174,47 @@ pub const PackCommand = struct {
             // maybe otp
         }
 
-        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
+        // If publishConfig.directory is set, re-read package.json from that directory
+        const actual_package_json_path: stringZ = if (publish_config_directory) |directory| path_with_dir: {
+            var path_buf: PathBuffer = undefined;
+            const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(
+                bun.path.normalizeBuf(directory, &path_buf, .posix),
+                "./",
+            ));
+
+            const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+            const abs_dir = bun.path.joinAbsStringBuf(
+                abs_workspace_path,
+                &path_buf,
+                &[_]string{normalized_dir},
+                .auto,
+            );
+
+            break :path_with_dir bun.path.joinAbsStringBufZ(
+                abs_dir,
+                &path_buf,
+                &[_]string{"package.json"},
+                .auto,
+            );
+        } else abs_package_json_path;
+
+        // Re-read package.json from the actual directory
+        const actual_json = if (publish_config_directory != null) switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, actual_package_json_path, .{
+            .guess_indentation = true,
+        })) {
+            .read_err => |err| {
+                Output.err(err, "failed to read package.json from publishConfig.directory: {s}", .{actual_package_json_path});
+                Global.crash();
+            },
+            .parse_err => |err| {
+                Output.err(err, "failed to parse package.json from publishConfig.directory: {s}", .{actual_package_json_path});
+                manager.log.print(Output.errorWriter()) catch {};
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        } else json;
+
+        const package_name_expr: Expr = actual_json.root.get("name") orelse return error.MissingPackageName;
         const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         if (comptime for_publish) {
             const is_scoped = try Dependency.isScopedPackageName(package_name);
@@ -1187,13 +1227,13 @@ pub const PackCommand = struct {
         defer if (comptime !for_publish) ctx.allocator.free(package_name);
         if (package_name.len == 0) return error.InvalidPackageName;
 
-        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
+        const package_version_expr: Expr = actual_json.root.get("version") orelse return error.MissingPackageVersion;
         const package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
         defer if (comptime !for_publish) ctx.allocator.free(package_version);
         if (package_version.len == 0) return error.InvalidPackageVersion;
 
         if (comptime for_publish) {
-            if (json.root.get("private")) |private| {
+            if (actual_json.root.get("private")) |private| {
                 if (private.asBool()) |is_private| {
                     if (is_private) {
                         return error.PrivatePackage;
@@ -1202,7 +1242,7 @@ pub const PackCommand = struct {
             }
         }
 
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, actual_json);
 
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 
@@ -1327,63 +1367,27 @@ pub const PackCommand = struct {
             break :post_scripts .{ postpack_script, null, null };
         };
 
-        // Keep track of the workspace directory for package.json
-        var workspace_dir = workspace_dir: {
+        // Open the directory where files will be packed from (and where package.json is)
+        const pack_dir_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(actual_package_json_path, "package.json"));
+        var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;
-            @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
-            path_buf[abs_workspace_path.len] = 0;
-            break :workspace_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
+            @memcpy(path_buf[0..pack_dir_path.len], pack_dir_path);
+            path_buf[pack_dir_path.len] = 0;
+            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..pack_dir_path.len :0], .{
                 .iterate = true,
             }) catch |err| {
-                Output.err(err, "failed to open workspace directory: {s}\n", .{abs_workspace_path});
+                Output.err(err, "failed to open pack directory: {s}\n", .{pack_dir_path});
                 Global.crash();
             };
         };
-        defer workspace_dir.close();
-
-        var root_dir = root_dir: {
-            if (publish_config_directory) |directory| {
-                // Use publishConfig.directory if specified
-                var path_buf: PathBuffer = undefined;
-                const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(
-                    bun.path.normalizeBuf(directory, &path_buf, .posix),
-                    "./",
-                ));
-
-                const root_path = bun.path.joinAbsStringBufZ(
-                    abs_workspace_path,
-                    &path_buf,
-                    &[_]string{normalized_dir},
-                    .auto,
-                );
-
-                break :root_dir std.fs.openDirAbsoluteZ(root_path, .{
-                    .iterate = true,
-                }) catch |err| {
-                    Output.err(err, "failed to open root directory: {s}\n", .{root_path});
-                    Global.crash();
-                };
-            } else {
-                // Use the same directory as workspace_dir
-                var path_buf: PathBuffer = undefined;
-                @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
-                path_buf[abs_workspace_path.len] = 0;
-                break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
-                    .iterate = true,
-                }) catch |err| {
-                    Output.err(err, "failed to open root directory: {s}\n", .{abs_workspace_path});
-                    Global.crash();
-                };
-            }
-        };
         defer root_dir.close();
 
-        ctx.bundled_deps = try getBundledDeps(ctx.allocator, json.root, "bundledDependencies") orelse
-            try getBundledDeps(ctx.allocator, json.root, "bundleDependencies") orelse
+        ctx.bundled_deps = try getBundledDeps(ctx.allocator, actual_json.root, "bundledDependencies") orelse
+            try getBundledDeps(ctx.allocator, actual_json.root, "bundleDependencies") orelse
             .{};
 
         var pack_queue = pack_queue: {
-            if (json.root.get("files")) |files| {
+            if (actual_json.root.get("files")) |files| {
                 files_error: {
                     if (files.asArray()) |_files_array| {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
@@ -1518,7 +1522,7 @@ pub const PackCommand = struct {
             return;
         }
 
-        const bins = try getPackageBins(ctx.allocator, json.root);
+        const bins = try getPackageBins(ctx.allocator, actual_json.root);
         defer for (bins) |bin| ctx.allocator.free(bin.path);
 
         var print_buf = std.ArrayList(u8).init(ctx.allocator);
@@ -1623,7 +1627,7 @@ pub const PackCommand = struct {
             }
             defer if (log_level.showProgress()) node.end();
 
-            entry = try archivePackageJSON(ctx, archive, entry, workspace_dir, edited_package_json);
+            entry = try archivePackageJSON(ctx, archive, entry, root_dir, edited_package_json);
             if (log_level.showProgress()) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {

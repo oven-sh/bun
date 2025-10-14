@@ -4993,9 +4993,17 @@ pub fn NewParser_(
                         }
 
                         if (prop.kind != .class_static_block and !prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
-                            // remove decorated fields without initializers to avoid assigning undefined.
-                            const initializer = if (prop.initializer) |initializer_value| initializer_value else continue;
-
+                            // All decorated fields (with or without initializers) are moved to constructor/static assignments
+                            // so decorator setters are called. Properties without initializers are assigned undefined.
+                            // Declare fields are removed entirely but decorators are still emitted.
+                            if (prop.kind == .declare) {
+                                // Remove declare fields from class body, decorators are already emitted above
+                                continue;
+                            }
+                            
+                            // Use initializer if present, otherwise use undefined
+                            const initializer = if (prop.initializer) |initializer_value| initializer_value else p.newExpr(E.Undefined{}, prop.key.?.loc);
+                            
                             var target: Expr = undefined;
                             if (prop.flags.contains(.is_static)) {
                                 p.recordUsage(class.class_name.?.ref.?);
@@ -5017,7 +5025,7 @@ pub fn NewParser_(
                                 }, prop.key.?.loc);
                             }
 
-                            // remove fields with decorators from class body. Move static members outside of class.
+                            // Move all decorated fields to constructor/static assignments (triggers decorator setters)
                             if (prop.flags.contains(.is_static)) {
                                 static_members.append(Stmt.assign(target, initializer)) catch unreachable;
                             } else {
@@ -5086,9 +5094,9 @@ pub fn NewParser_(
                     if (class.ts_decorators.len > 0) stmts_count += 1;
                     var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmts_count) catch unreachable;
                     stmts.appendAssumeCapacity(stmt);
-                    stmts.appendSliceAssumeCapacity(static_members.items);
                     stmts.appendSliceAssumeCapacity(instance_decorators.items);
                     stmts.appendSliceAssumeCapacity(static_decorators.items);
+                    stmts.appendSliceAssumeCapacity(static_members.items);
                     if (class.ts_decorators.len > 0) {
                         var array = class.ts_decorators.moveToListManaged(p.allocator);
 

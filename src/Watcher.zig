@@ -670,24 +670,22 @@ pub fn addFileByPathSlow(
         .result => {
             // On macOS, addFile may have found the file already watched (race)
             // and returned success without using our fd. Close it if unused.
-            if (comptime Environment.isMac) {
-                if (fd.isValid()) {
-                    this.mutex.lock();
-                    const maybe_idx = this.indexOf(hash);
-                    const stored_fd = if (maybe_idx) |idx|
-                        this.watchlist.items(.fd)[idx]
-                    else
-                        bun.invalid_fd;
-                    this.mutex.unlock();
+            if ((comptime Environment.isMac) and fd.isValid()) {
+                this.mutex.lock();
+                const maybe_idx = this.indexOf(hash);
+                const stored_fd = if (maybe_idx) |idx|
+                    this.watchlist.items(.fd)[idx]
+                else
+                    bun.invalid_fd;
+                this.mutex.unlock();
 
-                    // Only close if entry exists and stored fd differs from ours.
-                    // Race scenarios:
-                    // 1. Entry removed (maybe_idx == null): our fd was stored then closed by flushEvictions → don't close
-                    // 2. Entry exists with different fd: another thread added entry, addFile didn't use our fd → close ours
-                    // 3. Entry exists with same fd: our fd was stored → don't close
-                    if (maybe_idx != null and stored_fd.native() != fd.native()) {
-                        fd.close();
-                    }
+                // Only close if entry exists and stored fd differs from ours.
+                // Race scenarios:
+                // 1. Entry removed (maybe_idx == null): our fd was stored then closed by flushEvictions → don't close
+                // 2. Entry exists with different fd: another thread added entry, addFile didn't use our fd → close ours
+                // 3. Entry exists with same fd: our fd was stored → don't close
+                if (maybe_idx != null and stored_fd.native() != fd.native()) {
+                    fd.close();
                 }
             }
             return true;

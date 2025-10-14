@@ -18,39 +18,33 @@ $ bun init
 
 ---
 
-Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the PostgreSQL adapter as dependencies.
+Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the LibSQL adapter as dependencies.
 
 ```bash
 $ bun add -d prisma
-$ bun add @prisma/client @prisma/adapter-pg
+$ bun add @prisma/client @prisma/adapter-libsql
 ```
 
 ---
 
-We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory with [Prisma Postgres](https://www.prisma.io/docs/postgres?utm_source=bun_docs).
+We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
 
 ```bash
-$ bunx prisma init --db
+$ bunx --bun prisma init --datasource-provider sqlite
 ```
 
-Make sure to set the `DATABASE_URL` in `.env` with your PostgreSQL connection string.
-
----
-
-The `prisma init --db` command creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
+This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
 
 ```prisma-diff#prisma/schema.prisma
   generator client {
--   provider = "prisma-client-js"
--   output   = "../generated/prisma"
 +   provider = "prisma-client"
-+   output = "../generated"
++   output = "./generated"
 +   engineType = "client"
 +   runtime = "bun"
   }
 
   datasource db {
-    provider = "postgresql"
+    provider = "sqlite"
     url      = env("DATABASE_URL")
   }
 
@@ -65,17 +59,27 @@ The `prisma init --db` command creates a basic schema. We need to update it to u
 
 Then generate and run initial migration.
 
-This will generate a `.sql` migration file in `prisma/migrations` and execute the migration against your Prisma Postgres database.
+This will generate a `.sql` migration file in `prisma/migrations`, create a new SQLite instance, and execute the migration against the new instance.
 
 ```bash
 $ bunx prisma migrate dev --name init
 Environment variables loaded from .env
 Prisma schema loaded from prisma/schema.prisma
-Datasource "db": PostgreSQL database "postgres", schema "public" at "accelerate.prisma-data.net"
+Datasource "db": SQLite database "dev.db" at "file:./dev.db"
 
-Already in sync, no schema change or pending migration was found.
+SQLite database dev.db created at file:./dev.db
 
-✔ Generated Prisma Client (v6.17.1, engine=none) to ./generated/prisma in 28ms
+Applying migration `20251014141233_init`
+
+The following migration(s) have been created and applied from new schema changes:
+
+prisma/migrations/
+  └─ 20251014141233_init/
+    └─ migration.sql
+
+Your database is now in sync with your schema.
+
+✔ Generated Prisma Client (6.17.1) to ./generated in 18ms
 ```
 
 ---
@@ -88,11 +92,14 @@ $ bunx prisma generate
 
 ---
 
-Now we need to instantiate the PrismaClient using the PostgreSQL adapter. We can import the generated client and the adapter.
+Now we need to create a Prisma client instance. Create a new file `prisma/db.ts` to initialize the PrismaClient with the LibSQL adapter.
 
-```ts#src/index.ts
-import { PrismaClient } from "../generated/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+```ts#prisma/db.ts
+import { PrismaClient } from "./generated/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
+
+const adapter = new PrismaLibSQL({ url: process.env.DATABASE_URL || "" });
+export const prisma = new PrismaClient({ adapter });
 ```
 
 ---
@@ -100,11 +107,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 Let's write a simple script to create a new user, then count the number of users in the database.
 
 ```ts#index.ts
-import { PrismaClient } from "../generated/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter });
+import { prisma } from "./prisma/db";
 
 // create a new user
 await prisma.user.create({

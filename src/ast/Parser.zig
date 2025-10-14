@@ -1210,16 +1210,15 @@ pub const Parser = struct {
             if (items_count == 0)
                 break :outer;
 
-            const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
-
             var declared_symbols = js_ast.DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(p.allocator, items_count);
 
-            var import_record_indices = bun.handleOom(p.allocator.alloc(u32, 1));
-            import_record_indices[0] = import_record_id;
-
             // For CommonJS modules, use require instead of import
             if (exports_kind == .cjs) {
+                var import_record_indices = bun.handleOom(p.allocator.alloc(u32, 1));
+                const import_record_id = p.addImportRecord(.require, logger.Loc.Empty, "bun:test");
+                import_record_indices[0] = import_record_id;
+
                 // Create object binding pattern for destructuring
                 var properties = p.allocator.alloc(B.Property, items_count) catch unreachable;
                 var prop_i: usize = 0;
@@ -1260,6 +1259,10 @@ pub const Parser = struct {
                     .tag = .bun_test,
                 }) catch unreachable;
             } else {
+                var import_record_indices = bun.handleOom(p.allocator.alloc(u32, 1));
+                const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
+                import_record_indices[0] = import_record_id;
+
                 // For ESM modules, use import statement
                 var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
                 var clause_i: usize = 0;

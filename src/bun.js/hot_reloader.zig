@@ -127,10 +127,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             hash: Watcher.HashType = 0,
 
             /// On macOS, vim's atomic save triggers a race condition:
-            /// 1. Old file gets NOTE_RENAME (inode deleted)
+            /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
             /// 2. We receive the event and would normally trigger reload immediately
-            /// 3. But the new file isn't renamed into place yet - reload fails with ENOENT
-            /// 4. New file gets renamed into place (a.js~ -> a.js)
+            /// 3. But the new file hasn't been created yet - reload fails with ENOENT
+            /// 4. New file gets created and written (a.js)
             /// 5. Parent directory gets NOTE_WRITE
             ///
             /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag

@@ -25,11 +25,47 @@ We are tracking worker stability issues in https://github.com/oven-sh/bun/issues
 }
 
 // Check for better-sqlite3 with RunCommand or AutoCommand
-else if (body.includes("better-sqlite3") && (body.includes("[RunCommand]") || body.includes("[AutoCommand]"))) {
+else if (
+  (body.includes("better-sqlite3") || body.toLowerCase().includes("better-sqlite3")) &&
+  (body.includes("RunCommand") || body.includes("AutoCommand"))
+) {
   closeAction = {
     reason: "not_planned",
     comment: `Duplicate of #4290.
 better-sqlite3 is not supported yet in Bun due to missing V8 C++ APIs. For now, you can try [bun:sqlite](https://bun.com/docs/api/sqlite) for an almost drop-in replacement.`,
+  };
+}
+
+// Check for ENOTCONN with Transport and standalone_executable on v1.2.23
+else if (
+  body.includes("ENOTCONN") &&
+  body.includes("Transport") &&
+  body.includes("standalone_executable") &&
+  (body.includes("1.2.23") || body.includes("v1.2.23"))
+) {
+  closeAction = {
+    reason: "completed",
+    comment: `Duplicate of #23342.
+This issue was fixed in Bun v1.3. Please upgrade to the latest version:
+
+\`\`\`sh
+bun upgrade
+\`\`\``,
+  };
+}
+
+// Check for WASM IPInt 32 stack traces - be very specific to avoid false positives
+else if (body.includes("wasm_trampoline_wasm_ipint_call_wide32")) {
+  closeAction = {
+    reason: "not_planned",
+    comment: `Duplicate of #17841.
+This is a known issue with JavaScriptCore's WASM In-place interpreter on Linux x64. You can work around it by:
+
+1. Setting \`BUN_JSC_useWasmIPInt=0\` to disable IPInt (reverts to older Wasm interpreter)
+2. Using an aarch64 CPU instead of x86_64
+3. Using \`BUN_JSC_jitPolicyScale=0\` to force JIT compilation (may impact startup performance)
+
+We've reported this to WebKit and are tracking the issue in #17841.`,
   };
 }
 

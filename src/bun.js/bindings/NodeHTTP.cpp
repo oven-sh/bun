@@ -510,7 +510,7 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
 }
 
 template<bool isSSL>
-static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res, bool addConnectionHeaders = false)
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res, bool shouldKeepAlive = true, uint32_t keepAliveTimeout = 5000)
 {
     auto& internalHeaders = headers.internalHeaders();
 
@@ -584,10 +584,18 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
     // Add Connection: keep-alive and Keep-Alive headers if not already set
     // This matches Node.js behavior
-    if (addConnectionHeaders && !hasConnectionHeader) {
-        // For HTTP/1.1, default is keep-alive
-        res->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
-        res->writeHeader(std::string_view("Keep-Alive", 10), std::string_view("timeout=5", 9));
+    if (!hasConnectionHeader) {
+        if (shouldKeepAlive) {
+            res->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
+
+            // Format Keep-Alive header with timeout
+            char keepAliveValue[32];
+            uint32_t timeoutSeconds = keepAliveTimeout / 1000;
+            int len = snprintf(keepAliveValue, sizeof(keepAliveValue), "timeout=%u", timeoutSeconds);
+            res->writeHeader(std::string_view("Keep-Alive", 10), std::string_view(keepAliveValue, len));
+        } else {
+            res->writeHeader(std::string_view("Connection", 10), std::string_view("close", 5));
+        }
     }
 }
 
@@ -597,6 +605,8 @@ static void NodeHTTPServer__writeHead(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    bool shouldKeepAlive,
+    uint32_t keepAliveTimeout,
     uWS::HttpResponse<isSSL>* response)
 {
     auto& vm = globalObject->vm();
@@ -612,7 +622,7 @@ static void NodeHTTPServer__writeHead(
 
     if (headersObject) {
         if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response, true);
+            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response, shouldKeepAlive, keepAliveTimeout);
             return;
         }
 
@@ -675,9 +685,17 @@ static void NodeHTTPServer__writeHead(
     // Add Connection: keep-alive and Keep-Alive headers if not already set
     // This matches Node.js behavior
     if (!hasConnectionHeader) {
-        // For HTTP/1.1, default is keep-alive
-        response->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
-        response->writeHeader(std::string_view("Keep-Alive", 10), std::string_view("timeout=5", 9));
+        if (shouldKeepAlive) {
+            response->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
+
+            // Format Keep-Alive header with timeout
+            char keepAliveValue[32];
+            uint32_t timeoutSeconds = keepAliveTimeout / 1000;
+            int len = snprintf(keepAliveValue, sizeof(keepAliveValue), "timeout=%u", timeoutSeconds);
+            response->writeHeader(std::string_view("Keep-Alive", 10), std::string_view(keepAliveValue, len));
+        } else {
+            response->writeHeader(std::string_view("Connection", 10), std::string_view("close", 5));
+        }
     }
 
     RELEASE_AND_RETURN(scope, void());
@@ -688,9 +706,11 @@ extern "C" void NodeHTTPServer__writeHead_http(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    bool shouldKeepAlive,
+    uint32_t keepAliveTimeout,
     uWS::HttpResponse<false>* response)
 {
-    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, shouldKeepAlive, keepAliveTimeout, response);
 }
 
 extern "C" void NodeHTTPServer__writeHead_https(
@@ -698,9 +718,11 @@ extern "C" void NodeHTTPServer__writeHead_https(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    bool shouldKeepAlive,
+    uint32_t keepAliveTimeout,
     uWS::HttpResponse<true>* response)
 {
-    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, shouldKeepAlive, keepAliveTimeout, response);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(

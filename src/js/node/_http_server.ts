@@ -1349,7 +1349,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   if (headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      const shouldKeepAlive = this.shouldKeepAlive;
+      const keepAliveTimeout = this.socket?.server?.keepAliveTimeout ?? 5000;
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol], shouldKeepAlive, keepAliveTimeout);
 
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
@@ -1459,7 +1461,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      const shouldKeepAlive = this.shouldKeepAlive;
+      const keepAliveTimeout = this.socket?.server?.keepAliveTimeout ?? 5000;
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol], shouldKeepAlive, keepAliveTimeout);
 
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
@@ -1562,7 +1566,9 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      const shouldKeepAlive = this.shouldKeepAlive;
+      const keepAliveTimeout = this.socket?.server?.keepAliveTimeout ?? 5000;
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol], shouldKeepAlive, keepAliveTimeout);
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       handle.write(data, encoding, callback, strictContentLength(this));
     });
@@ -1629,7 +1635,9 @@ ServerResponse.prototype.flushHeaders = function () {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
-      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      const shouldKeepAlive = this.shouldKeepAlive;
+      const keepAliveTimeout = this.socket?.server?.keepAliveTimeout ?? 5000;
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol], shouldKeepAlive, keepAliveTimeout);
     }
     handle.flushHeaders();
   }

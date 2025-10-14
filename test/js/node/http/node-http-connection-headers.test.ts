@@ -85,8 +85,31 @@ test("should use default keepAliveTimeout (5 seconds)", async () => {
 
     expect(text).toBe("test");
     expect(response.headers.get("connection")).toBe("keep-alive");
-    // Default timeout is 5 seconds (hardcoded in C++ layer)
     expect(response.headers.get("keep-alive")).toBe("timeout=5");
+  } finally {
+    server.close();
+  }
+});
+
+test("should use custom keepAliveTimeout when configured", async () => {
+  const server = createServer((req, res) => {
+    res.writeHead(200);
+    res.end("test");
+  });
+
+  // Set custom keepAliveTimeout to 10 seconds
+  server.keepAliveTimeout = 10000;
+
+  await new Promise<void>(resolve => server.listen(0, () => resolve()));
+  const port = (server.address() as any).port;
+
+  try {
+    const response = await fetch(`http://localhost:${port}/`);
+    const text = await response.text();
+
+    expect(text).toBe("test");
+    expect(response.headers.get("connection")).toBe("keep-alive");
+    expect(response.headers.get("keep-alive")).toBe("timeout=10");
   } finally {
     server.close();
   }

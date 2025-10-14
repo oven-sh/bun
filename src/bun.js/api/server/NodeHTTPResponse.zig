@@ -407,6 +407,8 @@ extern "C" fn NodeHTTPServer__writeHead_http(
     statusMessage: [*]const u8,
     statusMessageLength: usize,
     headersObjectValue: jsc.JSValue,
+    shouldKeepAlive: bool,
+    keepAliveTimeout: u32,
     response: *anyopaque,
 ) void;
 
@@ -415,11 +417,13 @@ extern "C" fn NodeHTTPServer__writeHead_https(
     statusMessage: [*]const u8,
     statusMessageLength: usize,
     headersObjectValue: jsc.JSValue,
+    shouldKeepAlive: bool,
+    keepAliveTimeout: u32,
     response: *anyopaque,
 ) void;
 
 pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.argumentsUndef(3).slice();
+    const arguments = callframe.argumentsUndef(5).slice();
 
     if (this.isRequestedCompletedOrEnded()) {
         return globalObject.ERR(.STREAM_ALREADY_FINISHED, "Stream is already ended", .{}).throw();
@@ -436,6 +440,8 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
     const status_code_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
     const status_message_value: JSValue = if (arguments.len > 1 and arguments[1] != .null) arguments[1] else .js_undefined;
     const headers_object_value: JSValue = if (arguments.len > 2 and arguments[2] != .null) arguments[2] else .js_undefined;
+    const should_keep_alive_value: JSValue = if (arguments.len > 3) arguments[3] else .js_undefined;
+    const keep_alive_timeout_value: JSValue = if (arguments.len > 4) arguments[4] else .js_undefined;
 
     const status_code: i32 = brk: {
         if (!status_code_value.isUndefined()) {
@@ -461,6 +467,16 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         return error.JSError;
     }
 
+    const should_keep_alive: bool = if (!should_keep_alive_value.isUndefined())
+        should_keep_alive_value.toBoolean()
+    else
+        true;
+
+    const keep_alive_timeout: u32 = if (!keep_alive_timeout_value.isUndefined())
+        @intCast(keep_alive_timeout_value.toU32())
+    else
+        5000;
+
     if (state.isHttpStatusCalled()) {
         return globalObject.ERR(.HTTP_HEADERS_SENT, "Stream already started", .{}).throw();
     }
@@ -468,7 +484,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
     do_it: {
         if (status_message_slice.len == 0) {
             if (HTTPStatusText.get(@intCast(status_code))) |status_message| {
-                writeHeadInternal(this.raw_response.?, globalObject, status_message, headers_object_value);
+                writeHeadInternal(this.raw_response.?, globalObject, status_message, headers_object_value, should_keep_alive, keep_alive_timeout);
                 break :do_it;
             }
         }
@@ -476,18 +492,18 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         const message = if (status_message_slice.len > 0) status_message_slice.slice() else "HM";
         const status_message = bun.handleOom(std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }));
         defer allocator.free(status_message);
-        writeHeadInternal(this.raw_response.?, globalObject, status_message, headers_object_value);
+        writeHeadInternal(this.raw_response.?, globalObject, status_message, headers_object_value, should_keep_alive, keep_alive_timeout);
         break :do_it;
     }
 
     return .js_undefined;
 }
 
-fn writeHeadInternal(response: uws.AnyResponse, globalObject: *jsc.JSGlobalObject, status_message: []const u8, headers: jsc.JSValue) void {
+fn writeHeadInternal(response: uws.AnyResponse, globalObject: *jsc.JSGlobalObject, status_message: []const u8, headers: jsc.JSValue, should_keep_alive: bool, keep_alive_timeout: u32) void {
     log("writeHeadInternal({s})", .{status_message});
     switch (response) {
-        .TCP => NodeHTTPServer__writeHead_http(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.TCP)),
-        .SSL => NodeHTTPServer__writeHead_https(globalObject, status_message.ptr, status_message.len, headers, @ptrCast(response.SSL)),
+        .TCP => NodeHTTPServer__writeHead_http(globalObject, status_message.ptr, status_message.len, headers, should_keep_alive, keep_alive_timeout, @ptrCast(response.TCP)),
+        .SSL => NodeHTTPServer__writeHead_https(globalObject, status_message.ptr, status_message.len, headers, should_keep_alive, keep_alive_timeout, @ptrCast(response.SSL)),
     }
 }
 

@@ -35,10 +35,13 @@ inline fn runWithoutRemoving(this: *const WTFTimer) void {
 
 pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     // There's only one of these per VM, and each VM has its own imminent_gc_timer
-    this.imminent.store(if (seconds == 0) this else null, .seq_cst);
-
-    if (seconds == 0.0) {
+    // Only set imminent if it's not already set to avoid overwriting another timer
+    if (seconds == 0) {
+        _ = this.imminent.cmpxchgStrong(null, this, .seq_cst, .seq_cst);
         return;
+    } else {
+        // Clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     }
 
     const modf = std.math.modf(seconds);
@@ -59,7 +62,8 @@ pub fn cancel(this: *WTFTimer) void {
     defer this.lock.unlock();
 
     if (this.script_execution_context_id.valid()) {
-        this.imminent.store(null, .seq_cst);
+        // Only clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
 
         if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
@@ -69,10 +73,15 @@ pub fn cancel(this: *WTFTimer) void {
 
 pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
     this.event_loop_timer.state = .FIRED;
-    this.imminent.store(null, .seq_cst);
+    // Only clear imminent if this timer was the one that set it
+    _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
+    // Read `repeat` and `next` before calling runWithoutRemoving(), because the callback
+    // might destroy `this` (e.g., when Atomics.waitAsync creates a one-shot DispatchTimer).
+    const should_repeat = this.repeat;
+    const next_time = this.event_loop_timer.next;
     this.runWithoutRemoving();
-    return if (this.repeat)
-        .{ .rearm = this.event_loop_timer.next }
+    return if (should_repeat)
+        .{ .rearm = next_time }
     else
         .disarm;
 }

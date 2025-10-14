@@ -618,7 +618,9 @@ pub const Parser = struct {
                     .s_enum => {
                         try parts.appendSlice(preprocessed_enums.items[preprocessed_enum_i]);
                         preprocessed_enum_i += 1;
-                        p.scope_order_to_visit = p.scope_order_to_visit[1..];
+
+                        const enum_scope_count = p.scopes_in_order_for_enum.get(stmt.loc).?.len;
+                        p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..];
                     },
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);

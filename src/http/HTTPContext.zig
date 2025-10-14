@@ -473,6 +473,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false,
+                null,
+                0,
             );
             client.allow_retry = false;
             return socket;

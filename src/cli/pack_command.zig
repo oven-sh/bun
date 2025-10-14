@@ -1389,11 +1389,10 @@ pub const PackCommand = struct {
                     try pack_queue.add(.{ .path = bin.path, .optional = true });
                 },
                 .dir => {
-                    var bin_dir = root_dir.openDir(bin.path, .{ .iterate = true }) catch {
+                    const bin_dir = root_dir.openDir(bin.path, .{ .iterate = true }) catch {
                         // non-existent bins are ignored
                         continue;
                     };
-                    defer bin_dir.close();
 
                     try iterateProjectTree(ctx.allocator, &pack_queue, &.{}, .{ bin_dir, bin.path, 2 }, log_level);
                 },
@@ -2484,6 +2483,7 @@ pub const PackCommand = struct {
             while (pack_list.removeOrNull()) |item| {
                 const stat = root_dir.statat(item.path).unwrap() catch |err| {
                     if (item.optional) {
+                        ctx.stats.total_files -= 1;
                         continue;
                     }
                     Output.err(err, "failed to stat file: \"{s}\"", .{item.path});

@@ -678,19 +678,13 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
 }
 
 pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {
-    const promise_opt = this.pending_internal_promise;
-    if (promise_opt == null) {
-        this.addMainToWatcherIfNeeded();
-        return;
-    }
-    var promise = promise_opt.?;
+    defer this.addMainToWatcherIfNeeded();
+    var promise = this.pending_internal_promise orelse return;
 
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
         this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
     }
-
-    this.addMainToWatcherIfNeeded();
 }
 
 pub fn addMainToWatcherIfNeeded(this: *jsc.VirtualMachine) void {

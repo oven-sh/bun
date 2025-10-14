@@ -420,9 +420,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                 if (event.op.write) {
                                     // Check if the entrypoint now exists after an atomic save.
-                                    // If we previously got a NOTE_RENAME on the entrypoint (vim deleted
-                                    // the old inode), this directory write event signals that the new
-                                    // file has been renamed into place. Verify it exists and trigger reload.
+                                    // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
+                                    // the file), this directory write event signals that the new
+                                    // file has been re-created. Verify it exists and trigger reload.
                                     if (this.main.is_waiting_for_dir_change and this.main.dir_hash == current_hash) {
                                         if (bun.sys.faccessat(file_descriptors[event.index], std.fs.path.basename(this.main.file)) == .result) {
                                             this.main.is_waiting_for_dir_change = false;

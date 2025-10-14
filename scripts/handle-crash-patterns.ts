@@ -15,8 +15,11 @@ interface CloseAction {
 
 let closeAction: CloseAction | null = null;
 
+// Compute lowercase once for performance
+const bodyLower = body.toLowerCase();
+
 // Check for workers_terminated
-if (body.includes("workers_terminated")) {
+if (bodyLower.includes("workers_terminated")) {
   closeAction = {
     reason: "not_planned",
     comment: `Duplicate of #15964
@@ -26,8 +29,8 @@ We are tracking worker stability issues in https://github.com/oven-sh/bun/issues
 
 // Check for better-sqlite3 with RunCommand or AutoCommand
 else if (
-  body.toLowerCase().includes("better-sqlite3") &&
-  (body.toLowerCase().includes("runcommand") || body.toLowerCase().includes("autocommand"))
+  bodyLower.includes("better-sqlite3") &&
+  (bodyLower.includes("runcommand") || bodyLower.includes("autocommand"))
 ) {
   closeAction = {
     reason: "not_planned",
@@ -38,10 +41,10 @@ better-sqlite3 is not supported yet in Bun due to missing V8 C++ APIs. For now, 
 
 // Check for ENOTCONN with Transport and standalone_executable on v1.2.23
 else if (
-  body.toLowerCase().includes("enotconn") &&
-  body.toLowerCase().includes("transport") &&
-  body.toLowerCase().includes("standalone_executable") &&
-  /\bv?1\.2\.23\b/i.test(body)
+  bodyLower.includes("enotconn") &&
+  bodyLower.includes("transport") &&
+  bodyLower.includes("standalone_executable") &&
+  /\bv?1\.2\.23\b/i.test(bodyLower)
 ) {
   closeAction = {
     reason: "completed",
@@ -55,7 +58,7 @@ bun upgrade
 }
 
 // Check for WASM IPInt 32 stack traces - be very specific to avoid false positives
-else if (body.includes("wasm_trampoline_wasm_ipint_call_wide32")) {
+else if (bodyLower.includes("wasm_trampoline_wasm_ipint_call_wide32")) {
   closeAction = {
     reason: "not_planned",
     comment: `Duplicate of #17841.
@@ -71,10 +74,10 @@ We've reported this to WebKit and are tracking the issue in #17841.`,
 
 // Check for CPU architecture issues (Segmentation Fault/Illegal Instruction with no_avx)
 else if (
-  (body.includes("Segmentation Fault") ||
-    body.includes("Illegal Instruction") ||
-    body.includes("IllegalInstruction")) &&
-  body.includes("no_avx")
+  (bodyLower.includes("segmentation fault") ||
+    bodyLower.includes("illegal instruction") ||
+    bodyLower.includes("illegalinstruction")) &&
+  bodyLower.includes("no_avx")
 ) {
   let comment = `Bun requires a CPU with the micro-architecture [\`nehalem\`](https://en.wikipedia.org/wiki/Nehalem_(microarchitecture)) or later (released in 2008). If you're using a CPU emulator like qemu, then try enabling x86-64-v2.`;
 

@@ -334,6 +334,7 @@ pub const InitCommand = struct {
     const PackageJSONFields = struct {
         name: string = "project",
         type: string = "module",
+        version: string = "1.0.0",
         object: *js_ast.E.Object = undefined,
         entry_point: stringZ = "",
         private: bool = true,
@@ -649,11 +650,13 @@ pub const InitCommand = struct {
                 if (fields.object.hasProperty("module")) {
                     try fields.object.putString(alloc, "module", fields.entry_point);
                     try fields.object.putString(alloc, "type", "module");
+                    try fields.object.putString(alloc, "version", "1.0.0");
                 } else if (fields.object.hasProperty("main")) {
                     try fields.object.putString(alloc, "main", fields.entry_point);
                 } else {
                     try fields.object.putString(alloc, "module", fields.entry_point);
                     try fields.object.putString(alloc, "type", "module");
+                    try fields.object.putString(alloc, "version", "1.0.0");
                 }
             }
 

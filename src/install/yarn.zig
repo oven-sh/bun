@@ -1303,6 +1303,37 @@ fn isDefaultRegistry(url: []const u8) bool {
         strings.containsComptime(url, "registry.npmjs.org");
 }
 
+fn appendDependency(
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    string_buf: *String.Buf,
+    name_str: []const u8,
+    version_str: []const u8,
+    behavior: Dependency.Behavior,
+    log: *logger.Log,
+    manager: ?*PackageManager,
+) !void {
+    const name_hash = String.Builder.stringHash(name_str);
+    const name = try string_buf.appendExternalWithHash(name_str, name_hash);
+    const version = try string_buf.append(version_str);
+    const version_sliced = version.sliced(string_buf.bytes.items);
+    const dep: Dependency = .{
+        .name = name.value,
+        .name_hash = name.hash,
+        .behavior = behavior,
+        .version = Dependency.parse(
+            allocator,
+            name.value,
+            name.hash,
+            version_sliced.slice,
+            &version_sliced,
+            log,
+            manager,
+        ) orelse return,
+    };
+    try lockfile.buffers.dependencies.append(allocator, dep);
+}
+
 fn parsePackageJsonDependencies(
     lockfile: *Lockfile,
     manager: *PackageManager,
@@ -1330,29 +1361,9 @@ fn parsePackageJsonDependencies(
                 const value = prop.value.?;
 
                 const name_str = key.asString(allocator) orelse continue;
-                const name_hash = String.Builder.stringHash(name_str);
-                const name = try string_buf.appendExternalWithHash(name_str, name_hash);
-
                 const version_str = value.asString(allocator) orelse continue;
-                const version = try string_buf.append(version_str);
-                const version_sliced = version.sliced(string_buf.bytes.items);
 
-                const dep: Dependency = .{
-                    .name = name.value,
-                    .name_hash = name.hash,
-                    .behavior = group_behavior,
-                    .version = Dependency.parse(
-                        allocator,
-                        name.value,
-                        name.hash,
-                        version_sliced.slice,
-                        &version_sliced,
-                        log,
-                        manager,
-                    ) orelse continue,
-                };
-
-                try lockfile.buffers.dependencies.append(allocator, dep);
+                try appendDependency(lockfile, allocator, string_buf, name_str, version_str, group_behavior, log, manager);
             }
         }
     }
@@ -1383,28 +1394,7 @@ fn parseYarnDependencies(
         const name_str = kv.key_ptr.*;
         const version_str = kv.value_ptr.*;
 
-        const name_hash = String.Builder.stringHash(name_str);
-        const name = try string_buf.appendExternalWithHash(name_str, name_hash);
-
-        const version = try string_buf.append(version_str);
-        const version_sliced = version.sliced(string_buf.bytes.items);
-
-        const dep: Dependency = .{
-            .name = name.value,
-            .name_hash = name.hash,
-            .behavior = .{ .prod = true },
-            .version = Dependency.parse(
-                allocator,
-                name.value,
-                name.hash,
-                version_sliced.slice,
-                &version_sliced,
-                log,
-                null,
-            ) orelse continue,
-        };
-
-        try lockfile.buffers.dependencies.append(allocator, dep);
+        try appendDependency(lockfile, allocator, string_buf, name_str, version_str, .{ .prod = true }, log, null);
     }
 
     var opt_dep_iter = entry.optional_dependencies.iterator();
@@ -1412,28 +1402,7 @@ fn parseYarnDependencies(
         const name_str = kv.key_ptr.*;
         const version_str = kv.value_ptr.*;
 
-        const name_hash = String.Builder.stringHash(name_str);
-        const name = try string_buf.appendExternalWithHash(name_str, name_hash);
-
-        const version = try string_buf.append(version_str);
-        const version_sliced = version.sliced(string_buf.bytes.items);
-
-        const dep: Dependency = .{
-            .name = name.value,
-            .name_hash = name.hash,
-            .behavior = .{ .optional = true },
-            .version = Dependency.parse(
-                allocator,
-                name.value,
-                name.hash,
-                version_sliced.slice,
-                &version_sliced,
-                log,
-                null,
-            ) orelse continue,
-        };
-
-        try lockfile.buffers.dependencies.append(allocator, dep);
+        try appendDependency(lockfile, allocator, string_buf, name_str, version_str, .{ .optional = true }, log, null);
     }
 
     const end = lockfile.buffers.dependencies.items.len;

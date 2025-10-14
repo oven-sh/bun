@@ -3503,7 +3503,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
         globalObject->vm().queueMicrotask(WTFMove(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -5386,7 +5386,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, microTaskFunction, WTFMove(microtaskArgs[0]), WTFMove(microtaskArgs[1]), WTFMove(microtaskArgs[2]), WTFMove(microtaskArgs[3]) };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microTaskFunction, WTFMove(microtaskArgs[0]), WTFMove(microtaskArgs[1]), WTFMove(microtaskArgs[2]), WTFMove(microtaskArgs[3]) };
     globalObject->vm().queueMicrotask(WTFMove(task));
 }
 

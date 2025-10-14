@@ -1574,7 +1574,8 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     // This is a JSC builtin function
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::InvokeFunctionJob, globalObject, function, callback, asyncContext };
+    // BunPerformMicrotaskJob expects: performMicrotask, job, asyncContext, arg0, arg1
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTFMove(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());

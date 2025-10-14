@@ -10,6 +10,7 @@ export default [
     configurable: false,
     klass: {},
     values: ["resolve", "reject"],
+    valuesArray: true,
     proto: {
       run: {
         fn: "runFromJS",

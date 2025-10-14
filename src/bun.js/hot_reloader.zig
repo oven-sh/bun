@@ -381,8 +381,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 if (event.op.rename) {
                                     // Special case for entrypoint: defer reload until we get
                                     // a directory write event confirming the file exists.
-                                    // This handles vim's atomic save which deletes the old inode
-                                    // before the new file is renamed into place.
+                                    // This handles vim's save process which renames the old file
+                                    // before the new file is re-created with a different inode.
                                     if (this.main.hash == current_hash and !reload_immediately) {
                                         this.main.is_waiting_for_dir_change = true;
                                         continue;

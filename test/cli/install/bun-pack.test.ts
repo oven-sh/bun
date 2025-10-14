@@ -1546,4 +1546,71 @@ describe("publishConfig.directory", () => {
     // Should not create the tarball
     expect(await exists(join(packageDir, "pack-publishconfig-dryrun-1.0.0.tgz"))).toBeFalse();
   });
+
+  test("scripts run from workspace root", async () => {
+    await mkdir(join(packageDir, "dist"), { recursive: true });
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-scripts",
+          version: "1.0.0",
+          scripts: {
+            prepack: "touch .prepack-touched",
+          },
+          publishConfig: {
+            directory: "dist",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "dist", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-scripts",
+          version: "1.0.0",
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('dist');"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    // Script should run from workspace root, not from dist/
+    expect(await exists(join(packageDir, ".prepack-touched"))).toBeTrue();
+    expect(await exists(join(packageDir, "dist", ".prepack-touched"))).toBeFalse();
+  });
+
+  test("rejects parent directory traversal", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-publishconfig-parent",
+        version: "1.0.0",
+        publishConfig: {
+          directory: "../outside",
+        },
+      }),
+    );
+
+    const { err } = await packExpectError(packageDir, bunEnv);
+    // Should reject parent directory traversal
+    expect(err).toContain("publishConfig.directory cannot contain '..'");
+  });
+
+  test("rejects absolute paths", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-publishconfig-absolute",
+        version: "1.0.0",
+        publishConfig: {
+          directory: "/tmp/absolute",
+        },
+      }),
+    );
+
+    const { err } = await packExpectError(packageDir, bunEnv);
+    // Should reject absolute paths
+    expect(err).toContain("publishConfig.directory cannot be an absolute path");
+  });
 });

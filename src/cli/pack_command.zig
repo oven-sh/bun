@@ -1176,6 +1176,20 @@ pub const PackCommand = struct {
 
         // If publishConfig.directory is set, re-read package.json from that directory
         const actual_package_json_path: stringZ = if (publish_config_directory) |directory| path_with_dir: {
+            // Reject absolute paths before normalization
+            if (std.fs.path.isAbsolute(directory)) {
+                Output.errGeneric("publishConfig.directory cannot be an absolute path: {s}", .{directory});
+                Output.flush();
+                Global.crash();
+            }
+
+            // Reject parent directory traversal before normalization
+            if (strings.contains(directory, "..")) {
+                Output.errGeneric("publishConfig.directory cannot contain '..': {s}", .{directory});
+                Output.flush();
+                Global.crash();
+            }
+
             var path_buf: PathBuffer = undefined;
             const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(
                 bun.path.normalizeBuf(directory, &path_buf, .posix),
@@ -1197,6 +1211,11 @@ pub const PackCommand = struct {
                 .auto,
             );
         } else abs_package_json_path;
+
+        // Directory we actually pack from (directory containing actual package.json)
+        const pack_dir_path: string = strings.withoutTrailingSlash(
+            strings.withoutSuffixComptime(actual_package_json_path, "package.json"),
+        );
 
         // Re-read package.json from the actual directory
         const actual_json = if (publish_config_directory != null) switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, actual_package_json_path, .{
@@ -1368,7 +1387,6 @@ pub const PackCommand = struct {
         };
 
         // Open the directory where files will be packed from (and where package.json is)
-        const pack_dir_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(actual_package_json_path, "package.json"));
         var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;
             @memcpy(path_buf[0..pack_dir_path.len], pack_dir_path);

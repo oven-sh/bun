@@ -679,7 +679,6 @@ static void NodeHTTPServer__writeHead(
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
-
     }
 
     // Add Connection: keep-alive and Keep-Alive headers if not already set

@@ -8,6 +8,7 @@ void generateNativeModule_BunTest(
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* object = globalObject->lazyTestModuleObject();
 
@@ -18,10 +19,18 @@ void generateNativeModule_BunTest(
     // Also export all properties as named exports
     JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearException();
+        return;
+    }
 
     for (auto& property : properties) {
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
-        if (object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, property, slot)) {
+        auto ownPropertySlot = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, property, slot);
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+        }
+        if (ownPropertySlot) {
             exportNames.append(property);
             exportValues.append(slot.getValue(lexicalGlobalObject, property));
         }

@@ -1038,6 +1038,40 @@ my_config:
       });
     });
 
+    const indicatorQuotingTests = [
+      "-",
+      "?",
+      ":",
+      ",",
+      "[",
+      "]",
+      "{",
+      "}",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+      " ",
+      "\t",
+      "\n",
+      "\r",
+    ];
+
+    for (const indicatorOrWhitespace of indicatorQuotingTests) {
+      test(`round-trip string starting with '${indicatorOrWhitespace}'`, () => {
+        const array = [{ key: indicatorOrWhitespace }];
+        expect(YAML.parse(YAML.stringify(array))).toEqual(array);
+        expect(YAML.parse(YAML.stringify(array, null, 2))).toEqual(array);
+      });
+    }
+
     test("strings are properly referenced", () => {
       const config = {
         version: "1.0",

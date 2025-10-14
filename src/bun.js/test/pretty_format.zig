@@ -628,7 +628,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type(input, self.ctx) catch {
                         self.failed = true;
                     };
                 }
@@ -999,7 +999,7 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);

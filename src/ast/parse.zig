@@ -587,7 +587,7 @@ pub fn Parse(
                 var estr = try p.lexer.toEString();
                 if (estr.isUTF8()) {
                     return estr.slice8();
-                } else if (strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(p.lexer.allocator, []const u16, estr.slice16())) |alias_utf8| {
+                } else if (strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(p.lexer.allocator, estr.slice16())) |alias_utf8| {
                     return alias_utf8;
                 } else |err| {
                     const r = p.source.rangeOfString(loc);

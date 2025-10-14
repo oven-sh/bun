@@ -59,8 +59,9 @@ public:
     }
 
 private:
-    JSWrappingFunction(JSC::VM& vm, JSC::NativeExecutable* native, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    JSWrappingFunction(JSC::VM& vm, JSC::NativeExecutable* native, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSFunction* wrappedFn)
         : Base(vm, native, globalObject, structure)
+        , m_wrappedFn(wrappedFn, JSC::WriteBarrierEarlyInit)
     {
     }
 

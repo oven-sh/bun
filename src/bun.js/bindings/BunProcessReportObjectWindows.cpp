@@ -4,6 +4,7 @@
 
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
+#include "FormatStackTraceForJS.h"
 #include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
@@ -33,12 +34,6 @@ using namespace JSC;
 
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
-
-// Import these functions that are defined elsewhere in Bun
-extern WTF::String formatStackTrace(VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject,
-    const WTF::String& name, const WTF::String& message,
-    OrdinalNumber line, OrdinalNumber column,
-    const WTF::String& sourceURL, WTF::Vector<StackFrame>& stackFrames, JSC::JSObject* errorObject);
 
 // Helper function to convert time to ISO string
 static void toISOString(JSC::VM& vm, double time, char* buffer)

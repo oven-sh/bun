@@ -3059,7 +3059,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     if (non_ascii_idx > 0) {
                         try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
                     }
-                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
+                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, bytes[non_ascii_idx..]);
                 }
             }
             const end = self.strpool.items.len;
@@ -3705,6 +3705,7 @@ pub fn shellCmdFromJS(
     out_jsobjs: *std.ArrayList(JSValue),
     jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
+    marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
@@ -3723,7 +3724,7 @@ pub fn shellCmdFromJS(
             const template_value = try template_args.next() orelse {
                 return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
-            try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
+            try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..], marked_argument_buffer);
         }
     }
     return;
@@ -3736,13 +3737,14 @@ pub fn handleTemplateValue(
     out_script: *std.ArrayList(u8),
     jsstrings: *std.ArrayList(bun.String),
     jsobjref_buf: []u8,
+    marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
             _ = array_buffer;
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
@@ -3763,7 +3765,7 @@ pub fn handleTemplateValue(
             }
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
@@ -3774,7 +3776,7 @@ pub fn handleTemplateValue(
             _ = rstream;
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
@@ -3785,7 +3787,7 @@ pub fn handleTemplateValue(
             _ = req;
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
@@ -3804,7 +3806,7 @@ pub fn handleTemplateValue(
             const last = array.len -| 1;
             var i: u32 = 0;
             while (try array.next()) |arr| : (i += 1) {
-                try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
+                try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf, marked_argument_buffer);
                 if (i < last) {
                     const str = bun.String.static(" ");
                     if (!try builder.appendBunStr(str, false)) {
@@ -3929,7 +3931,7 @@ pub const ShellSrcBuilder = struct {
             try this.appendUTF8Impl(latin1[0..non_ascii_idx]);
         }
 
-        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, []const u8, latin1);
+        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, latin1);
     }
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {
@@ -3993,7 +3995,7 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
 pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
-    const non_ascii = bun.strings.firstNonASCII16([]const u16, str) orelse 0;
+    const non_ascii = bun.strings.firstNonASCII16(str) orelse 0;
     var cp_buf: [4]u8 = undefined;
 
     var i: usize = 0;
@@ -4003,7 +4005,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
                 defer i += 1;
                 break :brk str[i];
             }
-            const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
+            const ret = bun.strings.utf16Codepoint(str[i..]);
             if (ret.fail) return .{ .is_invalid = true };
             i += ret.len;
             break :brk ret.code_point;
@@ -4299,9 +4301,12 @@ pub const TestingAPIs = struct {
         return .false;
     }
 
-    pub fn shellLex(
+    pub const shellLex = jsc.MarkedArgumentBuffer.wrap(shellLexImpl);
+
+    fn shellLexImpl(
         globalThis: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
+        marked_argument_buffer: *jsc.MarkedArgumentBuffer,
     ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
         var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -4325,14 +4330,10 @@ pub const TestingAPIs = struct {
             jsstrings.deinit();
         }
         var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        defer {
-            for (jsobjs.items) |jsval| {
-                jsval.unprotect();
-            }
-        }
+        defer jsobjs.deinit();
 
         var script = std.ArrayList(u8).init(arena.allocator());
-        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script.items[0..])) {
@@ -4367,9 +4368,12 @@ pub const TestingAPIs = struct {
         return bun_str.toJS(globalThis);
     }
 
-    pub fn shellParse(
+    pub const shellParse = jsc.MarkedArgumentBuffer.wrap(shellParseImpl);
+
+    fn shellParseImpl(
         globalThis: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
+        marked_argument_buffer: *jsc.MarkedArgumentBuffer,
     ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
         var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -4393,13 +4397,9 @@ pub const TestingAPIs = struct {
             jsstrings.deinit();
         }
         var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        defer {
-            for (jsobjs.items) |jsval| {
-                jsval.unprotect();
-            }
-        }
+        defer jsobjs.deinit();
         var script = std.ArrayList(u8).init(arena.allocator());
-        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         var out_parser: ?Parser = null;
         var out_lex_result: ?LexResult = null;
@@ -4422,8 +4422,7 @@ pub const TestingAPIs = struct {
         const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{});
 
         defer globalThis.bunVM().allocator.free(str);
-        var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, str);
     }
 };
 

@@ -298,240 +298,13 @@ fn migrateYarnV1(
                 is_tarball_url_spec = true;
             }
 
-            const real_name = blk: {
-                if (strings.containsComptime(first_spec, "@npm:")) {
-                    if (strings.hasPrefixComptime(first_spec, "@")) {
-                        if (strings.indexOfChar(first_spec, '@')) |first_at| {
-                            const after_first_at = first_spec[first_at + 1 ..];
-                            if (strings.indexOfChar(after_first_at, '@')) |second_at_in_substr| {
-                                const second_at = first_at + 1 + second_at_in_substr;
-                                if (strings.hasPrefixComptime(first_spec[second_at..], "@npm:")) {
-                                    const real_spec = first_spec[second_at + 5 ..];
-                                    const real_pkg_name = extractPackageName(real_spec);
-                                    break :blk real_pkg_name;
-                                }
-                            }
-                        }
-                    } else {
-                        if (strings.indexOfChar(first_spec, '@')) |at_pos| {
-                            const after_at = first_spec[at_pos + 1 ..];
-                            if (strings.hasPrefixComptime(after_at, "npm:")) {
-                                const real_spec = first_spec[at_pos + 5 ..];
-                                const real_pkg_name = extractPackageName(real_spec);
-                                break :blk real_pkg_name;
-                            }
-                        }
-                    }
-                }
-                break :blk extractPackageName(first_spec);
+            const result = Resolution.fromYarnV1Spec(first_spec, entry.resolved, entry.version, &string_buf) catch {
+                skipped_other += 1;
+                continue;
             };
-
-            var real_name_hash = String.Builder.stringHash(real_name);
-            var real_name_string = try string_buf.appendWithHash(real_name, real_name_hash);
-
-            var res: Resolution = undefined;
-
-            if (is_github_spec) {
-                const at_github_idx = strings.indexOf(first_spec, "@github:") orelse {
-                    skipped_other += 1;
-                    continue;
-                };
-                const github_spec = first_spec[at_github_idx + 8 ..];
-                var repo = try Repository.parseAppendGithub(github_spec, &string_buf);
-
-                if (repo.committish.isEmpty() and entry.resolved.len > 0) {
-                    if (Resolution.fromPnpmLockfile(entry.resolved, &string_buf)) |resolved_res| {
-                        if (resolved_res.tag == .github) {
-                            repo.committish = resolved_res.value.github.committish;
-                        }
-                    } else |_| {}
-                }
-
-                if (repo.committish.len() > 0) {
-                    const committish = repo.committish.slice(string_buf.bytes.items);
-                    repo.committish = try shortenCommittish(committish, &string_buf);
-                }
-
-                res = .init(.{ .github = repo });
-                const alias_name = first_spec[0..at_github_idx];
-                real_name_hash = String.Builder.stringHash(alias_name);
-                real_name_string = try string_buf.appendWithHash(alias_name, real_name_hash);
-            } else if (is_git_spec) {
-                const at_git_idx = strings.indexOf(first_spec, "@git+") orelse {
-                    skipped_other += 1;
-                    continue;
-                };
-                const git_spec = first_spec[at_git_idx + 1 ..];
-
-                if (strings.containsComptime(git_spec, "github.com")) {
-                    const github_com_idx = strings.indexOf(git_spec, "github.com/") orelse {
-                        skipped_other += 1;
-                        continue;
-                    };
-                    var path = git_spec[github_com_idx + "github.com/".len ..];
-
-                    if (strings.hasPrefixComptime(path, "git+")) {
-                        path = path["git+".len..];
-                    }
-
-                    var hash_idx: usize = 0;
-                    var slash_idx: usize = 0;
-                    for (path, 0..) |c, i| {
-                        switch (c) {
-                            '/' => slash_idx = i,
-                            '#' => {
-                                hash_idx = i;
-                                break;
-                            },
-                            else => {},
-                        }
-                    }
-
-                    const owner = path[0..slash_idx];
-                    var repo_part = if (hash_idx == 0) path[slash_idx + 1 ..] else path[slash_idx + 1 .. hash_idx];
-
-                    if (strings.hasSuffixComptime(repo_part, ".git")) {
-                        repo_part = repo_part[0 .. repo_part.len - 4];
-                    }
-
-                    var repo_result: Repository = .{
-                        .owner = try string_buf.append(owner),
-                        .repo = try string_buf.append(repo_part),
-                    };
-
-                    if (hash_idx != 0) {
-                        const committish = path[hash_idx + 1 ..];
-                        repo_result.committish = try shortenCommittish(committish, &string_buf);
-                    } else if (entry.resolved.len > 0) {
-                        if (strings.indexOfChar(entry.resolved, '#')) |resolved_hash_idx| {
-                            const committish = entry.resolved[resolved_hash_idx + 1 ..];
-                            repo_result.committish = try shortenCommittish(committish, &string_buf);
-                        }
-                    }
-
-                    res = .init(.{ .github = repo_result });
-                    real_name_hash = String.Builder.stringHash(repo_part);
-                    real_name_string = repo_result.repo;
-                } else {
-                    var repo = try Repository.parseAppendGit(git_spec, &string_buf);
-                    res = .init(.{ .git = repo });
-                    var repo_name = repo.repo.slice(string_buf.bytes.items);
-                    if (strings.hasSuffixComptime(repo_name, ".git")) {
-                        repo_name = repo_name[0 .. repo_name.len - 4];
-                    }
-                    if (strings.lastIndexOfChar(repo_name, '/')) |slash| {
-                        repo_name = repo_name[slash + 1 ..];
-                    }
-                    real_name_hash = String.Builder.stringHash(repo_name);
-                    real_name_string = try string_buf.appendWithHash(repo_name, real_name_hash);
-                }
-            } else if (is_tarball_url_spec) {
-                const at_http_idx = strings.indexOf(first_spec, "@http") orelse {
-                    skipped_other += 1;
-                    continue;
-                };
-                const url_after_at = first_spec[at_http_idx + 1 ..];
-
-                if (strings.indexOf(url_after_at, "/-/")) |dash_slash_idx| {
-                    const before_dash_slash = url_after_at[0..dash_slash_idx];
-                    if (strings.lastIndexOfChar(before_dash_slash, '/')) |last_slash| {
-                        const real_pkg_name_from_url = before_dash_slash[last_slash + 1 ..];
-                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_url);
-                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_url, real_name_hash);
-                    } else {
-                        const real_pkg_name_from_spec = first_spec[0..at_http_idx];
-                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
-                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
-                    }
-                } else {
-                    const real_pkg_name_from_spec = first_spec[0..at_http_idx];
-                    real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
-                    real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
-                }
-                const version_str = try string_buf.append(entry.version);
-                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
-
-                if (!parsed.valid or parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
-                    skipped_other += 1;
-                    continue;
-                }
-
-                res = .init(.{ .npm = .{
-                    .version = parsed.version.min(),
-                    .url = try string_buf.append(url_after_at),
-                } });
-            } else if (entry.resolved.len == 0) {
-                if (strings.containsComptime(first_spec, "@file:")) {
-                    const at_file_idx = strings.indexOf(first_spec, "@file:") orelse {
-                        skipped_other += 1;
-                        continue;
-                    };
-                    const path = first_spec[at_file_idx + 6 ..];
-                    if (strings.hasSuffixComptime(path, ".tgz") or strings.hasSuffixComptime(path, ".tar.gz")) {
-                        res = .init(.{ .local_tarball = try string_buf.append(path) });
-                    } else {
-                        res = .init(.{ .folder = try string_buf.append(path) });
-                    }
-                } else {
-                    skipped_other += 1;
-                    continue;
-                }
-            } else if (isDefaultRegistry(entry.resolved) and
-                (strings.hasPrefixComptime(entry.resolved, "https://") or
-                    strings.hasPrefixComptime(entry.resolved, "http://")))
-            {
-                const version_str = try string_buf.append(entry.version);
-                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
-
-                if (!parsed.valid) {
-                    continue;
-                }
-
-                const scope = manager.scopeForPackageName(real_name);
-                const url = try ExtractTarball.buildURL(
-                    scope.url.href,
-                    strings.StringOrTinyString.init(real_name),
-                    parsed.version.min(),
-                    string_buf.bytes.items,
-                );
-
-                res = .init(.{ .npm = .{
-                    .version = parsed.version.min(),
-                    .url = try string_buf.append(url),
-                } });
-            } else {
-                res = Resolution.fromPnpmLockfile(entry.resolved, &string_buf) catch {
-                    skipped_other += 1;
-                    continue;
-                };
-
-                switch (res.tag) {
-                    .github => {
-                        var repo = res.value.github;
-                        if (repo.committish.len() > 0) {
-                            const committish = repo.committish.slice(string_buf.bytes.items);
-                            repo.committish = try shortenCommittish(committish, &string_buf);
-                            res = .init(.{ .github = repo });
-                        }
-                        const repo_name = repo.repo.slice(string_buf.bytes.items);
-                        real_name_hash = String.Builder.stringHash(repo_name);
-                        real_name_string = repo.repo;
-                    },
-                    .git => {
-                        const repo = res.value.git;
-                        var repo_name = repo.repo.slice(string_buf.bytes.items);
-                        if (strings.hasSuffixComptime(repo_name, ".git")) {
-                            repo_name = repo_name[0 .. repo_name.len - 4];
-                        }
-                        if (strings.lastIndexOfChar(repo_name, '/')) |slash| {
-                            repo_name = repo_name[slash + 1 ..];
-                        }
-                        real_name_hash = String.Builder.stringHash(repo_name);
-                        real_name_string = try string_buf.appendWithHash(repo_name, real_name_hash);
-                    },
-                    else => {},
-                }
-            }
+            const res = result[0];
+            const real_name_string = result[1];
+            const real_name_hash = result[2];
 
             added_count += 1;
             var pkg: Lockfile.Package = .{
@@ -587,80 +360,48 @@ fn migrateYarnV1(
     const pkg_deps = pkgs.items(.dependencies);
 
     {
-        for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
-            const dep_id: DependencyID = @intCast(_dep_id);
-            const dep = &lockfile.buffers.dependencies.items[dep_id];
-
-            if (dep.behavior.isWorkspace()) {
-                const workspace_path = dep.version.value.workspace.slice(string_buf);
-                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
-                defer path_buf.deinit();
-                path_buf.append(workspace_path);
-                if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
-                    lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
-                    continue;
-                }
-            }
-
-            const dep_name = dep.name.slice(string_buf);
-            const version_str = dep.version.literal.slice(string_buf);
-
-            res_buf.clearRetainingCapacity();
-            try res_buf.writer().print("{s}@{s}", .{ dep_name, version_str });
-
-            const pkg_id = pkg_map.get(res_buf.items) orelse {
-                continue;
-            };
-
-            lockfile.buffers.resolutions.items[dep_id] = pkg_id;
-        }
+        try resolveDependencyRange(
+            pkg_deps[0].begin(),
+            pkg_deps[0].end(),
+            lockfile.buffers.dependencies.items,
+            string_buf,
+            pkg_map,
+            lockfile.buffers.resolutions.items,
+            &res_buf,
+            true,
+        );
     }
 
     for (workspace_pkgs_off..workspace_pkgs_end) |_pkg_id| {
         const pkg_id: PackageID = @intCast(_pkg_id);
         const deps = pkg_deps[pkg_id];
 
-        for (deps.begin()..deps.end()) |_dep_id| {
-            const dep_id: DependencyID = @intCast(_dep_id);
-            const dep = &lockfile.buffers.dependencies.items[dep_id];
-
-            if (dep.behavior.isWorkspace()) {
-                continue;
-            }
-
-            const dep_name = dep.name.slice(string_buf);
-            const version_str = dep.version.literal.slice(string_buf);
-
-            res_buf.clearRetainingCapacity();
-            try res_buf.writer().print("{s}@{s}", .{ dep_name, version_str });
-
-            const res_pkg_id = pkg_map.get(res_buf.items) orelse {
-                continue;
-            };
-
-            lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
-        }
+        try resolveDependencyRange(
+            deps.begin(),
+            deps.end(),
+            lockfile.buffers.dependencies.items,
+            string_buf,
+            pkg_map,
+            lockfile.buffers.resolutions.items,
+            &res_buf,
+            false,
+        );
     }
 
     for (workspace_pkgs_end..lockfile.packages.len) |_pkg_id| {
         const pkg_id: PackageID = @intCast(_pkg_id);
         const deps = pkg_deps[pkg_id];
 
-        for (deps.begin()..deps.end()) |_dep_id| {
-            const dep_id: DependencyID = @intCast(_dep_id);
-            const dep = &lockfile.buffers.dependencies.items[dep_id];
-            const dep_name = dep.name.slice(string_buf);
-            const version_str = dep.version.literal.slice(string_buf);
-
-            res_buf.clearRetainingCapacity();
-            try res_buf.writer().print("{s}@{s}", .{ dep_name, version_str });
-
-            const res_pkg_id = pkg_map.get(res_buf.items) orelse {
-                continue;
-            };
-
-            lockfile.buffers.resolutions.items[dep_id] = res_pkg_id;
-        }
+        try resolveDependencyRange(
+            deps.begin(),
+            deps.end(),
+            lockfile.buffers.dependencies.items,
+            string_buf,
+            pkg_map,
+            lockfile.buffers.resolutions.items,
+            &res_buf,
+            false,
+        );
     }
 
     try lockfile.resolve(log);
@@ -676,6 +417,49 @@ fn migrateYarnV1(
             .format = .text,
         },
     };
+}
+
+fn resolveDependencyRange(
+    dep_range_begin: usize,
+    dep_range_end: usize,
+    deps_buf: []Dependency.Dependence,
+    string_buf: []const u8,
+    pkg_map: anytype,
+    resolutions_buf: []PackageID,
+    res_buf: *std.ArrayList(u8),
+    handle_workspace_deps: bool,
+) !void {
+    for (dep_range_begin..dep_range_end) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+        const dep = &deps_buf[dep_id];
+
+        if (handle_workspace_deps and dep.behavior.isWorkspace()) {
+            const workspace_path = dep.version.value.workspace.slice(string_buf);
+            var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+            defer path_buf.deinit();
+            path_buf.append(workspace_path);
+            if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
+                resolutions_buf[dep_id] = workspace_pkg_id;
+                continue;
+            }
+        }
+
+        if (!handle_workspace_deps and dep.behavior.isWorkspace()) {
+            continue;
+        }
+
+        const dep_name = dep.name.slice(string_buf);
+        const version_str = dep.version.literal.slice(string_buf);
+
+        res_buf.clearRetainingCapacity();
+        try res_buf.writer().print("{s}@{s}", .{ dep_name, version_str });
+
+        const res_pkg_id = pkg_map.get(res_buf.items) orelse {
+            continue;
+        };
+
+        resolutions_buf[dep_id] = res_pkg_id;
+    }
 }
 
 inline fn shortenCommittish(committish: []const u8, string_buf: *String.Buf) !String {

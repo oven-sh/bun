@@ -397,7 +397,7 @@ pub const SendHandle = struct {
 
 pub const WindowsWrite = struct {
     write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
-    write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
+    write_buffer: uv.uv_buf_t_const = .init(""),
     write_slice: []const u8,
     owner: ?*SendQueue,
     pub fn destroy(self: *WindowsWrite) void {
@@ -809,7 +809,7 @@ pub const SendQueue = struct {
                     .owner = this,
                     .write_slice = write_req_slice,
                     .write_req = std.mem.zeroes(uv.uv_write_t),
-                    .write_buffer = uv.uv_buf_t.init(write_req_slice),
+                    .write_buffer = .init(write_req_slice),
                 });
                 bun.assert(this.windows.windows_write == null);
                 this.windows.windows_write = write_req;

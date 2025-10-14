@@ -362,21 +362,21 @@ pub inline fn pread(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
 }
 
 pub inline fn read(fd: FileDescriptor, buf: []u8) Maybe(usize) {
-    var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
+    var bufs: [1]bun.PlatformIOVec = .{.init(buf)};
     return readv(fd, &bufs);
 }
 
-pub inline fn writev(fd: FileDescriptor, bufs: []bun.PlatformIOVec) Maybe(usize) {
+pub inline fn writev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst) Maybe(usize) {
     return pwritev(fd, bufs, -1);
 }
 
-pub inline fn pwrite(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
-    var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
+pub inline fn pwrite(fd: FileDescriptor, buf: []const u8, position: i64) Maybe(usize) {
+    var bufs: [1]bun.PlatformIOVecConst = .{.init(buf)};
     return pwritev(fd, &bufs, position);
 }
 
-pub inline fn write(fd: FileDescriptor, buf: []u8) Maybe(usize) {
-    var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
+pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
+    var bufs: [1]bun.PlatformIOVecConst = .{.init(buf)};
     return writev(fd, &bufs);
 }
 

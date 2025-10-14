@@ -728,9 +728,9 @@ pub const uv_buf_t = extern struct {
     len: ULONG,
     base: [*]u8,
 
-    pub fn init(input: []const u8) uv_buf_t {
+    pub fn init(input: []u8) uv_buf_t {
         bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
-        return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
+        return .{ .len = @truncate(input.len), .base = input.ptr };
     }
 
     pub fn slice(this: *const @This()) []u8 {
@@ -741,9 +741,9 @@ pub const uv_buf_t_const = extern struct {
     len: ULONG,
     base: [*]const u8,
 
-    pub fn init(input: []const u8) uv_buf_t {
+    pub fn init(input: []const u8) uv_buf_t_const {
         bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
-        return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
+        return .{ .len = @truncate(input.len), .base = input.ptr };
     }
 
     pub fn slice(this: *const @This()) []u8 {
@@ -1270,11 +1270,11 @@ pub const struct_uv_write_s = extern struct {
     send_handle: *uv_stream_t,
     handle: *uv_stream_t,
     coalesced: c_int,
-    write_buffer: uv_buf_t,
+    write_buffer: uv_buf_t_const,
     event_handle: HANDLE,
     wait_handle: HANDLE,
 
-    pub fn write(req: *@This(), stream: *uv_stream_t, input: *uv_buf_t, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
+    pub fn write(req: *@This(), stream: *uv_stream_t, input: *uv_buf_t_const, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
         if (comptime onWrite) |callback| {
             const Wrapper = struct {
                 pub fn uvWriteCb(handler: *uv_write_t, status: ReturnCode) callconv(.C) void {
@@ -1284,7 +1284,7 @@ pub const struct_uv_write_s = extern struct {
 
             req.data = context;
 
-            const rc = uv_write(req, stream, @ptrCast(input), 1, &Wrapper.uvWriteCb);
+            const rc = uv_write(req, stream, input[0..1], 1, &Wrapper.uvWriteCb);
             bun.sys.syslog("uv_write({d}) = {d}", .{ input.len, rc.int() });
 
             if (rc.toError(.write)) |err| {
@@ -2235,7 +2235,7 @@ pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connecti
 pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) ReturnCode;
 pub extern fn uv_read_start(*uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) ReturnCode;
 pub extern fn uv_read_stop(*uv_stream_t) ReturnCode;
-pub extern fn uv_write(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) ReturnCode;
+pub extern fn uv_write(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t_const, nbufs: c_uint, cb: uv_write_cb) ReturnCode;
 pub extern fn uv_write2(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t, cb: uv_write_cb) ReturnCode;
 pub extern fn uv_try_write(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) ReturnCode;
 pub extern fn uv_try_write2(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t) c_int;
@@ -2531,7 +2531,7 @@ pub extern fn uv_fs_close(loop: *uv_loop_t, req: *fs_t, file: uv_file, cb: uv_fs
 pub extern fn uv_fs_open(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, flags: c_int, mode: c_int, cb: uv_fs_cb) ReturnCode;
 pub extern fn uv_fs_read(loop: *uv_loop_t, req: *fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) ReturnCode;
 pub extern fn uv_fs_unlink(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
-pub extern fn uv_fs_write(loop: *uv_loop_t, req: *fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_write(loop: *uv_loop_t, req: *fs_t, file: uv_file, bufs: [*]const uv_buf_t_const, nbufs: c_uint, offset: i64, cb: uv_fs_cb) ReturnCode;
 pub extern fn uv_fs_copyfile(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, new_path: [*:0]const u8, flags: c_int, cb: uv_fs_cb) ReturnCode;
 pub extern fn uv_fs_mkdir(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, mode: c_int, cb: uv_fs_cb) ReturnCode;
 pub extern fn uv_fs_mkdtemp(loop: *uv_loop_t, req: *fs_t, tpl: [*:0]const u8, cb: uv_fs_cb) ReturnCode;

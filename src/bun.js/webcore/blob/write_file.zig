@@ -344,7 +344,7 @@ pub const WriteFileWindows = struct {
     onCompleteCallback: WriteFileOnWriteFileCallback,
     onCompleteCtx: *anyopaque,
     mkdirp_if_not_exists: bool = false,
-    uv_bufs: [1]uv.uv_buf_t,
+    uv_bufs: [1]uv.uv_buf_t_const,
 
     fd: uv.uv_file = -1,
     err: ?bun.sys.Error = null,

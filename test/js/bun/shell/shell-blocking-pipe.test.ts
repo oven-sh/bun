@@ -1,6 +1,6 @@
 import { $, generateHeapSnapshot } from "bun";
 
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { isWindows } from "harness";
 
 // We skip this test on Windows becasue:

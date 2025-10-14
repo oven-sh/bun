@@ -716,7 +716,7 @@ else
     mkdiratPosix;
 
 pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: [:0]const u16, _: i32) Maybe(void) {
-    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .create = true });
+    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create });
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
@@ -953,7 +953,7 @@ fn openDirAtWindowsNtPath(
         return openWindowsDevicePath(
             path,
             flags,
-            if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+            if (options.op != .only_open) w.FILE_OPEN_IF else w.FILE_OPEN,
             w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         );
 
@@ -987,7 +987,11 @@ fn openDirAtWindowsNtPath(
         null,
         0,
         FILE_SHARE,
-        if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+        switch (options.op) {
+            .only_open => w.FILE_OPEN,
+            .only_create => w.FILE_CREATE,
+            .open_or_create => w.FILE_OPEN_IF,
+        },
         w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         null,
         0,
@@ -1059,12 +1063,18 @@ fn openWindowsDevicePath(
     return .{ .result = .fromNative(rc) };
 }
 
-pub const WindowsOpenDirOptions = packed struct {
+pub const WindowsOpenDirOptions = struct {
     iterable: bool = false,
     no_follow: bool = false,
     can_rename_or_delete: bool = false,
-    create: bool = false,
+    op: Op = .only_open,
     read_only: bool = false,
+
+    const Op = enum {
+        only_open,
+        only_create,
+        open_or_create,
+    };
 };
 
 fn openDirAtWindowsT(

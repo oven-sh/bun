@@ -27,6 +27,7 @@
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include "FormatStackTraceForJS.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"

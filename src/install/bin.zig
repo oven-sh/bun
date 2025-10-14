@@ -631,7 +631,7 @@ pub const Bin = extern struct {
             // always unlink the old one. If it fails for any reason then exit
             // early.
             var tmpname_buf: [1024]u8 = undefined;
-            const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return);
+            const tmpname = bun.fs.FileSystem.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return;
 
             const dir_path = std.fs.path.dirname(abs_target) orelse return;
 

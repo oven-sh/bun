@@ -1448,7 +1448,7 @@ pub const PackCommand = struct {
         if (manager.options.dry_run) {
             // don't create the tarball, but run scripts if they exists
 
-            printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
+            printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, edited_package_json.len);
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
@@ -2446,15 +2446,18 @@ pub const PackCommand = struct {
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime is_dry_run) {
-            const package_json_stat = root_dir.statat("package.json").unwrap() catch |err| {
-                Output.err(err, "failed to stat package.json", .{});
-                Global.crash();
+            const package_json_size: usize = if (package_json_len != 0) package_json_len else blk: {
+                const stat = root_dir.statat("package.json").unwrap() catch |err| {
+                    Output.err(err, "failed to stat package.json", .{});
+                    Global.crash();
+                };
+                break :blk @intCast(stat.size);
             };
 
-            ctx.stats.unpacked_size += @intCast(package_json_stat.size);
+            ctx.stats.unpacked_size += package_json_size;
 
             Output.prettyln("\n" ++ packed_fmt, .{
-                bun.fmt.size(package_json_stat.size, .{ .space_between_number_and_unit = false }),
+                bun.fmt.size(package_json_size, .{ .space_between_number_and_unit = false }),
                 "package.json",
             });
 

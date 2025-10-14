@@ -1512,4 +1512,38 @@ describe("publishConfig.directory", () => {
     // other.js should not be included
     expect(tarball.entries.find(e => e.pathname === "package/other/other.js")).toBeUndefined();
   });
+
+  test("with --dry-run", async () => {
+    await mkdir(join(packageDir, "dist"), { recursive: true });
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-dryrun",
+          version: "1.0.0",
+          publishConfig: {
+            directory: "dist",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "dist", "package.json"),
+        JSON.stringify({
+          name: "pack-publishconfig-dryrun",
+          version: "1.0.0",
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('dist');"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--dry-run");
+
+    // Should show what would be packed
+    expect(out).toContain("packed");
+    expect(out).toContain("package.json");
+    expect(out).toContain("index.js");
+
+    // Should not create the tarball
+    expect(await exists(join(packageDir, "pack-publishconfig-dryrun-1.0.0.tgz"))).toBeFalse();
+  });
 });

@@ -2101,27 +2101,29 @@ pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
+        const debug_timer = bun.Output.DebugTimer.start();
         const rc = darwin_nocancel.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
         if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
-            syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
+            syslog("send({}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
             return err;
         }
 
-        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+        syslog("send({}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
+        const debug_timer = bun.Output.DebugTimer.start();
         while (true) {
             const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
             if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
+                syslog("send({}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
                 return err;
             }
 
-            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+            syslog("send({}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -2914,7 +2916,16 @@ pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: so
             if (comptime Environment.isMac) {
                 if (for_shell) {
                     // see the comment on `socketpairForShell` for why we don't
-                    // set SO_NOSIGPIPE here
+                    // set SO_NOSIGPIPE here.
+
+                    // macOS seems to default to around 8
+                    // KB for the buffer size this is comically small. for
+                    // processes normally, we do about 512 KB. for this we do
+                    // 128 KB since you might have a lot of them at once.
+                    const so_recvbuf: c_int = 1024 * 128;
+                    const so_sendbuf: c_int = 1024 * 128;
+                    _ = std.c.setsockopt(fds_i[1], std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
+                    _ = std.c.setsockopt(fds_i[0], std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
                 } else {
                     inline for (0..2) |i| {
                         switch (setNoSigpipe(.fromNative(fds_i[i]))) {

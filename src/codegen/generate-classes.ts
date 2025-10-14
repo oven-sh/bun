@@ -627,9 +627,6 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
     Object.keys(fields).length > 0 ? generateHashTable(name, classSymbolName, typeName, obj, fields, false) : "";
 
   const hashTableIdentifier = hashTable.length ? `${name}TableValues` : "";
-  if (obj.estimatedSize) {
-    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
-  }
 
   return (
     `
@@ -1370,6 +1367,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   if (zigOnly) return "";
 
   const name = className(typeName);
+
+  if (obj.estimatedSize) {
+    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
+  }
 
   const DECLARE_VISIT_CHILDREN =
     values.length ||

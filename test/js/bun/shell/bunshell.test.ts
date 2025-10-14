@@ -12,6 +12,9 @@ import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
+afterAll(() => console.error("After all RSS", process.memoryUsage.rss() / 1024 / 1024));
+beforeAll(() => console.error("Before all RSS", process.memoryUsage.rss() / 1024 / 1024));
+
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",

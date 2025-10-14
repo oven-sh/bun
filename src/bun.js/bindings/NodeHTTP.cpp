@@ -510,7 +510,7 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
 }
 
 template<bool isSSL>
-static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res, bool addConnectionHeaders = false)
 {
     auto& internalHeaders = headers.internalHeaders();
 
@@ -526,11 +526,17 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     }
 
     auto* data = res->getHttpResponseData();
+    bool hasConnectionHeader = false;
 
     for (const auto& header : internalHeaders.commonHeaders()) {
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
+
+        // Check if Connection header is already set
+        if (header.key == WebCore::HTTPHeaderName::Connection) {
+            hasConnectionHeader = true;
+        }
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
         // Otherwise, you get this when using Fastify;
@@ -568,7 +574,20 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         const auto& name = header.key;
         const auto& value = header.value;
 
+        // Check for Connection header in uncommon headers (case-insensitive)
+        if (name.length() == 10 && WTF::equalIgnoringASCIICase(name, "connection")) {
+            hasConnectionHeader = true;
+        }
+
         writeResponseHeader<isSSL>(res, name, value);
+    }
+
+    // Add Connection: keep-alive and Keep-Alive headers if not already set
+    // This matches Node.js behavior
+    if (addConnectionHeaders && !hasConnectionHeader) {
+        // For HTTP/1.1, default is keep-alive
+        res->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
+        res->writeHeader(std::string_view("Keep-Alive", 10), std::string_view("timeout=5", 9));
     }
 }
 
@@ -589,9 +608,11 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
+    bool hasConnectionHeader = false;
+
     if (headersObject) {
         if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response, true);
             return;
         }
 
@@ -611,6 +632,12 @@ static void NodeHTTPServer__writeHead(
                 }
 
                 String key = entry.key();
+
+                // Check for Connection header (case-insensitive)
+                if (key.length() == 10 && WTF::equalIgnoringASCIICase(key, "connection")) {
+                    hasConnectionHeader = true;
+                }
+
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
@@ -631,11 +658,26 @@ static void NodeHTTPServer__writeHead(
                 }
 
                 String key = propertyNames[i].string();
+
+                // Check for Connection header (case-insensitive)
+                if (key.length() == 10 && WTF::equalIgnoringASCIICase(key, "connection")) {
+                    hasConnectionHeader = true;
+                }
+
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
+
+    }
+
+    // Add Connection: keep-alive and Keep-Alive headers if not already set
+    // This matches Node.js behavior
+    if (!hasConnectionHeader) {
+        // For HTTP/1.1, default is keep-alive
+        response->writeHeader(std::string_view("Connection", 10), std::string_view("keep-alive", 10));
+        response->writeHeader(std::string_view("Keep-Alive", 10), std::string_view("timeout=5", 9));
     }
 
     RELEASE_AND_RETURN(scope, void());

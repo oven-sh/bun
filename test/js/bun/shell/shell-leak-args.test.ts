@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();

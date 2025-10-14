@@ -164,10 +164,17 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_transpiler.options.entry_points) orelse ".";
             };
 
-            var dir = bun.FD.fromStdDir(bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
-                Global.exit(1);
-            });
+            // Use bun.sys.openA which handles path conversion internally for both Windows and POSIX
+            const O_PATH = if (comptime bun.Environment.isLinux) bun.O.PATH else bun.O.RDONLY;
+            const flags = bun.O.CLOEXEC | bun.O.NOCTTY | bun.O.DIRECTORY | O_PATH;
+
+            var dir = switch (bun.sys.openA(path, flags, 0)) {
+                .result => |fd| fd,
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>{}<r> opening root directory {}", .{ err, bun.fmt.quote(path) });
+                    Global.exit(1);
+                },
+            };
             defer dir.close();
 
             break :brk1 dir.getFdPath(&src_root_dir_buf) catch |err| {

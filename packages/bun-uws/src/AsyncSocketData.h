@@ -83,6 +83,7 @@ struct AsyncSocketData {
 
     /* Or empty */
     AsyncSocketData() = default;
+    bool isIdle = false;
 };
 
 }

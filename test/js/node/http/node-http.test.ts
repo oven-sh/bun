@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -451,8 +451,14 @@ describe("node:http", () => {
       });
     });
 
-    it("should make a https:// GET request when passed string as first arg", done => {
-      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    it("should make a https:// GET request when passed string as first arg", _done => {
+      const server = exampleSite();
+      function done(err?: Error) {
+        server.stop();
+        _done(err);
+      }
+
+      const req = https.request(server.url, { ca: server.ca, headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -856,56 +862,26 @@ describe("node:http", () => {
   });
 
   describe("https.request with custom tls options", () => {
-    const createServer = () =>
-      new Promise(resolve => {
-        const server = createHttpsServer(
-          {
-            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
-            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-            rejectUnauthorized: true,
-          },
-          (req, res) => {
-            res.writeHead(200);
-            res.end("hello world");
-          },
-        );
+    it("supports custom tls args", async () => {
+      using httpsServer = exampleSite();
 
-        listen(server, "https").then(url => {
-          resolve({
-            server,
-            close: () => server.close(),
-            url,
-          });
-        });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const options: https.RequestOptions = {
+        method: "GET",
+        url: httpsServer.url.href as string,
+        port: httpsServer.url.port,
+        ca: httpsServer.ca,
+      };
+      const req = https.request(options, res => {
+        res.on("data", () => null);
+        res.on("end", resolve);
       });
 
-    it("supports custom tls args", async done => {
-      const { url, close } = await createServer();
-      try {
-        const options: https.RequestOptions = {
-          method: "GET",
-          url,
-          port: url.port,
-          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
-        };
-        const req = https.request(options, res => {
-          res.on("data", () => null);
-          res.on("end", () => {
-            close();
-            done();
-          });
-        });
+      req.on("error", reject);
 
-        req.on("error", error => {
-          close();
-          done(error);
-        });
+      req.end();
 
-        req.end();
-      } catch (e) {
-        close();
-        throw e;
-      }
+      await promise;
     });
   });
 
@@ -1700,5 +1676,28 @@ describe("HTTP Server Security Tests - Advanced", () => {
     clientErrors.length = 0;
     await doInvalidRequests(address);
     await Promise.all(clientErrors);
+  });
+
+  test("flushHeaders should send the headers immediately", async () => {
+    let headers_sent_at: number = 0;
+
+    let server_res: http.ServerResponse | undefined;
+    await using server = http.createServer(async (req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      headers_sent_at = Date.now();
+      server_res = res;
+      res.flushHeaders();
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}`);
+    expect(Date.now() - headers_sent_at).toBeLessThan(100);
+    expect(server_res).toBeDefined();
+    server_res!.write("Hello", () => {
+      server_res!.end(" World");
+    });
+    const text = await response.text();
+    expect(text).toBe("Hello World");
   });
 });

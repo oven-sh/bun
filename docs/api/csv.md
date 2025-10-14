@@ -76,7 +76,7 @@ console.log(data);
 #### Options
 
 To account for different ways of writing CSV files,
-we have added few options known from other popular CSV parsers,
+we have added a few options known from other popular CSV parsers,
 which can be passed as the second argument to `Bun.CSV.parse()`.
 
 The default options are:
@@ -115,7 +115,7 @@ All of them are optional.
 
 The parser returns an object with the following properties:
 
-- `data`: An array of objects representing the rows of the CSV file.
+- `data`: An array of objects (when `header: true`) or an array of arrays (when `header: false`) representing the rows of the CSV file.
 - `rows`: The number of rows in the CSV file.
 - `columns`: The number of columns in the CSV file.
 - `errors`: An array of objects representing any errors encountered during parsing. `undefined` if no errors occurred.
@@ -246,7 +246,9 @@ The default export of a CSV/TSV module is the parsed data itself,
 but the other results of `Bun.CSV.parse` are also available:
 
 ```ts
+// default export + other named exports
 import data, { rows, columns, errors } from "./data.csv";
+// named exports only
 import { data, rows, columns, errors } from "./data.csv";
 ```
 
@@ -276,11 +278,11 @@ The `line` is the line in the original CSV file.
 
 #### Typing imports
 
-Imports are typed same as the `Bun.CSV.parse` function a small caveat:
+Imports are typed the same as the `Bun.CSV.parse` function a small caveat:
 
 TypeScript can't use the `with { type: "" }` clause to infer the type,
-so if you are using `csv_no_header` or `tsv_no_header` imports,
-and you want correct types you can append `?header=false` to the import.
+so if you are using `csv_no_header` or `tsv_no_header` imports,  
+and you want correct types, you can append `?header=false` to the import.
 
 ```ts
 import data from "./data.csv";

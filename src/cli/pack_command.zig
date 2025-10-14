@@ -1183,30 +1183,34 @@ pub const PackCommand = struct {
                 Global.crash();
             }
 
-            // Reject parent directory traversal before normalization
+            // Reject parent directory traversal before normalization (check raw input)
+            // We check before normalization because normalizeBuf may resolve ".." away
             if (strings.contains(directory, "..")) {
                 Output.errGeneric("publishConfig.directory cannot contain '..': {s}", .{directory});
                 Output.flush();
                 Global.crash();
             }
 
-            var path_buf: PathBuffer = undefined;
-            const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(
-                bun.path.normalizeBuf(directory, &path_buf, .posix),
-                "./",
-            ));
+            // Normalize after validation
+            var norm_buf: PathBuffer = undefined;
+            const normalized0 = bun.path.normalizeBuf(directory, &norm_buf, .posix);
+            const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(normalized0, "./"));
 
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+
+            // Use a separate buffer for joins to avoid aliasing with normalized buffer
+            var join_buf1: PathBuffer = undefined;
             const abs_dir = bun.path.joinAbsStringBuf(
                 abs_workspace_path,
-                &path_buf,
+                &join_buf1,
                 &[_]string{normalized_dir},
                 .auto,
             );
 
+            var join_buf2: PathBuffer = undefined;
             break :path_with_dir bun.path.joinAbsStringBufZ(
                 abs_dir,
-                &path_buf,
+                &join_buf2,
                 &[_]string{"package.json"},
                 .auto,
             );
@@ -1262,6 +1266,7 @@ pub const PackCommand = struct {
         }
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, actual_json);
+        defer ctx.allocator.free(edited_package_json);
 
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 

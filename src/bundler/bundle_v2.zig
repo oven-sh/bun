@@ -106,6 +106,30 @@ fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.F
 }
 
 pub const BundleV2 = struct {
+    /// Represents a user-provided virtual module from the `modules` config option
+    pub const VirtualModule = struct {
+        /// The module's source code or binary content
+        /// This memory is owned by the VirtualModule and will be freed on deinit
+        contents: []const u8,
+
+        /// Whether this is a Blob-backed module (needs special cleanup)
+        /// If true, blob field contains the Blob instance for proper ref counting
+        is_blob: bool,
+
+        /// Blob stored by value (Blob.Store is reference counted internally)
+        blob: ?jsc.WebCore.Blob,
+
+        pub fn deinit(this: *VirtualModule) void {
+            if (this.is_blob) {
+                if (this.blob) |*blob| {
+                    blob.deinit();
+                }
+            } else {
+                // String or buffer - owned by default_allocator
+                bun.default_allocator.free(this.contents);
+            }
+        }
+    };
     transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
@@ -123,6 +147,11 @@ pub const BundleV2 = struct {
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
+
+    /// Map of import specifiers to virtual module contents
+    /// Populated from Bun.build({ modules: {...} })
+    /// Keys are owned by this map, values are VirtualModule structs
+    virtual_modules: bun.StringHashMapUnmanaged(VirtualModule) = .{},
 
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),

@@ -45,6 +45,13 @@ pub const JSBundler = struct {
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
 
+        /// Virtual modules provided via the `modules` option
+        /// Map of import specifier → content (string/blob/typedarray)
+        virtual_modules: bun.StringHashMapUnmanaged(BundleV2.VirtualModule) = .{},
+
+        /// Flag to prevent double-free when virtual_modules is moved to BundleV2
+        virtual_modules_moved: bool = false,
+
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
             exec_argv: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -719,6 +726,62 @@ pub const JSBundler = struct {
                 }
             }
 
+            // Parse virtual modules
+            if (try config.getOwnObject(globalThis, "modules")) |modules_obj| {
+                var modules_iter = try jsc.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, modules_obj);
+                defer modules_iter.deinit();
+
+                while (try modules_iter.next()) |specifier_prop| {
+                    const specifier = try specifier_prop.toOwnedSlice(bun.default_allocator);
+                    errdefer bun.default_allocator.free(specifier);
+
+                    const value_js = modules_iter.value;
+
+                    // Convert JS value to VirtualModule
+                    const virtual_module = brk: {
+                        // Try BlobOrStringOrBuffer
+                        if (try jsc.Node.BlobOrStringOrBuffer.fromJS(
+                            globalThis,
+                            bun.default_allocator,
+                            value_js,
+                        )) |blob_or_str| {
+                            switch (blob_or_str) {
+                                .blob => |blob| {
+                                    // Clone blob contents to owned memory
+                                    const contents = try bun.default_allocator.dupe(u8, blob.sharedView());
+                                    // Store the blob by value for proper ref counting
+                                    break :brk BundleV2.VirtualModule{
+                                        .contents = contents,
+                                        .is_blob = true,
+                                        .blob = blob,
+                                    };
+                                },
+                                .string_or_buffer => |str_buf| {
+                                    // Get slice and clone it
+                                    const contents = try bun.default_allocator.dupe(u8, str_buf.slice());
+                                    break :brk BundleV2.VirtualModule{
+                                        .contents = contents,
+                                        .is_blob = false,
+                                        .blob = null,
+                                    };
+                                },
+                            }
+                        } else {
+                            return globalThis.throwInvalidArguments(
+                                "modules[\"{s}\"] must be a string, Blob, or TypedArray",
+                                .{specifier},
+                            );
+                        }
+                    };
+
+                    // Insert into map
+                    try this.virtual_modules.put(bun.default_allocator, specifier, virtual_module);
+                }
+            }
+
             return this;
         }
 
@@ -795,6 +858,18 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+
+            // Clean up virtual modules if not moved
+            if (!self.virtual_modules_moved) {
+                var iter = self.virtual_modules.iterator();
+                while (iter.next()) |entry| {
+                    // Free the key (specifier)
+                    bun.default_allocator.free(entry.key_ptr.*);
+                    // Free the value (VirtualModule contents)
+                    entry.value_ptr.deinit();
+                }
+                self.virtual_modules.deinit(bun.default_allocator);
+            }
         }
     };
 

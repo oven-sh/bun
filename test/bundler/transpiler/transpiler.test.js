@@ -73,6 +73,10 @@ describe("Bun.Transpiler", () => {
       expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
     },
 
+    transpiledOutput: code => {
+      return ts.parsed(code, false, false);
+    },
+
     expectPrintedMin_: (code, out) => {
       expect(ts.parsedMin(code, !out.endsWith(";\n"), false)).toBe(out);
     },
@@ -320,6 +324,29 @@ describe("Bun.Transpiler", () => {
 
       err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
       err("enum [] { a }", 'Expected identifier but found "["');
+    });
+
+    it("doesn't crash with functions assigned to enum values", () => {
+      const exp = ts.expectPrinted_;
+
+      expect(
+        ts.transpiledOutput(
+          `
+enum ABC {
+  A = () => {},
+}
+function foo() {}
+`,
+          "hi",
+        ),
+      ).toMatchInlineSnapshot(`
+        "var ABC;
+        ((ABC) => {
+          ABC[ABC["A"] = () => {}] = "A";
+        })(ABC ||= {});
+        function foo() {}
+        "
+      `);
     });
 
     // TODO: fix all the cases that report generic "Parse error"
@@ -1342,6 +1369,19 @@ console.log(<div {...obj} key="after" />);`),
       `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
+  });
+
+  it("parses TSX arrow functions correctly", () => {
+    var transpiler = new Bun.Transpiler({
+      loader: "tsx",
+    });
+    expect(transpiler.transformSync("console.log(A = <T = unknown,>() => null)")).toBe(
+      "console.log(A = () => null);\n",
+    );
+    expect(transpiler.transformSync("const B = <T extends string>() => null")).toBe("const B = () => null;\n");
+    expect(transpiler.transformSync("const element = <T extends/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element2 = <T extends={true}/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element3 = <T extends></T>")).toContain("jsxDEV");
   });
 
   it.todo("JSX", () => {
@@ -3551,6 +3591,19 @@ it("does not crash with 9 comments and typescript type skipping", () => {
   expect(exitCode).toBe(0);
 });
 
+it("does not crash with --minify-syntax and revisiting dot expressions", () => {
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-p", "[(()=>{})()][''+'c']"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("undefined\n");
+  expect(exitCode).toBe(0);
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });
@@ -3565,4 +3618,133 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
+  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+
+  it("reproduces the original scope mismatch bug with JSX", () => {
+    // This is the exact pattern that caused the scope mismatch panic
+    const code = `
+const Layout = () => {
+  return (
+    <html>
+    </html>
+  )
+}
+
+['1', 'p'].forEach(i =>
+  app.get(\`/\${i === 'home' ? '' : i}\`, c => c.html(
+    <Layout selected={i}>
+      Hello {i}
+    </Layout>
+  ))
+)`;
+
+    // Without the fix, this would parse the array as indexing into the arrow function
+    // causing a scope mismatch panic when visiting the AST
+    const result = transpiler.transformSync(code);
+
+    // The correct parse should have the array literal as a separate statement
+    expect(result).toContain("forEach");
+    // The bug would incorrectly parse as: })["1", "p"]
+    expect(result).not.toContain(')["');
+    expect(result).not.toContain('}["');
+  });
+
+  it("correctly parses array literal on next line after block body arrow function", () => {
+    const code = `const Layout = () => {
+  return 1
+}
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    // The bug would cause the array to be parsed as indexing: Layout[...
+    expect(result).not.toContain(')["');
+  });
+
+  it("correctly parses JSX arrow function followed by array literal", () => {
+    const code = `const Layout = () => {
+  return (
+    <html>
+    </html>
+  )
+}
+
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("Layout[");
+  });
+
+  it("rejects indexing directly into block body arrow function without parens", () => {
+    const code = `const Layout = () => {return 1}['x']`;
+
+    // Should throw a parse error - either "Parse error" or the more specific message
+    expect(() => transpiler.transformSync(code)).toThrow();
+  });
+
+  it("allows indexing into parenthesized arrow function", () => {
+    const code = `const x = (() => {return {a: 1}})['a']`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain('["a"]');
+  });
+
+  it("correctly handles expression body arrow functions", () => {
+    const code = `const Layout = () => 1
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+  });
+
+  it("correctly handles arrow function with comma operator", () => {
+    const code = `const a = () => {return 1}, b = 2`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("b = 2");
+  });
+
+  it("correctly handles multiple arrow functions in const declaration", () => {
+    const code = `const a = () => {return 1}, b = () => {return 2}
+['1', '2'].forEach(x => console.log(x))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("b[");
+  });
+
+  it("preserves intentional array access with explicit semicolon", () => {
+    const code = `const Layout = () => {return 1};
+['1', 'p'].forEach(i => console.log(i))`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+    expect(result).not.toContain("Layout[");
+  });
+
+  it("handles nested arrow functions correctly", () => {
+    const code = `const outer = () => {
+  const inner = () => {
+    return 1
+  }
+  return inner
+}
+['test'].forEach(x => x)`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("forEach");
+  });
+
+  it("handles arrow function followed by object literal", () => {
+    const code = `const fn = () => {return 1}
+({a: 1, b: 2}).a`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("a: 1");
+    expect(result).not.toContain("fn(");
+  });
 });

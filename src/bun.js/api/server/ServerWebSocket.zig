@@ -81,18 +81,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.#flags.opened = false;
 
     if (onOpenHandler.isEmptyOrUndefinedOrNull()) {
-        if (bun.take(&this.#handler.onBeforeOpen)) |on_before_open| {
-            // Only create the "this" value if needed.
-            on_before_open.callback(on_before_open.ctx, this.#this_value.tryGet() orelse .js_undefined, ws.raw());
-        }
         return;
     }
 
     const this_value = this.#this_value.tryGet() orelse .js_undefined;
     var args = [_]JSValue{this_value};
-    if (bun.take(&this.#handler.onBeforeOpen)) |on_before_open| {
-        on_before_open.callback(on_before_open.ctx, this_value, ws.raw());
-    }
 
     const loop = vm.eventLoop();
     loop.enter();
@@ -438,10 +431,7 @@ pub fn publish(
     }
 
     {
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
         const slice = view.toSlice(bun.default_allocator);
         defer slice.deinit();
@@ -505,10 +495,7 @@ pub fn publishText(
         return globalThis.throw("publishText requires a non-empty message", .{});
     }
 
-    var js_string = message_value.toString(globalThis);
-    if (globalThis.hasException()) {
-        return .zero;
-    }
+    var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
     const slice = view.toSlice(bun.default_allocator);
     defer slice.deinit();
@@ -756,10 +743,7 @@ pub fn send(
     }
 
     {
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
         const slice = view.toSlice(bun.default_allocator);
         defer slice.deinit();
@@ -814,10 +798,7 @@ pub fn sendText(
         return globalThis.throw("sendText expects a string", .{});
     }
 
-    var js_string = message_value.toString(globalThis);
-    if (globalThis.hasException()) {
-        return .zero;
-    }
+    var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
     const slice = view.toSlice(bun.default_allocator);
     defer slice.deinit();
@@ -997,7 +978,7 @@ inline fn sendPing(
                     },
                 }
             } else if (value.isString()) {
-                var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
+                var string_value = (try value.toJSString(globalThis)).toSlice(globalThis, bun.default_allocator);
                 defer string_value.deinit();
                 const buffer = string_value.slice();
 

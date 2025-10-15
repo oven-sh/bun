@@ -2,6 +2,30 @@ const debug = Output.scoped(.TCC, .visible);
 
 extern fn pthread_jit_write_protect_np(enable: c_int) void;
 
+/// Get the last dynamic library loading error message in a cross-platform way.
+/// On POSIX systems, this calls dlerror().
+/// On Windows, this uses GetLastError() and formats the error message.
+/// Returns an allocated string that must be freed by the caller.
+fn getDlError(allocator: std.mem.Allocator) ![]const u8 {
+    if (Environment.isWindows) {
+        // On Windows, we need to use GetLastError() and FormatMessageW()
+        const err = bun.windows.GetLastError();
+        const err_int = @intFromEnum(err);
+
+        // For now, just return the error code as we'd need to implement FormatMessageW in Zig
+        // This is still better than a generic message
+        return try std.fmt.allocPrint(allocator, "error code {d}", .{err_int});
+    } else {
+        // On POSIX systems, use dlerror() to get the actual system error
+        const msg = if (std.c.dlerror()) |err_ptr|
+            std.mem.span(err_ptr)
+        else
+            "unknown error";
+        // Return a copy since dlerror() string is not stable
+        return try allocator.dupe(u8, msg);
+    }
+}
+
 /// Run a function that needs to write to JIT-protected memory.
 ///
 /// This is dangerous as it allows overwriting executable regions of memory.
@@ -715,6 +739,7 @@ pub const FFI = struct {
                 },
                 error.JSError => |e| return e,
                 error.OutOfMemory => |e| return e,
+                error.JSTerminated => |e| return e,
             }
         };
         defer {
@@ -1016,10 +1041,20 @@ pub const FFI = struct {
                 const backup_name = Fs.FileSystem.instance.abs(&[1]string{name});
                 // if that fails, try resolving the filepath relative to the current working directory
                 break :brk std.DynLib.open(backup_name) catch {
-                    // Then, if that fails, report an error.
+                    // Then, if that fails, report an error with the library name and system error
+                    const dlerror_buf = getDlError(bun.default_allocator) catch null;
+                    defer if (dlerror_buf) |buf| bun.default_allocator.free(buf);
+                    const dlerror_msg = dlerror_buf orelse "unknown error";
+
+                    const msg = bun.handleOom(std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "Failed to open library \"{s}\": {s}",
+                        .{ name, dlerror_msg },
+                    ));
+                    defer bun.default_allocator.free(msg);
                     const system_error = jsc.SystemError{
                         .code = bun.String.cloneUTF8(@tagName(.ERR_DLOPEN_FAILED)),
-                        .message = bun.String.cloneUTF8("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .message = bun.String.cloneUTF8(msg),
                         .syscall = bun.String.cloneUTF8("dlopen"),
                     };
                     return system_error.toErrorInstance(global);
@@ -1150,7 +1185,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = global.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)});
+                const ret = global.toInvalidArguments("Symbol \"{s}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
                     allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);

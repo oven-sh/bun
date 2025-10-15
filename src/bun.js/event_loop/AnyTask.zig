@@ -4,17 +4,17 @@
 const AnyTask = @This();
 
 ctx: ?*anyopaque,
-callback: *const (fn (*anyopaque) void),
+callback: *const (fn (*anyopaque) bun.JSError!void),
 
 pub fn task(this: *AnyTask) Task {
     return Task.init(this);
 }
 
-pub fn run(this: *AnyTask) void {
+pub fn run(this: *AnyTask) bun.JSError!void {
     @setRuntimeSafety(false);
     const callback = this.callback;
     const ctx = this.ctx;
-    callback(ctx.?);
+    try callback(ctx.?);
 }
 
 pub fn New(comptime Type: type, comptime Callback: anytype) type {
@@ -26,8 +26,8 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
             };
         }
 
-        pub fn wrap(this: ?*anyopaque) void {
-            @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+        pub fn wrap(this: ?*anyopaque) bun.JSError!void {
+            return @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
         }
     };
 }

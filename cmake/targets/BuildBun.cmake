@@ -2,6 +2,8 @@ include(PathUtils)
 
 if(DEBUG)
   set(bun bun-debug)
+elseif(ENABLE_ASAN AND ENABLE_VALGRIND)
+  set(bun bun-asan-valgrind)
 elseif(ENABLE_ASAN)
   set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
@@ -41,6 +43,14 @@ if((NOT DEFINED CONFIGURE_DEPENDS AND NOT CI) OR CONFIGURE_DEPENDS)
 else()
   set(CONFIGURE_DEPENDS "")
 endif()
+
+set(LLVM_ZIG_CODEGEN_THREADS 0)
+# This makes the build slower, so we turn it off for now.
+# if (DEBUG)
+#   include(ProcessorCount)
+#   ProcessorCount(CPU_COUNT)
+#   set(LLVM_ZIG_CODEGEN_THREADS ${CPU_COUNT})
+# endif()
 
 # --- Dependencies ---
 
@@ -385,6 +395,54 @@ register_command(
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
+set(BUN_BINDGENV2_SCRIPT ${CWD}/src/codegen/bindgenv2/script.ts)
+
+absolute_sources(BUN_BINDGENV2_SOURCES ${CWD}/cmake/sources/BindgenV2Sources.txt)
+# These sources include the script itself.
+absolute_sources(BUN_BINDGENV2_INTERNAL_SOURCES
+  ${CWD}/cmake/sources/BindgenV2InternalSources.txt)
+string(REPLACE ";" "," BUN_BINDGENV2_SOURCES_COMMA_SEPARATED
+  "${BUN_BINDGENV2_SOURCES}")
+
+execute_process(
+  COMMAND ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+    --command=list-outputs
+    --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+    --codegen-path=${CODEGEN_PATH}
+  RESULT_VARIABLE bindgen_result
+  OUTPUT_VARIABLE bindgen_outputs
+)
+if(${bindgen_result})
+  message(FATAL_ERROR "bindgenv2/script.ts exited with non-zero status")
+endif()
+foreach(output IN LISTS bindgen_outputs)
+  if(output MATCHES "\.cpp$")
+    list(APPEND BUN_BINDGENV2_CPP_OUTPUTS ${output})
+  elseif(output MATCHES "\.zig$")
+    list(APPEND BUN_BINDGENV2_ZIG_OUTPUTS ${output})
+  else()
+    message(FATAL_ERROR "unexpected bindgen output: [${output}]")
+  endif()
+endforeach()
+
+register_command(
+  TARGET
+    bun-bindgen-v2
+  COMMENT
+    "Generating bindings (v2)"
+  COMMAND
+    ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+      --command=generate
+      --codegen-path=${CODEGEN_PATH}
+      --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+  SOURCES
+    ${BUN_BINDGENV2_SOURCES}
+    ${BUN_BINDGENV2_INTERNAL_SOURCES}
+  OUTPUTS
+    ${BUN_BINDGENV2_CPP_OUTPUTS}
+    ${BUN_BINDGENV2_ZIG_OUTPUTS}
+)
+
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
 absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/sources/BindgenSources.txt)
@@ -563,6 +621,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_ZIG_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -576,7 +635,13 @@ if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
   set(ZIG_STEPS test)
 else()
-  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  if (LLVM_ZIG_CODEGEN_THREADS GREATER 1)
+    foreach(i RANGE ${LLVM_ZIG_CODEGEN_THREADS})
+      list(APPEND BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.${i}.o)
+    endforeach()
+  else()
+    set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  endif()
   set(ZIG_STEPS obj)
 endif()
 
@@ -620,6 +685,8 @@ register_command(
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_mimalloc=$<IF:$<BOOL:${ENABLE_ASAN}>,false,true>
+      -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -695,6 +762,7 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
   ${BUN_BINDGEN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_CPP_OUTPUTS}
 )
 
 if(WIN32)
@@ -751,7 +819,7 @@ set_target_properties(${bun} PROPERTIES
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 17
+  C_STANDARD 23
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
@@ -832,6 +900,10 @@ if(WIN32)
   )
 endif()
 
+if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
+  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+endif()
+
 target_compile_definitions(${bun} PRIVATE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
@@ -887,12 +959,8 @@ if(NOT WIN32)
     endif()
 
     if(ENABLE_ASAN)
-      target_compile_options(${bun} PUBLIC
-        -fsanitize=address
-      )
-      target_link_libraries(${bun} PUBLIC
-        -fsanitize=address
-      )
+      target_compile_options(${bun} PUBLIC -fsanitize=address)
+      target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()
 
     target_compile_options(${bun} PUBLIC
@@ -931,12 +999,8 @@ if(NOT WIN32)
     )
 
     if(ENABLE_ASAN)
-      target_compile_options(${bun} PUBLIC
-        -fsanitize=address
-      )
-      target_link_libraries(${bun} PUBLIC
-        -fsanitize=address
-      )
+      target_compile_options(${bun} PUBLIC -fsanitize=address)
+      target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()
   endif()
 else()
@@ -970,6 +1034,7 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
+      /delayload:CRYPT32.dll
     )
   endif()
 endif()
@@ -980,7 +1045,6 @@ if(APPLE)
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    -Wl,-map,${bun}.linker-map
   )
 
   if(DEBUG)
@@ -1000,6 +1064,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC
       -dead_strip
       -dead_strip_dylibs
+      -Wl,-map,${bun}.linker-map
     )
   endif()
 endif()
@@ -1011,6 +1076,7 @@ if(LINUX)
     -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
+    -Wl,--wrap=gettid
     -Wl,--wrap=log
     -Wl,--wrap=log2
     -Wl,--wrap=log2f
@@ -1032,6 +1098,17 @@ if(LINUX)
     )
   endif()
 
+  if (ENABLE_LTO)
+    # We are optimizing for size at a slight debug-ability cost
+    target_link_options(${bun} PUBLIC
+      -Wl,--no-eh-frame-hdr
+    )
+  else()
+    target_link_options(${bun} PUBLIC
+      -Wl,--eh-frame-hdr
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     --ld-path=${LLD_PROGRAM}
     -fno-pic
@@ -1046,11 +1123,9 @@ if(LINUX)
     # make debug info faster to load
     -Wl,--gdb-index
     -Wl,-z,combreloc
-    -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
     -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
-    -Wl,-Map=${bun}.linker-map
   )
 
   # don't strip in debug, this seems to be needed so that the Zig std library
@@ -1062,9 +1137,10 @@ if(LINUX)
     )
   endif()
 
-  if (NOT DEBUG AND NOT ENABLE_ASAN)
+  if (NOT DEBUG AND NOT ENABLE_ASAN AND NOT ENABLE_VALGRIND)
     target_link_options(${bun} PUBLIC
       -Wl,-icf=safe
+      -Wl,-Map=${bun}.linker-map
     )
   endif()
 
@@ -1189,6 +1265,7 @@ if(WIN32)
     ntdll
     userenv
     dbghelp
+    crypt32
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     delayimp.lib
   )
@@ -1231,32 +1308,32 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
-    
+
     # Then sign both executables on Windows
     if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
       set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
-      
+
       # Verify signing script exists
       if(NOT EXISTS "${SIGN_SCRIPT}")
         message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
       endif()
-      
+
       # Use PowerShell for Windows code signing (native Windows, no path issues)
-      find_program(POWERSHELL_EXECUTABLE 
+      find_program(POWERSHELL_EXECUTABLE
         NAMES pwsh.exe powershell.exe
-        PATHS 
+        PATHS
           "C:/Program Files/PowerShell/7"
           "C:/Program Files (x86)/PowerShell/7"
           "C:/Windows/System32/WindowsPowerShell/v1.0"
         DOC "Path to PowerShell executable"
       )
-      
+
       if(NOT POWERSHELL_EXECUTABLE)
         set(POWERSHELL_EXECUTABLE "powershell.exe")
       endif()
-      
+
       message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
-      
+
       # Sign both bun-profile.exe and bun.exe after stripping
       register_command(
         TARGET
@@ -1364,12 +1441,20 @@ if(NOT BUN_CPP_ONLY)
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
-    if(ENABLE_ASAN)
+
+    if (ENABLE_ASAN AND ENABLE_VALGRIND)
+      set(bunTriplet ${bunTriplet}-asan-valgrind)
+      set(bunPath ${bunTriplet})
+    elseif (ENABLE_VALGRIND)
+      set(bunTriplet ${bunTriplet}-valgrind)
+      set(bunPath ${bunTriplet})
+    elseif(ENABLE_ASAN)
       set(bunTriplet ${bunTriplet}-asan)
       set(bunPath ${bunTriplet})
     else()
       string(REPLACE bun ${bunTriplet} bunPath ${bun})
     endif()
+
     set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
@@ -1377,7 +1462,7 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
 
-    if(APPLE OR LINUX)
+    if((APPLE OR LINUX) AND NOT ENABLE_ASAN)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
 

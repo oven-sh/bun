@@ -61,7 +61,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node);
+        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node, .{});
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -640,6 +640,14 @@ pub const Loader = enum(u8) {
         _,
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
         }
     };
 

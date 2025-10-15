@@ -6,7 +6,7 @@ pub var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 
 //TODO: this needs to be freed when Worker Threads are implemented
-pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.AnySocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
@@ -107,7 +107,10 @@ pub fn registerAbortTracker(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     if (client.signals.aborted != null) {
-        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+        switch (is_ssl) {
+            true => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTLS = socket }) catch unreachable,
+            false => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTCP = socket }) catch unreachable,
+        }
     }
 }
 
@@ -138,6 +141,9 @@ pub fn onOpen(
         client.closeAndAbort(comptime is_ssl, socket);
         return error.ClientAborted;
     }
+
+    if (client.state.request_stage == .pending)
+        client.state.request_stage = .opened;
 
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
@@ -181,8 +187,11 @@ pub fn firstCall(
         }
     }
 
-    if (client.state.request_stage == .pending) {
-        client.onWritable(true, comptime is_ssl, socket);
+    switch (client.state.request_stage) {
+        .opened, .pending => {
+            client.onWritable(true, comptime is_ssl, socket);
+        },
+        else => {},
     }
 }
 pub fn onClose(
@@ -724,10 +733,7 @@ pub fn doRedirect(
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
-        if (!socket.isClosed()) {
-            log("close socket in redirect", .{});
-            NewHTTPContext(is_ssl).closeSocket(socket);
-        }
+        NewHTTPContext(is_ssl).closeSocket(socket);
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
         if (this.isKeepAlivePossible()) {
@@ -762,6 +768,8 @@ pub fn doRedirect(
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }
+
+/// **Not thread safe while request is in-flight**
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
         if (proxy.isHTTPS()) {
@@ -774,6 +782,7 @@ pub fn isHTTPS(this: *HTTPClient) bool {
     }
     return false;
 }
+
 pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableString) void {
     body_out_str.reset();
 
@@ -788,6 +797,8 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    this.unregisterAbortTracker();
+
     // mark that we are connecting
     this.flags.defer_fail_until_connecting_is_complete = true;
     // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
@@ -818,6 +829,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         return;
+    }
+
+    // If we haven't already called onOpen(), then that means we need to
+    // register the abort tracker. We need to do this in cases where the
+    // connection takes a long time to happen such as when it's not routable.
+    // See test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts.
+    //
+    // We have to be careful here because if .connect() had finished
+    // synchronously, then this socket is on longer valid and the pointer points
+    // to invalid memory.
+    if (this.state.request_stage == .pending) {
+        this.registerAbortTracker(is_ssl, socket);
     }
 }
 
@@ -1003,8 +1026,8 @@ fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext
 
 /// Write buffered data to the socket returning true if there is backpressure
 fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !bool {
-    if (buffer.isNotEmpty()) {
-        const to_send = buffer.slice();
+    const to_send = buffer.slice();
+    if (to_send.len > 0) {
         const amount = try writeToSocket(is_ssl, socket, to_send);
         this.state.request_sent_len += amount;
         buffer.cursor += amount;
@@ -1020,6 +1043,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
             buffer.reset();
         }
     }
+
     // ok we flushed all pending data so we can reset the backpressure
     if (data.len > 0) {
         // no backpressure everything was sended so we can just try to send
@@ -1109,7 +1133,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     }
 
     switch (this.state.request_stage) {
-        .pending, .headers => {
+        .pending, .headers, .opened => {
             log("sendInitialRequestPayload", .{});
             this.setTimeout(socket, 5);
             const result = sendInitialRequestPayload(this, is_first_call, is_ssl, socket) catch |err| {
@@ -1164,13 +1188,15 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             switch (this.state.original_request_body) {
                 .bytes => {
                     const to_send = this.state.request_body;
-                    const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
+                    if (to_send.len > 0) {
+                        const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
+                            this.closeAndFail(err, is_ssl, socket);
+                            return;
+                        };
 
-                    this.state.request_sent_len += sent;
-                    this.state.request_body = this.state.request_body[sent..];
+                        this.state.request_sent_len += sent;
+                        this.state.request_body = this.state.request_body[sent..];
+                    }
 
                     if (this.state.request_body.len == 0) {
                         this.state.request_stage = .done;
@@ -1312,9 +1338,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("closeAndFail: {s}", .{@errorName(err)});
-    if (!socket.isClosed()) {
-        NewHTTPContext(is_ssl).terminateSocket(socket);
-    }
+    NewHTTPContext(is_ssl).terminateSocket(socket);
     this.fail(err);
 }
 
@@ -1660,6 +1684,89 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
     socket.setTimeoutMinutes(minutes);
 }
 
+pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+
+    // Find out if we should not send any update.
+    switch (this.state.stage) {
+        .done, .fail => return,
+        else => {},
+    }
+
+    if (this.state.fail != null) {
+        // If there's any error at all, do not drain.
+        return;
+    }
+
+    // If there's a pending redirect, then don't bother to send a response body
+    // as that wouldn't make sense and I want to defensively avoid edgecases
+    // from that.
+    if (this.state.flags.is_redirect_pending) {
+        return;
+    }
+
+    const body_out_str = this.state.body_out_str orelse return;
+    if (body_out_str.list.items.len == 0) {
+        // No update! Don't do anything.
+        return;
+    }
+
+    this.sendProgressUpdateWithoutStageCheck(is_ssl, http_thread.context(is_ssl), socket);
+}
+
+fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    const out_str = this.state.body_out_str.?;
+    const body = out_str.*;
+    const result = this.toResult();
+    const is_done = !result.has_more;
+
+    log("progressUpdate {}", .{is_done});
+
+    const callback = this.result_callback;
+
+    if (is_done) {
+        this.unregisterAbortTracker();
+        if (this.proxy_tunnel) |tunnel| {
+            log("close the tunnel", .{});
+            this.proxy_tunnel = null;
+            tunnel.shutdown();
+            tunnel.detachAndDeref();
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        } else {
+            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+                log("release socket", .{});
+                ctx.releaseSocket(
+                    socket,
+                    this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                    this.connected_url.hostname,
+                    this.connected_url.getPortAuto(),
+                );
+            } else {
+                NewHTTPContext(is_ssl).closeSocket(socket);
+            }
+        }
+
+        this.state.reset(this.allocator);
+        this.state.response_stage = .done;
+        this.state.request_stage = .done;
+        this.state.stage = .done;
+        this.flags.proxy_tunneling = false;
+        log("done", .{});
+    }
+
+    result.body.?.* = body;
+    callback.run(@fieldParentPtr("client", this), result);
+
+    if (comptime print_every > 0) {
+        print_every_i += 1;
+        if (print_every_i % print_every == 0) {
+            Output.prettyln("Heap stats for HTTP thread\n", .{});
+            Output.flush();
+            default_arena.dumpThreadStats();
+            print_every_i = 0;
+        }
+    }
+}
+
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
         if (this.state.flags.is_redirect_pending and this.state.fail == null) {
@@ -1668,61 +1775,8 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             }
             return;
         }
-        const out_str = this.state.body_out_str.?;
-        const body = out_str.*;
-        const result = this.toResult();
-        const is_done = !result.has_more;
 
-        log("progressUpdate {}", .{is_done});
-
-        const callback = this.result_callback;
-
-        if (is_done) {
-            this.unregisterAbortTracker();
-            if (this.proxy_tunnel) |tunnel| {
-                log("close the tunnel", .{});
-                this.proxy_tunnel = null;
-                tunnel.shutdown();
-                tunnel.detachAndDeref();
-                if (!socket.isClosed()) {
-                    log("close socket", .{});
-                    NewHTTPContext(is_ssl).closeSocket(socket);
-                }
-            } else {
-                if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-                    log("release socket", .{});
-                    ctx.releaseSocket(
-                        socket,
-                        this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                        this.connected_url.hostname,
-                        this.connected_url.getPortAuto(),
-                    );
-                } else if (!socket.isClosed()) {
-                    log("close socket", .{});
-                    NewHTTPContext(is_ssl).closeSocket(socket);
-                }
-            }
-
-            this.state.reset(this.allocator);
-            this.state.response_stage = .done;
-            this.state.request_stage = .done;
-            this.state.stage = .done;
-            this.flags.proxy_tunneling = false;
-            log("done", .{});
-        }
-
-        result.body.?.* = body;
-        callback.run(@fieldParentPtr("client", this), result);
-
-        if (comptime print_every > 0) {
-            print_every_i += 1;
-            if (print_every_i % print_every == 0) {
-                Output.prettyln("Heap stats for HTTP thread\n", .{});
-                Output.flush();
-                default_arena.dumpThreadStats();
-                print_every_i = 0;
-            }
-        }
+        this.sendProgressUpdateWithoutStageCheck(is_ssl, ctx, socket);
     }
 }
 
@@ -1924,7 +1978,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
-    if (is_done or this.signals.get(.body_streaming) or content_length == null) {
+    if (is_done or this.signals.get(.response_body_streaming) or content_length == null) {
         const is_final_chunk = is_done;
         const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
 
@@ -1990,7 +2044,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 progress.context.maybeRefresh();
             }
             // streaming chunks
-            if (this.signals.get(.body_streaming)) {
+            if (this.signals.get(.response_body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
                 this.state.flags.is_libdeflate_fast_path_disabled = true;
                 return try this.state.processBodyBuffer(buffer, false);
@@ -2071,7 +2125,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             try body_buffer.appendSliceExact(buffer);
 
             // streaming chunks
-            if (this.signals.get(.body_streaming)) {
+            if (this.signals.get(.response_body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
                 this.state.flags.is_libdeflate_fast_path_disabled = true;
 

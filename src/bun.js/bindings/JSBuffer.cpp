@@ -1752,7 +1752,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return JSC::JSValue::encode(buffer);
     }
     case BufferEncodingType::latin1: {
-        std::span<LChar> data;
+        std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
@@ -1778,7 +1778,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return JSValue::encode(jsString(vm, WTFMove(str)));
     }
     case BufferEncodingType::ascii: {
-        std::span<LChar> data;
+        std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);

@@ -508,7 +508,7 @@ pub const AddrInfo = extern struct {
                 try array.putIndex(
                     globalThis,
                     j,
-                    GetAddrInfo.Result.toJS(
+                    try GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
                                 AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.posix.sockaddr.in, this_node.addr.?).* } },
@@ -1682,7 +1682,7 @@ pub const Error = enum(i32) {
             });
         }
 
-        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) void {
+        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) bun.JSTerminated!void {
             const system_error = jsc.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
@@ -1697,18 +1697,18 @@ pub const Error = enum(i32) {
             const instance = system_error.toErrorInstance(globalThis);
             instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
 
-            this.promise.reject(globalThis, instance);
-            this.hostname = null;
-            this.deinit();
+            defer this.deinit();
+            defer this.hostname = null;
+            return this.promise.reject(globalThis, instance);
         }
 
         pub fn rejectLater(this: *Deferred, globalThis: *jsc.JSGlobalObject) void {
             const Context = struct {
                 deferred: *Deferred,
                 globalThis: *jsc.JSGlobalObject,
-                pub fn callback(context: *@This()) void {
-                    context.deferred.reject(context.globalThis);
-                    bun.default_allocator.destroy(context);
+                pub fn callback(context: *@This()) bun.JSTerminated!void {
+                    defer bun.default_allocator.destroy(context);
+                    try context.deferred.reject(context.globalThis);
                 }
             };
 

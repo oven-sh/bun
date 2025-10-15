@@ -172,17 +172,17 @@ pub const WalkTask = struct {
         }
     }
 
-    pub fn then(this: *WalkTask, promise: *jsc.JSPromise) void {
+    pub fn then(this: *WalkTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
 
         if (this.err) |err| {
             const errJs = err.toJS(this.global);
-            promise.reject(this.global, errJs);
+            try promise.reject(this.global, errJs);
             return;
         }
 
         const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
-        promise.resolve(this.global, jsStrings);
+        try promise.resolve(this.global, jsStrings);
     }
 
     fn deinit(this: *WalkTask) void {
@@ -364,7 +364,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    return jsc.JSValue.jsBoolean(globImpl.match(arena.allocator(), this.pattern, str.slice()).matches());
+    return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
@@ -383,12 +383,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 
-const globImpl = @import("../../glob.zig");
-const GlobWalker = globImpl.BunGlobWalker;
-
 const bun = @import("bun");
 const BunString = bun.String;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

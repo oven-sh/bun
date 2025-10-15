@@ -920,6 +920,8 @@ pub const Default = struct {
         if (!Environment.enable_mimalloc) return std.heap.c_allocator;
         return c_allocator;
     }
+
+    pub const deinit = void;
 };
 
 const basic = if (bun.use_mimalloc)

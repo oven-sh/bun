@@ -1345,7 +1345,7 @@ std::optional<WTF::String> X509View::getFingerprint(
 
     if (X509_digest(get(), method, md, &md_size)) {
         if (md_size == 0) return std::nullopt;
-        std::span<LChar> fingerprint;
+        std::span<Latin1Character> fingerprint;
         WTF::String fingerprintStr = WTF::String::createUninitialized((md_size * 3) - 1, fingerprint);
 
         {

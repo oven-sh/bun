@@ -69,25 +69,25 @@ class Response extends WebResponse {
 
   async arrayBuffer() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.arrayBuffer();
   }
 
   async blob() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.blob();
   }
 
   async formData() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.formData();
   }
 
   async json() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.json();
   }
 
@@ -95,13 +95,13 @@ class Response extends WebResponse {
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
     // load the getter
-    this.body;
+    void this.body;
     return new $Buffer(await super.arrayBuffer());
   }
 
   async text() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.text();
   }
 

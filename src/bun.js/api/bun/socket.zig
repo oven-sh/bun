@@ -328,7 +328,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.reject(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value) catch {}; // TODO: properly propagate exception upwards
                 }
 
                 return;
@@ -342,14 +342,14 @@ pub fn NewSocket(comptime ssl: bool) type {
             const result = callback.call(globalObject, this_value, &[_]JSValue{ this_value, err_value }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
-                if (handlers.rejectPromise(err_val)) return;
+                if (handlers.rejectPromise(err_val) catch true) return; // TODO: properly propagate exception upwards
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, err_val });
             } else if (handlers.promise.trySwap()) |val| {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_) catch {}; // TODO: properly propagate exception upwards
             }
         }
 
@@ -457,7 +457,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const this_value = this.getThisValue(globalObject);
 
             this.markActive();
-            handlers.resolvePromise(this_value);
+            handlers.resolvePromise(this_value) catch {}; // TODO: properly propagate exception upwards
 
             if (comptime ssl) {
                 // only calls open callback if handshake callback is provided
@@ -482,7 +482,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                     log("Already closed", .{});
                 }
 
-                if (handlers.rejectPromise(err)) return;
+                if (handlers.rejectPromise(err) catch true) return; // TODO: properly propagate exception upwards
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, err });
             }
         }
@@ -884,14 +884,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
-                // TODO: should we separate unattached and detached? unattached shouldn't throw here
-                const err: jsc.SystemError = .{
-                    .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
-                    .code = .static("EBADF"),
-                    .message = .static("write EBADF"),
-                    .syscall = .static("write"),
-                };
-                return globalObject.throwValue(err.toErrorInstance(globalObject));
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -1412,23 +1405,12 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
-            defer {
-                if (!success) {
-                    if (ssl_opts) |*ssl_config| {
-                        ssl_config.deinit();
-                    }
-                }
-            }
 
             if (try opts.getTruthy(globalObject, "tls")) |tls| {
-                if (tls.isBoolean()) {
-                    if (tls.toBoolean()) {
-                        ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
-                    }
-                } else {
-                    if (try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
-                        ssl_opts = ssl_config;
-                    }
+                if (!tls.isBoolean()) {
+                    ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
+                } else if (tls.toBoolean()) {
+                    ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
                 }
             }
 
@@ -1436,9 +1418,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            if (ssl_opts == null) {
+            const socket_config = &(ssl_opts orelse {
                 return globalObject.throw("Expected \"tls\" option", .{});
-            }
+            });
+            defer socket_config.deinit();
 
             var default_data = JSValue.zero;
             if (try opts.fastGet(globalObject, .data)) |default_data_value| {
@@ -1449,14 +1432,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var socket_config = ssl_opts.?;
-            ssl_opts = null;
-            defer socket_config.deinit();
             const options = socket_config.asUSockets();
-
-            const protos = socket_config.protos;
-            const protos_len = socket_config.protos_len;
-
             const ext_size = @sizeOf(WrappedSocket);
 
             var handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
@@ -1470,8 +1446,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
-                .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
+                .protos = if (socket_config.protos) |p|
+                    bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
+                else
+                    null,
+                .server_name = if (socket_config.server_name) |sn|
+                    bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
+                else
+                    null,
                 .socket_context = null, // only set after the wrapTLS
                 .flags = .{
                     .is_active = false,
@@ -1955,30 +1937,21 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
-        if (tls.isBoolean()) {
-            if (tls.toBoolean()) {
-                ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
-            }
-        } else {
-            if (try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
-                ssl_opts = ssl_config;
-            }
+        if (!tls.isBoolean()) {
+            ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
+        } else if (tls.toBoolean()) {
+            ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
         }
     }
-    if (ssl_opts == null) {
+    const socket_config = &(ssl_opts orelse {
         return globalObject.throw("Expected \"tls\" option", .{});
-    }
+    });
 
     var default_data = JSValue.zero;
     if (try opts.fastGet(globalObject, .data)) |default_data_value| {
         default_data = default_data_value;
         default_data.ensureStillAlive();
     }
-
-    const socket_config = ssl_opts.?;
-
-    const protos = socket_config.protos;
-    const protos_len = socket_config.protos_len;
 
     const is_server = false; // A duplex socket is always handled as a client
 
@@ -1994,8 +1967,14 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,
-        .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
-        .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
+        .protos = if (socket_config.protos) |p|
+            bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
+        else
+            null,
+        .server_name = if (socket_config.server_name) |sn|
+            bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
+        else
+            null,
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);
@@ -2006,7 +1985,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .tls = tls,
         .vm = globalObject.bunVM(),
         .task = undefined,
-        .ssl_config = socket_config,
+        .ssl_config = socket_config.*,
     });
     tls.ref();
 

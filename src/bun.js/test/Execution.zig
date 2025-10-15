@@ -77,6 +77,7 @@ pub const ExecutionSequence = struct {
     active_entry: ?*ExecutionEntry,
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: i64 = 1,
+    remaining_retry_count: u32 = 0,
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
@@ -91,10 +92,15 @@ pub const ExecutionSequence = struct {
     maybe_skip: bool = false,
 
     pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry) ExecutionSequence {
+        const repeat_count: i64 = if (test_entry) |entry| @intCast(entry.repeat_count) else 1;
+        const retry_count: u32 = if (test_entry) |entry| entry.retry_count else 0;
+
         return .{
             .first_entry = first_entry,
             .active_entry = first_entry,
             .test_entry = test_entry,
+            .remaining_repeat_count = repeat_count,
+            .remaining_retry_count = retry_count,
         };
     }
 
@@ -466,18 +472,34 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
 
     if (sequence.active_entry == null) {
         // just completed the sequence
-        this.onSequenceCompleted(sequence);
-        sequence.remaining_repeat_count -= 1;
-        if (sequence.remaining_repeat_count <= 0) {
-            // no repeats left; indicate completion
-            if (group.remaining_incomplete_entries == 0) {
-                bun.debugAssert(false); // remaining_incomplete_entries should never go below 0
+        const test_failed = sequence.result.isFail();
+        const test_passed = sequence.result.isPass(.pending_is_pass);
+
+        // Handle retry logic: if test failed and we have retries remaining, retry it
+        if (test_failed and sequence.remaining_retry_count > 0) {
+            sequence.remaining_retry_count -= 1;
+            this.resetSequence(sequence);
+            return;
+        }
+
+        // Handle repeat logic: if test passed and we have repeats remaining, repeat it
+        if (test_passed) {
+            sequence.remaining_repeat_count -= 1;
+            if (sequence.remaining_repeat_count > 0) {
+                this.resetSequence(sequence);
                 return;
             }
-            group.remaining_incomplete_entries -= 1;
-        } else {
-            this.resetSequence(sequence);
         }
+
+        // Only report the final result after all retries/repeats are done
+        this.onSequenceCompleted(sequence);
+
+        // No more retries or repeats; mark sequence as complete
+        if (group.remaining_incomplete_entries == 0) {
+            bun.debugAssert(false); // remaining_incomplete_entries should never go below 0
+            return;
+        }
+        group.remaining_incomplete_entries -= 1;
     }
 }
 fn onGroupStarted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
@@ -579,13 +601,12 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
         }
     }
 
-    if (sequence.result.isPass(.pending_is_pass)) {
-        // passed or pending; run again
-        sequence.* = .init(sequence.first_entry, sequence.test_entry);
-    } else {
-        // already failed or skipped; don't run again
-        sequence.active_entry = null;
-    }
+    // Preserve the current remaining_repeat_count and remaining_retry_count
+    const saved_repeat_count = sequence.remaining_repeat_count;
+    const saved_retry_count = sequence.remaining_retry_count;
+    sequence.* = .init(sequence.first_entry, sequence.test_entry);
+    sequence.remaining_repeat_count = saved_repeat_count;
+    sequence.remaining_retry_count = saved_retry_count;
     _ = this;
 }
 

@@ -61,14 +61,13 @@ pub fn ParseFn(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            var scopeIndex: usize = 0;
-            var pushedScopeForFunctionArgs = false;
-            // Push scope if the current lexer token is an open parenthesis token.
-            // That is, the parser is about parsing function arguments
-            if (p.lexer.token == .t_open_paren) {
-                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
-                pushedScopeForFunctionArgs = true;
-            }
+            // Always push function_args scope at the current lexer position.
+            // This must happen before parseFn() is called, and must use the same location
+            // that parseFn will capture as open_parens_loc (which is p.lexer.loc() before
+            // expect(t_open_paren)). Even in error recovery cases where we're not at the
+            // open paren, we must push this scope so that parseFnBody's assertion holds.
+            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            const pushedScopeForFunctionArgs = true;
 
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,

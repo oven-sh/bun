@@ -217,8 +217,6 @@ pub const SocketConfig = struct {
     allowHalfOpen: bool = false,
     reusePort: bool = false,
     ipv6Only: bool = false,
-    localAddress: ?jsc.ZigString.Slice = null,
-    localPort: ?u16 = null,
 
     pub fn socketFlags(this: *const SocketConfig) i32 {
         var flags: i32 = if (this.exclusive)
@@ -250,11 +248,6 @@ pub const SocketConfig = struct {
 
         var ssl: ?SSLConfig = null;
         var default_data = JSValue.zero;
-
-        // Parse localAddress and localPort for bind address
-        var localAddress: ?jsc.ZigString.Slice = null;
-        errdefer if (localAddress) |la| la.deinit();
-        var localPort: ?u16 = null;
 
         if (try opts.getTruthy(globalObject, "tls")) |tls| {
             if (!tls.isBoolean()) {
@@ -306,21 +299,6 @@ pub const SocketConfig = struct {
 
             if (try opts.getBooleanLoose(globalObject, "ipv6Only")) |ipv6_only| {
                 ipv6Only = ipv6_only;
-            }
-
-            if (try opts.getStringish(globalObject, "localAddress")) |local_addr| {
-                defer local_addr.deref();
-                localAddress = try local_addr.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
-            }
-
-            if (try opts.get(globalObject, "localPort")) |local_port_value| {
-                if (!local_port_value.isEmptyOrUndefinedOrNull()) {
-                    const local_port_i32 = try local_port_value.coerceToInt32(globalObject);
-                    if (local_port_i32 < 0 or local_port_i32 > 65535) {
-                        return globalObject.throwInvalidArguments("Expected \"localPort\" to be a number between 0 and 65535", .{});
-                    }
-                    localPort = @intCast(local_port_i32);
-                }
             }
 
             if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
@@ -388,8 +366,6 @@ pub const SocketConfig = struct {
             .allowHalfOpen = allowHalfOpen,
             .reusePort = reusePort,
             .ipv6Only = ipv6Only,
-            .localAddress = localAddress,
-            .localPort = localPort,
         };
     }
 };

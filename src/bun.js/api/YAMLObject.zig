@@ -610,7 +610,7 @@ const Stringifier = struct {
         }
 
         switch (str.charAt(0)) {
-            // starting with indicators or whitespace requires quotes
+            // starting with an indicator character requires quotes
             '&',
             '*',
             '?',
@@ -621,11 +621,21 @@ const Stringifier = struct {
             '!',
             '%',
             '@',
+            ':',
+            ',',
+            '[',
+            ']',
+            '{',
+            '}',
+            '#',
+            '\'',
+            '"',
+            '`',
+            // starting with whitespace requires quotes
             ' ',
             '\t',
             '\n',
             '\r',
-            '#',
             => return true,
 
             else => {},

@@ -707,15 +707,22 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
-        const js_value = jsc.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
 
+        const js_value = Bun__createShellInterpreter(
+            globalThis,
+            interpreter,
+            parsed_shell_script_js,
+            resolve,
+            reject,
+        );
         interpreter.this_jsvalue = js_value;
-        jsc.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
-        jsc.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
+
         interpreter.keep_alive.ref(globalThis.bunVM());
         bun.analytics.Features.shell += 1;
         return js_value;
     }
+
+    extern fn Bun__createShellInterpreter(globalThis: *jsc.JSGlobalObject, ptr: *Interpreter, parsed_shell_script: JSValue, resolve: JSValue, reject: JSValue) callconv(jsc.conv) JSValue;
 
     pub fn parse(
         arena_allocator: std.mem.Allocator,
@@ -1170,9 +1177,6 @@ pub const Interpreter = struct {
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
@@ -1192,9 +1196,6 @@ pub const Interpreter = struct {
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {

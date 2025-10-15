@@ -121,6 +121,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
+                        c.local_host,
+                        @as(i32, @intCast(c.local_port)),
                     );
                 },
                 .unix => |u| {

@@ -58,8 +58,8 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
     // We do not want to risk the GC running before this function is called.
     Bun__JSRequest__calculateEstimatedByteSize(sinkPtr);
 
-    JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr);
-    ptr->finishCreation(vm, params);
+    JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr, params);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
@@ -148,17 +148,17 @@ void JSBunRequest::setCookies(JSObject* cookies)
     Request__setCookiesOnRequestContext(this->wrapped(), WebCoreCast<WebCore::JSCookieMap, WebCore::CookieMap>(JSValue::encode(cookies)));
 }
 
-JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSC::JSObject* params)
     : Base(vm, structure, sinkPtr)
+    , m_params(params, JSC::WriteBarrierEarlyInit)
+    , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
 extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
 extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
-void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
+void JSBunRequest::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    m_params.setMayBeNull(vm, this, params);
-    m_cookies.clear();
 
     auto size = Request__estimatedSize(this->wrapped());
     vm.heap.reportExtraMemoryAllocated(this, size);

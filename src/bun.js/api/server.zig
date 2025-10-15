@@ -893,6 +893,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            var fetch_headers_to_use: ?*WebCore.FetchHeaders = null;
+
             if (optional) |opts| {
                 getter: {
                     if (opts.isEmptyOrUndefinedOrNull()) {
@@ -916,7 +918,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             break :getter;
                         }
 
-                        var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
+                        fetch_headers_to_use = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                             if (headers_value.isObject()) {
                                 if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
@@ -935,22 +937,43 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
                             sec_websocket_extensions = protocol;
                         }
-
-                        // we must write the status first so that 200 OK isn't written
-                        resp.writeStatus("101 Switching Protocols");
-                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
                     }
 
                     if (globalThis.hasException()) {
                         return error.JSError;
                     }
+                }
+            }
+
+            var cookies_to_write: ?*WebCore.CookieMap = null;
+            if (upgrader.cookies) |cookies| {
+                upgrader.cookies = null;
+                cookies_to_write = cookies;
+            }
+            defer {
+                if (cookies_to_write) |cookies| {
+                    cookies.deref();
+                }
+            }
+
+            // Write status, custom headers, and cookies in one place
+            if (fetch_headers_to_use != null or cookies_to_write != null) {
+                // we must write the status first so that 200 OK isn't written
+                resp.writeStatus("101 Switching Protocols");
+
+                if (fetch_headers_to_use) |headers| {
+                    headers.toUWSResponse(comptime ssl_enabled, resp);
+                }
+
+                if (cookies_to_write) |cookies| {
+                    try cookies.write(globalThis, ssl_enabled, @ptrCast(resp));
                 }
             }
 

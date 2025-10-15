@@ -677,11 +677,21 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
-pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
-    var promise = this.pending_internal_promise.?;
+pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {
+    defer this.addMainToWatcherIfNeeded();
+    var promise = this.pending_internal_promise orelse return;
+
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
         this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
+    }
+}
+
+pub fn addMainToWatcherIfNeeded(this: *jsc.VirtualMachine) void {
+    if (this.isWatcherEnabled()) {
+        const main = this.main;
+        if (main.len == 0) return;
+        _ = this.bun_watcher.addFileByPathSlow(main, this.transpiler.options.loader(std.fs.path.extension(main)));
     }
 }
 

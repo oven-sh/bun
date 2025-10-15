@@ -428,6 +428,7 @@ pub const FetchTasklet = struct {
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
                     buffer_reset = false;
+                    this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                     readable.ptr.Bytes.onData(
                         .{
                             // TODO: We are still investigating the memory issues with owned_and_done

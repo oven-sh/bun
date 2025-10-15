@@ -262,6 +262,8 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // Process any remaining events in the final batch
     if (event_id > 0) {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         switch (processWatchEventBatch(this, event_id)) {
             .err => |err| return .{ .err = err },
             .result => {},

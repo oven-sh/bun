@@ -6945,6 +6945,8 @@ var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
 
+const glob = @import("../glob.zig");
+
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
 
@@ -7046,4 +7048,3 @@ const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
-const glob = @import("../glob.zig");

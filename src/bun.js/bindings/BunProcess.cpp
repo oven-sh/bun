@@ -1109,7 +1109,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        // setUncaughtExceptionCaptureCallback expects only the exception, not the event name
+        MarkedArgumentBuffer captureArgs;
+        captureArgs.append(exception);
+        (void)call(lexicalGlobalObject, capture, captureArgs, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             scope.clearException();
             // if an exception is thrown in the uncaughtException handler, we abort

@@ -569,6 +569,15 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
     switch (this.unhandledRejectionsMode()) {
         .bun => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            // Check if the exception is handled by capture callback
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) {
+                // Mark the promise as handled to prevent double handling
+                if (promise.asAnyPromise()) |internal_promise| {
+                    internal_promise.setHandled(this.global.vm());
+                }
+                return;
+            }
             // continue to default handler
         },
         .none => {
@@ -660,15 +669,17 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
         bun.api.node.process.exit(globalObject, 7);
         @panic("Uncaught exception while handling uncaught exception");
     }
-    if (this.exit_on_uncaught_exception) {
-        this.runErrorHandler(err, null);
-        bun.api.node.process.exit(globalObject, 1);
-        @panic("made it past Bun__Process__exit");
-    }
     this.is_handling_uncaught_exception = true;
     defer this.is_handling_uncaught_exception = false;
-    const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
+    const handled_int = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0);
+    const handled = handled_int > 0;
     if (!handled) {
+        // If the exception was not handled, check if we should exit
+        if (this.exit_on_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            bun.api.node.process.exit(globalObject, 1);
+            @panic("made it past Bun__Process__exit");
+        }
         // TODO maybe we want a separate code path for uncaught exceptions
         this.unhandled_error_counter += 1;
         this.exit_handler.exit_code = 1;

@@ -323,7 +323,7 @@ pub const Run = struct {
         var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .rejected) {
+            if (promise.status(vm.global.vm()) == .rejected and !promise.isHandled(vm.global.vm())) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
                 promise.setHandled(vm.global.vm());
 

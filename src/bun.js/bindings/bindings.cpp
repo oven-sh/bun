@@ -3674,12 +3674,6 @@ void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 
 #pragma mark - JSC::JSValue
 
-JSC::JSCell* JSC__JSValue__asCell(JSC::EncodedJSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    return value.asCell();
-}
-
 JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)
 {
     auto value = JSC::JSValue::decode(JSValue0);

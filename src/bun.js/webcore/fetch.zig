@@ -433,6 +433,8 @@ pub const FetchTasklet = struct {
                     try readable.ptr.Bytes.onData(
                         .{
                             .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
+                            // Investigate: owned_and_done is the correct behavior, is having bigger memory usage than temporary_and_done
+                            // .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );

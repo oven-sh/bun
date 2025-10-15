@@ -250,30 +250,6 @@ pub const ArrayBuffer = extern struct {
             return this.value;
         }
 
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.mimalloc.mi_is_in_heap_region(this.ptr)) {
-            log("toJS but will never free: {d} bytes", .{this.len});
-
-            if (this.typed_array_type == .ArrayBuffer) {
-                return makeArrayBufferWithBytesNoCopy(
-                    ctx,
-                    this.ptr,
-                    this.byte_len,
-                    null,
-                    null,
-                );
-            }
-
-            return makeTypedArrayWithBytesNoCopy(
-                ctx,
-                this.typed_array_type.toTypedArrayType(),
-                this.ptr,
-                this.byte_len,
-                null,
-                null,
-            );
-        }
-
         return this.toJSUnchecked(ctx);
     }
 

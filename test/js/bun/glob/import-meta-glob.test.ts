@@ -192,6 +192,40 @@ describe("import.meta.glob", () => {
       expect(JSON.parse(lines[3].split(": ")[1])).toEqual(["./src/components/button.js", "./src/main.js"]);
     });
 
+    test("negative patterns exclude files from results", async () => {
+      const dir = tempDirWithFiles("import-glob-negative", {
+        "index.js": `
+          const all = import.meta.glob('./dir/*.js');
+          const filtered = import.meta.glob(['./dir/*.js', '!**/bar.js']);
+          
+          console.log('ALL:', JSON.stringify(Object.keys(all).sort()));
+          console.log('FILTERED:', JSON.stringify(Object.keys(filtered).sort()));
+        `,
+        "dir/foo.js": `export default "foo";`,
+        "dir/bar.js": `export default "bar";`,
+        "dir/baz.js": `export default "baz";`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(JSON.parse(lines[0].split(": ")[1])).toEqual(["./dir/bar.js", "./dir/baz.js", "./dir/foo.js"]);
+      expect(JSON.parse(lines[1].split(": ")[1])).toEqual(["./dir/baz.js", "./dir/foo.js"]);
+    });
+
     test("handles empty results gracefully", () => {
       const modules = import.meta.glob("./non-existent/*.js");
       expect(typeof modules).toBe("object");
@@ -790,6 +824,57 @@ describe("import.meta.glob", () => {
 ./module1.js: module1-value
 ./module2.js: module2-value
 `);
+    });
+
+    test("negative patterns work with bundler", async () => {
+      const dir = tempDirWithFiles("import-glob-bundler-negative", {
+        "index.js": `
+          const all = import.meta.glob('./dir/*.js');
+          const filtered = import.meta.glob(['./dir/*.js', '!**/bar.js']);
+          
+          console.log('ALL:', JSON.stringify(Object.keys(all).sort()));
+          console.log('FILTERED:', JSON.stringify(Object.keys(filtered).sort()));
+          
+          for (const [key, loader] of Object.entries(filtered)) {
+            const result = await loader();
+            console.log(\`\${key}: \${result.default}\`);
+          }
+        `,
+        "dir/foo.js": `export default "foo";`,
+        "dir/bar.js": `export default "bar";`,
+        "dir/baz.js": `export default "baz";`,
+      });
+
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.js", "--outfile", "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+      const buildExitCode = await buildProc.exited;
+      expect(buildExitCode).toBe(0);
+
+      expect(await Bun.file(path.join(dir, "bundle.js")).text()).not.toContain("glob");
+
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(JSON.parse(lines[0].split(": ")[1])).toEqual(["./dir/bar.js", "./dir/baz.js", "./dir/foo.js"]);
+      expect(JSON.parse(lines[1].split(": ")[1])).toEqual(["./dir/baz.js", "./dir/foo.js"]);
+      expect(lines).toContain("./dir/foo.js: foo");
+      expect(lines).toContain("./dir/baz.js: baz");
+      expect(stdout).not.toContain("./dir/bar.js: bar");
     });
   });
 });

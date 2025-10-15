@@ -6135,7 +6135,14 @@ pub fn NewParser_(
                 while (switch (iter.next() catch continue) {
                     .err => null,
                     .result => |path| path,
-                }) |path| {
+                }) |path| brk: {
+                    if (patterns.items.len > 0) for (patterns.items) |patt| {
+                        if (patt.len < 1 or patt[0] != '!') continue;
+                        if (glob.match(patt[1..], path).matches()) {
+                            break :brk;
+                        }
+                    };
+
                     var path_buf: bun.PathBuffer = undefined;
                     const slash_normalized = if (comptime bun.Environment.isWindows)
                         strings.normalizeSlashesOnly(&path_buf, path, '/')

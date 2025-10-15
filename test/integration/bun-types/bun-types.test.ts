@@ -430,8 +430,6 @@ describe("@types/bun integration test", () => {
           "beforeEach",
           "afterEach",
           "afterAll",
-          "mock",
-          "spyOn",
           "jest",
           "vi",
         ]

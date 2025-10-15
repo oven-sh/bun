@@ -130,3 +130,54 @@ test("--rerun-each should handle test failures correctly", async () => {
   expect(combined).toMatch(/2 pass/);
   expect(combined).toMatch(/1 fail/);
 });
+
+test("--rerun-each should use same snapshot keys across reruns", async () => {
+  using dir = tempDir("test-rerun-each-snapshot", {
+    "snapshot.test.ts": `
+      import { test, expect } from "bun:test";
+
+      test("snapshot test", () => {
+        const result = { value: 42 };
+        expect(result).toMatchSnapshot();
+      });
+    `,
+  });
+
+  // First run: create snapshots
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), "test", "snapshot.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const exitCode1 = await proc1.exited;
+  expect(exitCode1).toBe(0);
+
+  // Second run: verify with --rerun-each=2 in CI mode
+  // This should pass - both runs should use the same snapshot key
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), "test", "snapshot.test.ts", "--rerun-each=2"],
+    env: { ...bunEnv, CI: "true", GITHUB_ACTIONS: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout2, stderr2, exitCode2] = await Promise.all([
+    proc2.stdout.text(),
+    proc2.stderr.text(),
+    proc2.exited,
+  ]);
+
+  const combined = stdout2 + stderr2;
+
+  // Should pass - both runs should reuse the same snapshot
+  expect(exitCode2).toBe(0);
+  expect(combined).toMatch(/2 pass/);
+
+  // Should NOT see error about snapshot creation not allowed in CI
+  expect(combined).not.toContain("Snapshot creation is not allowed in CI environments");
+  expect(combined).not.toContain("error:");
+});

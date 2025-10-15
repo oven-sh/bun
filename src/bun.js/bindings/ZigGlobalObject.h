@@ -67,6 +67,9 @@ class JSMockModule;
 class JSMockFunction;
 }
 
+struct napi_env__;
+using NapiEnv = WTF::RefPtr<napi_env__>;
+
 namespace WebCore {
 class WorkerGlobalScope;
 class SubtleCrypto;
@@ -724,7 +727,7 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    WTF::Vector<NapiEnv> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;

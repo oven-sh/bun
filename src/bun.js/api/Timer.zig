@@ -1,6 +1,7 @@
 const Timer = @This();
 
 extern fn Bun__Timer__isFakeTimersEnabled(*jsc.JSGlobalObject) bool;
+extern fn Bun__Timer__advanceDateNowMs(*jsc.JSGlobalObject, f64) void;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -587,9 +588,17 @@ pub const All = struct {
         timer.lock.unlock();
 
         if (event_timer) |et| {
+            // Calculate the time delta between current virtual time and the timer's scheduled time
+            const old_vi_time = timer.vi_current_time orelse timespec{ .sec = 0, .nsec = 0 };
+            const delta_ms: f64 = @floatFromInt(et.next.ms() - old_vi_time.ms());
+
             // Set the virtual time to this timer's scheduled time
             // This ensures nested timers scheduled during callbacks get the correct base time
             timer.vi_current_time = et.next;
+
+            // Also advance Date.now() by the same delta
+            // This keeps Date.now() in sync with the virtual time
+            Bun__Timer__advanceDateNowMs(vm.global, delta_ms);
 
             // Fire the timer at its scheduled time
             const arm_result = et.fire(&et.next, vm);
@@ -653,8 +662,15 @@ pub const All = struct {
 
         // Now fire exactly those timers (not any that get scheduled during execution)
         for (pending_timers.items) |event_timer| {
+            // Calculate the time delta between current virtual time and the timer's scheduled time
+            const old_vi_time = timer.vi_current_time orelse timespec{ .sec = 0, .nsec = 0 };
+            const delta_ms: f64 = @floatFromInt(event_timer.next.ms() - old_vi_time.ms());
+
             // Set the virtual time to this timer's scheduled time
             timer.vi_current_time = event_timer.next;
+
+            // Also advance Date.now() by the same delta
+            Bun__Timer__advanceDateNowMs(vm.global, delta_ms);
 
             // Fire the timer at its scheduled time
             const arm_result = event_timer.fire(&event_timer.next, vm);

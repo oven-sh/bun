@@ -1559,6 +1559,14 @@ extern "C" bool Bun__Timer__isFakeTimersEnabled(JSC::JSGlobalObject* globalObjec
     return globalObject->overridenDateNow >= 0;
 }
 
+// Export C function for Zig to advance the Date.now() mock time by a delta
+extern "C" void Bun__Timer__advanceDateNowMs(JSC::JSGlobalObject* globalObject, double deltaMilliseconds)
+{
+    if (globalObject->overridenDateNow >= 0) {
+        globalObject->overridenDateNow += deltaMilliseconds;
+    }
+}
+
 // Drains all pending process.nextTick callbacks
 // This will also run all microtasks scheduled by themselves
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRunAllTicks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

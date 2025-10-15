@@ -120,6 +120,10 @@ argv: []const []const u8 = &[_][]const u8{},
 
 origin_timer: std.time.Timer = undefined,
 origin_timestamp: u64 = 0,
+/// Frozen value of performance.now() when fake timers are enabled
+/// When < 0, fake timers are disabled for performance.now() and real time is used
+/// When >= 0, this is the frozen value that performance.now() returns (advances with fake time)
+overriden_performance_now_ms: f64 = -1,
 macro_event_loop: EventLoop = EventLoop{},
 regular_event_loop: EventLoop = EventLoop{},
 event_loop: *EventLoop = undefined,

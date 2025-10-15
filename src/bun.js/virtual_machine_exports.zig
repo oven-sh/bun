@@ -18,12 +18,30 @@ pub export fn Bun__drainMicrotasks() void {
 }
 
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {
+    // If fake timers are enabled, return the frozen value converted to nanoseconds
+    if (vm.overriden_performance_now_ms >= 0) {
+        return @intFromFloat(vm.overriden_performance_now_ms * 1_000_000.0);
+    }
     return vm.origin_timer.read();
 }
 
 export fn Bun__readOriginTimerStart(vm: *jsc.VirtualMachine) f64 {
     // timespce to milliseconds
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + jsc.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
+}
+
+export fn Bun__Timer__getPerformanceNow(vm: *jsc.VirtualMachine) f64 {
+    return vm.overriden_performance_now_ms;
+}
+
+export fn Bun__Timer__setPerformanceNow(vm: *jsc.VirtualMachine, value: f64) void {
+    vm.overriden_performance_now_ms = value;
+}
+
+export fn Bun__Timer__advancePerformanceNow(vm: *jsc.VirtualMachine, delta: f64) void {
+    if (vm.overriden_performance_now_ms >= 0) {
+        vm.overriden_performance_now_ms += delta;
+    }
 }
 
 pub export fn Bun__GlobalObject__connectedIPC(global: *JSGlobalObject) bool {

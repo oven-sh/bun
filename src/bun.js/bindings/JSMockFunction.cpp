@@ -1424,6 +1424,9 @@ using namespace Bun;
 using namespace JSC;
 
 extern "C" void Bun__Timer__initViTime(void*);
+extern "C" void Bun__Timer__setPerformanceNow(void*, double);
+extern "C" double Bun__Timer__getPerformanceNow(void*);
+extern "C" uint64_t Bun__readOriginTimer(void*);
 
 // Enables fake timers and sets up Date mocking
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1436,10 +1439,17 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalO
         globalObject->overridenDateNow = globalObject->jsDateNow();
     }
 
-    // Initialize vi_current_time so timers are scheduled relative to time 0
+    // Freeze performance.now() at current value when fake timers are enabled
     auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
     auto* vm = bunGlobal->bunVM();
     if (vm) {
+        double currentFrozenValue = Bun__Timer__getPerformanceNow(vm);
+        if (currentFrozenValue < 0) {
+            // Get current performance.now() value and freeze it, rounded up
+            auto nowNano = Bun__readOriginTimer(vm);
+            double currentPerfNow = std::ceil(static_cast<double>(nowNano) / 1000000.0);
+            Bun__Timer__setPerformanceNow(vm, currentPerfNow);
+        }
         Bun__Timer__initViTime(vm);
     }
 
@@ -1456,6 +1466,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalO
     auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
     auto* vm = bunGlobal->bunVM();
     if (vm) {
+        Bun__Timer__setPerformanceNow(vm, -1);
         Bun__Timer__clearViTimers(vm);
     }
 
@@ -1559,11 +1570,19 @@ extern "C" bool Bun__Timer__isFakeTimersEnabled(JSC::JSGlobalObject* globalObjec
     return globalObject->overridenDateNow >= 0;
 }
 
+extern "C" void Bun__Timer__advancePerformanceNow(void*, double);
+
 // Export C function for Zig to advance the Date.now() mock time by a delta
 extern "C" void Bun__Timer__advanceDateNowMs(JSC::JSGlobalObject* globalObject, double deltaMilliseconds)
 {
     if (globalObject->overridenDateNow >= 0) {
         globalObject->overridenDateNow += deltaMilliseconds;
+    }
+    // Also advance performance.now() if fake timers are enabled
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* vm = bunGlobal->bunVM();
+    if (vm) {
+        Bun__Timer__advancePerformanceNow(vm, deltaMilliseconds);
     }
 }
 

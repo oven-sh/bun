@@ -1,4 +1,4 @@
-import { vi, test, beforeAll, afterAll, expect } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 
 beforeAll(() => vi.useFakeTimers());
 afterAll(() => vi.useRealTimers());
@@ -113,6 +113,7 @@ test("runAllTimers supports interval", () => {
     if (ticks >= 10) clearInterval(interval);
   }, 25);
 
+  vi.runAllTimers();
   expect(ticks).toBe(10);
 });
 

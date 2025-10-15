@@ -625,6 +625,55 @@ pub const All = struct {
         return .js_undefined;
     }
 
+    pub fn runOnlyPendingTimers(
+        globalThis: *JSGlobalObject,
+        _: *jsc.CallFrame,
+    ) JSError!JSValue {
+        jsc.markBinding(@src());
+        const vm = globalThis.bunVM();
+        const timer = &vm.timer;
+
+        // Collect all currently pending timers into a list by removing them from the heap
+        var pending_timers = std.ArrayList(*EventLoopTimer).init(bun.default_allocator);
+        defer pending_timers.deinit();
+
+        // Remove all timers from the heap and collect them
+        timer.lock.lock();
+        while (timer.vi_timers.deleteMin()) |event_timer| {
+            pending_timers.append(event_timer) catch |err| bun.handleOom(err);
+        }
+        timer.lock.unlock();
+
+        // Sort timers by their scheduled time to fire them in the correct order
+        std.mem.sort(*EventLoopTimer, pending_timers.items, {}, struct {
+            fn lessThan(_: void, a: *EventLoopTimer, b: *EventLoopTimer) bool {
+                return a.next.order(&b.next) == .lt;
+            }
+        }.lessThan);
+
+        // Now fire exactly those timers (not any that get scheduled during execution)
+        for (pending_timers.items) |event_timer| {
+            // Set the virtual time to this timer's scheduled time
+            timer.vi_current_time = event_timer.next;
+
+            // Fire the timer at its scheduled time
+            const arm_result = event_timer.fire(&event_timer.next, vm);
+
+            // If the timer wants to rearm (like setInterval), reinsert it
+            // but it won't be fired in this call to runOnlyPendingTimers
+            if (arm_result == .rearm) {
+                timer.lock.lock();
+                timer.vi_timers.insert(event_timer);
+                timer.lock.unlock();
+            }
+        }
+
+        // Clear the virtual time when we're done
+        timer.vi_current_time = null;
+
+        return .js_undefined;
+    }
+
     pub fn advanceTimersToNextTimer(
         globalThis: *JSGlobalObject,
         callframe: *jsc.CallFrame,
@@ -667,6 +716,7 @@ pub const All = struct {
         @export(&jsc.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
         @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
         @export(&jsc.host_fn.wrap2(runAllTimers), .{ .name = "Bun__Timer__runAllTimers" });
+        @export(&jsc.host_fn.wrap2(runOnlyPendingTimers), .{ .name = "Bun__Timer__runOnlyPendingTimers" });
         @export(&jsc.host_fn.wrap2(advanceTimersToNextTimer), .{ .name = "Bun__Timer__advanceTimersToNextTimer" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
         _ = &Bun__Timer__initViTime;

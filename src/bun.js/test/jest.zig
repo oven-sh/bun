@@ -245,7 +245,7 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
-        const vi = JSValue.createEmptyObject(globalObject, 12);
+        const vi = JSValue.createEmptyObject(globalObject, 13);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -259,6 +259,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("getRealSystemTime"), jsc.host_fn.NewFunction(globalObject, ZigString.static("getRealSystemTime"), 0, JSMock__jsGetRealSystemTime, false));
         vi.put(globalObject, ZigString.static("isFakeTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("isFakeTimers"), 0, JSMock__jsIsFakeTimers, false));
         vi.put(globalObject, ZigString.static("runAllTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runAllTimers"), 0, Bun__Timer__runAllTimers, false));
+        vi.put(globalObject, ZigString.static("runOnlyPendingTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runOnlyPendingTimers"), 0, Bun__Timer__runOnlyPendingTimers, false));
         vi.put(globalObject, ZigString.static("runAllTicks"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runAllTicks"), 0, JSMock__jsRunAllTicks, false));
         vi.put(globalObject, ZigString.static("advanceTimersToNextTimer"), jsc.host_fn.NewFunction(globalObject, ZigString.static("advanceTimersToNextTimer"), 0, Bun__Timer__advanceTimersToNextTimer, false));
         module.put(globalObject, ZigString.static("vi"), vi);
@@ -279,6 +280,7 @@ pub const Jest = struct {
     extern fn JSMock__jsUseFakeTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsUseRealTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn Bun__Timer__runAllTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn Bun__Timer__runOnlyPendingTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn Bun__Timer__advanceTimersToNextTimer(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     pub fn call(

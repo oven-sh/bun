@@ -710,14 +710,14 @@ public:
         // calling the finalizer
         Bun::NapiFinalizer saved_finalizer = this->finalizer;
         this->finalizer.clear();
-        saved_finalizer.call(env.get(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
+        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
         if (boundCleanup) {
-            boundCleanup->deactivate(env.get());
+            boundCleanup->deactivate(env);
             boundCleanup = nullptr;
         }
 
@@ -730,7 +730,7 @@ public:
         weakValueRef.clear();
     }
 
-    NapiEnv env = nullptr;
+    napi_env env = nullptr;  // Raw pointer - env is kept alive by GlobalObject::m_napiEnvs
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;

@@ -430,8 +430,6 @@ pub const FetchTasklet = struct {
                     buffer_reset = false;
                     readable.ptr.Bytes.onData(
                         .{
-                            // TODO: We are still investigating the memory issues with owned_and_done
-                            // .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
                             .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,

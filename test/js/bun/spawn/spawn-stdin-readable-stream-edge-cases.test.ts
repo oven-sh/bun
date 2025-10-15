@@ -35,10 +35,13 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
+    await proc.exited;
     const text = await proc.stdout.text();
     // Should receive data before the exception
     expect(text).toContain("chunk 1\n");
     expect(text).toContain("chunk 2\n");
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("ReadableStream writing after process closed", async () => {
@@ -92,6 +95,8 @@ describe("spawn stdin ReadableStream edge cases", () => {
     // The stream should have attempted multiple writes but only the first succeeded
     expect(writeAttempts).toBeGreaterThanOrEqual(1);
     expect(text).toBe("attempt 1\n");
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("ReadableStream with mixed types", async () => {
@@ -154,7 +159,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
           output: process.stdout,
           terminal: false
         });
-        
+
         rl.on('line', async (line) => {
           await Bun.sleep(10);
           console.log(line);

@@ -730,7 +730,7 @@ public:
         weakValueRef.clear();
     }
 
-    napi_env env = nullptr;  // Raw pointer - env is kept alive by GlobalObject::m_napiEnvs
+    napi_env env = nullptr; // Raw pointer - env is kept alive by GlobalObject::m_napiEnvs
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;

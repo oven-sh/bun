@@ -110,24 +110,12 @@ pub const BundleV2 = struct {
     pub const VirtualModule = struct {
         /// The module's source code or binary content
         /// This memory is owned by the VirtualModule and will be freed on deinit
+        /// Contents are always duplicated from the original source
         contents: []const u8,
 
-        /// Whether this is a Blob-backed module (needs special cleanup)
-        /// If true, blob field contains the Blob instance for proper ref counting
-        is_blob: bool,
-
-        /// Blob stored by value (Blob.Store is reference counted internally)
-        blob: ?jsc.WebCore.Blob,
-
         pub fn deinit(this: *VirtualModule) void {
-            if (this.is_blob) {
-                if (this.blob) |*blob| {
-                    blob.deinit();
-                }
-            } else {
-                // String or buffer - owned by default_allocator
-                bun.default_allocator.free(this.contents);
-            }
+            // Always free contents - they're owned by default_allocator
+            bun.default_allocator.free(this.contents);
         }
     };
     transpiler: *Transpiler,
@@ -1420,6 +1408,79 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
+    /// Enqueues a ParseTask for a virtual module (from `modules` config)
+    /// Similar to enqueueParseTask but skips filesystem I/O
+    pub fn enqueueVirtualModuleParseTask(
+        this: *BundleV2,
+        specifier: []const u8,
+        virtual_module: *const VirtualModule,
+        known_target: options.Target,
+    ) OOM!Index.Int {
+        const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
+
+        // Determine loader from file extension or default to .js
+        const loader = brk: {
+            // Check for file extension in specifier
+            if (std.mem.lastIndexOfScalar(u8, specifier, '.')) |dot_index| {
+                const ext = specifier[dot_index..];
+                if (options.Loader.fromString(ext)) |loader_from_ext| {
+                    break :brk loader_from_ext;
+                }
+            }
+            // Default to JavaScript
+            break :brk options.Loader.js;
+        };
+
+        // Use the specifier as-is for the path
+        const path_text = try this.allocator().dupe(u8, specifier);
+
+        // Create source with the exact specifier as path
+        const source = Logger.Source{
+            .path = Fs.Path.init(path_text),
+            .contents = virtual_module.contents,
+            .index = source_index,
+        };
+
+        // Add placeholder AST
+        this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+
+        // Add input file
+        this.graph.input_files.append(this.allocator(), .{
+            .source = source,
+            .loader = loader,
+            .side_effects = loader.sideEffects(),
+        }) catch |err| bun.handleOom(err);
+
+        // Create ParseTask with pre-loaded contents
+        var task = bun.handleOom(this.allocator().create(ParseTask));
+        task.* = .{
+            .ctx = this,
+            .path = source.path,
+            .contents_or_fd = .{ .contents = virtual_module.contents },
+            .side_effects = loader.sideEffects(),
+            .jsx = this.transpilerForTarget(known_target).options.jsx,
+            .source_index = source_index,
+            .module_type = .unknown,
+            .emit_decorator_metadata = false,
+            .package_version = "",
+            .loader = loader,
+            .tree_shaking = this.linker.options.tree_shaking,
+            .known_target = known_target,
+        };
+        task.task.node.next = null;
+        task.io_task.node.next = null;
+
+        this.incrementScanCounter();
+
+        // Check for onLoad plugins (even virtual modules can be intercepted)
+        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            // No plugin matched - schedule parsing
+            this.graph.pool.schedule(task);
+        }
+
+        return source_index.get();
+    }
+
     /// Enqueue a ServerComponentParseTask.
     /// `source_without_index` is copied and assigned a new source index. That index is returned.
     pub fn enqueueServerComponentGeneratedFile(
@@ -2618,6 +2679,18 @@ pub const BundleV2 = struct {
         }
         this.graph.pool.deinit();
 
+        // Clean up virtual modules
+        {
+            var iter = this.virtual_modules.iterator();
+            while (iter.next()) |entry| {
+                // Free the key (specifier)
+                bun.default_allocator.free(entry.key_ptr.*);
+                // Free the value (VirtualModule contents)
+                entry.value_ptr.deinit();
+            }
+            this.virtual_modules.deinit(bun.default_allocator);
+        }
+
         for (this.free_list.items) |free| {
             bun.default_allocator.free(free);
         }
@@ -3136,6 +3209,42 @@ pub const BundleV2 = struct {
                 // Don't resolve pre-resolved imports
                 import_record.source_index.isValid())
             {
+                continue;
+            }
+
+            // Check virtual modules first (highest priority)
+            if (this.virtual_modules.get(import_record.path.text)) |virtual_module| {
+                // This import resolves to a virtual module!
+                const target = ast.target;
+                const path_map = this.pathToSourceIndexMap(target);
+
+                // Check if we've already enqueued this virtual module
+                const entry = path_map.getOrPut(
+                    this.allocator(),
+                    import_record.path.text,
+                ) catch |err| {
+                    last_error = err;
+                    continue :outer;
+                };
+
+                if (entry.found_existing) {
+                    // Already parsed/parsing - just link to it
+                    import_record.source_index = Index.init(entry.value_ptr.*);
+                } else {
+                    // First time seeing this virtual module - enqueue parse task
+                    const virtual_source_index = this.enqueueVirtualModuleParseTask(
+                        import_record.path.text,
+                        &virtual_module,
+                        target,
+                    ) catch |err| {
+                        last_error = err;
+                        continue :outer;
+                    };
+                    entry.value_ptr.* = virtual_source_index;
+                    import_record.source_index = Index.init(virtual_source_index);
+                }
+
+                // Mark as resolved - skip further resolution
                 continue;
             }
 

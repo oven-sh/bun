@@ -134,6 +134,12 @@ pub fn BundleThread(CompletionStruct: type) type {
             };
             completion.transpiler = this;
 
+            // Transfer virtual modules from config to BundleV2
+            if (CompletionStruct == BundleV2.JSBundleCompletionTask) {
+                this.virtual_modules = completion.config.virtual_modules;
+                completion.config.virtual_modules_moved = true;
+            }
+
             defer {
                 ast_memory_allocator.pop();
                 this.deinitWithoutFreeingArena();

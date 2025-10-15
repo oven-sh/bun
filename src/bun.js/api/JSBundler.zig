@@ -752,11 +752,8 @@ pub const JSBundler = struct {
                                 .blob => |blob| {
                                     // Clone blob contents to owned memory
                                     const contents = try bun.default_allocator.dupe(u8, blob.sharedView());
-                                    // Store the blob by value for proper ref counting
                                     break :brk BundleV2.VirtualModule{
                                         .contents = contents,
-                                        .is_blob = true,
-                                        .blob = blob,
                                     };
                                 },
                                 .string_or_buffer => |str_buf| {
@@ -764,8 +761,6 @@ pub const JSBundler = struct {
                                     const contents = try bun.default_allocator.dupe(u8, str_buf.slice());
                                     break :brk BundleV2.VirtualModule{
                                         .contents = contents,
-                                        .is_blob = false,
-                                        .blob = null,
                                     };
                                 },
                             }

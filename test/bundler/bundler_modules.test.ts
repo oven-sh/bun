@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
+import { join } from "path";
 
 describe("Bun.build modules option", () => {
   test("should accept modules option with string", async () => {
-    using tmp = tempDirWithFiles("bundler-modules-basic", {
+    using tmp = tempDir("bundler-modules-basic", {
       "entry.js": `
         import { msg } from "virtual:msg";
         console.log(msg);
@@ -11,7 +12,7 @@ describe("Bun.build modules option", () => {
     });
 
     const result = await Bun.build({
-      entrypoints: [tmp.join("entry.js")],
+      entrypoints: [join(tmp, "entry.js")],
       modules: {
         "virtual:msg": "export const msg = 'Hello from virtual!';",
       },
@@ -25,7 +26,7 @@ describe("Bun.build modules option", () => {
   });
 
   test("should accept modules option with Blob", async () => {
-    using tmp = tempDirWithFiles("bundler-modules-blob", {
+    using tmp = tempDir("bundler-modules-blob", {
       "entry.js": `
         import data from "virtual:data";
         console.log(data);
@@ -35,7 +36,7 @@ describe("Bun.build modules option", () => {
     const blob = new Blob(["export default { key: 'value' };"]);
 
     const result = await Bun.build({
-      entrypoints: [tmp.join("entry.js")],
+      entrypoints: [join(tmp, "entry.js")],
       modules: {
         "virtual:data": blob,
       },
@@ -47,7 +48,7 @@ describe("Bun.build modules option", () => {
   });
 
   test("should accept modules option with Uint8Array", async () => {
-    using tmp = tempDirWithFiles("bundler-modules-uint8", {
+    using tmp = tempDir("bundler-modules-uint8", {
       "entry.js": `
         import data from "virtual:data";
         console.log(data);
@@ -58,7 +59,7 @@ describe("Bun.build modules option", () => {
     const arr = encoder.encode("export default 42;");
 
     const result = await Bun.build({
-      entrypoints: [tmp.join("entry.js")],
+      entrypoints: [join(tmp, "entry.js")],
       modules: {
         "virtual:data": arr,
       },
@@ -70,13 +71,13 @@ describe("Bun.build modules option", () => {
   });
 
   test("should reject invalid module value", async () => {
-    using tmp = tempDirWithFiles("bundler-modules-invalid", {
+    using tmp = tempDir("bundler-modules-invalid", {
       "entry.js": `console.log("hi");`,
     });
 
     await expect(async () => {
       await Bun.build({
-        entrypoints: [tmp.join("entry.js")],
+        entrypoints: [join(tmp, "entry.js")],
         modules: {
           "bad": 123 as any,
         },

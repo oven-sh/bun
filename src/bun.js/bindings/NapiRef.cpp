@@ -37,7 +37,7 @@ void NapiRef::unref()
 void NapiRef::clear()
 {
     NAPI_LOG("ref clear %p", this);
-    finalizer.call(env, nativeObject);
+    finalizer.call(env.get(), nativeObject);
     globalObject.clear();
     weakValueRef.clear();
     strongRef.clear();

@@ -112,7 +112,7 @@ pub const LoadResult = union(enum) {
     ok: struct {
         lockfile: *Lockfile,
         loaded_from_binary_lockfile: bool,
-        was_migrated: bool = false,
+        migrated: enum { none, npm, yarn, pnpm } = .none,
         serializer_result: Serializer.SerializerLoadResult,
         format: LockfileFormat,
     },
@@ -145,6 +145,13 @@ pub const LoadResult = union(enum) {
         };
     }
 
+    pub fn migratedFromNpm(this: *const LoadResult) bool {
+        return switch (this.*) {
+            .ok => |ok| ok.migrated == .npm,
+            else => false,
+        };
+    }
+
     pub fn saveFormat(this: LoadResult, options: *const PackageManager.Options) LockfileFormat {
         switch (this) {
             .not_found => {
@@ -169,12 +176,12 @@ pub const LoadResult = union(enum) {
                         return .text;
                     }
 
-                    if (ok.was_migrated) {
+                    if (ok.migrated != .none) {
                         return .binary;
                     }
                 }
 
-                if (ok.was_migrated) {
+                if (ok.migrated != .none) {
                     return .text;
                 }
 
@@ -1141,6 +1148,9 @@ pub const Printer = struct {
         };
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        if (entries_option.* == .err) {
+            return entries_option.err.canonical_error;
+        }
 
         var env_loader: *DotEnv.Loader = brk: {
             const map = try allocator.create(DotEnv.Map);

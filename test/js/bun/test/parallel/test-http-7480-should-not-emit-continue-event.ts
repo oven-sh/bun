@@ -1,9 +1,9 @@
-import { createTest } from "node-harness";
+import { createTest, exampleSite } from "node-harness";
 import https from "node:https";
 const { expect } = createTest(import.meta.path);
-
+using server = exampleSite();
 let receivedContinue = false;
-const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+const req = https.request(server.url, { ca: server.ca, headers: { "accept-encoding": "identity" } }, res => {
   let data = "";
   res.setEncoding("utf8");
   res.on("data", chunk => {

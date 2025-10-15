@@ -41,7 +41,7 @@ var getTemporaryDirectoryOnce = bun.once(struct {
             };
         };
         var tmpbuf: bun.PathBuffer = undefined;
-        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
+        const tmpname = Fs.FileSystem.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
         var timer: std.time.Timer = if (manager.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
             var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {

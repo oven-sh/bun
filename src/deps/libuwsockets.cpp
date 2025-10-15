@@ -1801,13 +1801,23 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  void uws_res_flush_headers(int ssl, uws_res_r res) {
+  void uws_res_flush_headers(int ssl, uws_res_r res, bool flushImmediately) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->flushHeaders();
+      uwsRes->flushHeaders(flushImmediately);
     } else {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->flushHeaders();
+      uwsRes->flushHeaders(flushImmediately);
+    }
+  }
+
+  bool uws_res_is_corked(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isCorked();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isCorked();
     }
   }
 

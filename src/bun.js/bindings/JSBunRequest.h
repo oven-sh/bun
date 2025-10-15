@@ -39,8 +39,8 @@ public:
     JSBunRequest* clone(JSC::VM& vm, JSGlobalObject* globalObject);
 
 private:
-    JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
-    void finishCreation(JSC::VM& vm, JSObject* params);
+    JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSC::JSObject* params);
+    void finishCreation(JSC::VM& vm);
 
     mutable JSC::WriteBarrier<JSC::JSObject> m_params;
     mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;

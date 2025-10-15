@@ -43,7 +43,7 @@ pub fn enter(this: *Handlers) Scope {
 
 // corker: Corker = .{},
 
-pub fn resolvePromise(this: *Handlers, value: JSValue) void {
+pub fn resolvePromise(this: *Handlers, value: JSValue) bun.JSTerminated!void {
     const vm = this.vm;
     if (vm.isShuttingDown()) {
         return;
@@ -51,10 +51,10 @@ pub fn resolvePromise(this: *Handlers, value: JSValue) void {
 
     const promise = this.promise.trySwap() orelse return;
     const anyPromise = promise.asAnyPromise() orelse return;
-    anyPromise.resolve(this.globalObject, value);
+    try anyPromise.resolve(this.globalObject, value);
 }
 
-pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
+pub fn rejectPromise(this: *Handlers, value: JSValue) bun.JSTerminated!bool {
     const vm = this.vm;
     if (vm.isShuttingDown()) {
         return true;
@@ -62,7 +62,7 @@ pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
 
     const promise = this.promise.trySwap() orelse return false;
     const anyPromise = promise.asAnyPromise() orelse return false;
-    anyPromise.reject(this.globalObject, value);
+    try anyPromise.reject(this.globalObject, value);
     return true;
 }
 

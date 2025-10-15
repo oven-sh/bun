@@ -328,7 +328,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
-                    promise.asPromise().?.reject(globalObject, err_value);
+                    promise.asPromise().?.reject(globalObject, err_value) catch {}; // TODO: properly propagate exception upwards
                 }
 
                 return;
@@ -342,14 +342,14 @@ pub fn NewSocket(comptime ssl: bool) type {
             const result = callback.call(globalObject, this_value, &[_]JSValue{ this_value, err_value }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
-                if (handlers.rejectPromise(err_val)) return;
+                if (handlers.rejectPromise(err_val) catch true) return; // TODO: properly propagate exception upwards
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, err_val });
             } else if (handlers.promise.trySwap()) |val| {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
-                promise.rejectAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_) catch {}; // TODO: properly propagate exception upwards
             }
         }
 
@@ -457,7 +457,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const this_value = this.getThisValue(globalObject);
 
             this.markActive();
-            handlers.resolvePromise(this_value);
+            handlers.resolvePromise(this_value) catch {}; // TODO: properly propagate exception upwards
 
             if (comptime ssl) {
                 // only calls open callback if handshake callback is provided
@@ -482,7 +482,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                     log("Already closed", .{});
                 }
 
-                if (handlers.rejectPromise(err)) return;
+                if (handlers.rejectPromise(err) catch true) return; // TODO: properly propagate exception upwards
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, err });
             }
         }

@@ -3,26 +3,6 @@ import fs from "node:fs";
 const scannerModuleName = "__SCANNER_MODULE__";
 const suppressError = __SUPPRESS_ERROR__;
 
-let packagesJson: string = "";
-try {
-  const stdinBuffer = await Bun.stdin.text();
-  packagesJson = stdinBuffer;
-} catch (error) {
-  console.error("Failed to read packages from stdin:", error);
-  process.exit(1);
-}
-
-let packages: Bun.Security.Package[];
-try {
-  packages = JSON.parse(packagesJson);
-  if (!Array.isArray(packages)) {
-    throw new Error("Expected packages to be an array");
-  }
-} catch (error) {
-  console.error("Failed to parse packages JSON from stdin:", error);
-  process.exit(1);
-}
-
 type IPCMessage =
   | { type: "result"; advisories: Bun.Security.Advisory[] }
   | { type: "error"; code: "MODULE_NOT_FOUND"; module: string }
@@ -47,6 +27,34 @@ function writeAndExit(message: IPCMessage): never {
   fs.closeSync(IPC_PIPE_FD);
 
   process.exit(message.type === "error" ? 1 : 0);
+}
+
+let packagesJson: string = "";
+try {
+  const stdinBuffer = await Bun.stdin.text();
+  packagesJson = stdinBuffer;
+} catch (error) {
+  const message = `Failed to read packages from stdin: ${error instanceof Error ? error.message : String(error)}`;
+  writeAndExit({
+    type: "error",
+    code: "SCAN_FAILED",
+    message,
+  });
+}
+
+let packages: Bun.Security.Package[];
+try {
+  packages = JSON.parse(packagesJson);
+  if (!Array.isArray(packages)) {
+    throw new Error("Expected packages to be an array");
+  }
+} catch (error) {
+  const message = `Failed to parse packages JSON from stdin: ${error instanceof Error ? error.message : String(error)}`;
+  writeAndExit({
+    type: "error",
+    code: "SCAN_FAILED",
+    message,
+  });
 }
 
 let scanner: Bun.Security.Scanner;

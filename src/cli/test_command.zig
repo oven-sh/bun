@@ -1962,6 +1962,9 @@ pub const TestCommand = struct {
             // Ensure these never linger across files.
             vm.auto_killer.clear();
             vm.auto_killer.disable();
+
+            // Write and reset snapshot state after each test run for --rerun-each consistency
+            try reporter.jest.snapshots.writeSnapshotFile();
         }
     }
 };

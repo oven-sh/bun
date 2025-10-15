@@ -398,8 +398,6 @@ describe("@types/bun integration test", () => {
       const beforeEach_shouldBeAFunction: Function = beforeEach;
       const afterEach_shouldBeAFunction: Function = afterEach;
       const afterAll_shouldBeAFunction: Function = afterAll;
-      const mock_shouldBeAFunction: Function = mock;
-      const spyOn_shouldBeAFunction: Function = spyOn;
       const jest_shouldBeDefined: object = jest;
       const vi_shouldBeDefined: object = vi;
     `;

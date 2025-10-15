@@ -76,9 +76,13 @@ setTimeout(() => {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    env: bunEnv,
   });
-  expect(stdout.toString()).toBeEmpty();
-  expect(stderr.toString().replace(/DEBUG: Reloading...\n/g, "")).toBeEmpty();
+  const out = stdout.toString();
+  const err = stderr.toString().replace(/DEBUG: Reloading...\n/g, "");
+  console.log({ out, err });
+  expect(out).toBeEmpty();
+  expect(err).toBeEmpty();
   expect(exitCode).toBe(0);
 });
 

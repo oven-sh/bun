@@ -68,6 +68,7 @@ pub fn ParseFn(
             // open paren, we must push this scope so that parseFnBody's assertion holds.
             const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
             const pushedScopeForFunctionArgs = true;
+            errdefer p.popScope();
 
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,

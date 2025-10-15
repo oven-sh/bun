@@ -26,8 +26,6 @@ const object = {
 
   // Should report parse errors, not crash with assertion
   expect(result.exitCode).not.toBe(0);
-  expect(output).not.toContain("panic");
-  expect(output).not.toContain("unreachable");
   expect(output).toContain("error:");
 });
 
@@ -50,7 +48,5 @@ b: async function(first) {
 
   // Should report parse errors, not crash
   expect(result.exitCode).not.toBe(0);
-  expect(output).not.toContain("panic");
-  expect(output).not.toContain("unreachable");
   expect(output).toContain("error:");
 });

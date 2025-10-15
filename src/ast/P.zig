@@ -6019,8 +6019,6 @@ pub fn NewParser_(
         }
 
         pub fn handleImportMetaGlobCall(p: *P, call: *E.Call, loc: logger.Loc) Expr {
-            const glob = @import("../glob.zig");
-
             if (call.args.len == 0) {
                 bun.handleOom(p.log.addError(p.source, loc, "import.meta.glob() requires at least one argument"));
                 return p.newExpr(E.Object{}, loc);
@@ -6054,6 +6052,7 @@ pub fn NewParser_(
             var loader: ?options.Loader = null;
             var with_attrs: ?*const E.Object = null;
             var base_path: ?[]const u8 = null;
+            var eager: bool = false;
 
             if (call.args.len >= 2 and call.args.at(1).data == .e_object) {
                 const obj = call.args.at(1).data.e_object;
@@ -6083,6 +6082,17 @@ pub fn NewParser_(
                             if (type_value.data == .e_string) {
                                 loader = options.Loader.fromString(type_value.data.e_string.slice(p.allocator));
                             }
+                        }
+                    }
+                }
+                if (obj.get("eager")) |eager_value| {
+                    if (eager_value.data == .e_boolean) {
+                        eager = eager_value.data.e_boolean.value;
+
+                        // todo: support eager mode
+                        if (eager) {
+                            bun.handleOom(p.log.addError(p.source, eager_value.loc, "import.meta.glob() eager mode is not yet supported"));
+                            return p.newExpr(E.Object{}, loc);
                         }
                     }
                 }
@@ -7036,3 +7046,4 @@ const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
+const glob = @import("../glob.zig");

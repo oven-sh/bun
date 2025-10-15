@@ -118,7 +118,8 @@ describe("import.meta.glob", () => {
       expect(lines[1]).toBe("WITH_QUERY: 1");
     });
 
-    test("eager mode falls back to lazy loading", async () => {
+    // todo: make it not throw and instead actually work
+    test("eager mode throws an error", async () => {
       const dir = tempDirWithFiles("import-glob-eager", {
         "index.js": `
           const modules = import.meta.glob('./modules/*.js', { eager: true });
@@ -131,6 +132,7 @@ describe("import.meta.glob", () => {
         cmd: [bunExe(), "index.js"],
         env: bunEnv,
         cwd: dir,
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([
@@ -139,9 +141,9 @@ describe("import.meta.glob", () => {
         proc.exited,
       ]);
 
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("function");
+      expect(exitCode).toBe(1);
+      expect(stderr).toInclude("import.meta.glob() eager mode is not yet supported");
+      expect(stdout.trim()).toBe("");
     });
 
     test("supports recursive ** and multiple patterns", async () => {
@@ -168,6 +170,7 @@ describe("import.meta.glob", () => {
         cmd: [bunExe(), "index.js"],
         env: bunEnv,
         cwd: dir,
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([
@@ -455,7 +458,7 @@ describe("import.meta.glob", () => {
       expect(lines[1]).toBe("FIRST_TYPE: function");
     });
 
-    test("bundled code still uses lazy loading for all modes", async () => {
+    test("bundled code throws error for eager mode", async () => {
       const dir = tempDirWithFiles("import-glob-bundle-modes", {
         "index.js": `
           const regular = import.meta.glob('./lib/*.js');
@@ -473,27 +476,18 @@ describe("import.meta.glob", () => {
         cmd: [bunExe(), "build", "index.js", "--outfile", "dist/bundle.js"],
         env: bunEnv,
         cwd: dir,
-      });
-      await buildProc.exited;
-
-      await using runProc = Bun.spawn({
-        cmd: [bunExe(), "dist/bundle.js"],
-        env: bunEnv,
-        cwd: dir,
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(runProc.stdout).text(),
-        new Response(runProc.stderr).text(),
-        runProc.exited,
+        new Response(buildProc.stdout).text(),
+        new Response(buildProc.stderr).text(),
+        buildProc.exited,
       ]);
 
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n");
-      expect(lines[0]).toBe("REGULAR: function");
-      expect(lines[1]).toBe("EAGER: function");
-      expect(lines[2]).toBe("IMPORT: function");
+      expect(exitCode).toBe(1);
+      expect(stderr).toInclude("import.meta.glob() eager mode is not yet supported");
+      expect(stdout.trim()).toBe("");
     });
 
     test("bundled code maintains correct file paths", async () => {

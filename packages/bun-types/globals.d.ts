@@ -1346,16 +1346,17 @@ interface ImportMeta {
 
   /**
    * Import multiple modules using glob patterns.
+   * Inspired by [Vite's `import.meta.glob`](https://vite.dev/guide/features.html#glob-import).
    *
    * @param pattern - A glob pattern or array of glob patterns to match files
    * @param options - Options for how imports are handled
-   * @returns An object mapping file paths to import functions or modules
+   * @returns An object mapping file paths to dynamic import functions
    *
    * @example
    * const modules = import.meta.glob('./src/*.ts')
    * const module = await modules['./src/foo.ts']()
    *
-   * // code produced by bun
+   * // equivalent to
    * const modules = {
    *   './src/foo.ts': () => import('./src/foo.ts'),
    *   './src/bar.ts': () => import('./src/bar.ts'),
@@ -1382,39 +1383,40 @@ interface ImportMeta {
 interface ImportMetaGlobOptions<Eager extends boolean = false> {
   // todo:
   // /**
-  //  * If true, imports all modules eagerly (synchronously).
-  //  * If false (default), returns functions that import modules lazily.
+  //  * If true, imports all modules eagerly as if they were top level imports.
+  //  * If false (default), returns functions that import modules lazily with dynamic imports.
   //  *
   //  * @example
   //  * const eager = import.meta.glob('./src/*.ts', { eager: true })
   //  * const normal = import.meta.glob('./src/*.ts', { eager: false })
   //  *
-  //  * // code produced by bun
+  //  * // equivalent to
   //  * import * as __modules_foo from './src/foo.ts'
   //  * import * as __modules_bar from './src/bar.ts'
+  //  *
   //  * const eager = {
   //  *   './src/foo.ts': __modules_foo,
   //  *   './src/bar.ts': __modules_bar,
   //  * }
-  //  *
   //  * const normal = {
   //  *   './src/foo.ts': () => import('./src/foo.ts'),
   //  *   './src/bar.ts': () => import('./src/bar.ts'),
   //  * }
   //  */
   // eager?: Eager;
+  /** Right now Bun doesn't support eager mode */
   eager?: false;
   /**
    * Specify a named export to import from matched modules.
    * If not specified, imports the entire module.
    *
    * @example
-   * const modules = import.meta.glob('./src/*.ts', { import: 'setup' })
+   * const modules = import.meta.glob('./src/*.ts', { import: 'default' })
    *
-   * // code produced by bun
+   * // equivalent to
    * const modules = {
-   *   './src/bar.ts': () => import('./src/bar.ts').then((m) => m.setup),
-   *   './src/foo.ts': () => import('./src/foo.ts').then((m) => m.setup),
+   *   './src/bar.ts': () => import('./src/bar.ts').then((m) => m.default),
+   *   './src/foo.ts': () => import('./src/foo.ts').then((m) => m.default),
    * }
    */
   import?: "default" | (string & {});
@@ -1424,7 +1426,7 @@ interface ImportMetaGlobOptions<Eager extends boolean = false> {
    * @example
    * const modules = import.meta.glob('./assets/*.txt', { query: '?something' })
    *
-   * // code produced by bun
+   * // equivalent to
    * const modules = {
    *   './assets/file.txt': () => import('./assets/file.txt?something'),
    * }
@@ -1432,12 +1434,12 @@ interface ImportMetaGlobOptions<Eager extends boolean = false> {
   query?: string;
   /**
    * Import attributes to pass to the import statement.
-   * This is the standard way to specify import options.
+   * This is like the standard way to specify import options to a normal dynamic import.
    *
    * @example
    * const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } })
    *
-   * // code produced by bun
+   * // equivalent to
    * const modules = {
    *   './assets/file.txt': () => import('./assets/file.txt', { with: { type: 'text' } }),
    * }
@@ -1448,11 +1450,11 @@ interface ImportMetaGlobOptions<Eager extends boolean = false> {
    * Basically changing the "cwd" of the directory to scan.
    *
    * @example
-   * const modules = import.meta.glob('./assets/*.txt', { base: './src' })
+   * const modules = import.meta.glob('./*.txt', { base: '../public' })
    *
-   * // code produced by bun
+   * // equivalent to
    * const modules = {
-   *   './assets/file.txt': () => import('./src/assets/file.txt'),
+   *   './file.txt': () => import('../public/file.txt'),
    * }
    */
   base?: string;

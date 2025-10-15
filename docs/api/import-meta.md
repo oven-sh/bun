@@ -74,10 +74,10 @@ import.meta.glob("./src/*.ts"); // => { "./src/a.ts": () => import("./src/a.ts")
 - Import multiple modules using glob patterns. Returns an object mapping file paths to lazy-loading functions.
 
   ```ts
-  const modules = import.meta.glob("./modules/*.ts");
+  const modules = import.meta.glob("./src/*.ts");
   // const modules = {
-  //   './modules/a.ts': () => import('./modules/a.ts'),
-  //   './modules/b.ts': () => import('./modules/b.st'),
+  //   './src/a.ts': () => import('./src/a.ts'),
+  //   './src/b.ts': () => import('./src/b.ts'),
   // }
   ```
 

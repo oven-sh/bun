@@ -18,7 +18,9 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 it("should list top-level dependency", async () => {

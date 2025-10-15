@@ -628,7 +628,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type(input, self.ctx) catch {
                         self.failed = true;
                     };
                 }
@@ -818,7 +818,7 @@ pub const JestPrettyFormat = struct {
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
-                            var utf16Slice = key.utf16SliceAligned();
+                            const utf16Slice = key.utf16SliceAligned();
 
                             this.addForNewLine(utf16Slice.len + 2);
 
@@ -826,16 +826,8 @@ pub const JestPrettyFormat = struct {
                                 writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                             }
 
-                            writer.writeAll("'");
-
-                            while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
-                                writer.write16Bit(utf16Slice[0..j]);
-                                writer.writeAll("\"");
-                                utf16Slice = utf16Slice[j + 1 ..];
-                            }
-
+                            writer.writeAll("\"");
                             writer.write16Bit(utf16Slice);
-
                             writer.print(
                                 comptime Output.prettyFmt("\"<r><d>:<r> ", enable_ansi_colors),
                                 .{},
@@ -1007,7 +999,7 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);

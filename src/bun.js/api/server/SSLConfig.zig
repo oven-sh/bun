@@ -309,6 +309,7 @@ fn handleFileForField(
     return handleFile(global, file) catch |err| switch (err) {
         error.JSError => return error.JSError,
         error.OutOfMemory => return error.OutOfMemory,
+        error.JSTerminated => return error.JSTerminated,
         error.EmptyFile => return global.throwInvalidArguments(
             std.fmt.comptimePrint("TLSOptions.{s} is an empty file", .{field}),
             .{},

@@ -1706,7 +1706,7 @@ pub const Error = enum(i32) {
             const Context = struct {
                 deferred: *Deferred,
                 globalThis: *jsc.JSGlobalObject,
-                pub fn callback(context: *@This()) bun.JSError!void {
+                pub fn callback(context: *@This()) bun.JSTerminated!void {
                     defer bun.default_allocator.destroy(context);
                     try context.deferred.reject(context.globalThis);
                 }

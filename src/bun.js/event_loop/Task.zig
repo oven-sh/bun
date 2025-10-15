@@ -449,15 +449,15 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
             },
             @field(Task.Tag, @typeName(NativeZlib)) => {
                 var any: *NativeZlib = task.get(NativeZlib).?;
-                any.runFromJSThread() catch |err| try reportErrorOrTerminate(global, err);
+                any.runFromJSThread();
             },
             @field(Task.Tag, @typeName(NativeBrotli)) => {
                 var any: *NativeBrotli = task.get(NativeBrotli).?;
-                any.runFromJSThread() catch |err| try reportErrorOrTerminate(global, err);
+                any.runFromJSThread();
             },
             @field(Task.Tag, @typeName(NativeZstd)) => {
                 var any: *NativeZstd = task.get(NativeZstd).?;
-                any.runFromJSThread() catch |err| try reportErrorOrTerminate(global, err);
+                any.runFromJSThread();
             },
             @field(Task.Tag, @typeName(ProcessWaiterThreadTask)) => {
                 bun.markPosixOnly();

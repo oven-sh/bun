@@ -399,7 +399,7 @@ pub const ValkeyClient = struct {
         in_flight: Command.PromisePair.Queue,
         queue: Command.Entry.Queue,
 
-        pub fn run(this: *DeferredFailure) bun.JSError!void {
+        pub fn run(this: *DeferredFailure) bun.JSTerminated!void {
             defer {
                 bun.default_allocator.free(this.message);
                 bun.destroy(this);

@@ -493,7 +493,7 @@ pub const BunTest = struct {
         globalThis: *jsc.JSGlobalObject,
         phase: RefDataValue,
 
-        pub fn call(this: *RunTestsTask) bun.JSError!void {
+        pub fn call(this: *RunTestsTask) void {
             defer bun.destroy(this);
             defer this.weak.deinit();
             var strong = this.weak.upgrade() orelse return;

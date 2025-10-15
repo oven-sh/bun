@@ -550,14 +550,14 @@ pub const SendQueue = struct {
         jsc.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
     }
 
-    fn _closeSocketTask(this: *SendQueue) bun.JSError!void {
+    fn _closeSocketTask(this: *SendQueue) void {
         log("SendQueue#closeSocketTask", .{});
         bun.assert(this.close_next_tick != null);
         this.close_next_tick = null;
         this.closeSocket(.normal, .user);
     }
 
-    fn _onAfterIPCClosed(this: *SendQueue) bun.JSError!void {
+    fn _onAfterIPCClosed(this: *SendQueue) void {
         log("SendQueue#_onAfterIPCClosed", .{});
         if (this.close_event_sent) return;
         this.close_event_sent = true;

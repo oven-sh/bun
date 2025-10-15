@@ -114,7 +114,7 @@ pub fn fromJSHostCall(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!JSValue {
+) error{JSError}!JSValue {
     var scope: jsc.ExceptionValidationScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
@@ -131,7 +131,7 @@ pub fn fromJSHostCallGeneric(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
+) error{JSError}!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();

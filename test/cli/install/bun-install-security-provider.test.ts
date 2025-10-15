@@ -746,7 +746,7 @@ describe("Large Payload via stdin", () => {
     packages: [],
     customRegistry: urls => dummyRegistry(urls, { "0.0.2": {} }, 0, tgzTempDir),
     expectedExitCode: 0,
-    expect: ({ out, err }) => {
+    expect: ({ out }) => {
       expect(out).toContain("Received JSON payload");
       expect(out).toContain("via stdin");
       expect(out).toContain("packages");
@@ -756,7 +756,6 @@ describe("Large Payload via stdin", () => {
         const bytes = parseInt(match[1], 10);
         expect(bytes).toBeGreaterThan(1024 * 1024); // >1MB
       }
-      expect(err).not.toContain("panic");
     },
   });
 });

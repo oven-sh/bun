@@ -180,6 +180,16 @@ pub const Snapshots = struct {
         }
     }
 
+    /// Reset snapshot counts for a new rerun iteration.
+    /// This allows the same test to use the same snapshot keys across --rerun-each iterations.
+    pub fn resetCounts(this: *Snapshots) void {
+        var count_key_itr = this.counts.keyIterator();
+        while (count_key_itr.next()) |key| {
+            this.allocator.free(key.*);
+        }
+        this.counts.clearRetainingCapacity();
+    }
+
     pub fn writeSnapshotFile(this: *Snapshots) !void {
         if (this._current_file) |_file| {
             var file = _file;

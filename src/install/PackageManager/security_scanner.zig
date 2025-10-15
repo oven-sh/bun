@@ -725,7 +725,7 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-         var stdin_stdio = bun.spawn.Stdio{ .pipe = {} };
+        var stdin_stdio = bun.spawn.Stdio{ .pipe = {} };
 
         const stdin_opt = switch (stdin_stdio.asSpawnOption(0)) {
             .result => |opt| opt,
@@ -748,9 +748,9 @@ pub const SecurityScanSubprocess = struct {
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-         ipc_pipe_fds[1].close();
+        ipc_pipe_fds[1].close();
 
-         if (comptime bun.Environment.isPosix) {
+        if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
         }
         this.remaining_fds = 1;
@@ -764,7 +764,6 @@ pub const SecurityScanSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        
         const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
         const stdin_source = jsc.Subprocess.Source{
             .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
@@ -772,7 +771,7 @@ pub const SecurityScanSubprocess = struct {
 
         this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, spawned.stdin, stdin_source);
 
-         switch (this.stdin_writer.?.start()) {
+        switch (this.stdin_writer.?.start()) {
             .err => |err| {
                 Output.errGeneric("Failed to start stdin writer: {}", .{err});
                 return error.StdinWriterFailed;
@@ -793,7 +792,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onCloseIO(this: *SecurityScanSubprocess, _: jsc.Subprocess.StdioKind) void {
-         if (this.stdin_writer) |writer| {
+        if (this.stdin_writer) |writer| {
             writer.source.detach();
             writer.deref();
             this.stdin_writer = null;

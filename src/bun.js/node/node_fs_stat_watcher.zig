@@ -382,7 +382,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
@@ -393,7 +393,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         _ = js.listenerGetCached(this.js_this).?.call(

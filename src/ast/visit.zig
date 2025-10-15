@@ -820,7 +820,9 @@ pub fn Visit(
                                 const enum_stmts = preprocessed_enums.items[preprocessed_enum_i];
                                 preprocessed_enum_i += 1;
                                 try visited.appendSlice(enum_stmts);
-                                p.scope_order_to_visit = p.scope_order_to_visit[1..];
+
+                                const enum_scope_count = p.scopes_in_order_for_enum.get(stmt.loc).?.len;
+                                p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..];
                                 continue;
                             },
                             else => {},

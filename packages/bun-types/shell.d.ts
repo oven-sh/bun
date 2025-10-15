@@ -112,8 +112,9 @@ declare module "bun" {
        * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
        *
        * This configures the shell to only buffer the output.
+       * @param isQuiet - Whether to suppress output. Defaults to true.
        */
-      quiet(): this;
+      quiet(isQuiet?: boolean): this;
 
       /**
        * Read from stdout as a string, line by line

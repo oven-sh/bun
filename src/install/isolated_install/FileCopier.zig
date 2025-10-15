@@ -1,6 +1,4 @@
 pub const FileCopier = struct {
-    src_dir: FD,
-
     src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
     dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
     walker: Walker,
@@ -12,7 +10,6 @@ pub const FileCopier = struct {
         skip_dirnames: []const bun.OSPathSlice,
     ) OOM!FileCopier {
         return .{
-            .src_dir = src_dir,
             .src_path = src_path,
             .dest_subpath = dest_subpath,
             .walker = try .walk(
@@ -28,7 +25,7 @@ pub const FileCopier = struct {
         this.walker.deinit();
     }
 
-    pub fn copy(this: *FileCopier) OOM!sys.Maybe(void) {
+    pub fn copy(this: *FileCopier) sys.Maybe(void) {
         var dest_dir = bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{}) catch |err| {
             // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
             var errno: bun.sys.E = switch (@as(anyerror, err)) {

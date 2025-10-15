@@ -1,8 +1,27 @@
 import fs from "node:fs";
 
 const scannerModuleName = "__SCANNER_MODULE__";
-const packages = __PACKAGES_JSON__;
 const suppressError = __SUPPRESS_ERROR__;
+
+let packagesJson: string = "";
+try {
+  const stdinBuffer = await Bun.stdin.text();
+  packagesJson = stdinBuffer;
+} catch (error) {
+  console.error("Failed to read packages from stdin:", error);
+  process.exit(1);
+}
+
+let packages: Bun.Security.Package[];
+try {
+  packages = JSON.parse(packagesJson);
+  if (!Array.isArray(packages)) {
+    throw new Error("Expected packages to be an array");
+  }
+} catch (error) {
+  console.error("Failed to parse packages JSON from stdin:", error);
+  process.exit(1);
+}
 
 type IPCMessage =
   | { type: "result"; advisories: Bun.Security.Advisory[] }

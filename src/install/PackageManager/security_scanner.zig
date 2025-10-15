@@ -639,17 +639,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.ArrayList(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
-        temp_source = code.items;
-    }
-
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.ArrayList(u8).init(manager.allocator);
@@ -702,16 +691,18 @@ pub const SecurityScanSubprocess = struct {
     has_received_ipc: bool = false,
     exit_status: ?bun.spawn.Status = null,
     remaining_fds: i8 = 0,
+    stdin_writer: ?*StaticPipeWriter = null,
 
     pub const new = bun.TrivialNew(@This());
+    pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());
 
     pub fn spawn(this: *SecurityScanSubprocess) !void {
         this.ipc_data = std.ArrayList(u8).init(this.manager.allocator);
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
-        const pipe_result = bun.sys.pipe();
-        const pipe_fds = switch (pipe_result) {
+        const ipc_pipe_result = bun.sys.pipe();
+        const ipc_pipe_fds = switch (ipc_pipe_result) {
             .err => {
                 return error.IPCPipeFailed;
             },
@@ -734,12 +725,22 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
+         var stdin_stdio = bun.spawn.Stdio{ .pipe = {} };
+
+        const stdin_opt = switch (stdin_stdio.asSpawnOption(0)) {
+            .result => |opt| opt,
+            .err => |e| {
+                Output.errGeneric("Failed to create stdin pipe: {any}", .{e});
+                return error.StdinPipeFailed;
+            },
+        };
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
-            .stdin = .inherit,
+            .stdin = stdin_opt,
             .cwd = spawn_cwd,
-            .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
+            .extra_fds = &.{.{ .pipe = ipc_pipe_fds[1] }},
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
             },
@@ -747,21 +748,37 @@ pub const SecurityScanSubprocess = struct {
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-        pipe_fds[1].close();
+         ipc_pipe_fds[1].close();
 
-        if (comptime bun.Environment.isPosix) {
-            _ = bun.sys.setNonblocking(pipe_fds[0]);
+         if (comptime bun.Environment.isPosix) {
+            _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
         }
         this.remaining_fds = 1;
         this.ipc_reader.flags.nonblocking = true;
         if (comptime bun.Environment.isPosix) {
             this.ipc_reader.flags.socket = false;
         }
-        try this.ipc_reader.start(pipe_fds[0], true).unwrap();
+        try this.ipc_reader.start(ipc_pipe_fds[0], true).unwrap();
 
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);
+
+        
+        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
+        const stdin_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
+        };
+
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, spawned.stdin, stdin_source);
+
+         switch (this.stdin_writer.?.start()) {
+            .err => |err| {
+                Output.errGeneric("Failed to start stdin writer: {}", .{err});
+                return error.StdinWriterFailed;
+            },
+            .result => {},
+        }
 
         switch (process.watchOrReap()) {
             .err => {
@@ -773,6 +790,14 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn isDone(this: *SecurityScanSubprocess) bool {
         return this.has_process_exited and this.remaining_fds == 0;
+    }
+
+    pub fn onCloseIO(this: *SecurityScanSubprocess, _: jsc.Subprocess.StdioKind) void {
+         if (this.stdin_writer) |writer| {
+            writer.source.detach();
+            writer.deref();
+            this.stdin_writer = null;
+        }
     }
 
     pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {

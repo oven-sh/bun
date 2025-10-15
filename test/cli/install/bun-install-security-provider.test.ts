@@ -28,13 +28,15 @@ function test(
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
+    packageJson?: object;
+    customRegistry?: (urls: string[]) => any;
   },
 ) {
   it(
     name,
     async () => {
       const urls: string[] = [];
-      setHandler(dummyRegistry(urls));
+      setHandler(options.customRegistry ? options.customRegistry(urls) : dummyRegistry(urls));
 
       const scannerPath = options.scannerFile || "./scanner.ts";
       if (typeof options.scanner === "string") {
@@ -53,11 +55,14 @@ function test(
         await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
       }
 
-      await write("package.json", {
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {},
-      });
+      await write(
+        "package.json",
+        options.packageJson ?? {
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {},
+        },
+      );
 
       const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
       const packages = options.packages ?? ["bar"];
@@ -676,6 +681,82 @@ describe("Package Resolution", () => {
     expectedExitCode: 0,
     expect: ({ out }) => {
       expect(out).toContain("Latest tag:");
+    },
+  });
+});
+
+describe("Large Payload via stdin", () => {
+  let tgzTempDir: string;
+
+  beforeAll(async () => {
+    const { tmpdir } = await import("node:os");
+    const { mkdtemp } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    tgzTempDir = await mkdtemp(join(tmpdir(), "bun-test-tgz-"));
+
+    // Copy bar-0.0.2.tgz and create test-pkg-* copies in temp dir
+    const testDir = import.meta.dir;
+    const barTarball = `${testDir}/bar-0.0.2.tgz`;
+    const barContent = Bun.file(barTarball);
+
+    // Create 10,000 packages to generate ~1.25MB of JSON
+    // (each entry is ~125 bytes, so 10k * 125 = 1.25MB)
+    for (let i = 0; i < 10000; i++) {
+      const targetPath = `${tgzTempDir}/test-pkg-${i}-0.0.2.tgz`;
+      await Bun.write(targetPath, barContent);
+    }
+  });
+
+  afterAll(async () => {
+    const { rm } = await import("node:fs/promises");
+    try {
+      await rm(tgzTempDir, { recursive: true, force: true });
+    } catch (e) {}
+  });
+
+  test("handles JSON data larger than max arg length (>1MB)", {
+    testTimeout: 60_000,
+    scanner: async ({ packages }) => {
+      const jsonSize = JSON.stringify(packages).length;
+      console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages via stdin`);
+
+      if (jsonSize < 1024 * 1024) {
+        throw new Error(`Expected JSON payload to exceed 1MB, got ${jsonSize} bytes`);
+      }
+
+      if (packages.length === 0) {
+        throw new Error("Expected to receive packages via stdin");
+      }
+
+      return [];
+    },
+
+    packageJson: (() => {
+      const dependencies: Record<string, string> = {};
+
+      for (let i = 0; i < 10000; i++) {
+        dependencies[`test-pkg-${i}`] = "0.0.2";
+      }
+      return {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies,
+      };
+    })(),
+    packages: [],
+    customRegistry: urls => dummyRegistry(urls, { "0.0.2": {} }, 0, tgzTempDir),
+    expectedExitCode: 0,
+    expect: ({ out, err }) => {
+      expect(out).toContain("Received JSON payload");
+      expect(out).toContain("via stdin");
+      expect(out).toContain("packages");
+
+      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      if (match) {
+        const bytes = parseInt(match[1], 10);
+        expect(bytes).toBeGreaterThan(1024 * 1024); // >1MB
+      }
+      expect(err).not.toContain("panic");
     },
   });
 });

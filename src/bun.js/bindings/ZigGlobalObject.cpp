@@ -1367,6 +1367,13 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     // Do this in C++ for now
     auto* globalObj = static_cast<GlobalObject*>(obj);
+
+    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
+    // as they are internal to the engine and should not be exposed to user space.
+    // See: JSInternalPromise.h - "CAUTION: Must not leak the JSInternalPromise to the user space"
+    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
+        return;
+
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);

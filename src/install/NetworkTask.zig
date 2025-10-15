@@ -86,6 +86,11 @@ pub fn forManifest(
     is_optional: bool,
     needs_extended: bool,
 ) ForManifestError!void {
+    // Debug assertion - should not be called in offline mode
+    if (comptime bun.Environment.allow_assert) {
+        bun.assert(!this.package_manager.options.enable.offline);
+    }
+
     this.url_buf = blk: {
 
         // Not all registries support scoped package names when fetching the manifest.
@@ -250,6 +255,7 @@ pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
 
 pub const ForTarballError = OOM || error{
     InvalidURL,
+    OfflineModePackageNotCached,
 };
 
 pub fn forTarball(
@@ -259,6 +265,11 @@ pub fn forTarball(
     scope: *const Npm.Registry.Scope,
     authorization: NetworkTask.Authorization,
 ) ForTarballError!void {
+    // Debug assertion - should not be called in offline mode
+    if (comptime bun.Environment.allow_assert) {
+        bun.assert(!this.package_manager.options.enable.offline);
+    }
+
     this.callback = .{ .extract = tarball_.* };
     const tarball = &this.callback.extract;
     const tarball_url = tarball.url.slice();

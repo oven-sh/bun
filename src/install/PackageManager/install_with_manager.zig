@@ -6,6 +6,14 @@ pub fn installWithManager(
 ) !void {
     const log_level = manager.options.log_level;
 
+    // Display offline mode message
+    if (manager.options.enable.offline) {
+        if (log_level != .silent) {
+            Output.prettyErrorln("<d>Installing in offline mode (using cache only)<r>", .{});
+            Output.flush();
+        }
+    }
+
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
     if (!manager.env.hasHTTPProxy()) {

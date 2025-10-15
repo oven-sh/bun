@@ -624,6 +624,12 @@ pub fn load(
             this.enable.frozen_lockfile = true;
         }
 
+        if (cli.offline) {
+            this.enable.offline = true;
+            // In offline mode, use stale cache (don't check expiry)
+            this.enable.manifest_cache_control = false;
+        }
+
         if (cli.force) {
             this.enable.manifest_cache_control = false;
             this.enable.force_install = true;
@@ -728,7 +734,8 @@ pub const Enable = packed struct(u16) {
 
     exact_versions: bool = false,
     only_missing: bool = false,
-    _: u7 = 0,
+    offline: bool = false,
+    _: u6 = 0,
 };
 
 const string = []const u8;

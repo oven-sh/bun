@@ -964,7 +964,7 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
-                                error.InvalidURL => {
+                                error.InvalidURL, error.OfflineModePackageNotCached => {
                                     Output.err(err, "failed to enqueue package for download: {s}@{}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
@@ -1001,7 +1001,7 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
-                                error.InvalidURL => {
+                                error.InvalidURL, error.OfflineModePackageNotCached => {
                                     Output.err(err, "failed to enqueue github package for download: {s}@{}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
@@ -1035,7 +1035,7 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
-                                error.InvalidURL => {
+                                error.InvalidURL, error.OfflineModePackageNotCached => {
                                     Output.err(err, "failed to enqueue tarball for download: {s}@{}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),

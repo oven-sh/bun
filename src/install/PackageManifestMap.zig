@@ -87,6 +87,16 @@ pub fn byNameHashAllowExpired(
                 return null;
             }
 
+            // In offline mode, always use cached manifest regardless of expiry
+            if (pm.options.enable.offline) {
+                entry.value_ptr.* = .{ .manifest = manifest };
+                if (is_expired) |expiry| {
+                    expiry.* = false;
+                }
+                return &entry.value_ptr.manifest;
+            }
+
+            // Online mode: check expiry
             if (pm.options.enable.manifest_cache_control and manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control) {
                 entry.value_ptr.* = .{ .manifest = manifest };
                 return &entry.value_ptr.manifest;

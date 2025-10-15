@@ -1,9 +1,27 @@
-const StartManifestTaskError = bun.OOM || error{InvalidURL};
+const StartManifestTaskError = bun.OOM || error{ InvalidURL, OfflineModePackageNotCached };
 fn startManifestTask(manager: *PackageManager, pkg_name: []const u8, dep: *const Dependency, needs_extended_manifest: bool) StartManifestTaskError!void {
     const task_id = Task.Id.forManifest(pkg_name);
     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) {
         return;
     }
+
+    // In offline mode, error if we need to fetch a manifest
+    if (manager.options.enable.offline) {
+        if (dep.behavior.isOptional()) {
+            // Optional dependencies can fail silently in offline mode
+            return;
+        }
+        // Required dependency not in cache - fail
+        manager.log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            manager.allocator,
+            "Package \"{s}\" not found in cache (offline mode)",
+            .{pkg_name},
+        ) catch {};
+        return error.OfflineModePackageNotCached;
+    }
+
     manager.startProgressBarIfNone();
     var task = manager.getNetworkTask();
     task.* = .{
@@ -153,6 +171,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
+const logger = bun.logger;
 
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;

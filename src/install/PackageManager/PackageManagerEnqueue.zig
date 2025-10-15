@@ -107,6 +107,21 @@ pub fn enqueueTarballForDownload(
 
     if (task_queue.found_existing) return;
 
+    // In offline mode, check if tarball is in cache
+    if (this.options.enable.offline) {
+        const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+        if (!dep.behavior.isOptional()) {
+            this.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.allocator,
+                "Package tarball not found in cache (offline mode): {s}",
+                .{url},
+            ) catch {};
+        }
+        return error.OfflineModePackageNotCached;
+    }
+
     if (try this.generateNetworkTaskForTarball(
         task_id,
         url,
@@ -162,6 +177,21 @@ pub fn enqueueGitForCheckout(
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: ?u64,
 ) void {
+    // Git dependencies not supported in offline mode
+    if (this.options.enable.offline) {
+        const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+        if (!dep.behavior.isOptional()) {
+            this.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.allocator,
+                "Git dependencies not supported in offline mode: {s}",
+                .{alias},
+            ) catch {};
+        }
+        return;
+    }
+
     const repository = &resolution.value.git;
     const url = this.lockfile.str(&repository.repo);
     const clone_id = Task.Id.forGitClone(url);
@@ -760,6 +790,20 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                     }
                                 }
 
+                                // In offline mode, check if package is in cache
+                                if (this.options.enable.offline) {
+                                    if (!dependency.behavior.isOptional()) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Package \"{s}\" not found in cache (offline mode)",
+                                            .{name_str},
+                                        ) catch {};
+                                    }
+                                    return;
+                                }
+
                                 if (PackageManager.verbose_install) {
                                     Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
                                 }
@@ -812,6 +856,20 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             // First: see if we already loaded the git package in-memory
             if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
+                return;
+            }
+
+            // Git dependencies not supported in offline mode
+            if (this.options.enable.offline) {
+                if (dependency.behavior.isRequired()) {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        "Git dependencies not supported in offline mode",
+                        .{},
+                    ) catch {};
+                }
                 return;
             }
 

@@ -995,14 +995,14 @@ const Template = enum {
         }
 
         // Give some way to opt out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CLAUDE_CODE_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.bun_agent_rule_disabled.get() or bun.env_var.claude_code_agent_rule_disabled.get()) {
             return false;
         }
 
         const pathbuffer = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(pathbuffer);
 
-        return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
+        return bun.which(pathbuffer, bun.env_var.path.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
 
     pub fn createAgentRule() void {
@@ -1054,7 +1054,7 @@ const Template = enum {
 
     fn isCursorInstalled() bool {
         // Give some way to opt-out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CURSOR_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.bun_agent_rule_disabled.get() or bun.env_var.cursor_agent_rule_disabled.get()) {
             return false;
         }
 

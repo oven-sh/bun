@@ -165,12 +165,14 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }
 
-    if (env.get("XDG_CACHE_HOME")) |dir| {
-        var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+    if (bun.env_var.xdg_cache_home.platformKey()) |key| {
+        if (env.get(key)) |dir| {
+            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+        }
     }
 
-    if (env.get(bun.DotEnv.home_env)) |dir| {
+    if (env.get(bun.env_var.home.key())) |dir| {
         var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }

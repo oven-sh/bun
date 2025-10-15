@@ -73,14 +73,14 @@ const CI = enum {
             var name: []const u8 = "";
             defer ci_name = name;
 
-            if (bun.getenvZ("CI")) |ci| {
+            if (bun.env_var.ci.get()) |ci| {
                 if (strings.eqlComptime(ci, "false")) {
                     return;
                 }
             }
 
             // Special case Heroku
-            if (bun.getenvZ("NODE")) |node| {
+            if (bun.env_var.node.get()) |node| {
                 if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) {
                     name = "heroku";
                     return;

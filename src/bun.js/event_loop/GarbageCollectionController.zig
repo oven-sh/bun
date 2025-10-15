@@ -37,7 +37,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     actual.internal_loop_data.jsc_vm = vm.jsc_vm;
 
     if (comptime Environment.isDebug) {
-        if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+        if (bun.env_var.bun_track_last_fn_name.get()) {
             vm.eventLoop().debug.track_last_fn_name = true;
         }
     }

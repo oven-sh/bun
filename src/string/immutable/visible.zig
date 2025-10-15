@@ -1,47 +1,31 @@
 pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
-    if (cp <= 0x1f) {
-        return true;
-    }
-
-    if (cp >= 0x7f and cp <= 0x9f) {
-        // C1 control characters
-        return true;
-    }
+    const c1_control_chars = bun.math.interval.Closed(T).init(0x7f, 0x9f);
+    const combining_diacritical_marks = bun.math.interval.Closed(T).init(0x300, 0x36f);
+    const modifying_invisible_chars = bun.math.interval.Closed(T).init(0x200b, 0x200f);
+    const combining_diacritical_marks_for_symbols = bun.math.interval.Closed(T).init(0x20d0, 0x20ff);
+    const variation_selectors_1 = bun.math.interval.Closed(T).init(0xfe00, 0xfe0f);
+    const combining_half_marks = bun.math.interval.Closed(T).init(0xfe20, 0xfe2f);
+    const variation_selectors_2 = bun.math.interval.Closed(T).init(0xe0100, 0xe01ef);
 
     if (comptime @sizeOf(T) == 1) {
         return false;
     }
 
-    if (cp >= 0x300 and cp <= 0x36f) {
-        // Combining Diacritical Marks
-        return true;
-    }
-
-    if (cp >= 0x200b and cp <= 0x200f) {
-        // Modifying Invisible Characters
-        return true;
-    }
-
-    if (cp >= 0x20d0 and cp <= 0x20ff)
-        // Combining Diacritical Marks for Symbols
-        return true;
-
-    if (cp >= 0xfe00 and cp <= 0xfe0f)
-        // Variation Selectors
-        return true;
-    if (cp >= 0xfe20 and cp <= 0xfe2f)
-        // Combining Half Marks
-        return true;
-
     if (cp == 0xfeff)
         // Zero Width No-Break Space (BOM, ZWNBSP)
         return true;
 
-    if (cp >= 0xe0100 and cp <= 0xe01ef)
-        // Variation Selectors
+    if (cp <= 0x1f) {
         return true;
+    }
 
-    return false;
+    return c1_control_chars.contains(cp) or
+        combining_diacritical_marks.contains(cp) or
+        modifying_invisible_chars.contains(cp) or
+        combining_diacritical_marks_for_symbols.contains(cp) or
+        variation_selectors_1.contains(cp) or
+        combining_half_marks.contains(cp) or
+        variation_selectors_2.contains(cp);
 }
 
 /// Official unicode reference: https://www.unicode.org/Public/UCD/latest/ucd/EastAsianWidth.txt

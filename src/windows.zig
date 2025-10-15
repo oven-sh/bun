@@ -86,6 +86,31 @@ pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 pub const HANDLE = win32.HANDLE;
 pub const HMODULE = win32.HMODULE;
 
+/// learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects
+pub const TOKEN_QUERY: DWORD = 0x0008;
+
+/// learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken
+pub extern "advapi32" fn OpenProcessToken(
+    ProcessHandle: HANDLE,
+    DesiredAccess: DWORD,
+    TokenHandle: *HANDLE,
+) callconv(windows.WINAPI) BOOL;
+
+/// learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-getuserprofiledirectoryw
+pub extern "userenv" fn GetUserProfileDirectoryW(
+    hToken: HANDLE,
+    lpProfileDir: LPWSTR,
+    lpcchSize: *DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemwindowsdirectoryw
+pub extern "kernel32" fn GetSystemWindowsDirectoryW(
+    lpBuffer: LPWSTR,
+    uSize: UINT,
+) callconv(windows.WINAPI) UINT;
+
+pub const GetCurrentProcess = windows.GetCurrentProcess;
+
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
     hFile: HANDLE,

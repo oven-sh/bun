@@ -98,6 +98,10 @@ test("my feature", async () => {
 - `transpiler.zig` - Wrapper around js_parser with sourcemap support
 - `resolver/` - Module resolution system
 - `allocators/` - Custom memory allocators for performance
+- `os.zig` - Type-safe cross-platform OS abstractions
+- `sys.zig` - Type-safe low-level system calls and utilities
+
+**ALWAYS** prefer using high-quality common abstractions rather than direct syscalls.
 
 #### JavaScript Runtime (`src/bun.js/`)
 

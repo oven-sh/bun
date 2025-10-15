@@ -1147,26 +1147,11 @@ pub const internal = struct {
 
     var __max_dns_time_to_live_seconds: ?u32 = null;
     pub fn getMaxDNSTimeToLiveSeconds() u32 {
-        // Amazon Web Services recommends 5 seconds: https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
-        const default_max_dns_time_to_live_seconds = 30;
-
         // This is racy, but it's okay because the number won't be invalid, just stale.
         return __max_dns_time_to_live_seconds orelse {
-            if (bun.getenvZ("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS")) |string_value| {
-                const value = std.fmt.parseInt(i64, string_value, 10) catch {
-                    __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-                    return default_max_dns_time_to_live_seconds;
-                };
-                if (value < 0) {
-                    __max_dns_time_to_live_seconds = std.math.maxInt(u32);
-                } else {
-                    __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
-                }
-                return __max_dns_time_to_live_seconds.?;
-            }
-
-            __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-            return default_max_dns_time_to_live_seconds;
+            const value = bun.env_var.bun_config_dns_time_to_live_seconds.get();
+            __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
+            return __max_dns_time_to_live_seconds.?;
         };
     }
 
@@ -1393,12 +1378,12 @@ pub const internal = struct {
     };
     pub fn getHints() std.c.addrinfo {
         var hints_copy = default_hints;
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG)) {
+        if (bun.feature_flag.disable_addrconfig.get()) {
             hints_copy.flags.ADDRCONFIG = false;
         }
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV6)) {
+        if (bun.feature_flag.disable_ipv6.get()) {
             hints_copy.family = std.c.AF.INET;
-        } else if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV4)) {
+        } else if (bun.feature_flag.disable_ipv4.get()) {
             hints_copy.family = std.c.AF.INET6;
         }
 
@@ -1685,7 +1670,7 @@ pub const internal = struct {
         getaddrinfo_calls += 1;
         var timestamp_to_store: u32 = 0;
         // is there a cache hit?
-        if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE)) {
+        if (!bun.feature_flag.disable_dns_cache.get()) {
             if (global_cache.get(key, &timestamp_to_store)) |entry| {
                 if (preload) {
                     global_cache.lock.unlock();
@@ -1724,7 +1709,7 @@ pub const internal = struct {
         global_cache.lock.unlock();
 
         if (comptime Environment.isMac) {
-            if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO)) {
+            if (!bun.feature_flag.disable_dns_cache_libinfo.get()) {
                 const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
                 log("getaddrinfo({s}) = cache miss (libinfo)", .{host orelse ""});
                 if (res) return req;

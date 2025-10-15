@@ -902,7 +902,7 @@ pub const Transpiler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS)) {
+        if (bun.feature_flag.disable_source_maps.get()) {
             return transpiler.printWithSourceMapMaybe(
                 result.ast,
                 &result.source,

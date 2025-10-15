@@ -152,6 +152,25 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return null;
         }
 
+        pub inline fn asValueConstPtr(this: *const @This()) ?*const ReturnType {
+            if (comptime ReturnType == void)
+                @compileError("Maybe.asValueConstPtr is invalid for ReturnType == void");
+            return switch (this.*) {
+                .result => |*r| r,
+                .err => null,
+            };
+        }
+
+        pub inline fn asValuePtr(this: *@This()) ?*ReturnType {
+            if (comptime ReturnType == void)
+                @compileError("Maybe.asValuePtr is invalid for ReturnType == void");
+
+            return switch (this.*) {
+                .result => |*r| r,
+                .err => null,
+            };
+        }
+
         pub inline fn isOk(this: *const @This()) bool {
             return switch (this.*) {
                 .result => true,

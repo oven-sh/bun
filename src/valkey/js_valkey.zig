@@ -1583,7 +1583,7 @@ fn SocketHandler(comptime ssl: bool) type {
 const Options = struct {
     pub fn fromJS(globalObject: *jsc.JSGlobalObject, options_obj: jsc.JSValue) !valkey.Options {
         var this = valkey.Options{
-            .enable_auto_pipelining = !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING),
+            .enable_auto_pipelining = !bun.feature_flag.disable_redis_auto_pipelining.get(),
         };
 
         if (try options_obj.getOptionalInt(globalObject, "idleTimeout", u32)) |idle_timeout| {

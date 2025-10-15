@@ -1,48 +1,5 @@
-/// All runtime feature flags that can be toggled with an environment variable.
-/// The field names correspond exactly to the expected environment variable names.
-pub const RuntimeFeatureFlag = enum {
-    BUN_ASSUME_PERFECT_INCREMENTAL,
-    BUN_BE_BUN,
-    BUN_DEBUG_NO_DUMP,
-    BUN_DESTRUCT_VM_ON_EXIT,
-    BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING,
-    BUN_DISABLE_SOURCE_CODE_PREVIEW,
-    BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW,
-    BUN_DUMP_STATE_ON_CRASH,
-    BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS,
-    BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG,
-    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER,
-    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE,
-    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO,
-    BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX,
-    BUN_FEATURE_FLAG_DISABLE_IO_POOL,
-    BUN_FEATURE_FLAG_DISABLE_IPV4,
-    BUN_FEATURE_FLAG_DISABLE_IPV6,
-    BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING,
-    BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK,
-    BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS,
-    BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH,
-    BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING,
-    BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE,
-    BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE,
-    BUN_FEATURE_FLAG_FORCE_IO_POOL,
-    BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS,
-    BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304,
-    BUN_FEATURE_FLAG_NO_LIBDEFLATE,
-    BUN_INSTRUMENTS,
-    BUN_INTERNAL_BUNX_INSTALL,
-    /// Suppress crash reporting and creating a core dump when we abort due to an unsupported libuv function being called
-    BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB,
-    /// Suppress crash reporting and creating a core dump when we abort due to a fatal Node-API error
-    BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT,
-    /// Suppress crash reporting and creating a core dump when `process._kill()` is passed its own PID
-    BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF,
-    /// Suppress crash reporting and creating a core dump when we abort due to a signal in `bun run`
-    BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN,
-    BUN_NO_CODESIGN_MACHO_BINARY,
-    BUN_TRACE,
-    NODE_NO_WARNINGS,
-};
+//! If you are adding feature-flags to this file, you are in the wrong spot. Go to env_var.zig
+//! instead.
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
@@ -51,8 +8,6 @@ pub const breaking_changes_1_4 = false;
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
 pub const store_file_descriptors = !env.isBrowser;
-
-pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
 
@@ -68,15 +23,7 @@ pub const watch_directories = true;
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
 pub const allow_json_single_quotes = true;
 
-pub const react_specific_warnings = true;
-
 pub const is_macro_enabled = !env.isWasm and !env.isWasi;
-
-// pretend everything is always the macro environment
-// useful for debugging the macro's JSX transform
-pub const force_macro = false;
-
-pub const include_filename_in_jsx = false;
 
 pub const disable_compression_in_http_client = false;
 
@@ -172,13 +119,6 @@ pub const runtime_transpiler_cache = true;
 /// order to isolate your bug.
 pub const windows_bunx_fast_path = true;
 
-// This causes strange bugs where writing via console.log (sync) has a different
-// order than via Bun.file.writer() so we turn it off until there's a unified,
-// buffered writer abstraction shared throughout Bun
-pub const nonblocking_stdout_and_stderr_on_posix = false;
-
-pub const postgresql = env.is_canary or env.isDebug;
-
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const is_fetch_preconnect_supported = env.isPosix;
 
@@ -190,14 +130,14 @@ pub fn isLibdeflateEnabled() bool {
         return false;
     }
 
-    return !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE);
+    return !bun.feature_flag.no_libdeflate.get();
 }
 
 /// Enable the "app" option in Bun.serve. This option will likely be removed
 /// in favor of HTML loaders and configuring framework options in bunfig.toml
 pub fn bake() bool {
     // In canary or if an environment variable is specified.
-    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE);
+    return env.is_canary or env.isDebug or bun.feature_flag.experimental_bake.get();
 }
 
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.

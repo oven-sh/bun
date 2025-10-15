@@ -984,7 +984,7 @@ pub const PatternBuffer = struct {
 
 pub fn printWarning() void {
     // Silence this for the test suite
-    if (bun.getenvZ("BUN_DEV_SERVER_TEST_RUNNER") == null) {
+    if (bun.env_var.bun_dev_server_test_runner.get() == null) {
         bun.Output.warn(
             \\Be advised that Bun Bake is highly experimental, and its API
             \\will have breaking changes. Join the <magenta>#bake<r> Discord

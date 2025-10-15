@@ -12,12 +12,10 @@ pub fn isEnabled() bool {
         .no => false,
         .unknown => {
             enabled = detect: {
-                if (bun.getenvZ("DO_NOT_TRACK")) |x| {
-                    if (x.len == 1 and x[0] == '1') {
-                        break :detect .no;
-                    }
+                if (bun.env_var.do_not_track.get()) {
+                    break :detect .no;
                 }
-                if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+                if (bun.env_var.hyperfine_randomized_environment_offset.get() != null) {
                     break :detect .no;
                 }
                 break :detect .yes;

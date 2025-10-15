@@ -1328,7 +1328,7 @@ pub const StandaloneModuleGraph = struct {
                         var whichbuf: bun.PathBuffer = undefined;
                         if (bun.which(
                             &whichbuf,
-                            bun.getenvZ("PATH") orelse return error.FileNotFound,
+                            bun.env_var.path.get() orelse return error.FileNotFound,
                             "",
                             bun.argv[0],
                         )) |path| {

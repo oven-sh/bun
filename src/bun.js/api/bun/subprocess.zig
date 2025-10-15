@@ -1351,7 +1351,7 @@ pub fn spawnMaybeSync(
         !jsc_vm.auto_killer.enabled and
         !jsc_vm.jsc_vm.hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
-        !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
+        !bun.feature_flag.disable_spawnsync_fast_path.get();
 
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,

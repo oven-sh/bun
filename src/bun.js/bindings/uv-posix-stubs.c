@@ -1129,10 +1129,10 @@ UV_EXTERN int uv_os_getpriority(uv_pid_t pid, int* priority)
     __builtin_unreachable();
 }
 
+extern int bunuv__os_homedir(char* buffer, size_t* size);
 UV_EXTERN int uv_os_homedir(char* buffer, size_t* size)
 {
-    __bun_throw_not_implemented("uv_os_homedir");
-    __builtin_unreachable();
+    return bunuv__os_homedir(buffer, size);
 }
 
 UV_EXTERN int uv_os_setenv(const char* name, const char* value)

@@ -318,7 +318,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .memory_visualizer_timer = .initPaused(.DevServerMemoryVisualizerTick),
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
-                bun.getRuntimeFeatureFlag(.BUN_DUMP_STATE_ON_CRASH),
+                bun.feature_flag.dump_state_on_crash.get(),
         .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
@@ -349,7 +349,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             else
                 true
         else
-            bun.getRuntimeFeatureFlag(.BUN_ASSUME_PERFECT_INCREMENTAL),
+            bun.feature_flag.assume_perfect_incremental.get(),
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
         .server_transpiler = undefined,

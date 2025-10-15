@@ -94,9 +94,10 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     bun.assert(!this.loaded);
     this.loaded = true;
 
-    if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
-        this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
-    }
+    const raw_interval = bun.env_var.bun_inotify_coalesce_interval.get();
+    const valid_ns_range = bun.math.interval.Closed(u64).init(0, 999_999_999);
+    const clamped_interval = valid_ns_range.clamp(raw_interval);
+    this.coalesce_interval = @intCast(clamped_interval);
 
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));

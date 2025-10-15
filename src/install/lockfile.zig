@@ -313,7 +313,7 @@ pub fn loadFromDir(
 
     switch (result) {
         .ok => {
-            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null and manager != null) {
+            if (bun.env_var.bun_debug_test_text_lockfile.get() and manager != null) {
 
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.

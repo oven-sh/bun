@@ -1267,7 +1267,7 @@ pub fn spawnOpts(
             "XDG_CONFIG_HOME",
             "USERPROFILE",
         };
-        const PATH = bun.getenvZ("PATH");
+        const PATH = bun.env_var.path.get();
         const envp_buf = bun.handleOom(bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null));
         for (0..env_arr.len) |i| {
             envp_buf[i] = env_arr[i].ptr;
@@ -1392,7 +1392,7 @@ pub fn gitDiffInternal(
     child_proc.stderr_behavior = .Pipe;
     var map = std.process.EnvMap.init(allocator);
     defer map.deinit();
-    if (bun.getenvZ("PATH")) |v| try map.put("PATH", v);
+    if (bun.env_var.path.get()) |v| try map.put("PATH", v);
     try map.put("GIT_CONFIG_NOSYSTEM", "1");
     try map.put("HOME", "");
     try map.put("XDG_CONFIG_HOME", "");

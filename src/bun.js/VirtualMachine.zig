@@ -1603,7 +1603,7 @@ fn _resolve(
         ret.result = null;
         ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
-    } else if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
+    } else if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun, .{})) |result| {
         ret.result = null;
         ret.path = result.path;
         return;
@@ -1774,7 +1774,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         }
     }
 
-    if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun)) |hardcoded| {
+    if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier_utf8.slice(), .bun, .{})) |hardcoded| {
         res.* = ErrorableString.ok(
             if (is_user_require_resolve and hardcoded.node_builtin)
                 specifier

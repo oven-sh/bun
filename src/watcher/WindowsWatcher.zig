@@ -214,7 +214,11 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = WindowsWatcher.Timeout.none;
+
+        this.mutex.lock();
+        defer this.mutex.unlock();
         const item_paths = this.watchlist.items(.file_path);
+
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
             const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], event.filename);

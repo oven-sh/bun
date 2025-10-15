@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist, tempDir } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -30,6 +30,56 @@ it("preload not found should exit with code 1 and not time out", async () => {
   expect(runner.signalCode).toBe(null);
   expect(runner.exitCode).toBe(1);
   expect(await new Response(runner.stderr).text()).toContain("preload not found");
+});
+
+it("does not crash under stress", () => {
+  // 1 second test, crashes about 50% of the time
+  using testDir = tempDir("watcher-stress-test", {
+    "index.js": `
+const TEST_DIR = "./crash-test";
+
+// Create a deeply nested module structure
+for (let i = 0; i < 100; i++) {
+  for (let j = 0; j < 10; j++) {
+    const dir = \`\${TEST_DIR}/dir\${i}\`;
+    await Bun.write(\`\${dir}/module\${j}.ts\`, \`export default \${i * 10 + j};\`);
+  }
+}
+
+// Spawn multiple async tasks to stress the watcher
+for (let worker = 0; worker < 10; worker++) {
+  (async () => {
+    while (true) {
+      // Dynamically import (adds to watchlist via ModuleLoader.zig)
+      const i = Math.floor(Math.random() * 100);
+      const j = Math.floor(Math.random() * 10);
+      try {
+        await import(\`\${TEST_DIR}/dir\${i}/module\${j}.ts\`);
+      } catch {}
+
+      // Modify files to trigger WindowsWatcher.watchLoopCycle
+      await Bun.write(\`\${TEST_DIR}/dir\${i}/module\${j}.ts\`, \`export default \${Date.now()};\`);
+    }
+  })();
+}
+
+// Keep process alive
+setTimeout(() => {
+  process.exit(0);
+}, 1000);
+`,
+  });
+
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "--hot", "index.js"],
+    cwd: testDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  expect(stdout.toString()).toBeEmpty();
+  expect(stderr.toString().replace(/DEBUG: Reloading...\n/g, "")).toBeEmpty();
+  expect(exitCode).toBe(0);
 });
 
 it(

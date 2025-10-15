@@ -233,6 +233,7 @@ registry=http://localhost:\${PORT}/
       default_registry_token: string;
       default_registry_username: string;
       default_registry_password: string;
+      default_registry_email: string;
     }) => void,
   ) {
     const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
@@ -442,6 +443,25 @@ ${Object.keys(opts)
     },
     (stdout: string, stderr: string) => {
       expect(stderr).toContain("received an empty string");
+    },
+  );
+
+  await makeTest([["email", "user@example.com"]], result => {
+    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_email).toEqual("user@example.com");
+  });
+
+  await makeTest(
+    [
+      ["username", "testuser"],
+      ["_password", "testpass"],
+      ["email", "test@example.com"],
+    ],
+    result => {
+      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_username).toEqual("testuser");
+      expect(result.default_registry_password).toEqual("testpass");
+      expect(result.default_registry_email).toEqual("test@example.com");
     },
   );
 });

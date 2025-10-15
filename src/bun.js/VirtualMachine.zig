@@ -573,14 +573,14 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .none => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             return; // ignore the unhandled rejection
         },
         .warn => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
             jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
@@ -590,7 +590,7 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .warn_with_error_code => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
@@ -601,7 +601,7 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .strict => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
@@ -614,20 +614,20 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         .throw => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) {
                 this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                    error.JSExecutionTerminated => {}, // we are returning anyway
+                    error.JSTerminated => {}, // we are returning anyway
                 };
                 return;
             }
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             if (this.uncaughtException(globalObject, wrapped_reason, true)) {
                 this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                    error.JSExecutionTerminated => {}, // we are returning anyway
+                    error.JSTerminated => {}, // we are returning anyway
                 };
                 return;
             }
             // continue to default handler
             this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => return,
+                error.JSTerminated => return,
             };
         },
     }
@@ -1860,8 +1860,7 @@ pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callfram
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    // TODO: properly propagate exception upwards
-    this.eventLoop().drainMicrotasks() catch {};
+    this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {

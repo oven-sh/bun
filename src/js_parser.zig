@@ -929,7 +929,7 @@ pub const MacroState = struct {
     }
 };
 
-pub const BunTestGlobals = struct {
+pub const Jest = struct {
     @"test": Ref = Ref.None,
     it: Ref = Ref.None,
     describe: Ref = Ref.None,

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 test("parser should not crash with assertion error on invalid async function syntax", async () => {
   // This used to cause: panic(main thread): reached unreachable code
   // when parsing invalid syntax where async function appears after missing comma
-  using dir = tempDir("parser-assertion", {
+  const dir = tempDirWithFiles("parser-assertion", {
     "input.js": `
 const object = {
   a(el) {
@@ -17,9 +18,9 @@ const object = {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", String(dir) + "/input.js"],
+    cmd: [bunExe(), "build", join(dir, "input.js")],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -39,7 +40,7 @@ const object = {
 
 test("parser should not crash with assertion error on labeled async function statement", async () => {
   // Similar case: labeled statement with async function
-  using dir = tempDir("parser-assertion-label", {
+  const dir = tempDirWithFiles("parser-assertion-label", {
     "input.js": `
 b: async function(first) {
 }
@@ -47,9 +48,9 @@ b: async function(first) {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", String(dir) + "/input.js"],
+    cmd: [bunExe(), "build", join(dir, "input.js")],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -487,6 +487,11 @@ describe("@types/bun integration test", () => {
           "line": "my-test.test.ts:13:44",
           "message": "Cannot find name 'jest'.",
         },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:14:42",
+          "message": "Cannot find name 'vi'.",
+        },
       ]);
     });
   });

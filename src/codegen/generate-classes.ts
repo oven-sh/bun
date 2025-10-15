@@ -2188,6 +2188,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSTerminated => return null,
           });
         }
       `;
@@ -2201,6 +2202,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSTerminated => return null,
           });
         }
       `;

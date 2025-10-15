@@ -43,10 +43,64 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+            const store = this.store;
+
+            const node_pkg_ids = store.nodes.items(.pkg_id);
+
+            const entries = store.entries.slice();
+            const entry_steps = entries.items(.step);
+            const entry_node_ids = entries.items(.node_id);
+
+            const pkgs = this.lockfile.packages.slice();
+            const pkg_names = pkgs.items(.name);
+            const pkg_name_hashes = pkgs.items(.name_hash);
+            const pkg_resolutions = pkgs.items(.resolution);
+
             for (removed.value.items) |install_ctx| {
                 const entry_id = install_ctx.isolated_package_install_context;
+
+                const node_id = entry_node_ids[entry_id.get()];
+                const pkg_id = node_pkg_ids[node_id.get()];
+                const pkg_name = pkg_names[pkg_id];
+                const pkg_name_hash = pkg_name_hashes[pkg_id];
+                const pkg_res = &pkg_resolutions[pkg_id];
+
+                const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
+
+                if (patch_info == .patch) {
+                    var log: bun.logger.Log = .init(this.manager.allocator);
+                    this.applyPackagePatch(entry_id, patch_info.patch, &log);
+                    if (log.hasErrors()) {
+                        // monotonic is okay because we haven't started the task yet (it isn't running
+                        // on another thread)
+                        entry_steps[entry_id.get()].store(.done, .monotonic);
+                        this.onTaskFail(entry_id, .{ .patching = log });
+                        continue;
+                    }
+                }
+
                 this.startTask(entry_id);
             }
+        }
+    }
+
+    pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch, log: *bun.logger.Log) void {
+        const store = this.store;
+        const entry_node_ids = store.entries.items(.node_id);
+        const node_id = entry_node_ids[entry_id.get()];
+        const node_pkg_ids = store.nodes.items(.pkg_id);
+        const pkg_id = node_pkg_ids[node_id.get()];
+        const patch_task = install.PatchTask.newApplyPatchHash(
+            this.manager,
+            pkg_id,
+            patch.contents_hash,
+            patch.name_and_version_hash,
+        );
+        defer patch_task.deinit();
+        bun.handleOom(patch_task.apply());
+
+        if (patch_task.callback.apply.logger.hasErrors()) {
+            bun.handleOom(patch_task.callback.apply.logger.cloneToWithRecycled(log, true));
         }
     }
 
@@ -82,6 +136,13 @@ pub const Installer = struct {
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
+            },
+            .patching => |patch_log| {
+                Output.errGeneric("failed to patch package: {s}@{}", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                });
+                patch_log.print(Output.errorWriter()) catch {};
             },
             else => {},
         }
@@ -290,6 +351,7 @@ pub const Installer = struct {
             symlink_dependencies: sys.Error,
             run_scripts: anyerror,
             binaries: anyerror,
+            patching: bun.logger.Log,
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
@@ -297,6 +359,7 @@ pub const Installer = struct {
                     .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
                     .binaries => |err| .{ .binaries = err },
                     .run_scripts => |err| .{ .run_scripts = err },
+                    .patching => |log| .{ .patching = log },
                 };
             }
         };
@@ -396,7 +459,7 @@ pub const Installer = struct {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
-                    var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res.tag) {
+                    var pkg_cache_dir_subpath: bun.AutoRelPath = .from(switch (pkg_res.tag) {
                         else => |tag| pkg_cache_dir_subpath: {
                             const patch_info = try installer.packagePatchInfo(
                                 pkg_name,
@@ -516,7 +579,7 @@ pub const Installer = struct {
                                     );
                                     defer file_copier.deinit();
 
-                                    switch (try file_copier.copy()) {
+                                    switch (file_copier.copy()) {
                                         .result => {},
                                         .err => |err| {
                                             if (PackageManager.verbose_install) {
@@ -580,10 +643,16 @@ pub const Installer = struct {
                                 bun.Output.flush();
                             }
 
-                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
+                            var cloner: FileCloner = .{
+                                .cache_dir = cache_dir,
+                                .cache_dir_subpath = pkg_cache_dir_subpath,
+                                .dest_subpath = dest_subpath,
+                            };
+
+                            switch (cloner.clone()) {
                                 .result => {},
-                                .err => |clonefile_err1| {
-                                    switch (clonefile_err1.getErrno()) {
+                                .err => |err| {
+                                    switch (err.getErrno()) {
                                         .XDEV => {
                                             installer.supported_backend.store(.copyfile, .monotonic);
                                             continue :backend .copyfile;
@@ -592,19 +661,8 @@ pub const Installer = struct {
                                             installer.supported_backend.store(.hardlink, .monotonic);
                                             continue :backend .hardlink;
                                         },
-                                        .NOENT => {
-                                            const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
-                                                return .failure(.{ .link_package = clonefile_err1 });
-                                            };
-                                            FD.cwd().makePath(u8, parent_dest_dir) catch {};
-                                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
-                                                .result => {},
-                                                .err => |clonefile_err2| return .failure(.{ .link_package = clonefile_err2 }),
-                                            }
-                                        },
                                         else => {
-                                            installer.supported_backend.store(.hardlink, .monotonic);
-                                            continue :backend .hardlink;
+                                            return .failure(.{ .link_package = err });
                                         },
                                     }
                                 },
@@ -709,7 +767,7 @@ pub const Installer = struct {
                             );
                             defer file_copier.deinit();
 
-                            switch (try file_copier.copy()) {
+                            switch (file_copier.copy()) {
                                 .result => {},
                                 .err => |err| {
                                     if (PackageManager.verbose_install) {
@@ -896,7 +954,7 @@ pub const Installer = struct {
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
                     if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) {
-                        const pkg_scripts: *Package.Scripts = &pkg_script_lists[pkg_id];
+                        var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
 
                         var log = bun.logger.Log.init(bun.default_allocator);
                         defer log.deinit();
@@ -1085,14 +1143,18 @@ pub const Installer = struct {
 
     const PatchInfo = union(enum) {
         none,
-        remove: struct {
+        remove: Remove,
+        patch: Patch,
+
+        pub const Remove = struct {
             name_and_version_hash: u64,
-        },
-        patch: struct {
+        };
+
+        pub const Patch = struct {
             name_and_version_hash: u64,
             patch_path: string,
             contents_hash: u64,
-        },
+        };
 
         pub fn contentsHash(this: *const @This()) ?u64 {
             return switch (this.*) {
@@ -1354,9 +1416,9 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
-const FileCopier = @import("./FileCopier.zig").FileCopier;
 const Symlinker = @import("./Symlinker.zig").Symlinker;
 
 const bun = @import("bun");
@@ -1377,6 +1439,7 @@ const String = bun.Semver.String;
 const install = bun.install;
 const Bin = install.Bin;
 const DependencyID = install.DependencyID;
+const FileCopier = bun.install.FileCopier;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;

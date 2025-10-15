@@ -95,7 +95,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -516,7 +516,7 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         this.deinit();
     }
 
@@ -932,7 +932,7 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1013,7 +1013,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result);
+            promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
@@ -1108,7 +1108,7 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -2746,6 +2746,7 @@ pub const Resolver = struct {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
+                    error.JSTerminated => |e| e,
 
                     // more information with these errors
                     error.InvalidOptions,

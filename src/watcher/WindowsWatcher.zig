@@ -246,7 +246,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 // Check if we're about to exceed the watch_events array capacity
                 if (event_id >= this.watch_events.len) {
                     // Process current batch of events
-                    switch (processWatchEventBatch(this, event_id)) {
+                    switch (processWatchEventBatch(this, event_id, .dont_lock)) {
                         .err => |err| return .{ .err = err },
                         .result => {},
                     }
@@ -262,9 +262,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // Process any remaining events in the final batch
     if (event_id > 0) {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        switch (processWatchEventBatch(this, event_id)) {
+        switch (processWatchEventBatch(this, event_id, .lock)) {
             .err => |err| return .{ .err = err },
             .result => {},
         }
@@ -273,7 +271,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
-fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(void) {
+fn processWatchEventBatch(this: *bun.Watcher, event_count: usize, lock: enum { lock, dont_lock }) bun.sys.Maybe(void) {
     if (event_count == 0) {
         return .success;
     }
@@ -299,8 +297,12 @@ fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
-    this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
-    this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
+    {
+        if (lock == .lock) this.mutex.lock();
+        defer if (lock == .lock) this.mutex.unlock();
+        this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
+        this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
+    }
 
     return .success;
 }

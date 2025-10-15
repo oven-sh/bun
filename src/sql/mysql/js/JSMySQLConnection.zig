@@ -478,7 +478,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             });
         } else {
             ptr.#connection.setSocket(.{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false, null, 0) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
                     ptr.deref();
                     return globalObject.throwError(err, "failed to connect to mysql");
                 },

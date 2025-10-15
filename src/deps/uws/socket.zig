@@ -158,75 +158,110 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                             );
                         }
                     }
-                    Fields.onOpen(
+                    const res = Fields.onOpen(
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
-                    Fields.onClose(
+                    const res = Fields.onClose(
                         getValue(socket),
                         TLSSocket.from(socket),
                         code,
                         reason,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
-                    Fields.onData(
+                    const res = Fields.onData(
                         getValue(socket),
                         TLSSocket.from(socket),
                         buf.?[0..@as(usize, @intCast(len))],
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onWritable(
+                    const res = Fields.onWritable(
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onTimeout(
+                    const res = Fields.onTimeout(
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_long_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onLongTimeout(
+                    const res = Fields.onLongTimeout(
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         TLSSocket.from(socket).ext(ContextType).?.*,
                         TLSSocket.from(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         @as(*align(alignment) ContextType, @ptrCast(@alignCast(socket.ext(comptime is_ssl)))).*,
                         TLSSocket.fromConnecting(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onEnd(
+                    const res = Fields.onEnd(
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
-                    Fields.onHandshake(getValue(socket), TLSSocket.from(socket), success, verify_error);
+                    const res = Fields.onHandshake(
+                        getValue(socket),
+                        TLSSocket.from(socket),
+                        success,
+                        verify_error,
+                    );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return,
+                    };
                 }
             };
 
@@ -507,7 +542,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime socket_field_name: []const u8,
             allowHalfOpen: bool,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen, null, 0);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -597,11 +632,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
             allowHalfOpen: bool,
-            local_host: ?[]const u8,
-            local_port: i32,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
             // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
@@ -613,28 +646,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const host = bun.handleOom(allocator.dupeZ(u8, clean_host));
             defer allocator.free(host);
 
-            // Handle local_host parameter - also remove brackets from IPv6 addresses
-            var local_host_z: ?[*:0]const u8 = null;
-            var local_host_buf: ?[]u8 = null;
-            defer if (local_host_buf) |buf| allocator.free(buf);
-
-            if (local_host) |lh| {
-                const clean_local_host = if (lh.len > 1 and lh[0] == '[' and lh[lh.len - 1] == ']')
-                    lh[1 .. lh.len - 1]
-                else
-                    lh;
-                const lh_z = bun.handleOom(allocator.dupeZ(u8, clean_local_host));
-                local_host_buf = lh_z;
-                local_host_z = lh_z.ptr;
-            }
-
             var did_dns_resolve: i32 = 0;
             const socket_ptr = socket_ctx.connect(
                 is_ssl,
                 host.ptr,
                 port,
-                local_host_z,
-                local_port,
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
@@ -690,41 +706,56 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                             );
                         }
                     }
-                    Fields.onOpen(
+                    const res = Fields.onOpen(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
-                    Fields.onClose(
+                    const res = Fields.onClose(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                         code,
                         reason,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
-                    Fields.onData(
+                    const res = Fields.onData(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                         buf.?[0..@as(usize, @intCast(len))],
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onWritable(
+                    const res = Fields.onWritable(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onTimeout(
+                    const res = Fields.onTimeout(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
@@ -734,11 +765,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.fromConnecting(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.fromConnecting(socket).ext(ContextType);
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         val,
                         SocketHandlerType.fromConnecting(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
@@ -748,22 +782,36 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.from(socket).ext(ContextType);
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         val,
                         SocketHandlerType.from(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onEnd(
+                    const res = Fields.onEnd(
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
-                    Fields.onHandshake(getValue(socket), SocketHandlerType.from(socket), success, verify_error);
+                    const res = Fields.onHandshake(
+                        getValue(socket),
+                        SocketHandlerType.from(socket),
+                        success,
+                        verify_error,
+                    );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return,
+                    };
                 }
             };
 
@@ -824,56 +872,77 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                             );
                         }
                     }
-                    Fields.onOpen(
+                    const res = Fields.onOpen(
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
-                    Fields.onClose(
+                    const res = Fields.onClose(
                         getValue(socket),
                         ThisSocket.from(socket),
                         code,
                         reason,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
-                    Fields.onData(
+                    const res = Fields.onData(
                         getValue(socket),
                         ThisSocket.from(socket),
                         buf.?[0..@as(usize, @intCast(len))],
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_fd(socket: *us_socket_t, file_descriptor: c_int) callconv(.C) ?*us_socket_t {
-                    Fields.onFd(
+                    const res = Fields.onFd(
                         getValue(socket),
                         ThisSocket.from(socket),
                         file_descriptor,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onWritable(
+                    const res = Fields.onWritable(
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onTimeout(
+                    const res = Fields.onTimeout(
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_long_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onLongTimeout(
+                    const res = Fields.onLongTimeout(
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
@@ -883,11 +952,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.fromConnecting(socket).ext(ContextType).?.*
                     else
                         ThisSocket.fromConnecting(socket).ext(ContextType);
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         val,
                         ThisSocket.fromConnecting(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
@@ -903,22 +975,36 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     // So we need to close it like a TCP socket.
                     NewSocketHandler(false).from(socket).close(.failure);
 
-                    Fields.onConnectError(
+                    const res = Fields.onConnectError(
                         val,
                         ThisSocket.from(socket),
                         code,
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
-                    Fields.onEnd(
+                    const res = Fields.onEnd(
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return null, // TODO: declare throw scope
+                    };
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
-                    Fields.onHandshake(getValue(socket), ThisSocket.from(socket), success, verify_error);
+                    const res = Fields.onHandshake(
+                        getValue(socket),
+                        ThisSocket.from(socket),
+                        success,
+                        verify_error,
+                    );
+                    if (@TypeOf(res) != void) res catch |err| switch (err) {
+                        error.JSTerminated => return,
+                    };
                 }
             };
 

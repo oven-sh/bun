@@ -18,6 +18,7 @@ lazy: Lazy = .{ .none = {} },
 buffered: std.ArrayListUnmanaged(u8) = .{},
 read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
 highwater_mark: usize = 16384,
+flowing: bool = true,
 
 pub const IOReader = bun.io.BufferedReader;
 pub const Poll = IOReader;
@@ -487,6 +488,14 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     }
 
     if (!this.reader.hasPendingRead()) {
+        // If not flowing (paused), don't initiate new reads
+        if (!this.flowing) {
+            log("onPull({d}) = pending (not flowing)", .{buffer.len});
+            this.pending_value.set(this.parent().globalThis, array);
+            this.pending_view = buffer;
+            return .{ .pending = &this.pending };
+        }
+
         this.read_inside_on_pull = .{ .js = buffer };
         this.reader.read();
 
@@ -581,32 +590,15 @@ pub fn onReaderDone(this: *FileReader) void {
             }
             this.buffered = .{};
             this.pending.run();
-        } else if (this.buffered.items.len > 0) {
-            const this_value = this.parent().this_jsvalue;
-            const globalThis = this.parent().globalThis;
-            if (this_value != .zero) {
-                if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
-                    const buffered = this.buffered;
-                    this.buffered = .{};
-                    this.parent().incrementCount();
-                    defer _ = this.parent().decrementCount();
-                    this.eventLoop().js.runCallback(
-                        cb,
-                        globalThis,
-                        .js_undefined,
-                        &.{
-                            jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
-                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
-                                return;
-                            },
-                        },
-                    );
-                }
-            }
         }
+        // Don't handle buffered data here - it will be returned on the next onPull
+        // This ensures proper ordering of chunks
     }
 
-    this.parent().onClose();
+    // Only close the stream if there's no buffered data left to deliver
+    if (this.buffered.items.len == 0) {
+        this.parent().onClose();
+    }
     if (this.waiting_for_onReaderDone) {
         this.waiting_for_onReaderDone = false;
         _ = this.parent().decrementCount();
@@ -629,6 +621,26 @@ pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {
         @panic("FileReader.setRawMode must not be called on " ++ comptime Environment.os.displayString());
     }
     return this.reader.setRawMode(flag);
+}
+
+pub fn setFlowing(this: *FileReader, flag: bool) void {
+    log("setFlowing({}) was={}", .{ flag, this.flowing });
+
+    if (this.flowing == flag) {
+        return;
+    }
+
+    this.flowing = flag;
+
+    if (flag) {
+        this.reader.unpause();
+        if (!this.reader.isDone() and !this.reader.hasPendingRead()) {
+            // Kick off a new read if needed
+            this.reader.read();
+        }
+    } else {
+        this.reader.pause();
+    }
 }
 
 pub fn memoryCost(this: *const FileReader) usize {

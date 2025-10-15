@@ -8,6 +8,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
+    valuesArray: true,
     klass: {},
     proto: {
       setCwd: {
@@ -20,7 +21,7 @@ export default [
       },
       setQuiet: {
         fn: "setQuiet",
-        length: 0,
+        length: 1,
       },
     },
   }),

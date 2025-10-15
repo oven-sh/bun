@@ -15,8 +15,8 @@ pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
-pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
-pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+pub const callmod_inline: std.builtin.CallModifier = if (Environment.isDebug or Environment.enable_asan) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (Environment.isDebug or Environment.enable_asan) .Unspecified else .Inline;
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
 pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)

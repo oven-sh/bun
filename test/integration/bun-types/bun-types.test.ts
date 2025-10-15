@@ -402,6 +402,7 @@ describe("@types/bun integration test", () => {
       const mock_shouldBeAFunction: Function = mock;
       const spyOn_shouldBeAFunction: Function = spyOn;
       const jest_shouldBeDefined: object = jest;
+      const vi_shouldBeDefined: object = vi;
     `;
 
     test("checks without lib.dom.d.ts and test-globals references", async () => {

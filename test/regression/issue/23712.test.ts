@@ -16,16 +16,24 @@ const object = {
 `,
   });
 
-  const result = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "build", String(dir) + "/input.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const output = result.stderr.toString() + result.stdout.toString();
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  const output = stderr + stdout;
 
   // Should report parse errors, not crash with assertion
-  expect(result.exitCode).not.toBe(0);
+  expect(exitCode).not.toBe(0);
   expect(output).toContain("error:");
 });
 
@@ -38,15 +46,23 @@ b: async function(first) {
 `,
   });
 
-  const result = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "build", String(dir) + "/input.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const output = result.stderr.toString() + result.stdout.toString();
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  const output = stderr + stdout;
 
   // Should report parse errors, not crash
-  expect(result.exitCode).not.toBe(0);
+  expect(exitCode).not.toBe(0);
   expect(output).toContain("error:");
 });

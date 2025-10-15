@@ -706,8 +706,10 @@ pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
 pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
     @branchHint(.cold);
     Global.mimalloc_cleanup(false);
-    if (sync)
+
+    if (sync) {
         return this.global.vm().runGC(true);
+    }
 
     this.global.vm().collectAsync();
     return this.global.vm().heapSize();

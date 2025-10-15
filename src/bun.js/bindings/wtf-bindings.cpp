@@ -170,7 +170,7 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
 #endif
 }
 
-extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
+extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);
 }
@@ -183,6 +183,12 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
+extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+{
+    bool isLocalTime;
+    return WTF::parseES5Date({ string, length }, isLocalTime);
+}
+
 namespace Bun {
 String base64URLEncodeToString(Vector<uint8_t> data)
 {
@@ -191,7 +197,7 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
 
     encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);

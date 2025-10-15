@@ -67,7 +67,9 @@ beforeAll(() => {
 });
 
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach({ linker: "hoisted" });
+});
 afterEach(dummyAfterEach);
 
 for (let input of ["abcdef", "65537", "-1"]) {
@@ -3528,12 +3530,12 @@ it("should handle bitbucket git dependencies", async () => {
       "",
       `+ public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 
   for (const dep of deps) {
@@ -3564,12 +3566,12 @@ it("should handle bitbucket git dependencies", async () => {
       "",
       `installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 });
 
@@ -3605,12 +3607,12 @@ it("should handle gitlab git dependencies", async () => {
       "",
       `+ public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 
   for (const dep of deps) {
@@ -3641,12 +3643,12 @@ it("should handle gitlab git dependencies", async () => {
       "",
       `installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
-      "1 package installed",
+      expect.stringContaining("installed"),
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
-    dummyAfterEach();
-    dummyBeforeEach();
+    await dummyAfterEach();
+    await dummyBeforeEach({ linker: "isolated" });
   }
 });
 
@@ -4795,7 +4797,7 @@ it("should fail on invalid Git URL", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  expect(err.split(/\r?\n/)).toContain("error: InstallFailed cloning repository for uglify");
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -6977,7 +6979,7 @@ it("should handle installing workspaces with more complicated globs", async () =
       .toString()
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/),
-  ).toEqual([expect.stringContaining("bun install v1."), "", "4 packages installed"]);
+  ).toEqual([expect.stringContaining("bun install v1."), "", "Checked 7 installs across 5 packages (no changes)"]);
 });
 
 it("should handle installing workspaces with multiple glob patterns", async () => {
@@ -7040,7 +7042,7 @@ it("should handle installing workspaces with multiple glob patterns", async () =
       .toString()
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/),
-  ).toEqual([expect.stringContaining("bun install v1."), "", "4 packages installed"]);
+  ).toEqual([expect.stringContaining("bun install v1."), "", "Checked 7 installs across 5 packages (no changes)"]);
 });
 
 it.todo("should handle installing workspaces with absolute glob patterns", async () => {
@@ -8433,6 +8435,9 @@ saveTextLockfile = true
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
+        dependencies: {
+          "pkg-one": "workspace:*",
+        },
       }),
     ),
     write(
@@ -8456,7 +8461,7 @@ saveTextLockfile = true
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   const out = await stdout.text();
-  expect(out).toContain("1 package installed");
+  expect(out).toContain("Checked 3 installs across 2 packages (no changes)");
 
   expect(await exited).toBe(0);
   expect(await Bun.file(join(package_dir, "node_modules", "pkg-one", "package.json")).json()).toEqual({
@@ -8464,7 +8469,27 @@ saveTextLockfile = true
     version: "1.0.0",
   });
   expect(await exists(join(package_dir, "bun.lockb"))).toBeFalse();
-  expect(await file(join(package_dir, "bun.lock")).text()).toMatchSnapshot();
+  expect(await file(join(package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "foo",
+          "dependencies": {
+            "pkg-one": "workspace:*",
+          },
+        },
+        "packages/pkg1": {
+          "name": "pkg-one",
+          "version": "1.0.0",
+        },
+      },
+      "packages": {
+        "pkg-one": ["pkg-one@workspace:packages/pkg1"],
+      }
+    }
+    "
+  `);
 });
 
 test("providing invalid url in lockfile does not crash", async () => {

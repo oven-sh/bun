@@ -618,7 +618,9 @@ pub const Parser = struct {
                     .s_enum => {
                         try parts.appendSlice(preprocessed_enums.items[preprocessed_enum_i]);
                         preprocessed_enum_i += 1;
-                        p.scope_order_to_visit = p.scope_order_to_visit[1..];
+
+                        const enum_scope_count = p.scopes_in_order_for_enum.get(stmt.loc).?.len;
+                        p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..];
                     },
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
@@ -1355,6 +1357,16 @@ pub const Parser = struct {
                     },
                 },
             );
+        }
+
+        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
+        if (!p.response_ref.isNull() and is_used_and_has_no_links: {
+            // We only want to do this if the symbol is used and didn't get
+            // bound to some other value
+            const symbol: *const Symbol = &p.symbols.items[p.response_ref.innerIndex()];
+            break :is_used_and_has_no_links !symbol.hasLink() and symbol.use_count_estimate > 0;
+        }) {
+            try p.generateImportStmtForBakeResponse(&before);
         }
 
         if (before.items.len > 0 or after.items.len > 0) {

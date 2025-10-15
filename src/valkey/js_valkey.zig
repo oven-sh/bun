@@ -125,7 +125,7 @@ pub const SubscriptionCtx = struct {
         defer this.parent().onNewSubscriptionCallbackInsert();
         const map = this.subscriptionCallbackMap();
 
-        var handlers_array: JSValue = undefined;
+        var handlers_array: JSValue = .js_undefined;
         var is_new_channel = false;
         const existing_handler_arr = try map.get(globalObject, channelName);
         if (existing_handler_arr != .js_undefined) {
@@ -586,7 +586,7 @@ pub const JSValkeyClient = struct {
                 const event_loop = this.client.vm.eventLoop();
                 event_loop.enter();
                 defer event_loop.exit();
-                promise_ptr.reject(globalObject, err_value);
+                try promise_ptr.reject(globalObject, err_value);
                 return promise;
             };
 
@@ -596,11 +596,6 @@ pub const JSValkeyClient = struct {
 
         switch (this.client.status) {
             .disconnected => {
-                this.client.flags.is_reconnecting = true;
-                this.client.retry_attempts = 0;
-                this.reconnect();
-            },
-            .failed => {
                 this.client.flags.is_reconnecting = true;
                 this.client.retry_attempts = 0;
                 this.reconnect();
@@ -714,6 +709,9 @@ pub const JSValkeyClient = struct {
         // Increment ref to ensure 'this' stays alive throughout the function
         this.ref();
         defer this.deref();
+        if (this.client.flags.failed) {
+            return .disarm;
+        }
 
         if (this.client.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();
@@ -724,14 +722,11 @@ pub const JSValkeyClient = struct {
         switch (this.client.status) {
             .connected => {
                 const msg = std.fmt.bufPrintZ(&buf, "Idle timeout reached after {d}ms", .{this.client.idle_timeout_interval_ms}) catch unreachable;
-                this.clientFail(msg, protocol.RedisError.IdleTimeout);
+                this.clientFail(msg, protocol.RedisError.IdleTimeout) catch {}; // TODO: properly propagate exception upwards
             },
             .disconnected, .connecting => {
                 const msg = std.fmt.bufPrintZ(&buf, "Connection timeout reached after {d}ms", .{this.client.connection_timeout_ms}) catch unreachable;
-                this.clientFail(msg, protocol.RedisError.ConnectionTimeout);
-            },
-            else => {
-                // No timeout for other states
+                this.clientFail(msg, protocol.RedisError.ConnectionTimeout) catch {}; // TODO: properly propagate exception upwards
             },
         }
 
@@ -786,7 +781,7 @@ pub const JSValkeyClient = struct {
     }
 
     // Callback for when Valkey client connects
-    pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
+    pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) bun.JSTerminated!void {
         bun.debugAssert(this.client.status == .connected);
         // we should always have a strong reference to the object here
         bun.debugAssert(this.this_value.isStrong());
@@ -823,10 +818,10 @@ pub const JSValkeyClient = struct {
                 const js_promise = promise.asPromise().?;
                 if (this.client.flags.connection_promise_returns_client) {
                     debug("Resolving connection promise with client instance", .{});
-                    js_promise.resolve(globalObject, this_value);
+                    try js_promise.resolve(globalObject, this_value);
                 } else {
                     debug("Resolving connection promise with HELLO response", .{});
-                    js_promise.resolve(globalObject, hello_value);
+                    try js_promise.resolve(globalObject, hello_value);
                 }
                 this.client.flags.connection_promise_returns_client = false;
             }
@@ -919,7 +914,7 @@ pub const JSValkeyClient = struct {
     }
 
     // Callback for when Valkey client closes
-    pub fn onValkeyClose(this: *JSValkeyClient) void {
+    pub fn onValkeyClose(this: *JSValkeyClient) bun.JSTerminated!void {
         const globalObject = this.globalObject;
 
         defer {
@@ -941,7 +936,7 @@ pub const JSValkeyClient = struct {
         if (!this_jsvalue.isUndefined()) {
             if (js.connectionPromiseGetCached(this_jsvalue)) |promise| {
                 js.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
-                promise.asPromise().?.reject(globalObject, error_value);
+                try promise.asPromise().?.reject(globalObject, error_value);
             }
         }
 
@@ -960,8 +955,8 @@ pub const JSValkeyClient = struct {
         this.clientFail("Connection timeout", protocol.RedisError.ConnectionClosed);
     }
 
-    pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.RedisError) void {
-        this.client.fail(message, err);
+    pub fn clientFail(this: *JSValkeyClient, message: []const u8, err: protocol.RedisError) bun.JSTerminated!void {
+        try this.client.fail(message, err);
     }
 
     pub fn failWithJSValue(this: *JSValkeyClient, value: JSValue) void {
@@ -1030,24 +1025,27 @@ pub const JSValkeyClient = struct {
         }
     }
 
-    fn failWithInvalidSocketContext(this: *JSValkeyClient) void {
+    fn failWithInvalidSocketContext(this: *JSValkeyClient) bun.JSTerminated!void {
         // if the context is invalid is not worth retrying
         this.client.flags.enable_auto_reconnect = false;
-        this.clientFail(if (this.client.tls == .none) "Failed to create TCP context" else "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
-        this.client.onValkeyClose();
+        try this.clientFail(if (this.client.tls == .none) "Failed to create TCP context" else "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
+        try this.client.onValkeyClose();
     }
 
     fn connect(this: *JSValkeyClient) !void {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
 
+        this.ref();
+        defer this.deref();
         const ctx: *uws.SocketContext, const own_ctx: bool =
             switch (this.client.tls) {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
                         const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)) orelse {
-                            this.failWithInvalidSocketContext();
+                            try this.failWithInvalidSocketContext();
+                            this.client.status = .disconnected;
                             return;
                         };
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
@@ -1061,7 +1059,8 @@ pub const JSValkeyClient = struct {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
                         const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err) orelse {
-                            this.failWithInvalidSocketContext();
+                            try this.failWithInvalidSocketContext();
+                            this.client.status = .disconnected;
                             return;
                         };
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1079,7 +1078,8 @@ pub const JSValkeyClient = struct {
                     const options = custom.asUSockets();
 
                     const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err) orelse {
-                        this.failWithInvalidSocketContext();
+                        try this.failWithInvalidSocketContext();
+                        this.client.status = .disconnected;
                         return;
                     };
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1094,6 +1094,11 @@ pub const JSValkeyClient = struct {
         }
         this.client.status = .connecting;
         this.updatePollRef();
+
+        errdefer {
+            this.client.status = .disconnected;
+            this.updatePollRef();
+        }
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
@@ -1108,7 +1113,7 @@ pub const JSValkeyClient = struct {
                 const event_loop = this.client.vm.eventLoop();
                 event_loop.enter();
                 defer event_loop.exit();
-                promise.reject(globalThis, err_value);
+                try promise.reject(globalThis, err_value);
                 return promise;
             };
             this.resetConnectionTimeout();
@@ -1189,8 +1194,8 @@ pub const JSValkeyClient = struct {
         const has_activity = has_pending_commands or !subs_deletable or this.client.flags.is_reconnecting;
 
         // There's a couple cases to handle here:
-        if (has_activity) {
-            // If we currently have pending activity, we need to keep the event
+        if (has_activity or this.client.status == .connecting) {
+            // If we currently have pending activity or we are connecting, we need to keep the event
             // loop alive.
             this.poll_ref.ref(this.client.vm);
         } else {
@@ -1221,8 +1226,8 @@ pub const JSValkeyClient = struct {
                 debug("upgrading this_value since we are connected/connecting", .{});
                 this.this_value.upgrade(this.globalObject);
             },
-            .disconnected, .failed => {
-                // If we're disconnected or failed, we need to check if we have
+            .disconnected => {
+                // If we're disconnected, we need to check if we have
                 // any pending activity.
                 if (has_activity) {
                     debug("upgrading this_value since there is pending activity", .{});
@@ -1243,72 +1248,163 @@ pub const JSValkeyClient = struct {
     pub const @"type" = fns.type;
     pub const append = fns.append;
     pub const bitcount = fns.bitcount;
+    pub const blpop = fns.blpop;
+    pub const brpop = fns.brpop;
+    pub const copy = fns.copy;
     pub const decr = fns.decr;
+    pub const decrby = fns.decrby;
     pub const del = fns.del;
     pub const dump = fns.dump;
     pub const duplicate = fns.duplicate;
     pub const exists = fns.exists;
     pub const expire = fns.expire;
+    pub const expireat = fns.expireat;
     pub const expiretime = fns.expiretime;
     pub const get = fns.get;
     pub const getBuffer = fns.getBuffer;
+    pub const getbit = fns.getbit;
     pub const getdel = fns.getdel;
     pub const getex = fns.getex;
+    pub const getrange = fns.getrange;
     pub const getset = fns.getset;
     pub const hgetall = fns.hgetall;
     pub const hget = fns.hget;
     pub const hincrby = fns.hincrby;
     pub const hincrbyfloat = fns.hincrbyfloat;
     pub const hkeys = fns.hkeys;
+    pub const hdel = fns.hdel;
+    pub const hexists = fns.hexists;
+    pub const hgetdel = fns.hgetdel;
+    pub const hgetex = fns.hgetex;
     pub const hlen = fns.hlen;
     pub const hmget = fns.hmget;
     pub const hmset = fns.hmset;
+    pub const hrandfield = fns.hrandfield;
+    pub const hscan = fns.hscan;
+    pub const hset = fns.hset;
+    pub const hsetex = fns.hsetex;
+    pub const hsetnx = fns.hsetnx;
     pub const hstrlen = fns.hstrlen;
     pub const hvals = fns.hvals;
+    pub const hexpire = fns.hexpire;
+    pub const hexpireat = fns.hexpireat;
+    pub const hexpiretime = fns.hexpiretime;
+    pub const hpersist = fns.hpersist;
+    pub const hpexpire = fns.hpexpire;
+    pub const hpexpireat = fns.hpexpireat;
+    pub const hpexpiretime = fns.hpexpiretime;
+    pub const hpttl = fns.hpttl;
+    pub const httl = fns.httl;
     pub const incr = fns.incr;
+    pub const incrby = fns.incrby;
+    pub const incrbyfloat = fns.incrbyfloat;
     pub const keys = fns.keys;
+    pub const lindex = fns.lindex;
+    pub const linsert = fns.linsert;
     pub const llen = fns.llen;
+    pub const lmove = fns.lmove;
+    pub const lmpop = fns.lmpop;
     pub const lpop = fns.lpop;
+    pub const lpos = fns.lpos;
     pub const lpush = fns.lpush;
     pub const lpushx = fns.lpushx;
+    pub const lrange = fns.lrange;
+    pub const lrem = fns.lrem;
+    pub const lset = fns.lset;
+    pub const ltrim = fns.ltrim;
     pub const mget = fns.mget;
+    pub const mset = fns.mset;
+    pub const msetnx = fns.msetnx;
     pub const persist = fns.persist;
+    pub const pexpire = fns.pexpire;
+    pub const pexpireat = fns.pexpireat;
     pub const pexpiretime = fns.pexpiretime;
     pub const pfadd = fns.pfadd;
     pub const ping = fns.ping;
+    pub const psetex = fns.psetex;
     pub const psubscribe = fns.psubscribe;
     pub const pttl = fns.pttl;
     pub const publish = fns.publish;
     pub const pubsub = fns.pubsub;
     pub const punsubscribe = fns.punsubscribe;
+    pub const randomkey = fns.randomkey;
+    pub const rename = fns.rename;
+    pub const renamenx = fns.renamenx;
     pub const rpop = fns.rpop;
+    pub const rpoplpush = fns.rpoplpush;
     pub const rpush = fns.rpush;
     pub const rpushx = fns.rpushx;
     pub const sadd = fns.sadd;
+    pub const scan = fns.scan;
     pub const scard = fns.scard;
     pub const script = fns.script;
+    pub const sdiff = fns.sdiff;
+    pub const sdiffstore = fns.sdiffstore;
+    pub const sinter = fns.sinter;
+    pub const sintercard = fns.sintercard;
+    pub const sinterstore = fns.sinterstore;
     pub const select = fns.select;
     pub const set = fns.set;
+    pub const setbit = fns.setbit;
+    pub const setex = fns.setex;
     pub const setnx = fns.setnx;
+    pub const setrange = fns.setrange;
     pub const sismember = fns.sismember;
     pub const smembers = fns.smembers;
+    pub const smismember = fns.smismember;
     pub const smove = fns.smove;
     pub const spop = fns.spop;
     pub const spublish = fns.spublish;
     pub const srandmember = fns.srandmember;
     pub const srem = fns.srem;
+    pub const sscan = fns.sscan;
     pub const strlen = fns.strlen;
     pub const subscribe = fns.subscribe;
     pub const substr = fns.substr;
+    pub const sunion = fns.sunion;
+    pub const sunionstore = fns.sunionstore;
+    pub const touch = fns.touch;
     pub const ttl = fns.ttl;
+    pub const unlink = fns.unlink;
     pub const unsubscribe = fns.unsubscribe;
     pub const zcard = fns.zcard;
+    pub const zcount = fns.zcount;
+    pub const zlexcount = fns.zlexcount;
     pub const zpopmax = fns.zpopmax;
     pub const zpopmin = fns.zpopmin;
     pub const zrandmember = fns.zrandmember;
+    pub const zrange = fns.zrange;
+    pub const zrangebylex = fns.zrangebylex;
+    pub const zrangebyscore = fns.zrangebyscore;
+    pub const zrangestore = fns.zrangestore;
     pub const zrank = fns.zrank;
+    pub const zrem = fns.zrem;
+    pub const zremrangebylex = fns.zremrangebylex;
+    pub const zremrangebyrank = fns.zremrangebyrank;
+    pub const zremrangebyscore = fns.zremrangebyscore;
+    pub const zrevrange = fns.zrevrange;
+    pub const zrevrangebylex = fns.zrevrangebylex;
+    pub const zrevrangebyscore = fns.zrevrangebyscore;
     pub const zrevrank = fns.zrevrank;
     pub const zscore = fns.zscore;
+    pub const zincrby = fns.zincrby;
+    pub const zmscore = fns.zmscore;
+    pub const zadd = fns.zadd;
+    pub const zscan = fns.zscan;
+    pub const zdiff = fns.zdiff;
+    pub const zdiffstore = fns.zdiffstore;
+    pub const zinter = fns.zinter;
+    pub const zintercard = fns.zintercard;
+    pub const zinterstore = fns.zinterstore;
+    pub const zunion = fns.zunion;
+    pub const zunionstore = fns.zunionstore;
+    pub const zmpop = fns.zmpop;
+    pub const bzmpop = fns.bzmpop;
+    pub const bzpopmin = fns.bzpopmin;
+    pub const bzpopmax = fns.bzpopmax;
+    pub const blmove = fns.blmove;
+    pub const blmpop = fns.blmpop;
+    pub const brpoplpush = fns.brpoplpush;
 
     const fns = @import("./js_valkey_functions.zig");
 };
@@ -1324,12 +1420,12 @@ fn SocketHandler(comptime ssl: bool) type {
 
             return Socket{ .SocketTCP = s };
         }
-        pub fn onOpen(this: *JSValkeyClient, socket: SocketType) void {
+        pub fn onOpen(this: *JSValkeyClient, socket: SocketType) bun.JSTerminated!void {
             this.client.socket = _socket(socket);
-            this.client.onOpen(_socket(socket));
+            try this.client.onOpen(_socket(socket));
         }
 
-        fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+        fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) bun.JSTerminated!void {
             debug("onHandshake: {d} error={d} reason={s} code={s}", .{
                 success,
                 ssl_error.error_no,
@@ -1355,14 +1451,14 @@ fn SocketHandler(comptime ssl: bool) type {
                                 loop.enter();
                                 defer loop.exit();
                                 this.client.flags.is_manually_closed = true;
-                                this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
-                                this.client.close();
+                                defer this.client.close();
+                                try this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
                                 return;
                             }
                         }
                     }
                 }
-                this.client.start();
+                try this.client.start();
             }
         }
 
@@ -1372,25 +1468,37 @@ fn SocketHandler(comptime ssl: bool) type {
             // No need to deref since this.client.onClose() invokes onValkeyClose which does the deref.
 
             debug("Socket closed.", .{});
-
+            this.ref();
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
+            defer {
+                this.client.status = .disconnected;
+                this.updatePollRef();
+                this.deref();
+            }
 
-            this.client.onClose();
-            this.updatePollRef();
+            this.client.onClose() catch {}; // TODO: properly propagate exception upwards
         }
 
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
             _ = this;
             _ = socket;
+
             // Half-opened sockets are not allowed.
+            // usockets will always call onClose after onEnd in this case so we don't need to do anything here
         }
 
-        pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {
+        pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) bun.JSTerminated!void {
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
+            this.ref();
+            defer {
+                this.client.status = .disconnected;
+                this.updatePollRef();
+                this.deref();
+            }
 
-            this.client.onClose();
+            try this.client.onClose();
         }
 
         pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
@@ -1406,7 +1514,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
             this.ref();
             defer this.deref();
-            this.client.onData(data);
+            this.client.onData(data) catch {}; // TODO: properly propagate exception upwards
             this.updatePollRef();
         }
 

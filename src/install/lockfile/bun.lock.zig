@@ -1652,9 +1652,15 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackageResolution;
             };
 
-            const name_str, const res_str = Dependency.splitNameAndVersion(res_info_str) catch {
-                try log.addError(source, res_info.loc, "Invalid package resolution");
-                return error.InvalidPackageResolution;
+            const name_str, const res_str = name_and_res: {
+                if (strings.hasPrefixComptime(res_info_str, "@root:")) {
+                    break :name_and_res .{ "", res_info_str[1..] };
+                }
+
+                break :name_and_res Dependency.splitNameAndVersion(res_info_str) catch {
+                    try log.addError(source, res_info.loc, "Invalid package resolution");
+                    return error.InvalidPackageResolution;
+                };
             };
 
             const name_hash = String.Builder.stringHash(name_str);

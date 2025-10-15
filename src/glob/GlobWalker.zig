@@ -263,9 +263,7 @@ pub const DirEntryAccessor = struct {
         // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
         // The glob implementation specifically checks for this error when dealing with symlinks
         // return .{ .err = Syscall.Error.fromCode(bun.sys.E.NOTDIR, Syscall.Tag.open) };
-        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
-            return err;
-        };
+        const res = try FS.instance.fs.readDirectory(path, null, 0, false);
         switch (res.*) {
             .entries => |entry| {
                 return .{ .result = .{ .value = entry } };
@@ -1324,8 +1322,7 @@ pub fn GlobWalker_(
         }
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
-            return match(
-                this.arena.allocator(),
+            return bun.glob.match(
                 pattern_component.patternSlice(this.pattern),
                 filepath,
             ).matches();
@@ -1686,11 +1683,8 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-pub const matchImpl = match;
-
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
-const match = @import("./match.zig").match;
 
 const bun = @import("bun");
 const BunString = bun.String;

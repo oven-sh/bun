@@ -13,8 +13,31 @@
 #include "CookieMap.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include <bun-uws/src/App.h>
 
 namespace Bun {
+
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* paramsPrototype = globalObject->m_JSBunRequestParamsPrototype.get(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // the params are passed into the page component as a prop so we'll make
+    // this empty for now
+    auto* emptyParams = JSC::constructEmptyObject(globalObject, paramsPrototype);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSBunRequest* request
+        = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(request);
+}
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
@@ -35,8 +58,8 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
     // We do not want to risk the GC running before this function is called.
     Bun__JSRequest__calculateEstimatedByteSize(sinkPtr);
 
-    JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr);
-    ptr->finishCreation(vm, params);
+    JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr, params);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
@@ -79,7 +102,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
+    auto* structure = defaultGlobalObject(globalObject)->m_JSBunRequestStructure.getInitializedOnMainThread(globalObject);
     auto* raw = Request__clone(this->wrapped(), globalObject);
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -125,17 +148,17 @@ void JSBunRequest::setCookies(JSObject* cookies)
     Request__setCookiesOnRequestContext(this->wrapped(), WebCoreCast<WebCore::JSCookieMap, WebCore::CookieMap>(JSValue::encode(cookies)));
 }
 
-JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSC::JSObject* params)
     : Base(vm, structure, sinkPtr)
+    , m_params(params, JSC::WriteBarrierEarlyInit)
+    , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
-extern "C" size_t Request__estimatedSize(void* requestPtr);
-
-void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
+extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
+extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
+void JSBunRequest::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    m_params.setMayBeNull(vm, this, params);
-    m_cookies.clear();
 
     auto size = Request__estimatedSize(this->wrapped());
     vm.heap.reportExtraMemoryAllocated(this, size);

@@ -80,6 +80,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
+  if (!isCI) return 60_000; // everything slower in debug mode
   return 20_000;
 }
 
@@ -449,7 +450,7 @@ async function runTests() {
 
       if (parallelism > 1) {
         console.log(grouptitle);
-        result = await fn();
+        result = await fn(index);
       } else {
         result = await startGroup(grouptitle, fn);
       }
@@ -469,6 +470,7 @@ async function runTests() {
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
+        if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -579,8 +581,11 @@ async function runTests() {
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
           if (isNodeTest(testPath)) {
             const testContent = readFileSync(absoluteTestPath, "utf-8");
-            const runWithBunTest =
-              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+            // don't wanna have a filter for includes("bun:test") but these need our mocks
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
             const subcommand = runWithBunTest ? "test" : "run";
             const env = {
               FORCE_COLOR: "0",
@@ -668,7 +673,9 @@ async function runTests() {
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
-          await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
+          await runTest(title, index =>
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+          );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
           if (!existsSync(testRunnerPath)) {
@@ -1295,6 +1302,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {object} [opts]
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
+ * @param {object} [opts.env]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -1328,6 +1336,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
 
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...opts["env"],
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";

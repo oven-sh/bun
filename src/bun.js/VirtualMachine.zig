@@ -189,6 +189,14 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
+
+pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
+    const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
+    if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
+    return jsvalue;
+}
+
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -565,14 +573,14 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .none => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             return; // ignore the unhandled rejection
         },
         .warn => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
             jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
@@ -582,7 +590,7 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .warn_with_error_code => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch |err| {
@@ -593,7 +601,7 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         },
         .strict => {
             defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => {}, // we are returning anyway
+                error.JSTerminated => {}, // we are returning anyway
             };
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
@@ -606,20 +614,20 @@ pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObje
         .throw => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) {
                 this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                    error.JSExecutionTerminated => {}, // we are returning anyway
+                    error.JSTerminated => {}, // we are returning anyway
                 };
                 return;
             }
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             if (this.uncaughtException(globalObject, wrapped_reason, true)) {
                 this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                    error.JSExecutionTerminated => {}, // we are returning anyway
+                    error.JSTerminated => {}, // we are returning anyway
                 };
                 return;
             }
             // continue to default handler
             this.eventLoop().drainMicrotasks() catch |e| switch (e) {
-                error.JSExecutionTerminated => return,
+                error.JSTerminated => return,
             };
         },
     }
@@ -669,11 +677,21 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     return handled;
 }
 
-pub fn handlePendingInternalPromiseRejection(this: *jsc.VirtualMachine) void {
-    var promise = this.pending_internal_promise.?;
+pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {
+    defer this.addMainToWatcherIfNeeded();
+    var promise = this.pending_internal_promise orelse return;
+
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
         this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
+    }
+}
+
+pub fn addMainToWatcherIfNeeded(this: *jsc.VirtualMachine) void {
+    if (this.isWatcherEnabled()) {
+        const main = this.main;
+        if (main.len == 0) return;
+        _ = this.bun_watcher.addFileByPathSlow(main, this.transpiler.options.loader(std.fs.path.extension(main)));
     }
 }
 
@@ -1840,8 +1858,7 @@ pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callfram
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    // TODO: properly propagate exception upwards
-    this.eventLoop().drainMicrotasks() catch {};
+    this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
@@ -2667,7 +2684,9 @@ pub fn remapZigException(
             }
 
             // Workaround for being unable to hide that specific frame without also hiding the frame before it
-            if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+            if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+            {
                 start_index = 0;
                 break;
             }
@@ -2683,7 +2702,9 @@ pub fn remapZigException(
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
+                if ((frame.source_url.isEmpty() or frame.source_url.eqlComptime("[unknown]") or frame.source_url.hasPrefixComptime("[source:")) and
+                    NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null)
+                {
                     continue;
                 }
 
@@ -2705,7 +2726,9 @@ pub fn remapZigException(
                 frame.source_url.hasPrefixComptime("node:") or
                 frame.source_url.isEmpty() or
                 frame.source_url.eqlComptime("native") or
-                frame.source_url.eqlComptime("unknown"))
+                frame.source_url.eqlComptime("unknown") or
+                frame.source_url.eqlComptime("[unknown]") or
+                frame.source_url.hasPrefixComptime("[source:"))
             {
                 top_frame_is_builtin = true;
                 continue;

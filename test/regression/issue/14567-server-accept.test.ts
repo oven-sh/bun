@@ -1,9 +1,11 @@
 import { createSocketPair } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+import { isWindows } from "harness";
 
 // Tests for server.accept() which allows accepting file descriptors into the HTTP server.
+// Note: server.accept() is not supported on Windows because us_socket_from_fd() is not implemented there.
 
-test("server.accept() accepts file descriptor and handles HTTP request", async () => {
+test.todoIf(isWindows)("server.accept() accepts file descriptor and handles HTTP request", async () => {
   const [serverFd, clientFd] = createSocketPair();
 
   let requestCount = 0;
@@ -57,7 +59,7 @@ test("server.accept() accepts file descriptor and handles HTTP request", async (
   }
 });
 
-test("server.accept() handles multiple requests with Keep-Alive", async () => {
+test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Alive", async () => {
   const [serverFd, clientFd] = createSocketPair();
 
   let requestCount = 0;
@@ -154,7 +156,7 @@ test("server.accept() handles multiple requests with Keep-Alive", async () => {
   }
 });
 
-test("server.accept() handles POST request with large body", async () => {
+test.todoIf(isWindows)("server.accept() handles POST request with large body", async () => {
   const [serverFd, clientFd] = createSocketPair();
 
   const server = Bun.serve({
@@ -214,7 +216,7 @@ test("server.accept() handles POST request with large body", async () => {
   }
 });
 
-test("server.accept() handles file upload with binary data", async () => {
+test.todoIf(isWindows)("server.accept() handles file upload with binary data", async () => {
   const [serverFd, clientFd] = createSocketPair();
 
   const server = Bun.serve({

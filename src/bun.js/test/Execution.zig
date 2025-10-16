@@ -356,8 +356,10 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
     }
 
     const next_item = sequence.active_entry orelse {
-        bun.debugAssert(sequence.remaining_repeat_count == 0); // repeat count is decremented when the sequence is advanced, this should only happen if the sequence were empty. which should be impossible.
-        groupLog.log("runOne: no repeats left; wait for group completion.", .{});
+        // Sequence is complete - either because:
+        // 1. It ran out of entries (normal completion)
+        // 2. All retry/repeat attempts have been exhausted
+        groupLog.log("runOne: no more entries; sequence complete.", .{});
         return .done;
     };
     sequence.executing = true;

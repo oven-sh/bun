@@ -13,6 +13,7 @@ pub const Error = error{
 
     LocalInfileNotSupported,
     JSError,
+    JSTerminated,
     OutOfMemory,
     Overflow,
 
@@ -70,6 +71,9 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
         error.InvalidState => "ERR_MYSQL_INVALID_STATE",
         error.JSError => {
             return globalObject.takeException(error.JSError);
+        },
+        error.JSTerminated => {
+            return globalObject.takeException(error.JSTerminated);
         },
         error.OutOfMemory => {
             // TODO: add binding for creating an out of memory error?

@@ -60,7 +60,7 @@ pub fn convertStmtsForChunkForDevServer(
             const record = ast.import_records.mut(st.import_record_index);
             if (record.path.is_disabled) continue;
 
-            const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
+            const is_builtin = record.tag == .builtin or record.tag == .bun or record.tag == .runtime;
             const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
             if (is_builtin) {

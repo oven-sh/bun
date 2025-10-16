@@ -4992,38 +4992,47 @@ pub fn NewParser_(
                             }
                         }
 
-                        if (prop.kind != .class_static_block and !prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
-                            // remove decorated fields without initializers to avoid assigning undefined.
-                            const initializer = if (prop.initializer) |initializer_value| initializer_value else continue;
-
-                            var target: Expr = undefined;
-                            if (prop.flags.contains(.is_static)) {
-                                p.recordUsage(class.class_name.?.ref.?);
-                                target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
-                            } else {
-                                target = p.newExpr(E.This{}, prop.key.?.loc);
-                            }
-
-                            if (prop.flags.contains(.is_computed) or prop.key.?.data == .e_number) {
-                                target = p.newExpr(E.Index{
-                                    .target = target,
-                                    .index = prop.key.?,
-                                }, prop.key.?.loc);
-                            } else {
-                                target = p.newExpr(E.Dot{
-                                    .target = target,
-                                    .name = prop.key.?.data.e_string.data,
-                                    .name_loc = prop.key.?.loc,
-                                }, prop.key.?.loc);
-                            }
-
-                            // remove fields with decorators from class body. Move static members outside of class.
-                            if (prop.flags.contains(.is_static)) {
-                                static_members.append(Stmt.assign(target, initializer)) catch unreachable;
-                            } else {
-                                instance_members.append(Stmt.assign(target, initializer)) catch unreachable;
-                            }
+                        // TypeScript-only properties (declare, abstract) should be completely removed
+                        if (prop.kind == .declare or prop.kind == .abstract) {
                             continue;
+                        }
+
+                        if (prop.kind != .class_static_block and !prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
+                            if (prop.initializer) |initializer| {
+                                // For decorated fields WITH initializers: remove from class body and move initializer to constructor.
+                                // This allows decorators to define getters/setters that will be called by the constructor assignment.
+                                var target: Expr = undefined;
+                                if (prop.flags.contains(.is_static)) {
+                                    p.recordUsage(class.class_name.?.ref.?);
+                                    target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                                } else {
+                                    target = p.newExpr(E.This{}, prop.key.?.loc);
+                                }
+
+                                if (prop.flags.contains(.is_computed) or prop.key.?.data == .e_number) {
+                                    target = p.newExpr(E.Index{
+                                        .target = target,
+                                        .index = prop.key.?,
+                                    }, prop.key.?.loc);
+                                } else {
+                                    target = p.newExpr(E.Dot{
+                                        .target = target,
+                                        .name = prop.key.?.data.e_string.data,
+                                        .name_loc = prop.key.?.loc,
+                                    }, prop.key.?.loc);
+                                }
+
+                                // Move initializers outside of class body
+                                if (prop.flags.contains(.is_static)) {
+                                    static_members.append(Stmt.assign(target, initializer)) catch unreachable;
+                                } else {
+                                    instance_members.append(Stmt.assign(target, initializer)) catch unreachable;
+                                }
+                                // Skip adding this property to class_properties
+                                continue;
+                            }
+                            // For decorated fields WITHOUT initializers: keep in class body so Object.keys() works correctly.
+                            // This fixes issue #20664 where decorated properties were incorrectly removed.
                         }
 
                         class_properties.append(prop.*) catch unreachable;

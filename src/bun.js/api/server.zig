@@ -1835,7 +1835,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const result = app.accept(bun.FileDescriptor.fromUV(@intCast(fd)));
             if (result != 0) {
-                return globalThis.throwInvalidArguments("Failed to accept file descriptor", .{});
+                return globalThis.throwInvalidArguments("Failed to accept file descriptor {d}. Ensure it is a valid socket file descriptor and matches the server's SSL configuration.", .{fd});
             }
 
             return .js_undefined;

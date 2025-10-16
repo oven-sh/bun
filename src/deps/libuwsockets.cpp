@@ -514,9 +514,10 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      // The HttpContext is the same as the App
-      // and can be cast to us_socket_context_t
-      us_socket_context_t *socketContext = (us_socket_context_t *)uwsApp;
+      // Access the httpContext pointer from the app - it's the first member of the App struct
+      // We use pointer arithmetic since httpContext is private
+      uWS::HttpContext<true> *httpContext = *(uWS::HttpContext<true> **)uwsApp;
+      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 
       // Create a socket from the file descriptor with the proper extension size
       struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<true>), fd, 0);
@@ -538,9 +539,10 @@ extern "C"
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      // The HttpContext is the same as the App
-      // and can be cast to us_socket_context_t
-      us_socket_context_t *socketContext = (us_socket_context_t *)uwsApp;
+      // Access the httpContext pointer from the app - it's the first member of the App struct
+      // We use pointer arithmetic since httpContext is private
+      uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
+      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 
       // Create a socket from the file descriptor with the proper extension size
       struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);

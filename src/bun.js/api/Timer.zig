@@ -59,8 +59,8 @@ pub const All = struct {
     }
 
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
-        this.lock.lock();
-        defer this.lock.unlock();
+        // this.lock.lock();
+        // defer this.lock.unlock();
         this.timers.insert(timer);
         timer.state = .ACTIVE;
 
@@ -70,8 +70,8 @@ pub const All = struct {
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
-        this.lock.lock();
-        defer this.lock.unlock();
+        // this.lock.lock();
+        // defer this.lock.unlock();
         this.timers.remove(timer);
 
         timer.state = .CANCELLED;
@@ -79,8 +79,8 @@ pub const All = struct {
 
     /// Remove the EventLoopTimer if necessary.
     pub fn update(this: *All, timer: *EventLoopTimer, time: *const timespec) void {
-        this.lock.lock();
-        defer this.lock.unlock();
+        // this.lock.lock();
+        // defer this.lock.unlock();
         if (timer.state == .ACTIVE) {
             this.timers.remove(timer);
         }
@@ -228,6 +228,7 @@ pub const All = struct {
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         var maybe_now: ?timespec = null;
+
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
                 const real_now = timespec.now();
@@ -257,14 +258,6 @@ pub const All = struct {
         return false;
     }
 
-    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
-        drainTimers(&vm.timer, vm);
-    }
-
-    comptime {
-        _ = &Bun__internal_drainTimers;
-    }
-
     // Getting the current time is expensive on certain platforms.
     // We don't want to call it when there are no timers.
     // And when we do call it, we want to be sure we only call it once.
@@ -284,7 +277,6 @@ pub const All = struct {
             }
 
             assert(this.timers.deleteMin().? == timer);
-
             return timer;
         }
         return null;
@@ -634,3 +626,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+const debug = bun.Output.scoped(.Timer, .visible);

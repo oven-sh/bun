@@ -111,7 +111,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, .hidden);
+const log = bun.Output.scoped(.EventLoop, .visible);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {
@@ -370,7 +370,6 @@ pub fn autoTick(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
-
     ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     this.runImminentGCTimer();
@@ -451,13 +450,11 @@ pub fn autoTickActive(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
-
     ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     if (loop.isActive()) {
         this.processGCTimer();
         var timespec: bun.timespec = undefined;
-
         loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
     } else {
         loop.tickWithoutIdle();

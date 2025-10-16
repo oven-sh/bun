@@ -462,7 +462,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #if !defined(_WIN32)
                     }
                     #endif
-
+                
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -490,6 +490,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         eof = 1; // lets handle EOF in the same place
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                       
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_ERR, NULL);
                         return;

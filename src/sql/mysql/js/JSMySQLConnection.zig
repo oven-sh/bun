@@ -309,15 +309,17 @@ fn updateReferenceType(this: *@This()) void {
     if (this.#connection.isActive()) {
         debug("connection is active", .{});
         if (this.#js_value.isNotEmpty() and this.#js_value == .weak) {
-            debug("strong ref", .{});
+            debug("strong ref until connection is closed", .{});
             this.#js_value.upgrade(this.#globalObject);
         }
-        this.#poll_ref.ref(this.#vm);
+        if (this.#connection.status == .connected and this.#connection.isIdle()) {
+            this.#poll_ref.unref(this.#vm);
+        } else {
+            this.#poll_ref.ref(this.#vm);
+        }
         return;
     }
-    debug("connection is not active", .{});
     if (this.#js_value.isNotEmpty() and this.#js_value == .strong) {
-        debug("week ref", .{});
         this.#js_value.downgrade();
     }
     this.#poll_ref.unref(this.#vm);

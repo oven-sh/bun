@@ -1822,7 +1822,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throwNotEnoughArguments("accept", 1, 0);
             }
 
-            const fd_value = callframe.argumentsAsArray(1)[0];
+            const fd_value = callframe.argument(0);
 
             if (!fd_value.isNumber()) {
                 return globalThis.throwInvalidArguments("accept expects a file descriptor number", .{});

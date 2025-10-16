@@ -680,7 +680,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target))
+                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target, .{ .rewrite_jest_for_tests = r.opts.rewrite_jest_for_tests }))
             {
                 return .{
                     .success = Result{
@@ -1018,30 +1018,20 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
                         }
                     } else if (dir.abs_real_path.len > 0) {
+                        // When the directory is a symlink, we don't need to call getFdPath.
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
                         var buf: bun.PathBuffer = undefined;
 
-                        var out = r.fs.absBuf(&parts, &buf);
+                        const out = r.fs.absBuf(&parts, &buf);
 
                         const store_fd = r.store_fd;
 
-                        if (!query.entry.cache.fd.isValid()) {
+                        if (!query.entry.cache.fd.isValid() and store_fd) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file: bun.FD = if (store_fd)
-                                .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }))
-                            else
-                                .fromStdFile(try bun.openFileForPath(span));
-
-                            if (!store_fd) {
-                                assert(file.stdioTag() == null);
-                                out = try file.getFdPath(&buf);
-                                file.close();
-                                query.entry.cache.fd = .invalid;
-                            } else {
-                                query.entry.cache.fd = file;
-                                Fs.FileSystem.setMaxFd(file.native());
-                            }
+                            var file: bun.FD = .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }));
+                            query.entry.cache.fd = file;
+                            Fs.FileSystem.setMaxFd(file.native());
                         }
 
                         defer {
@@ -1052,10 +1042,6 @@ pub const Resolver = struct {
                                     query.entry.cache.fd = .invalid;
                                 }
                             }
-                        }
-
-                        if (store_fd) {
-                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -1236,7 +1222,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node, .{})) {
                         return .{ .not_found = {} };
                     }
 
@@ -2842,31 +2828,38 @@ pub const Resolver = struct {
                     // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                     // list which contains such paths and treating them as missing means we just
                     // ignore them during path resolution.
-                    error.ENOENT,
-                    error.ENOTDIR,
-                    error.IsDir,
-                    error.NotDir,
-                    error.FileNotFound,
-                    => return null,
-
+                    error.ENOTDIR, error.IsDir, error.NotDir => return null,
                     else => {
                         const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        // If we don't properly cache not found, then we repeatedly attempt to open the same directories, which causes a perf trace that looks like this stupidity;
+                        //
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react/", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
-                        if (comptime enable_logging) {
-                            const pretty = queue_top.unsafe_path;
+                        switch (@as(anyerror, err)) {
+                            error.ENOENT, error.FileNotFound => {},
+                            else => {
+                                if (comptime enable_logging) {
+                                    const pretty = queue_top.unsafe_path;
 
-                            r.log.addErrorFmt(
-                                null,
-                                logger.Loc{},
-                                r.allocator,
-                                "Cannot read directory \"{s}\": {s}",
-                                .{
-                                    pretty,
-                                    @errorName(err),
-                                },
-                            ) catch {};
+                                    r.log.addErrorFmt(
+                                        null,
+                                        logger.Loc{},
+                                        r.allocator,
+                                        "Cannot read directory \"{s}\": {s}",
+                                        .{
+                                            pretty,
+                                            @errorName(err),
+                                        },
+                                    ) catch {};
+                                }
+                            },
                         }
+
                         return null;
                     },
                 };
@@ -3154,7 +3147,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target, .{})) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -3798,17 +3791,20 @@ pub const Resolver = struct {
         };
 
         if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
-            if (dir_entry.err.original_err != error.ENOENT) {
-                r.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    r.allocator,
-                    "Cannot read directory \"{s}\": {s}",
-                    .{
-                        dir_path,
-                        @errorName(dir_entry.err.original_err),
-                    },
-                ) catch {};
+            switch (dir_entry.err.original_err) {
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir => {},
+                else => {
+                    r.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        r.allocator,
+                        "Cannot read directory \"{s}\": {s}",
+                        .{
+                            dir_path,
+                            @errorName(dir_entry.err.original_err),
+                        },
+                    ) catch {};
+                },
             }
             return null;
         }

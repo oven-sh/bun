@@ -304,7 +304,7 @@ pub fn crashHandler(
                     writer.print("Crashed while {}\n", .{action}) catch std.posix.abort();
                 }
 
-                var addr_buf: [10]usize = undefined;
+                var addr_buf: [20]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
@@ -319,7 +319,55 @@ pub fn crashHandler(
                         .index = 0,
                         .instruction_addresses = &addr_buf,
                     };
-                    std.debug.captureStackTrace(begin_addr orelse @returnAddress(), &trace_buf);
+                    const desired_begin_addr = begin_addr orelse @returnAddress();
+
+                    // On Linux with glibc, always use backtrace() instead of Zig's StackIterator
+                    // because Zig's frame pointer-based unwinding doesn't work reliably,
+                    // especially on aarch64. glibc's backtrace() uses DWARF unwinding.
+                    if (bun.Environment.isLinux and !bun.Environment.isMusl) {
+                        const backtrace_fn = struct {
+                            extern "c" fn backtrace(buffer: [*]?*anyopaque, size: c_int) c_int;
+                        }.backtrace;
+                        const count = backtrace_fn(@ptrCast(&addr_buf), addr_buf.len);
+                        if (count > 0) {
+                            trace_buf.index = @intCast(count);
+
+                            // Skip frames until we find begin_addr (or close to it)
+                            // backtrace() captures everything including crash handler frames
+                            var skip: usize = 0;
+                            var found_begin = false;
+                            const tolerance: usize = 128;
+                            for (addr_buf[0..trace_buf.index], 0..) |addr, i| {
+                                // Check if this address is close to begin_addr (within tolerance)
+                                const delta = if (addr >= desired_begin_addr)
+                                    addr - desired_begin_addr
+                                else
+                                    desired_begin_addr - addr;
+                                if (delta <= tolerance) {
+                                    skip = i;
+                                    found_begin = true;
+                                    break;
+                                }
+                                // Give up searching after 8 frames
+                                if (i >= 8) break;
+                            }
+
+                            // Shift the addresses to skip crash handler frames
+                            // If begin_addr was not found, use the complete backtrace
+                            if (found_begin and skip > 0 and skip < trace_buf.index) {
+                                const remaining = trace_buf.index - skip;
+                                var j: usize = 0;
+                                while (j < remaining) : (j += 1) {
+                                    addr_buf[j] = addr_buf[skip + j];
+                                }
+                                trace_buf.index = remaining;
+                            }
+                        }
+                    } else {
+                        // Fall back to Zig's stack capture on other platforms
+                        std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
+                    }
+
                     break :get_backtrace &trace_buf;
                 };
 
@@ -1635,12 +1683,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             return;
         },
         .linux => {
+            // In non-debug builds, use WTF's stack trace printer and return early
             if (!bun.Environment.isDebug) {
-                // Linux doesnt seem to be able to decode it's own debug info.
-                // TODO(@paperclover): see if zig 0.14 fixes this
-                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.index);
                 return;
             }
+            // Otherwise fall through to llvm-symbolizer for debug builds
         },
         else => {
             // Assume debug symbol tooling is reliable.

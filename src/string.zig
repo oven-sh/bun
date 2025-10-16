@@ -6,8 +6,9 @@ pub const PathString = @import("./string/PathString.zig").PathString;
 pub const SmolStr = @import("./string/SmolStr.zig").SmolStr;
 pub const StringBuilder = @import("./string/StringBuilder.zig");
 pub const StringJoiner = @import("./string/StringJoiner.zig");
-pub const WTFStringImpl = @import("./string/WTFStringImpl.zig").WTFStringImpl;
-pub const WTFStringImplStruct = @import("./string/WTFStringImpl.zig").WTFStringImplStruct;
+pub const WTFString = @import("./string/wtf.zig").WTFString;
+pub const WTFStringImpl = @import("./string/wtf.zig").WTFStringImpl;
+pub const WTFStringImplStruct = @import("./string/wtf.zig").WTFStringImplStruct;
 
 pub const Tag = enum(u8) {
     /// String is not valid. Observed on some failed operations.
@@ -47,7 +48,7 @@ pub const String = extern struct {
     pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
-    pub const StringImplAllocator = @import("./string/WTFStringImpl.zig").StringImplAllocator;
+    pub const StringImplAllocator = @import("./string/wtf.zig").StringImplAllocator;
 
     pub fn toInt32(this: *const String) ?i32 {
         const val = bun.cpp.BunString__toInt32(this);
@@ -182,7 +183,7 @@ pub const String = extern struct {
 
     pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
-        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
+        if (bun.strings.firstNonASCII16(bytes) == null) {
             return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
         return validateRefCount(bun.cpp.BunString__fromUTF16(bytes.ptr, bytes.len));

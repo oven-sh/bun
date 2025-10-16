@@ -2335,6 +2335,7 @@ pub fn finalizeBundle(
             result.chunks,
             null,
             false,
+            false,
         );
 
         // Create an entry for this file.
@@ -2950,8 +2951,8 @@ pub fn finalizeBundle(
         defer current_bundle.promise.deinitIdempotently();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
         dev.vm.eventLoop().enter();
-        current_bundle.promise.strong.resolve(dev.vm.global, .true);
-        dev.vm.eventLoop().exit();
+        defer dev.vm.eventLoop().exit();
+        try current_bundle.promise.strong.resolve(dev.vm.global, .true);
     }
 
     while (current_bundle.requests.popFirst()) |node| {
@@ -3139,6 +3140,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
             &ctx,
         ) catch |err| switch (err) {
             error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
+            error.JSTerminated => dev.vm.global.reportActiveExceptionAsUnhandled(err),
             error.OutOfMemory => bun.outOfMemory(),
         };
         return;
@@ -3196,6 +3198,7 @@ pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, 
         &ctx,
     ) catch |err| switch (err) {
         error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
+        error.JSTerminated => dev.vm.global.reportActiveExceptionAsUnhandled(err),
         else => |other| return other,
     };
 }
@@ -3353,16 +3356,18 @@ fn sendSerializedFailures(
                 }
             }
             const fetch_headers = try headers.toFetchHeaders(r.global);
-            var response = Response{
-                .body = .{ .value = .{ .Blob = any_blob.toBlob(r.global) } },
-                .init = Response.Init{
+            var response = Response.init(
+                .{
                     .status_code = 500,
                     .headers = fetch_headers,
                 },
-            };
+                .{ .value = .{ .Blob = any_blob.toBlob(r.global) } },
+                bun.String.empty,
+                false,
+            );
             dev.vm.eventLoop().enter();
-            r.promise.reject(r.global, response.toJS(r.global));
             defer dev.vm.eventLoop().exit();
+            try r.promise.reject(r.global, response.toJS(r.global));
         },
     }
 }
@@ -4471,7 +4476,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onLoaded(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.resolve(this.global, .true);
+        try this.p.?.resolve(this.global, .true);
         this.dev.vm.drainMicrotasks();
     }
 
@@ -4488,7 +4493,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onPluginError(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.reject(this.global, bun.String.static("Plugin error").toJS(this.global));
+        try this.p.?.reject(this.global, bun.String.static("Plugin error").toJS(this.global));
         this.dev.vm.drainMicrotasks();
     }
 

@@ -44,6 +44,7 @@ pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;
 pub const array_buffer = @import("./jsc/array_buffer.zig");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
+pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
 pub const CachedBytecode = @import("./bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("./bindings/CallFrame.zig").CallFrame;
 pub const CommonAbortReason = @import("./bindings/CommonAbortReason.zig").CommonAbortReason;
@@ -51,8 +52,8 @@ pub const CommonStrings = @import("./bindings/CommonStrings.zig").CommonStrings;
 pub const CustomGetterSetter = @import("./bindings/CustomGetterSetter.zig").CustomGetterSetter;
 pub const DOMFormData = @import("./bindings/DOMFormData.zig").DOMFormData;
 pub const DOMURL = @import("./bindings/DOMURL.zig").DOMURL;
+pub const DecodedJSValue = @import("./bindings/DecodedJSValue.zig").DecodedJSValue;
 pub const DeferredError = @import("./bindings/DeferredError.zig").DeferredError;
-pub const EncodedJSValue = @import("./bindings/EncodedJSValue.zig").EncodedJSValue;
 pub const GetterSetter = @import("./bindings/GetterSetter.zig").GetterSetter;
 pub const JSArray = @import("./bindings/JSArray.zig").JSArray;
 pub const JSArrayIterator = @import("./bindings/JSArrayIterator.zig").JSArrayIterator;
@@ -275,6 +276,8 @@ pub const math = struct {
         return Bun__JSC__operationMathPow(x, y);
     }
 };
+
+pub const generated = @import("bindgen_generated");
 
 const bun = @import("bun");
 const std = @import("std");

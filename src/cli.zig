@@ -181,6 +181,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\  <b><blue>info<r>      <d>{s:<16}<r>     Display package metadata from the registry
+        \\  <b><blue>why<r>       <d>{s:<16}<r>     Explain why a package is installed
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
@@ -214,6 +215,7 @@ pub const HelpCommand = struct {
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_add_filler[(package_add_i + 2) % packages_to_add_filler.len],
+            packages_to_add_filler[(package_add_i + 3) % packages_to_add_filler.len],
             packages_to_create_filler[package_create_i],
         };
 
@@ -350,7 +352,10 @@ pub const Command = struct {
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
 
-        file_reporter: ?TestCommand.FileReporter = null,
+        reporters: struct {
+            dots: bool = false,
+            junit: bool = false,
+        } = .{},
         reporter_outfile: ?[]const u8 = null,
     };
 

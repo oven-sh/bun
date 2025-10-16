@@ -196,6 +196,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+    clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
     clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
     clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
@@ -204,33 +205,24 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
+    clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-        .result => |fd| fd.stdFile(),
+    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
+        .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
             Global.exit(1);
         },
-    };
-
-    defer config_file.close();
-    const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        if (auto_loaded) return;
-        Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
-            @errorName(err),
-            config_path,
-        });
-        Global.exit(1);
     };
 
     js_ast.Stmt.Data.Store.create();
@@ -244,7 +236,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+    try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -413,6 +405,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (timeout_ms.len > 0) {
                 ctx.test_options.default_timeout_ms = std.fmt.parseInt(u32, timeout_ms, 10) catch {
                     Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
+                    Output.flush();
                     Global.exit(1);
                 };
             }
@@ -455,11 +448,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Output.errGeneric("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", .{});
                     Global.crash();
                 }
-                ctx.test_options.file_reporter = .junit;
+                ctx.test_options.reporters.junit = true;
+            } else if (strings.eqlComptime(reporter, "dots") or strings.eqlComptime(reporter, "dot")) {
+                ctx.test_options.reporters.dots = true;
             } else {
-                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results)", .{reporter});
+                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results), 'dots'", .{reporter});
                 Global.crash();
             }
+        }
+
+        // Handle --dots flag as shorthand for --reporter=dots
+        if (args.flag("--dots")) {
+            ctx.test_options.reporters.dots = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {
@@ -470,11 +470,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number: {s}", .{@errorName(e)});
+                    Output.flush();
                     Global.exit(1);
                 };
 
                 if (ctx.test_options.bail == 0) {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number greater than 0", .{});
+                    Output.flush();
                     Global.exit(1);
                 }
             } else {
@@ -506,6 +508,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
+        ctx.test_options.only = args.flag("--only");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
 

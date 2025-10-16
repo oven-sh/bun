@@ -2,9 +2,9 @@ import * as b from "bindgenv2";
 import { SSLConfig } from "../../server/SSLConfig.bindv2";
 
 export const BinaryType = b.enumeration("SocketConfigBinaryType", [
-    ["arraybuffer", "ArrayBuffer"],
-    ["buffer", "Buffer"],
-    ["uint8array", "Uint8Array"],
+  ["arraybuffer", "ArrayBuffer"],
+  ["buffer", "Buffer"],
+  ["uint8array", "Uint8Array"],
 ]);
 
 export const Handlers = b.dictionary(

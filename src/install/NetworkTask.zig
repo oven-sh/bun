@@ -100,10 +100,16 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.jsc.URL.join(
-            bun.String.borrowUTF8(scope.url.href),
-            bun.String.borrowUTF8(encoded_name),
-        );
+        const tmp = brk: {
+            var tmp_base = bun.String.borrowUTF8(scope.url.href);
+            defer tmp_base.deref();
+            var tmp_relative = bun.String.borrowUTF8(encoded_name);
+            defer tmp_relative.deref();
+            break :brk bun.jsc.URL.join(
+                &tmp_base,
+                &tmp_relative,
+            );
+        };
         defer tmp.deref();
 
         if (tmp.tag == .Dead) {

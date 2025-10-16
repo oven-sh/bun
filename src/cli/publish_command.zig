@@ -970,6 +970,37 @@ pub const PublishCommand = struct {
                 logger.Loc.Empty,
             ),
         };
+
+        var registry_url: *jsc.URL = jsc.URL.fromUTF8(registry.url.href) catch |err| {
+            Output.err(err, "failed to parse registry url: {s}", .{registry.url.href});
+            Global.exit(1);
+        };
+        defer registry_url.deinit();
+
+        // always replace https with http
+        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+        if (registry_url.protocol().eqlUTF8("https")) {
+            registry_url.setProtocol(bun.String.static("http"));
+        }
+
+        var registry_url_str = registry_url.href();
+        defer registry_url_str.deref();
+
+        var tarball_path_str = bun.String.createFormat("{s}/-/{}", .{
+            package_name,
+            Pack.fmtTarballFilename(package_name, package_version, .raw),
+        }) catch bun.outOfMemory();
+        defer tarball_path_str.deref();
+
+        const tarball_url = jsc.URL.join(&registry_url_str, &tarball_path_str);
+        defer tarball_url.deref();
+
+        const tarball_url_slice = tarball_url.toSlice(bun.default_allocator);
+        defer tarball_url_slice.deinit();
+
+        // Duplicate the tarball URL string so it persists beyond the defer
+        const tarball_url_str_duped = try allocator.dupe(u8, tarball_url_slice.slice());
+
         dist_props[2] = .{
             .key = Expr.init(
                 E.String,
@@ -979,13 +1010,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
-                        // always use replace https with http
-                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
-                        strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
-                        package_name,
-                        Pack.fmtTarballFilename(package_name, package_version, .raw),
-                    }),
+                    .data = tarball_url_str_duped,
                 },
                 logger.Loc.Empty,
             ),
@@ -1454,6 +1479,7 @@ const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const URL = bun.URL;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const path = bun.path;
 const sha = bun.sha;

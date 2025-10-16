@@ -647,7 +647,12 @@ pub const SendQueue = struct {
     }
     fn shouldRef(this: *SendQueue) bool {
         if (this.waiting_for_ack != null) return true; // waiting to receive an ack/nack from the other side
-        if (this.queue.items.len == 0) return false; // nothing to send
+        if (this.queue.items.len == 0) {
+            // Keep the event loop alive if the socket is connected.
+            // Per Node.js behavior, IPC always keeps the parent alive "unless there is an established IPC channel"
+            // This means after unref(), IPC still keeps the loop alive (unref only affects process/stdio).
+            return this.isConnected();
+        }
         const first = &this.queue.items[0];
         if (first.data.cursor > 0) return true; // send in progress, waiting on writable
         if (this.write_in_progress) return true; // send in progress (windows), waiting on writable

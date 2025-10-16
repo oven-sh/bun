@@ -55,7 +55,7 @@ export const SocketConfig = b.dictionary(
       internalName: "allow_half_open",
     },
     hostname: {
-      type: b.String.optional,
+      type: b.String.nullable.loose,
       altNames: ["host"],
     },
     port: b.u16.optional,
@@ -75,18 +75,9 @@ export const SocketConfig = b.dictionary(
       internalName: "ipv6_only",
     },
     unix: {
-      type: b.String.optional,
+      type: b.String.nullable.loose,
       internalName: "unix_", // `unix` is a predefined C macro...
     },
     fd: b.i32.optional,
-    localAddress: {
-      type: b.String.optional,
-      internalName: "local_address",
-    },
-    localPort: {
-      type: b.u16,
-      default: 0,
-      internalName: "local_port",
-    },
   },
 );

@@ -289,7 +289,7 @@ pub const SocketConfig = struct {
             }
         } else if (generated.hostname.get()) |hostname| {
             if (hostname.length() == 0) {
-                return global.throwInvalidArguments("\"hostname\" cannot be non-empty", .{});
+                return global.throwInvalidArguments("\"hostname\" cannot be empty", .{});
             }
             result.hostname_or_unix = hostname.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();

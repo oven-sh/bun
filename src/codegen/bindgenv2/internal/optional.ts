@@ -3,6 +3,7 @@ import { CodeStyle, Type } from "./base";
 
 export abstract class OptionalType extends Type {}
 
+/** Treats `undefined` as a not-provided value. */
 export function optional(payload: Type): OptionalType {
   if (isAny(payload)) {
     throw RangeError("`Any` types are already optional");
@@ -26,23 +27,53 @@ export function optional(payload: Type): OptionalType {
   })();
 }
 
-export abstract class NullableType extends Type {}
+export abstract class NullableType extends OptionalType {}
 
+/** Treats `null` or `undefined` as a not-provided value. */
 export function nullable(payload: Type): NullableType {
-  const AsOptional = optional(payload);
+  const asOptional = optional(payload);
   return new (class extends NullableType {
+    /** Treats all falsy values as null. */
+    get loose(): LooseNullableType {
+      return looseNullable(payload);
+    }
+
     get idlType() {
       return `::WebCore::IDLNullable<${payload.idlType}>`;
     }
     get bindgenType() {
-      return AsOptional.bindgenType;
+      return asOptional.bindgenType;
     }
     zigType(style?: CodeStyle) {
-      return AsOptional.zigType(style);
+      return asOptional.zigType(style);
     }
     toCpp(value: any): string {
       if (value == null) {
         return `::WebCore::IDLNullable<${payload.idlType}>::nullValue()`;
+      }
+      return payload.toCpp(value);
+    }
+  })();
+}
+
+export abstract class LooseNullableType extends NullableType {}
+
+/** Treats all falsy values as null. */
+export function looseNullable(payload: Type): LooseNullableType {
+  const asNullable = nullable(payload);
+  return new (class extends LooseNullableType {
+    get idlType() {
+      return `::Bun::IDLLooseNullable<${payload.idlType}>`;
+    }
+    get bindgenType() {
+      return asNullable.bindgenType;
+    }
+    zigType(style?: CodeStyle) {
+      return asNullable.zigType(style);
+    }
+    toCpp(value: any): string {
+      if (!value) {
+        return `::Bun::IDLLooseNullable<${payload.idlType}>::nullValue()`;
       }
       return payload.toCpp(value);
     }

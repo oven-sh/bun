@@ -182,9 +182,27 @@ test.todoIf(isWindows)("server.accept() handles POST request with large body", a
       socket: {
         data(socket, data) {
           fullResponse += Buffer.from(data).toString();
-          if (fullResponse.includes("\r\n\r\n") && resolveData) {
-            resolveData();
-            resolveData = null;
+
+          // Parse headers to find Content-Length
+          const headerEnd = fullResponse.indexOf("\r\n\r\n");
+          if (headerEnd !== -1) {
+            const headers = fullResponse.substring(0, headerEnd);
+            const contentLengthMatch = headers.match(/Content-Length:\s*(\d+)/i);
+
+            if (contentLengthMatch) {
+              const contentLength = parseInt(contentLengthMatch[1], 10);
+              const bodyStart = headerEnd + 4;
+              const currentBodyLength = fullResponse.length - bodyStart;
+
+              // Only resolve when we have the complete body
+              if (currentBodyLength >= contentLength && resolveData) {
+                resolveData();
+                resolveData = null;
+              }
+            } else if (headers.includes("Connection: close")) {
+              // If no Content-Length but Connection: close, wait for connection to close
+              // This is handled by checking if we got enough data in assertions
+            }
           }
         },
         open(socket) {
@@ -199,6 +217,13 @@ test.todoIf(isWindows)("server.accept() handles POST request with large body", a
               "\r\n" +
               largeBody,
           );
+        },
+        close(socket) {
+          // Connection closed - resolve if not already resolved
+          if (resolveData) {
+            resolveData();
+            resolveData = null;
+          }
         },
       },
       fd: clientFd,

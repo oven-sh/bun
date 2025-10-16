@@ -243,6 +243,63 @@ test("testFlags.testFilterPattern is set when --test-name-pattern is passed", as
   expect(exitCode).toBe(0);
 });
 
+test("testFlags.randomize is true and seed is set when --randomize is passed", async () => {
+  using dir = tempDir("test-flags-randomize", {
+    "test.test.ts": `
+      import { test, expect, testFlags } from "bun:test";
+
+      test("check randomize and seed", () => {
+        expect(testFlags.randomize).toBe(true);
+        expect(typeof testFlags.seed).toBe("number");
+        expect(testFlags.seed).toBeGreaterThan(0);
+        console.log("Resolved seed:", testFlags.seed);
+      });
+    `,
+  });
+
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--randomize"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/Resolved seed: \d+/);
+});
+
+test("testFlags.seed is the specified value when --seed is passed", async () => {
+  using dir = tempDir("test-flags-explicit-seed", {
+    "test.test.ts": `
+      import { test, expect, testFlags } from "bun:test";
+
+      test("check explicit seed", () => {
+        expect(testFlags.randomize).toBe(true);
+        expect(testFlags.seed).toBe(12345);
+      });
+    `,
+  });
+
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--randomize", "--seed", "12345"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  expect(exitCode).toBe(0);
+});
+
 test("testFlags has all expected properties", async () => {
   using dir = tempDir("test-flags-properties", {
     "test.test.ts": `

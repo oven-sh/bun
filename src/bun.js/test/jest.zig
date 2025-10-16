@@ -69,6 +69,7 @@ pub const TestRunner = struct {
     run_todo: bool = false,
     concurrent: bool = false,
     randomize: ?std.Random = null,
+    seed: u32 = 0,
     concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
@@ -198,14 +199,21 @@ pub const Jest = struct {
         // concurrent
         flags.put(globalObject, ZigString.static("concurrent"), JSValue.jsBoolean(test_options.concurrent));
 
-        // randomize
-        flags.put(globalObject, ZigString.static("randomize"), JSValue.jsBoolean(test_options.randomize));
-
-        // seed
-        if (test_options.seed) |seed| {
-            flags.put(globalObject, ZigString.static("seed"), JSValue.jsNumber(seed));
+        // randomize and seed - use resolved values from TestRunner
+        if (Jest.runner) |test_runner| {
+            flags.put(globalObject, ZigString.static("randomize"), JSValue.jsBoolean(test_runner.randomize != null));
+            if (test_runner.randomize != null) {
+                flags.put(globalObject, ZigString.static("seed"), JSValue.jsNumber(test_runner.seed));
+            } else {
+                flags.put(globalObject, ZigString.static("seed"), .js_undefined);
+            }
         } else {
-            flags.put(globalObject, ZigString.static("seed"), .js_undefined);
+            flags.put(globalObject, ZigString.static("randomize"), JSValue.jsBoolean(test_options.randomize));
+            if (test_options.seed) |seed| {
+                flags.put(globalObject, ZigString.static("seed"), JSValue.jsNumber(seed));
+            } else {
+                flags.put(globalObject, ZigString.static("seed"), .js_undefined);
+            }
         }
 
         // bail

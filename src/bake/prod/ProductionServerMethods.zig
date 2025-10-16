@@ -59,7 +59,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
             params: *const bun.bake.FrameworkRouter.MatchedParams,
         ) void {
             onFrameworkSsrRequestImpl(server, req, resp, route_index, params) catch |err| switch (err) {
-                error.JSError => server.vm.global.reportActiveExceptionAsUnhandled(err),
+                error.JSError, error.JSTerminated => server.vm.global.reportActiveExceptionAsUnhandled(err),
                 error.OutOfMemory => bun.outOfMemory(),
             };
         }

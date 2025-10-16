@@ -512,41 +512,66 @@ extern "C"
 
   int uws_app_accept(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd)
   {
-    // SSL/TLS socket acceptance is not currently supported
-    // Proper implementation requires calling us_socket_wrap_with_tls() + us_socket_open()
-    // to initiate the TLS handshake, which is beyond the scope of the initial implementation
     if (ssl)
     {
-      return -1;
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      // Access the httpContext pointer from the app - it's the first member of the App struct.
+      // Technical debt: We use pointer arithmetic to access the private httpContext member.
+      // This relies on the known memory layout of TemplatedApp (see App.h line 96).
+      // Ideally, uWebSockets would expose a getSocketContext() accessor, but since it's
+      // a vendored library, we use this approach which is consistent with patterns in
+      // other parts of this file (e.g., lines 115, 127, 132 in App.h show similar casts).
+      // The layout is stable across the uWebSockets API and unlikely to change.
+      uWS::HttpContext<true> *httpContext = *(uWS::HttpContext<true> **)uwsApp;
+      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
+
+      // Create a socket from the file descriptor with the proper extension size
+      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<true>), fd, 0);
+      if (socket == nullptr) {
+        return -1;
+      }
+
+      // Initialize the socket extension with HttpResponseData
+      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<true>;
+
+      // Trigger the on_open callback that was registered by HttpContext
+      // This will properly initialize the HTTP response and call filters
+      if (socketContext->on_open) {
+        socketContext->on_open(socket, 0, nullptr, 0);
+      }
+
+      return 0;
     }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      // Access the httpContext pointer from the app - it's the first member of the App struct.
+      // Technical debt: We use pointer arithmetic to access the private httpContext member.
+      // This relies on the known memory layout of TemplatedApp (see App.h line 96).
+      // Ideally, uWebSockets would expose a getSocketContext() accessor, but since it's
+      // a vendored library, we use this approach which is consistent with patterns in
+      // other parts of this file (e.g., lines 115, 127, 132 in App.h show similar casts).
+      // The layout is stable across the uWebSockets API and unlikely to change.
+      uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
+      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 
-    uWS::App *uwsApp = (uWS::App *)app;
-    // Access the httpContext pointer from the app - it's the first member of the App struct.
-    // Technical debt: We use pointer arithmetic to access the private httpContext member.
-    // This relies on the known memory layout of TemplatedApp (see App.h line 96).
-    // Ideally, uWebSockets would expose a getSocketContext() accessor, but since it's
-    // a vendored library, we use this approach which is consistent with patterns in
-    // other parts of this file (e.g., lines 115, 127, 132 in App.h show similar casts).
-    // The layout is stable across the uWebSockets API and unlikely to change.
-    uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
-    us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
+      // Create a socket from the file descriptor with the proper extension size
+      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);
+      if (socket == nullptr) {
+        return -1;
+      }
 
-    // Create a socket from the file descriptor with the proper extension size
-    struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);
-    if (socket == nullptr) {
-      return -1;
+      // Initialize the socket extension with HttpResponseData
+      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<false>;
+
+      // Trigger the on_open callback that was registered by HttpContext
+      // This will properly initialize the HTTP response and call filters
+      if (socketContext->on_open) {
+        socketContext->on_open(socket, 0, nullptr, 0);
+      }
+
+      return 0;
     }
-
-    // Initialize the socket extension with HttpResponseData
-    new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<false>;
-
-    // Trigger the on_open callback that was registered by HttpContext
-    // This will properly initialize the HTTP response and call filters
-    if (socketContext->on_open) {
-      socketContext->on_open(socket, 0, nullptr, 0);
-    }
-
-    return 0;
   }
 
   void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)

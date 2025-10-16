@@ -627,7 +627,7 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
 
     internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
 
-    us_poll_start((struct us_poll_t *) a, internal_cb->loop, LIBUS_SOCKET_READABLE | EPOLLET);
+    us_poll_start((struct us_poll_t *) a, internal_cb->loop, LIBUS_SOCKET_READABLE);
 }
 
 void us_internal_async_wakeup(struct us_internal_async *a) {

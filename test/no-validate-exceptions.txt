@@ -1,6 +1,7 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASAN CI
 
 # List of tests that potentially throw inside of reifyStaticProperties
+test/bundler/bundler_banner_sourcemap.test.ts
 test/js/node/test/parallel/test-stream-some-find-every.mjs
 test/js/node/test/parallel/test-stream-iterator-helpers-test262-tests.mjs
 test/js/node/test/parallel/test-fs-stat-date.mjs

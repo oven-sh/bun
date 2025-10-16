@@ -3792,8 +3792,9 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
 
+const debug = Output.scoped(.bun, .visible);
+
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const debug = Output.scoped(.bun, .visible);

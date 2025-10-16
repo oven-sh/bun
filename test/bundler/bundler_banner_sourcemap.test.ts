@@ -256,6 +256,23 @@ for (const format of formats) {
                   }
                 }
 
+                // Verify banner presence (skip shebang lines which may be processed differently)
+                {
+                  const nonShebangBannerLines = banner.content
+                    .split("\n")
+                    .filter(l => !l.startsWith("#!"))
+                    .filter(l => l.trim().length > 0);
+                  for (const line of nonShebangBannerLines) {
+                    expect(outputCode, `${chunkTestName}: banner line missing: ${JSON.stringify(line)}`).toContain(
+                      line,
+                    );
+                  }
+                  // Shebang (if present at start) should be the very first line of entry-point chunks only
+                  if (banner.name === "shebang-start" && output.kind === "entry-point") {
+                    expect(outputCode.startsWith("#!"), `${chunkTestName}: shebang should be first line`).toBe(true);
+                  }
+                }
+
                 // Extract sourcemap based on type
                 let sourcemapData: string;
 

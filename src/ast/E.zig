@@ -992,14 +992,64 @@ pub const String = struct {
     }
 
     /// Compares two strings lexicographically for JavaScript semantics.
-    /// Both strings must share the same encoding (UTF-8 vs UTF-16).
+    /// Handles both UTF-8 and UTF-16 encodings, including mixed encodings.
     pub inline fn order(this: *const String, other: *const String) std.math.Order {
-        bun.debugAssert(this.isUTF8() == other.isUTF8());
+        // Fast path: both strings have the same encoding
+        if (this.isUTF8() == other.isUTF8()) {
+            if (this.isUTF8()) {
+                return stringCompareForJavaScript(u8, this.data, other.data);
+            } else {
+                return stringCompareForJavaScript(u16, this.slice16(), other.slice16());
+            }
+        }
 
+        // Slow path: encodings differ, compare code points
+        return orderMixedEncoding(this, other);
+    }
+
+    /// Compares strings with different encodings by comparing code points.
+    /// This handles the case where one string is UTF-8 and the other is UTF-16.
+    fn orderMixedEncoding(this: *const String, other: *const String) std.math.Order {
         if (this.isUTF8()) {
-            return stringCompareForJavaScript(u8, this.data, other.data);
+            // this is UTF-8, other is UTF-16
+            const utf8_data = this.data;
+            const utf16_data = other.slice16();
+
+            var utf8_i: usize = 0;
+            var utf16_i: usize = 0;
+
+            while (utf8_i < utf8_data.len and utf16_i < utf16_data.len) {
+                // Decode UTF-8 code point
+                const utf8_len = strings.wtf8ByteSequenceLengthWithInvalid(utf8_data[utf8_i]);
+                const utf8_cp = if (utf8_len > 0 and utf8_i + utf8_len <= utf8_data.len) blk: {
+                    var bytes: [4]u8 = undefined;
+                    @memcpy(bytes[0..utf8_len], utf8_data[utf8_i..][0..utf8_len]);
+                    break :blk strings.decodeWTF8RuneT(&bytes, @intCast(utf8_len), u32, 0xFFFD);
+                } else 0xFFFD;
+
+                // Decode UTF-16 code point
+                const utf16_result = strings.utf16Codepoint(utf16_data[utf16_i..]);
+                const utf16_cp = utf16_result.code_point;
+
+                // Compare code points
+                if (utf8_cp < utf16_cp) return .lt;
+                if (utf8_cp > utf16_cp) return .gt;
+
+                // Advance both iterators
+                utf8_i += utf8_len;
+                utf16_i += utf16_result.len;
+            }
+
+            // If we've exhausted one string, the shorter one is "less than"
+            const utf8_exhausted = utf8_i >= utf8_data.len;
+            const utf16_exhausted = utf16_i >= utf16_data.len;
+
+            if (utf8_exhausted and !utf16_exhausted) return .lt;
+            if (!utf8_exhausted and utf16_exhausted) return .gt;
+            return .eq;
         } else {
-            return stringCompareForJavaScript(u16, this.slice16(), other.slice16());
+            // this is UTF-16, other is UTF-8 - reverse the comparison
+            return other.orderMixedEncoding(this).invert();
         }
     }
 

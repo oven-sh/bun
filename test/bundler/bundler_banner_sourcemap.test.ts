@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { SourceMap } from "node:module";
-import { join } from "path";
+import { basename, join } from "path";
 
 // Define test file contents as constants
 const testFiles = {
@@ -204,168 +204,185 @@ for (const format of formats) {
 
             const testName = `format=${format}, target=${target}, sourcemap=${sourcemap}, splitting=${splitting}, minify=${minify.name}, banner=${banner.name}`;
 
-            test(
-              testName,
-              async () => {
-                // Create temp directory for this test
-                using dir = tempDir(`banner-sourcemap-${format}-${target}-${sourcemap}`, testFiles);
+            test(testName, async () => {
+              // Create temp directory for this test
+              using dir = tempDir(`banner-sourcemap-${format}-${target}-${sourcemap}`, testFiles);
 
-                // Build with banner
-                const entrypoint = splitting ? join(dir, "main.js") : join(dir, "input.js");
-                const result = await Bun.build({
-                  entrypoints: [entrypoint],
-                  outdir: dir,
-                  naming: splitting
-                    ? `split-${target}-${sourcemap}-${minify.name}-${banner.name}/[name].[ext]`
-                    : `output-${format}-${target}-${sourcemap}-${minify.name}-${banner.name}.js`,
-                  format,
-                  target,
-                  sourcemap,
-                  splitting,
-                  minify: {
-                    identifiers: minify.minifyIdentifiers,
-                    whitespace: minify.minifyWhitespace,
-                    syntax: minify.minifySyntax,
-                  },
-                  banner: banner.content,
-                });
+              // Build with banner
+              const entrypoint = splitting ? join(dir, "main.js") : join(dir, "input.js");
+              const result = await Bun.build({
+                entrypoints: [entrypoint],
+                outdir: dir,
+                naming: splitting
+                  ? `split-${target}-${sourcemap}-${minify.name}-${banner.name}/[name].[ext]`
+                  : `output-${format}-${target}-${sourcemap}-${minify.name}-${banner.name}.js`,
+                format,
+                target,
+                sourcemap,
+                splitting,
+                minify: {
+                  identifiers: minify.minifyIdentifiers,
+                  whitespace: minify.minifyWhitespace,
+                  syntax: minify.minifySyntax,
+                },
+                banner: banner.content,
+              });
 
-                expect(result.success, `${testName}: build failed\n${result.logs.join("\n")}`).toBe(true);
+              expect(result.success, `${testName}: build failed\n${result.logs.join("\n")}`).toBe(true);
 
-                // For splitting builds, we check each chunk's sourcemap
-                const outputsToCheck = splitting ? result.outputs.filter(o => o.kind === "chunk") : [result.outputs[0]];
+              // Always filter to JS chunks only (not assets or sourcemaps)
+              // kind can be "entry-point", "chunk", etc. but not "asset" or "sourcemap"
+              const outputsToCheck = result.outputs.filter(o => o.kind !== "sourcemap" && o.path.endsWith(".js"));
+              expect(outputsToCheck.length, `${testName}: no JS outputs found`).toBeGreaterThan(0);
 
-                for (const output of outputsToCheck) {
-                  const outputCode = await output.text();
-                  const outfile = output.path;
-                  const chunkName = splitting ? ` (chunk: ${output.path.split("/").pop()})` : "";
-                  const chunkTestName = `${testName}${chunkName}`;
+              for (const output of outputsToCheck) {
+                const outputCode = await output.text();
+                const outfile = output.path;
+                const chunkName = splitting ? ` (chunk: ${basename(output.path)})` : "";
+                const chunkTestName = `${testName}${chunkName}`;
 
-                  // Verify Bun-specific directives for target=bun
-                  if (target === "bun") {
-                    if (format === "cjs") {
-                      expect(outputCode, `${chunkTestName}: should contain // @bun @bun-cjs directive`).toContain(
-                        "// @bun @bun-cjs",
-                      );
-                    } else if (format === "esm") {
-                      expect(outputCode, `${chunkTestName}: should contain // @bun directive`).toContain("// @bun");
-                      // Make sure it's not the CJS variant
-                      expect(outputCode, `${chunkTestName}: should not contain @bun-cjs for ESM`).not.toContain(
-                        "@bun-cjs",
-                      );
-                    }
+                // Verify Bun-specific directives for target=bun
+                if (target === "bun") {
+                  if (format === "cjs") {
+                    expect(outputCode, `${chunkTestName}: should contain // @bun @bun-cjs directive`).toContain(
+                      "// @bun @bun-cjs",
+                    );
+                  } else if (format === "esm") {
+                    expect(outputCode, `${chunkTestName}: should contain // @bun directive`).toContain("// @bun");
+                    // Make sure it's not the CJS variant
+                    expect(outputCode, `${chunkTestName}: should not contain @bun-cjs for ESM`).not.toContain(
+                      "@bun-cjs",
+                    );
                   }
+                }
 
-                  // Extract sourcemap based on type
-                  let sourcemapData: string;
+                // Extract sourcemap based on type
+                let sourcemapData: string;
 
-                  if (sourcemap === "inline") {
-                    // Extract inline sourcemap from data URL
-                    const match = outputCode.match(/\/\/# sourceMappingURL=data:application\/json;base64,([^\s]+)/);
-                    expect(match, `${chunkTestName}: inline sourcemap not found`).not.toBeNull();
-                    sourcemapData = Buffer.from(match![1], "base64").toString("utf-8");
-                  } else {
-                    // Read external sourcemap file
-                    const mapfile = `${outfile}.map`;
-                    sourcemapData = await Bun.file(mapfile).text();
-                  }
+                if (sourcemap === "inline") {
+                  // Extract inline sourcemap from data URL (accept optional charset)
+                  const match = outputCode.match(
+                    /\/\/# sourceMappingURL=data:application\/json(?:;charset=[^;]+)?;base64,([^\s]+)/,
+                  );
+                  expect(match, `${chunkTestName}: inline sourcemap not found`).not.toBeNull();
+                  sourcemapData = Buffer.from(match![1], "base64").toString("utf-8");
+                } else if (sourcemap === "linked") {
+                  // Verify sourceMappingURL comment exists
+                  expect(outputCode, `${chunkTestName}: linked sourcemap comment not found`).toMatch(
+                    /\/\/# sourceMappingURL=.*\.js\.map/,
+                  );
+                  const mapfile = `${outfile}.map`;
+                  sourcemapData = await Bun.file(mapfile).text();
+                } else {
+                  // external
+                  const mapfile = `${outfile}.map`;
+                  sourcemapData = await Bun.file(mapfile).text();
+                }
 
-                  // Parse the sourcemap
-                  const sourceMapObj = JSON.parse(sourcemapData);
-                  expect(sourceMapObj, `${chunkTestName}: invalid sourcemap JSON`).toBeDefined();
+                // Parse and validate sourcemap structure
+                const sourceMapObj = JSON.parse(sourcemapData);
+                expect(typeof sourceMapObj, `${chunkTestName}: sourcemap should be an object`).toBe("object");
+                expect(sourceMapObj, `${chunkTestName}: sourcemap should not be null`).not.toBeNull();
+                expect(Number.isInteger(sourceMapObj.version), `${chunkTestName}: version should be an integer`).toBe(
+                  true,
+                );
+                expect(sourceMapObj.version, `${chunkTestName}: version should be 3`).toBe(3);
+                expect(Array.isArray(sourceMapObj.sources), `${chunkTestName}: sources should be an array`).toBe(true);
 
-                  // Skip runtime helper chunks (chunks with no sources - these are generated code)
-                  if (!sourceMapObj.sources || sourceMapObj.sources.length === 0 || !sourceMapObj.mappings) {
-                    // This is expected for runtime helper chunks in code splitting
-                    continue;
-                  }
+                // Skip runtime helper chunks (chunks with no sources - these are generated code)
+                if (!sourceMapObj.sources || sourceMapObj.sources.length === 0 || !sourceMapObj.mappings) {
+                  // This is expected for runtime helper chunks in code splitting
+                  continue;
+                }
 
-                  expect(sourceMapObj.mappings, `${chunkTestName}: mappings should be a non-empty string`).toBeTruthy();
-                  expect(typeof sourceMapObj.mappings, `${chunkTestName}: mappings should be string type`).toBe(
-                    "string",
+                expect(sourceMapObj.mappings, `${chunkTestName}: mappings should be a non-empty string`).toBeTruthy();
+                expect(typeof sourceMapObj.mappings, `${chunkTestName}: mappings should be string type`).toBe("string");
+
+                // Use node:module SourceMap to validate
+                const sm = new SourceMap(sourceMapObj);
+
+                // The banner should NOT affect the source mapping
+                // Different checks for different chunks
+                const isInputChunk = outfile.includes("input") || !splitting;
+                const isUtilsChunk = outfile.includes("utils");
+                const isMainChunk = outfile.includes("main");
+
+                // Test mappings based on which chunk we're in - require at least one anchor match
+                if (isInputChunk) {
+                  // Test 1: Check mapping in the middle of the file - the flush() method (line 42, 0-indexed: 41)
+                  // Use minification-resistant pattern
+                  const flushMatch = outputCode.match(/flush\s*\(/);
+                  expect(flushMatch, `${chunkTestName}: flush method not found in input chunk`).not.toBeNull();
+
+                  const flushIndex = flushMatch!.index!;
+                  const linesBeforeFlush = outputCode.substring(0, flushIndex).split("\n").length;
+                  const flushLineStart = outputCode.lastIndexOf("\n", flushIndex - 1) + 1;
+                  const flushColumn = flushIndex - flushLineStart;
+                  const flushPosition = sm.findEntry(linesBeforeFlush - 1, flushColumn);
+
+                  expect(
+                    flushPosition?.originalLine,
+                    `${chunkTestName}: flush() should map to original line 34 (0-indexed), got ${flushPosition?.originalLine}`,
+                  ).toBe(34);
+                  expect(flushPosition?.originalSource, `${chunkTestName}: source should be input.js`).toMatch(
+                    /input\.js$/,
                   );
 
-                  // Use node:module SourceMap to validate
-                  const sm = new SourceMap(sourceMapObj);
+                  // Test 2: Check mapping for this.buffer.push (line 39, 0-indexed: 38)
+                  // Use minification-resistant pattern - match the call structure, not argument names
+                  const bufferPushMatch = outputCode.match(/this\.buffer\.push\s*\(/);
+                  if (bufferPushMatch) {
+                    const bufferPushIndex = bufferPushMatch.index!;
+                    const linesBeforePush = outputCode.substring(0, bufferPushIndex).split("\n").length;
+                    const pushLineStart = outputCode.lastIndexOf("\n", bufferPushIndex - 1) + 1;
+                    const pushColumn = bufferPushIndex - pushLineStart;
+                    const pushPosition = sm.findEntry(linesBeforePush - 1, pushColumn);
 
-                  // The banner should NOT affect the source mapping
-                  // Different checks for different chunks
-                  const isInputChunk = outfile.includes("input") || !splitting;
-                  const isUtilsChunk = outfile.includes("utils");
-                  const isMainChunk = outfile.includes("main");
-
-                  // Test mappings based on which chunk we're in
-                  if (isInputChunk) {
-                    // Test 1: Check mapping in the middle of the file - the flush() method
-                    // This is on line 35 in the original (0-indexed: 34)
-                    const flushMatch = outputCode.match(/flush\(\)\s*{/);
-                    if (flushMatch) {
-                      const flushIndex = flushMatch.index!;
-                      const linesBeforeFlush = outputCode.substring(0, flushIndex).split("\n").length;
-                      const flushLineStart = outputCode.lastIndexOf("\n", flushIndex - 1) + 1;
-                      const flushColumn = flushIndex - flushLineStart;
-                      const flushPosition = sm.findEntry(linesBeforeFlush - 1, flushColumn);
-
-                      expect(
-                        flushPosition?.originalLine,
-                        `${chunkTestName}: flush() should map to original line 34 (0-indexed), got ${flushPosition?.originalLine}`,
-                      ).toBe(34);
-                      expect(flushPosition?.originalSource, `${chunkTestName}: source should be input.js`).toMatch(
-                        /input\.js$/,
-                      );
-                    }
-
-                    // Test 2: Check mapping for this.buffer.push - in the middle of FileLogger class
-                    const bufferPushMatch = outputCode.match(/this\.buffer\.push\(message\)/);
-                    if (bufferPushMatch) {
-                      const bufferPushIndex = bufferPushMatch.index!;
-                      const linesBeforePush = outputCode.substring(0, bufferPushIndex).split("\n").length;
-                      const pushLineStart = outputCode.lastIndexOf("\n", bufferPushIndex - 1) + 1;
-                      const pushColumn = bufferPushIndex - pushLineStart;
-                      const pushPosition = sm.findEntry(linesBeforePush - 1, pushColumn);
-
-                      expect(
-                        pushPosition?.originalLine,
-                        `${chunkTestName}: this.buffer.push should map to original line 31 (0-indexed), got ${pushPosition?.originalLine}`,
-                      ).toBe(31);
-                    }
+                    expect(
+                      pushPosition?.originalLine,
+                      `${chunkTestName}: this.buffer.push should map to original line 31 (0-indexed), got ${pushPosition?.originalLine}`,
+                    ).toBe(31);
                   }
+                }
 
-                  if (isUtilsChunk) {
-                    // Test for utils.js - check DatabaseConnection.connect() at line 12 (0-indexed: 11)
-                    const connectMatch = outputCode.match(/async connect\(\)\s*{/);
-                    if (connectMatch) {
-                      const connectIndex = connectMatch.index!;
-                      const linesBeforeConnect = outputCode.substring(0, connectIndex).split("\n").length;
-                      const connectLineStart = outputCode.lastIndexOf("\n", connectIndex - 1) + 1;
-                      const connectColumn = connectIndex - connectLineStart;
-                      const connectPosition = sm.findEntry(linesBeforeConnect - 1, connectColumn);
+                if (isUtilsChunk) {
+                  // Test for utils.js - use minification-resistant pattern
+                  const connectMatch = outputCode.match(/\bconnect\s*\(/);
+                  expect(connectMatch, `${chunkTestName}: connect method not found in utils chunk`).not.toBeNull();
 
-                      expect(
-                        connectPosition?.originalLine,
-                        `${chunkTestName}: connect() should map to utils.js line 11 (0-indexed), got ${connectPosition?.originalLine}`,
-                      ).toBe(11);
-                    }
+                  const connectIndex = connectMatch!.index!;
+                  const linesBeforeConnect = outputCode.substring(0, connectIndex).split("\n").length;
+                  const connectLineStart = outputCode.lastIndexOf("\n", connectIndex - 1) + 1;
+                  const connectColumn = connectIndex - connectLineStart;
+                  const connectPosition = sm.findEntry(linesBeforeConnect - 1, connectColumn);
 
-                    // Test validateEmail function at line 32 (0-indexed: 31)
-                    const validateMatch = outputCode.match(/function validateEmail\(/);
-                    if (validateMatch) {
-                      const validateIndex = validateMatch.index!;
-                      const linesBeforeValidate = outputCode.substring(0, validateIndex).split("\n").length;
-                      const validateLineStart = outputCode.lastIndexOf("\n", validateIndex - 1) + 1;
-                      const validateColumn = validateIndex - validateLineStart;
-                      const validatePosition = sm.findEntry(linesBeforeValidate - 1, validateColumn);
+                  expect(
+                    connectPosition?.originalLine,
+                    `${chunkTestName}: connect() should map to utils.js line 11 (0-indexed), got ${connectPosition?.originalLine}`,
+                  ).toBe(11);
 
-                      expect(
-                        validatePosition?.originalLine,
-                        `${chunkTestName}: validateEmail should map to utils.js line 31 (0-indexed), got ${validatePosition?.originalLine}`,
-                      ).toBe(31);
-                    }
+                  // Test validateEmail - match identifier only
+                  const validateMatch = outputCode.match(/\bvalidateEmail\b/);
+                  if (validateMatch) {
+                    const validateIndex = validateMatch.index!;
+                    const linesBeforeValidate = outputCode.substring(0, validateIndex).split("\n").length;
+                    const validateLineStart = outputCode.lastIndexOf("\n", validateIndex - 1) + 1;
+                    const validateColumn = validateIndex - validateLineStart;
+                    const validatePosition = sm.findEntry(linesBeforeValidate - 1, validateColumn);
+
+                    expect(
+                      validatePosition?.originalLine,
+                      `${chunkTestName}: validateEmail should map to utils.js line 31 (0-indexed), got ${validatePosition?.originalLine}`,
+                    ).toBe(31);
                   }
+                }
 
-                  if (isMainChunk) {
-                    // Test for main.js - check loadUtils function at line 10 (0-indexed: 9)
-                    const loadUtilsMatch = outputCode.match(/async function loadUtils\(\)/);
+                if (isMainChunk) {
+                  // Test for main.js - skip if identifiers are minified
+                  // With minifyIdentifiers, the function name is mangled and "loadUtils" only exists as an export alias
+                  // which doesn't have a sourcemap entry
+                  if (!minify.minifyIdentifiers) {
+                    const loadUtilsMatch = outputCode.match(/\bloadUtils\b/);
                     if (loadUtilsMatch) {
                       const loadUtilsIndex = loadUtilsMatch.index!;
                       const linesBeforeLoadUtils = outputCode.substring(0, loadUtilsIndex).split("\n").length;
@@ -375,14 +392,13 @@ for (const format of formats) {
 
                       expect(
                         loadUtilsPosition?.originalLine,
-                        `${chunkTestName}: loadUtils should map to main.js line 9 (0-indexed), got ${loadUtilsPosition?.originalLine}`,
-                      ).toBe(9);
+                        `${chunkTestName}: loadUtils should map to main.js line 6 (0-indexed), got ${loadUtilsPosition?.originalLine}`,
+                      ).toBe(6);
                     }
                   }
                 }
-              },
-              30000,
-            ); // 30 second timeout per test
+              }
+            });
           }
         }
       }

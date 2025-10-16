@@ -18,7 +18,19 @@ active_connections: u32 = 0,
 is_server: bool,
 promise: jsc.Strong.Optional = .empty,
 
-protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
+protection_count: if (Environment.ci_assert) u32 else void = if (Environment.ci_assert) 0,
+
+const callback_fields = .{
+    "onOpen",
+    "onClose",
+    "onData",
+    "onWritable",
+    "onTimeout",
+    "onConnectError",
+    "onEnd",
+    "onError",
+    "onHandshake",
+};
 
 pub fn markActive(this: *Handlers) void {
     Listener.log("markActive", .{});
@@ -103,53 +115,50 @@ pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, args: *const [2]JSV
     return true;
 }
 
-pub fn fromJS(globalObject: *jsc.JSGlobalObject, opts: jsc.JSValue, is_server: bool) bun.JSError!Handlers {
-    var handlers = Handlers{
+/// Does not `protect` the handlers.
+pub fn fromJS(
+    globalObject: *jsc.JSGlobalObject,
+    opts: jsc.JSValue,
+    is_server: bool,
+) bun.JSError!Handlers {
+    var generated: jsc.generated.SocketConfigHandlers = try .fromJS(globalObject, opts);
+    defer generated.deinit();
+    return .fromGenerated(globalObject, &generated, is_server);
+}
+
+pub fn fromGenerated(
+    globalObject: *jsc.JSGlobalObject,
+    generated: *const jsc.generated.SocketConfigHandlers,
+    is_server: bool,
+) bun.JSError!Handlers {
+    var result: Handlers = .{
         .vm = globalObject.bunVM(),
         .globalObject = globalObject,
         .is_server = is_server,
+        .binary_type = switch (generated.binary_type) {
+            .arraybuffer => .ArrayBuffer,
+            .buffer => .Buffer,
+            .uint8array => .Uint8Array,
+        },
     };
-
-    if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-        return globalObject.throwInvalidArguments("Expected \"socket\" to be an object", .{});
-    }
-
-    const pairs = .{
-        .{ "onData", "data" },
-        .{ "onWritable", "drain" },
-        .{ "onOpen", "open" },
-        .{ "onClose", "close" },
-        .{ "onTimeout", "timeout" },
-        .{ "onConnectError", "connectError" },
-        .{ "onEnd", "end" },
-        .{ "onError", "error" },
-        .{ "onHandshake", "handshake" },
-    };
-    inline for (pairs) |pair| {
-        if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
-            if (!callback_value.isCell() or !callback_value.isCallable()) {
-                return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
-            }
-
-            @field(handlers, pair.@"0") = callback_value;
+    inline for (callback_fields) |field| {
+        const value = @field(generated, field);
+        if (value.isUndefinedOrNull()) {} else if (!value.isCallable()) {
+            return globalObject.throwInvalidArguments(
+                "Expected \"{s}\" callback to be a function",
+                .{field},
+            );
+        } else {
+            @field(result, field) = value;
         }
     }
-
-    if (handlers.onData == .zero and handlers.onWritable == .zero) {
-        return globalObject.throwInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{});
+    if (result.onData == .zero and result.onWritable == .zero) {
+        return globalObject.throwInvalidArguments(
+            "Expected at least \"data\" or \"drain\" callback",
+            .{},
+        );
     }
-
-    if (try opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
-        if (!binary_type_value.isString()) {
-            return globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{});
-        }
-
-        handlers.binary_type = try BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-            return globalObject.throwInvalidArguments("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
-        };
-    }
-
-    return handlers;
+    return result;
 }
 
 pub fn unprotect(this: *Handlers) void {
@@ -157,7 +166,7 @@ pub fn unprotect(this: *Handlers) void {
         return;
     }
 
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.ci_assert) {
         bun.assert(this.protection_count > 0);
         this.protection_count -= 1;
     }
@@ -173,17 +182,7 @@ pub fn unprotect(this: *Handlers) void {
 }
 
 pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObject) void {
-    inline for (.{
-        "onOpen",
-        "onClose",
-        "onData",
-        "onWritable",
-        "onTimeout",
-        "onConnectError",
-        "onEnd",
-        "onError",
-        "onHandshake",
-    }) |field| {
+    inline for (callback_fields) |field| {
         const value = @field(this, field);
         if (value != .zero) {
             @field(this, field) = value.withAsyncContextIfNeeded(globalObject);
@@ -192,7 +191,7 @@ pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObje
 }
 
 pub fn protect(this: *Handlers) void {
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.ci_assert) {
         this.protection_count += 1;
     }
     this.onOpen.protect();
@@ -206,6 +205,7 @@ pub fn protect(this: *Handlers) void {
     this.onHandshake.protect();
 }
 
+/// `handlers` is always `protect`ed in this struct.
 pub const SocketConfig = struct {
     hostname_or_unix: jsc.ZigString.Slice,
     port: ?u16 = null,
@@ -217,6 +217,23 @@ pub const SocketConfig = struct {
     allowHalfOpen: bool = false,
     reusePort: bool = false,
     ipv6Only: bool = false,
+
+    /// Deinitializes everything and `unprotect`s `handlers`.
+    pub fn deinit(this: *SocketConfig) void {
+        this.handlers.unprotect();
+        this.deinitExcludingHandlers();
+        this.handlers = undefined;
+    }
+
+    /// Deinitializes everything but does not `unprotect` `handlers`.
+    pub fn deinitExcludingHandlers(this: *SocketConfig) void {
+        this.hostname_or_unix.deinit();
+        bun.memory.deinit(&this.ssl);
+        const handlers = this.handlers;
+        this.* = undefined;
+        // make sure pointers to `this.handlers` are still valid
+        this.handlers = handlers;
+    }
 
     pub fn socketFlags(this: *const SocketConfig) i32 {
         var flags: i32 = if (this.exclusive)
@@ -236,137 +253,68 @@ pub const SocketConfig = struct {
         return flags;
     }
 
-    pub fn fromJS(vm: *jsc.VirtualMachine, opts: jsc.JSValue, globalObject: *jsc.JSGlobalObject, is_server: bool) bun.JSError!SocketConfig {
-        var hostname_or_unix: jsc.ZigString.Slice = jsc.ZigString.Slice.empty;
-        errdefer hostname_or_unix.deinit();
-        var port: ?u16 = null;
-        var fd: ?bun.FileDescriptor = null;
-        var exclusive = false;
-        var allowHalfOpen = false;
-        var reusePort = false;
-        var ipv6Only = false;
-
-        var ssl: ?SSLConfig = null;
-        var default_data = JSValue.zero;
-
-        if (try opts.getTruthy(globalObject, "tls")) |tls| {
-            if (!tls.isBoolean()) {
-                ssl = try SSLConfig.fromJS(vm, globalObject, tls);
-            } else if (tls.toBoolean()) {
-                ssl = SSLConfig.zero;
-            }
-        }
-
-        errdefer bun.memory.deinit(&ssl);
-
-        hostname_or_unix: {
-            if (try opts.getTruthy(globalObject, "fd")) |fd_| {
-                if (fd_.isNumber()) {
-                    fd = fd_.asFileDescriptor();
-                    break :hostname_or_unix;
-                }
-            }
-
-            if (try opts.getStringish(globalObject, "unix")) |unix_socket| {
-                defer unix_socket.deref();
-
-                hostname_or_unix = try unix_socket.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
-
-                if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
-                    // The memory allocator relies on the pointer address to
-                    // free it, so if we simply moved the pointer up it would
-                    // cause an issue when freeing it later.
-                    const moved_bytes = try bun.default_allocator.dupeZ(u8, hostname_or_unix.slice()[7..]);
-                    hostname_or_unix.deinit();
-                    hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
-                }
-
-                if (hostname_or_unix.len > 0) {
-                    break :hostname_or_unix;
-                }
-            }
-
-            if (try opts.getBooleanLoose(globalObject, "exclusive")) |exclusive_| {
-                exclusive = exclusive_;
-            }
-            if (try opts.getBooleanLoose(globalObject, "allowHalfOpen")) |allow_half_open| {
-                allowHalfOpen = allow_half_open;
-            }
-
-            if (try opts.getBooleanLoose(globalObject, "reusePort")) |reuse_port| {
-                reusePort = reuse_port;
-            }
-
-            if (try opts.getBooleanLoose(globalObject, "ipv6Only")) |ipv6_only| {
-                ipv6Only = ipv6_only;
-            }
-
-            if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
-                defer hostname.deref();
-
-                var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
-                hostname_or_unix = try hostname.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
-
-                if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
-                    const parsed_url = bun.URL.parse(hostname_or_unix.slice());
-                    if (parsed_url.getPort()) |port_num| {
-                        port_value = JSValue.jsNumber(port_num);
-                        if (parsed_url.hostname.len > 0) {
-                            const moved_bytes = try bun.default_allocator.dupeZ(u8, parsed_url.hostname);
-                            hostname_or_unix.deinit();
-                            hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
-                        }
-                    }
-                }
-
-                if (port_value.isEmptyOrUndefinedOrNull()) {
-                    return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
-                }
-
-                const porti32 = try port_value.coerceToInt32(globalObject);
-                if (porti32 < 0 or porti32 > 65535) {
-                    return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
-                }
-
-                port = @intCast(porti32);
-
-                if (hostname_or_unix.len == 0) {
-                    return globalObject.throwInvalidArguments("Expected \"hostname\" to be a non-empty string", .{});
-                }
-
-                if (hostname_or_unix.len > 0) {
-                    break :hostname_or_unix;
-                }
-            }
-
-            if (hostname_or_unix.len == 0) {
-                return globalObject.throwInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{});
-            }
-
-            return globalObject.throwInvalidArguments("Expected either \"hostname\" or \"unix\"", .{});
-        }
-
-        var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero, is_server);
-
-        if (try opts.fastGet(globalObject, .data)) |default_data_value| {
-            default_data = default_data_value;
-        }
-
-        handlers.withAsyncContextIfNeeded(globalObject);
-        handlers.protect();
-
-        return SocketConfig{
-            .hostname_or_unix = hostname_or_unix,
-            .port = port,
-            .fd = fd,
-            .ssl = ssl,
-            .handlers = handlers,
-            .default_data = default_data,
-            .exclusive = exclusive,
-            .allowHalfOpen = allowHalfOpen,
-            .reusePort = reusePort,
-            .ipv6Only = ipv6Only,
+    pub fn fromGenerated(
+        vm: *jsc.VirtualMachine,
+        global: *jsc.JSGlobalObject,
+        generated: *const jsc.generated.SocketConfig,
+        is_server: bool,
+    ) bun.JSError!SocketConfig {
+        var result: SocketConfig = .{
+            .hostname_or_unix = .empty,
+            .fd = if (generated.fd) |fd| .fromUV(fd) else null,
+            .ssl = switch (generated.tls) {
+                .none => null,
+                .boolean => |b| if (b) .zero else null,
+                .object => |*ssl| try .fromGenerated(vm, global, ssl),
+            },
+            .handlers = try .fromGenerated(global, &generated.handlers, is_server),
+            .default_data = if (generated.data.isUndefined()) .zero else generated.data,
         };
+        result.handlers.protect();
+        errdefer result.deinit();
+
+        if (result.fd != null) {} else if (generated.unix_.get()) |unix| {
+            if (unix.length() == 0) {
+                return global.throwInvalidArguments("\"unix\" cannot be empty", .{});
+            }
+            result.hostname_or_unix = unix.toUTF8(bun.default_allocator);
+            const slice = result.hostname_or_unix.slice();
+            if (strings.hasPrefixComptime(slice, "file://") or
+                strings.hasPrefixComptime(slice, "unix://") or
+                strings.hasPrefixComptime(slice, "sock://"))
+            {
+                const without_prefix = try bun.default_allocator.dupe(u8, slice[7..]);
+                result.hostname_or_unix.deinit();
+                result.hostname_or_unix = .init(bun.default_allocator, without_prefix);
+            }
+        } else if (generated.hostname.get()) |hostname| {
+            if (hostname.length() == 0) {
+                return global.throwInvalidArguments("\"hostname\" cannot be non-empty", .{});
+            }
+            result.hostname_or_unix = hostname.toUTF8(bun.default_allocator);
+            const slice = result.hostname_or_unix.slice();
+            result.port = generated.port orelse bun.URL.parse(slice).getPort() orelse {
+                return global.throwInvalidArguments("Missing \"port\"", .{});
+            };
+            result.exclusive = generated.exclusive;
+            result.allowHalfOpen = generated.allow_half_open;
+            result.reusePort = generated.reuse_port;
+            result.ipv6Only = generated.ipv6_only;
+        } else {
+            return global.throwInvalidArguments("Expected either \"hostname\" or \"unix\"", .{});
+        }
+        return result;
+    }
+
+    pub fn fromJS(
+        vm: *jsc.VirtualMachine,
+        opts: jsc.JSValue,
+        globalObject: *jsc.JSGlobalObject,
+        is_server: bool,
+    ) bun.JSError!SocketConfig {
+        var generated: jsc.generated.SocketConfig = try .fromJS(globalObject, opts);
+        defer generated.deinit();
+        return .fromGenerated(vm, globalObject, &generated, is_server);
     }
 };
 

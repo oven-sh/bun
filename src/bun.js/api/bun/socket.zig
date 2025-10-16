@@ -574,8 +574,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                     // clean onOpen callback so only called in the first handshake and not in every renegotiation
                     // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                     // servers don't support renegotiation
-                    this.handlers.?.onOpen.unprotect();
-                    this.handlers.?.onOpen = .zero;
+                    handlers.onOpen.unprotect();
+                    handlers.onOpen = .zero;
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
@@ -1349,14 +1349,12 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"socket\" option", .{});
             };
 
-            var prev_handlers = this.getHandlers();
-
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, prev_handlers.is_server);
-
-            prev_handlers.unprotect();
-            this.handlers.?.* = handlers; // TODO: this is a memory leak
-            this.handlers.?.withAsyncContextIfNeeded(globalObject);
-            this.handlers.?.protect();
+            var this_handlers = this.getHandlers();
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this_handlers.is_server);
+            this_handlers.unprotect();
+            handlers.protect();
+            handlers.withAsyncContextIfNeeded(globalObject);
+            this_handlers.* = handlers; // TODO: this is a memory leak
 
             return .js_undefined;
         }

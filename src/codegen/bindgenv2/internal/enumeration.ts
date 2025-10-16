@@ -11,17 +11,29 @@ import {
 
 abstract class EnumType extends NamedType {}
 
-export function enumeration(name: string, values: string[]): EnumType {
-  if (values.length === 0) {
+/**
+ * If `values[x]` is an array, all elements of that array will map to the same underlying integral
+ * value (that is, `x`). Essentially, they become different spellings of the same enum value.
+ */
+export function enumeration(name: string, values: (string | string[])[]): EnumType {
+  const uniqueValues = values.map((v, i) => {
+    if (typeof v !== "object") return v;
+    if (v.length === 0) throw RangeError(`enum value cannot be empty (index ${i})`);
+    return v[0];
+  });
+  if (uniqueValues.length === 0) {
     throw RangeError("enum cannot be empty: " + name);
   }
-  if (values.length > 1n << 32n) {
+  if (uniqueValues.length > 1n << 32n) {
     throw RangeError("too many enum values: " + name);
   }
+  const valueMap = new Map(
+    values.map(v => (typeof v === "object" ? v : [v])).flatMap((arr, i) => arr.map(v => [v, i])),
+  );
 
   const valueSet = new Set<string>();
   const cppMemberSet = new Set<string>();
-  for (const value of values) {
+  for (const value of uniqueValues) {
     if (valueSet.size === valueSet.add(value).size) {
       throw RangeError(`duplicate enum value in ${name}: ${util.inspect(value)}`);
     }
@@ -53,8 +65,8 @@ export function enumeration(name: string, values: string[]): EnumType {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
-      const index = values.indexOf(value);
-      if (index === -1) {
+      const index = valueMap.get(value);
+      if (index == null) {
         throw RangeError(`not a member of this enumeration: ${value}`);
       }
       return `::Bun::Bindgen::Generated::${name}::${cppMembers[index]}`;
@@ -128,11 +140,10 @@ export function enumeration(name: string, values: string[]): EnumType {
         template<> std::optional<${qualifiedName}>
         WebCore::parseEnumerationFromString<${qualifiedName}>(const WTF::String& stringVal)
         {
-          static constexpr ::std::array<${pairType}, ${values.length}> mappings {
+          static constexpr ::std::array<${pairType}, ${valueMap.size}> mappings {
             ${joinIndented(
               12,
-              values
-                .map<[string, number]>((value, i) => [value, i])
+              Array.from(valueMap.entries())
                 .sort()
                 .map(([value, i]) => {
                   return `${pairType} {
@@ -169,7 +180,7 @@ export function enumeration(name: string, values: string[]): EnumType {
         pub const ${name} = enum(u32) {
           ${joinIndented(
             10,
-            values.map(value => `@${toQuotedLiteral(value)},`),
+            uniqueValues.map(value => `@${toQuotedLiteral(value)},`),
           )}
         };
 

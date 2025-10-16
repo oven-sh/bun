@@ -70,8 +70,8 @@ struct ExternVariant {
 
     explicit ExternVariant(std::variant<Args...>&& variant)
         : tag(static_cast<std::uint8_t>(variant.index()))
+        , data(std::move(variant))
     {
-        data.initFromVariant(std::move(variant));
     }
 };
 

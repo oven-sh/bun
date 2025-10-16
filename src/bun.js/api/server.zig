@@ -1828,6 +1828,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (fd < 0) {
                 return globalThis.throwInvalidArguments("accept expects a valid file descriptor", .{});
             }
+            if (fd > std.math.maxInt(u32)) {
+                return globalThis.throwInvalidArguments("File descriptor value {d} is out of valid range", .{fd});
+            }
 
             const app = this.app orelse {
                 return globalThis.throwInvalidArguments("Server is not listening", .{});
@@ -1835,7 +1838,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const result = app.accept(bun.FileDescriptor.fromUV(@intCast(fd)));
             if (result != 0) {
-                return globalThis.throwInvalidArguments("Failed to accept file descriptor {d}. Ensure it is a valid socket file descriptor and matches the server's SSL configuration.", .{fd});
+                return globalThis.throwInvalidArguments("Failed to accept file descriptor {d}", .{fd});
             }
 
             return .js_undefined;

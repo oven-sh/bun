@@ -114,10 +114,16 @@ pub fn start(this: *Watcher) !void {
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
     if (this.watchloop_handle != null) {
+        // Signal the thread to stop
         this.mutex.lock();
-        defer this.mutex.unlock();
         this.close_descriptors = close_descriptors;
         this.running = false;
+        this.mutex.unlock();
+
+        // Wait for the watcher thread to finish. This ensures that any in-flight
+        // onFileUpdate callbacks complete before the context (e.g., DevServer) is destroyed.
+        // The thread will clean up and destroy the Watcher itself.
+        this.thread.join();
     } else {
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);

@@ -604,7 +604,14 @@ pub fn deinit(dev: *DevServer) void {
         .memory_visualizer_timer = if (dev.memory_visualizer_timer.state == .ACTIVE)
             dev.vm.timer.remove(&dev.memory_visualizer_timer),
         .graph_safety_lock = dev.graph_safety_lock.lock(),
-        .bun_watcher = dev.bun_watcher.deinit(true),
+        .bun_watcher = brk: {
+            // Wait for any in-flight onFileUpdate calls to complete before destroying the DevServer.
+            // The watcher thread holds thread_lock while processing events, so acquiring and
+            // immediately releasing it ensures no events are being processed.
+            dev.bun_watcher.thread_lock.lock();
+            dev.bun_watcher.thread_lock.unlock();
+            break :brk dev.bun_watcher.deinit(true);
+        },
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
         .log = dev.log.deinit(),
         .server_fetch_function_callback = dev.server_fetch_function_callback.deinit(),

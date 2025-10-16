@@ -725,12 +725,14 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
+        const json_fd_option = if (Environment.isWindows) .buffer else .ipc;
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
             .stdin = .inherit,
             .cwd = spawn_cwd,
-            .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .ipc },
+            .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, json_fd_option },
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
             },

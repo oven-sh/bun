@@ -162,6 +162,74 @@ pub const Jest = struct {
         return createTestModule(globalObject) catch return .zero;
     }
 
+    fn createTestFlags(globalObject: *JSGlobalObject, test_options: *const bun.cli.Command.TestOptions) JSValue {
+        const flags = JSValue.createEmptyObject(globalObject, 11);
+
+        // defaultTimeout
+        if (Jest.runner) |test_runner| {
+            const timeout = if (test_runner.default_timeout_override != std.math.maxInt(u32))
+                test_runner.default_timeout_override
+            else
+                test_options.default_timeout_ms;
+            flags.put(globalObject, ZigString.static("defaultTimeout"), JSValue.jsNumber(timeout));
+        } else {
+            flags.put(globalObject, ZigString.static("defaultTimeout"), JSValue.jsNumber(test_options.default_timeout_ms));
+        }
+
+        // updateSnapshots
+        flags.put(globalObject, ZigString.static("updateSnapshots"), JSValue.jsBoolean(test_options.update_snapshots));
+
+        // rerunEach
+        if (test_options.repeat_count > 0) {
+            flags.put(globalObject, ZigString.static("rerunEach"), JSValue.jsNumber(test_options.repeat_count));
+        } else {
+            flags.put(globalObject, ZigString.static("rerunEach"), .js_undefined);
+        }
+
+        // runTodo
+        flags.put(globalObject, ZigString.static("runTodo"), JSValue.jsBoolean(test_options.run_todo));
+
+        // only
+        flags.put(globalObject, ZigString.static("only"), JSValue.jsBoolean(test_options.only));
+
+        // passWithNoTests
+        flags.put(globalObject, ZigString.static("passWithNoTests"), JSValue.jsBoolean(test_options.pass_with_no_tests));
+
+        // concurrent
+        flags.put(globalObject, ZigString.static("concurrent"), JSValue.jsBoolean(test_options.concurrent));
+
+        // randomize
+        flags.put(globalObject, ZigString.static("randomize"), JSValue.jsBoolean(test_options.randomize));
+
+        // seed
+        if (test_options.seed) |seed| {
+            flags.put(globalObject, ZigString.static("seed"), JSValue.jsNumber(seed));
+        } else {
+            flags.put(globalObject, ZigString.static("seed"), .js_undefined);
+        }
+
+        // bail
+        if (test_options.bail > 0) {
+            flags.put(globalObject, ZigString.static("bail"), JSValue.jsNumber(test_options.bail));
+        } else {
+            flags.put(globalObject, ZigString.static("bail"), .js_undefined);
+        }
+
+        // testFilterPattern
+        if (test_options.test_filter_pattern) |filter| {
+            const filter_str = bun.String.fromBytes(filter);
+            defer filter_str.deref();
+            flags.put(globalObject, ZigString.static("testFilterPattern"), filter_str.toJS(globalObject));
+        } else {
+            flags.put(globalObject, ZigString.static("testFilterPattern"), .js_undefined);
+        }
+
+        // maxConcurrency
+        flags.put(globalObject, ZigString.static("maxConcurrency"), JSValue.jsNumber(test_options.max_concurrency));
+
+        return flags;
+    }
+
     pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const module = JSValue.createEmptyObject(globalObject, 19);
 
@@ -188,6 +256,12 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
 
         createMockObjects(globalObject, module);
+
+        // Add testFlags object
+        if (Jest.runner) |test_runner| {
+            const test_flags = createTestFlags(globalObject, test_runner.test_options);
+            module.put(globalObject, ZigString.static("testFlags"), test_flags);
+        }
 
         return module;
     }

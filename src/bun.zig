@@ -3182,48 +3182,54 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 }
 
 pub const dns = @import("./dns.zig");
-const clocky = if (Environment.isMac) struct {
-    pub var timebase: std.c.mach_timebase_info_data = std.mem.zeroes(std.c.mach_timebase_info_data);
-    pub fn get() void {
-        // if != KERN_SUCCESS
-        if (std.c.mach_timebase_info(&timebase) != 0) {
-            // libuv would panic here
-            @panic("Failed to get mach timebase info");
-        }
-    }
 
-    pub var once = std.once(get);
-} else if (Environment.isLinux) struct {
-    pub var clock_id: std.os.linux.CLOCK = .REALTIME;
-    pub fn get() void {
-        var res: timespec = undefined;
-        std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
-        if (res.ms() <= 1) {
-            clock_id = .MONOTONIC_COARSE;
-        } else {
-            clock_id = .MONOTONIC_RAW;
-        }
-    }
-
-    pub var once = std.once(get);
-} else void;
 pub fn getRoughTickCount() timespec {
     if (comptime Environment.isMac) {
-        // matchs libuv's implementation
-        // https://github.com/libuv/libuv/blob/a944c422cca5522073e03710ca7fd08f53218358/src/unix/darwin.c#L62
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: std.c.CLOCK = .REALTIME;
+            pub fn get() void {
+                var res: timespec = undefined;
+                _ = std.c.clock_getres(.MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = .MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = .MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
         clocky.once.call();
 
-        const ns: u64 = std.c.mach_continuous_time() * clocky.timebase.numer / clocky.timebase.denom;
-        return timespec{
-            .sec = @intCast(ns / std.time.ns_per_s),
-            .nsec = @intCast(ns % std.time.ns_per_s),
-        };
+        // We use this one because we can avoid reading the mach timebase info ourselves.
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
     }
 
     if (comptime Environment.isLinux) {
         var spec = timespec{
             .nsec = 0,
             .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: std.os.linux.CLOCK = .REALTIME;
+            pub fn get() void {
+                var res: timespec = undefined;
+                std.posix.clock_getres(.MONOTONIC_COARSE, @ptrCast(&res)) catch {};
+                if (res.ms() <= 1) {
+                    clock_id = .MONOTONIC_COARSE;
+                } else {
+                    clock_id = .MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
         };
         clocky.once.call();
         _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
@@ -3233,8 +3239,8 @@ pub fn getRoughTickCount() timespec {
     if (comptime Environment.isWindows) {
         const ms = getRoughTickCountMs();
         return timespec{
-            .sec = @intCast(ms / std.time.ms_per_s),
-            .nsec = @intCast((ms % std.time.ms_per_s) * std.time.ns_per_ms),
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
         };
     }
 
@@ -3791,8 +3797,6 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     const Arguments = @import("./cli/Arguments.zig");
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
-
-const debug = Output.scoped(.bun, .visible);
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

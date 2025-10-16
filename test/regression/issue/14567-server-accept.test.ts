@@ -214,6 +214,112 @@ test("server.accept() handles POST request with large body", async () => {
   }
 });
 
+test("server.accept() handles file upload with binary data", async () => {
+  const [serverFd, clientFd] = createSocketPair();
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "POST" && req.url.endsWith("/upload")) {
+        const buffer = await req.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+
+        // Verify we received binary data correctly
+        let sum = 0;
+        for (let i = 0; i < bytes.length; i++) {
+          sum += bytes[i];
+        }
+
+        // Send back binary data
+        const response = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) {
+          response[i] = i;
+        }
+
+        return new Response(response, {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-Received-Length": buffer.byteLength.toString(),
+            "X-Received-Sum": sum.toString(),
+          },
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  try {
+    server.accept(serverFd);
+
+    let fullResponse = Buffer.alloc(0);
+    let resolveData: ((value: void) => void) | null = null;
+    let dataPromise = new Promise<void>(resolve => {
+      resolveData = resolve;
+    });
+
+    const client = await Bun.connect({
+      socket: {
+        data(socket, data) {
+          fullResponse = Buffer.concat([fullResponse, Buffer.from(data)]);
+          // Check if we have received the full response (headers + 256 bytes of body)
+          const headerEnd = fullResponse.indexOf("\r\n\r\n");
+          if (headerEnd !== -1) {
+            const body = fullResponse.slice(headerEnd + 4);
+            if (body.length >= 256 && resolveData) {
+              resolveData();
+              resolveData = null;
+            }
+          }
+        },
+        open(socket) {
+          // Create binary data to upload (1000 bytes with values 0-255 repeating)
+          const uploadData = Buffer.alloc(1000);
+          for (let i = 0; i < 1000; i++) {
+            uploadData[i] = i % 256;
+          }
+
+          // Send POST with binary data
+          const headers =
+            "POST /upload HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Connection: close\r\n" +
+            `Content-Length: ${uploadData.length}\r\n` +
+            "Content-Type: application/octet-stream\r\n" +
+            "\r\n";
+
+          socket.write(Buffer.concat([Buffer.from(headers), uploadData]));
+        },
+      },
+      fd: clientFd,
+    });
+
+    await dataPromise;
+
+    // Parse the response
+    const responseStr = fullResponse.toString("utf8");
+    expect(responseStr).toContain("HTTP/1.1 200");
+    expect(responseStr).toContain("X-Received-Length: 1000");
+
+    // Calculate expected sum: sum of 0-255 repeated ~4 times (1000 bytes)
+    // = (0+1+2+...+255) * 3 + (0+1+2+...+231) = 32640 * 3 + 26796 = 124716
+    expect(responseStr).toContain("X-Received-Sum: 124716");
+
+    // Verify we received correct binary data back
+    const headerEnd = fullResponse.indexOf("\r\n\r\n");
+    const responseBody = fullResponse.slice(headerEnd + 4);
+    expect(responseBody.length).toBeGreaterThanOrEqual(256);
+
+    // Check the binary response contains sequential bytes 0-255
+    for (let i = 0; i < 256; i++) {
+      expect(responseBody[i]).toBe(i);
+    }
+
+    client.end();
+  } finally {
+    server.stop();
+  }
+});
+
 test("server.accept() throws on invalid file descriptor", async () => {
   const server = Bun.serve({
     port: 0,

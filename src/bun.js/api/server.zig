@@ -1817,6 +1817,24 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return this_value;
         }
 
+        /// Accept an already-open file descriptor and attach it to this HTTP server.
+        ///
+        /// Takes a file descriptor number (callframe.argument(0)) and integrates it as an
+        /// HTTP connection, running the same initialization as regular connections.
+        ///
+        /// Common use cases:
+        /// - Systemd socket activation
+        /// - Unix domain socket FD passing between processes
+        /// - Pre-connected socket handling
+        ///
+        /// Returns js_undefined on success.
+        ///
+        /// Throws bun.JSError if:
+        /// - No argument provided (expects 1 argument)
+        /// - Argument is not a number
+        /// - FD is negative
+        /// - Server is not listening
+        /// - Failed to accept the FD (invalid socket, SSL mismatch, etc.)
         pub fn doAccept(this: *ThisServer, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             if (callframe.argumentsCount() < 1) {
                 return globalThis.throwNotEnoughArguments("accept", 1, 0);

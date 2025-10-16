@@ -725,30 +725,22 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-        var stdin_stdio = bun.spawn.Stdio{ .pipe = {} };
-
-        const stdin_opt = switch (stdin_stdio.asSpawnOption(0)) {
-            .result => |opt| opt,
-            .err => |e| {
-                Output.errGeneric("Failed to create stdin pipe: {any}", .{e});
-                return error.StdinPipeFailed;
-            },
-        };
-
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
-            .stdin = stdin_opt,
+            .stdin = .inherit,
             .cwd = spawn_cwd,
-            .extra_fds = &.{.{ .pipe = ipc_pipe_fds[1] }},
+            .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .ipc },
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
-            },
+            } else null,
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
         ipc_pipe_fds[1].close();
+
+        const json_write_fd = spawned.extra_pipes.items[1];
 
         if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
@@ -765,16 +757,16 @@ pub const SecurityScanSubprocess = struct {
         process.setExitHandler(this);
 
         const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
-        const stdin_source = jsc.Subprocess.Source{
+        const json_source = jsc.Subprocess.Source{
             .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
         };
 
-        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, spawned.stdin, stdin_source);
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_write_fd, json_source);
 
         switch (this.stdin_writer.?.start()) {
             .err => |err| {
-                Output.errGeneric("Failed to start stdin writer: {}", .{err});
-                return error.StdinWriterFailed;
+                Output.errGeneric("Failed to start JSON pipe writer: {}", .{err});
+                return error.JSONPipeWriterFailed;
             },
             .result => {},
         }

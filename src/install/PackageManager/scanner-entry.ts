@@ -10,6 +10,7 @@ type IPCMessage =
   | { type: "error"; code: "SCAN_FAILED"; message: string };
 
 const IPC_PIPE_FD = 3;
+const JSON_PIPE_FD = 4;
 
 function writeAndExit(message: IPCMessage): never {
   const data = JSON.stringify(message);
@@ -31,10 +32,9 @@ function writeAndExit(message: IPCMessage): never {
 
 let packagesJson: string = "";
 try {
-  const stdinBuffer = await Bun.stdin.text();
-  packagesJson = stdinBuffer;
+  packagesJson = await Bun.file(JSON_PIPE_FD).text();
 } catch (error) {
-  const message = `Failed to read packages from stdin: ${error instanceof Error ? error.message : String(error)}`;
+  const message = `Failed to read packages from FD ${JSON_PIPE_FD}: ${error instanceof Error ? error.message : String(error)}`;
   writeAndExit({
     type: "error",
     code: "SCAN_FAILED",
@@ -49,7 +49,7 @@ try {
     throw new Error("Expected packages to be an array");
   }
 } catch (error) {
-  const message = `Failed to parse packages JSON from stdin: ${error instanceof Error ? error.message : String(error)}`;
+  const message = `Failed to parse packages JSON: ${error instanceof Error ? error.message : String(error)}`;
   writeAndExit({
     type: "error",
     code: "SCAN_FAILED",

@@ -22,7 +22,7 @@ test.todoIf(isWindows)("server.accept() accepts file descriptor and handles HTTP
     server.accept(serverFd);
 
     // Connect client socket and track responses
-    const responses: Buffer[] = [];
+    let fullResponse = "";
     let resolveData: ((value: void) => void) | null = null;
     let dataPromise = new Promise<void>(resolve => {
       resolveData = resolve;
@@ -31,15 +31,37 @@ test.todoIf(isWindows)("server.accept() accepts file descriptor and handles HTTP
     const client = await Bun.connect({
       socket: {
         data(socket, data) {
-          responses.push(Buffer.from(data));
-          if (resolveData) {
-            resolveData();
-            resolveData = null;
+          fullResponse += Buffer.from(data).toString();
+
+          // Parse headers to find Content-Length
+          const headerEnd = fullResponse.indexOf("\r\n\r\n");
+          if (headerEnd !== -1) {
+            const headers = fullResponse.substring(0, headerEnd);
+            const contentLengthMatch = headers.match(/Content-Length:\s*(\d+)/i);
+
+            if (contentLengthMatch) {
+              const contentLength = parseInt(contentLengthMatch[1], 10);
+              const bodyStart = headerEnd + 4;
+              const currentBodyLength = fullResponse.length - bodyStart;
+
+              // Only resolve when we have the complete body
+              if (currentBodyLength >= contentLength && resolveData) {
+                resolveData();
+                resolveData = null;
+              }
+            }
           }
         },
         open(socket) {
           // Send HTTP request
           socket.write("GET / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Connection: close\r\n" + "\r\n");
+        },
+        close(socket) {
+          // Connection closed - resolve if not already resolved
+          if (resolveData) {
+            resolveData();
+            resolveData = null;
+          }
         },
       },
       fd: clientFd,
@@ -49,9 +71,8 @@ test.todoIf(isWindows)("server.accept() accepts file descriptor and handles HTTP
     await dataPromise;
 
     // Verify we got an HTTP response
-    const response = Buffer.concat(responses).toString();
-    expect(response).toContain("HTTP/1.1 200");
-    expect(response).toContain("Hello from request 1!");
+    expect(fullResponse).toContain("HTTP/1.1 200");
+    expect(fullResponse).toContain("Hello from request 1!");
 
     client.end();
   } finally {
@@ -81,6 +102,7 @@ test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Aliv
     server.accept(serverFd);
 
     const responses: string[] = [];
+    let buffer = "";
     let resolveData: ((value: void) => void) | null = null;
     let currentPromise = new Promise<void>(resolve => {
       resolveData = resolve;
@@ -89,11 +111,41 @@ test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Aliv
     const client = await Bun.connect({
       socket: {
         data(socket, data) {
-          const text = Buffer.from(data).toString();
-          responses.push(text);
-          if (resolveData) {
-            resolveData();
-            resolveData = null;
+          buffer += Buffer.from(data).toString();
+
+          // Parse and extract complete HTTP responses from buffer
+          while (true) {
+            const headerEnd = buffer.indexOf("\r\n\r\n");
+            if (headerEnd === -1) break;
+
+            const headers = buffer.substring(0, headerEnd);
+            const contentLengthMatch = headers.match(/Content-Length:\s*(\d+)/i);
+
+            if (contentLengthMatch) {
+              const contentLength = parseInt(contentLengthMatch[1], 10);
+              const bodyStart = headerEnd + 4;
+              const totalLength = bodyStart + contentLength;
+
+              // Check if we have the complete response
+              if (buffer.length >= totalLength) {
+                // Extract complete response
+                const completeResponse = buffer.substring(0, totalLength);
+                buffer = buffer.substring(totalLength);
+
+                // Push to responses and resolve current promise
+                responses.push(completeResponse);
+                if (resolveData) {
+                  resolveData();
+                  resolveData = null;
+                }
+              } else {
+                // Need more data
+                break;
+              }
+            } else {
+              // No Content-Length - can't parse further without more info
+              break;
+            }
           }
         },
         open(socket) {
@@ -109,12 +161,24 @@ test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Aliv
               body1,
           );
         },
+        close(socket) {
+          // Connection closed - push any remaining buffer as final response
+          if (buffer.length > 0) {
+            responses.push(buffer);
+            buffer = "";
+          }
+          if (resolveData) {
+            resolveData();
+            resolveData = null;
+          }
+        },
       },
       fd: clientFd,
     });
 
     // Wait for first response
     await currentPromise;
+    expect(responses.length).toBeGreaterThanOrEqual(1);
     expect(responses[0]).toContain("HTTP/1.1 200");
     expect(responses[0]).toContain("Request 1: Hello World");
 
@@ -135,8 +199,7 @@ test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Aliv
 
     await currentPromise;
     expect(responses.length).toBeGreaterThanOrEqual(2);
-    const fullResponse = responses.join("");
-    expect(fullResponse).toContain("Request 2: Second request");
+    expect(responses[1]).toContain("Request 2: Second request");
 
     // Send third request
     currentPromise = new Promise<void>(resolve => {
@@ -145,8 +208,9 @@ test.todoIf(isWindows)("server.accept() handles multiple requests with Keep-Aliv
     client.write("GET /final HTTP/1.1\r\n" + "Host: localhost\r\n" + "Connection: close\r\n" + "\r\n");
 
     await currentPromise;
-    const finalResponse = responses.join("");
-    expect(finalResponse).toContain("Request 3: no body");
+    expect(responses.length).toBeGreaterThanOrEqual(3);
+    const allResponses = responses.join("");
+    expect(allResponses).toContain("Request 3: no body");
 
     expect(requestCount).toBe(3);
 

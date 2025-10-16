@@ -1313,7 +1313,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
 
 extern "C" fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
 extern "C" fn Bake__getBundleNewRouteJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
-extern "C" fn Bake__getNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
+extern "C" fn Bake__getDevNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
 
 fn computeArgumentsForFrameworkRequest(
     dev: *DevServer,
@@ -1405,7 +1405,7 @@ fn computeArgumentsForFrameworkRequest(
         // setAsyncLocalStorage
         .set_async_local_storage = if (first_request) Bake__getEnsureAsyncLocalStorageInstanceJSFunction(dev.vm.global) else JSValue.null,
         .bundle_new_route = if (first_request) Bake__getBundleNewRouteJSFunction(dev.vm.global) else JSValue.null,
-        .new_route_params = if (first_request) Bake__getNewRouteParamsJSFunction(dev.vm.global) else JSValue.null,
+        .new_route_params = if (first_request) Bake__getDevNewRouteParamsJSFunction(dev.vm.global) else JSValue.null,
     };
 }
 
@@ -1438,13 +1438,14 @@ fn onFrameworkRequestWithBundle(
     defer url.deinit();
 
     // Extract pathname from URL (remove protocol, host, query, hash)
-    const pathname = extractPathnameFromUrl(url.byteSlice());
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url.byteSlice());
 
     // Create params JSValue
     // TODO: lazy structure caching since we are making these objects a lot
-    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
-        break :blk params.toJS(dev.vm.global);
-    } else JSValue.null;
+    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_|
+        params.toJS(dev.vm.global)
+    else
+        JSValue.null;
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
@@ -4520,7 +4521,7 @@ fn bundleNewRouteJSFunctionImpl(global: *bun.jsc.JSGlobalObject, request_ptr: *a
         return global.throw("Request context does not belong to dev server", .{});
     };
     // Extract pathname from URL (remove protocol, host, query, hash)
-    const pathname = extractPathnameFromUrl(url.byteSlice());
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url.byteSlice());
 
     if (pathname.len == 0 or pathname[0] != '/') {
         return global.throw("Invalid path \"{s}\" it should be non-empty and start with a slash", .{pathname});
@@ -4584,7 +4585,7 @@ pub fn createDevServerFrameworkRequestArgsObject(
     );
 }
 
-export fn Bake__getNewRouteParamsJSFunctionImpl(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) bun.jsc.JSValue {
+export fn Bake__getDevNewRouteParamsJSFunctionImpl(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) bun.jsc.JSValue {
     return bun.jsc.toJSHostCall(global, @src(), newRouteParamsForBundlePromiseForJS, .{ global, callframe });
 }
 
@@ -4622,7 +4623,7 @@ fn newRouteParamsForBundlePromise(
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     const framework_bundle = &route_bundle.data.framework;
 
-    const pathname = extractPathnameFromUrl(url);
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url);
 
     var params: FrameworkRouter.MatchedParams = undefined;
     const route_index = dev.router.matchSlow(pathname, &params) orelse return dev.vm.global.throw("No route found for path: {s}", .{pathname});
@@ -4646,26 +4647,6 @@ fn newRouteParamsForBundlePromise(
         args.styles,
         args.params,
     );
-}
-
-// TODO: this is shitty
-fn extractPathnameFromUrl(url: []const u8) []const u8 {
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    var pathname = if (std.mem.indexOf(u8, url, "://")) |proto_end| blk: {
-        const after_proto = url[proto_end + 3 ..];
-        break :blk after_proto;
-    } else url;
-
-    if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
-        const path_with_query = pathname[path_start..];
-        // Remove query string and hash
-        const query_index = std.mem.indexOfScalar(u8, path_with_query, '?') orelse path_with_query.len;
-        const hash_index = std.mem.indexOfScalar(u8, path_with_query, '#') orelse path_with_query.len;
-        const end = @min(query_index, hash_index);
-        pathname = path_with_query[0..end];
-    }
-
-    return pathname;
 }
 
 const bun = @import("bun");

@@ -6,6 +6,11 @@ pub const production = @import("./bake/production.zig");
 pub const DevServer = @import("./bake/DevServer.zig");
 pub const FrameworkRouter = @import("./bake/FrameworkRouter.zig");
 
+pub const Manifest = @import("./bake/prod/Manifest.zig");
+pub const ProductionServerState = @import("./bake/prod/ProductionServerState.zig");
+pub const SSRRouteList = @import("./bake/prod/SSRRouteList.zig");
+pub const ProductionServerMethods = @import("./bake/prod/ProductionServerMethods.zig").ProductionServerMethods;
+
 /// export default { app: ... };
 pub const api_name = "app";
 
@@ -866,6 +871,16 @@ pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
         });
 }
 
+pub fn getProductionRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
+    return switch (side) {
+        .server => if (Environment.codegen_embed)
+            .init(@embedFile("bake-codegen/bake.production-server.js"))
+        else
+            .init(bun.runtimeEmbedFile(.codegen, "bake.production-server.js")),
+        .client => @panic("Production client runtime not implemented"),
+    };
+}
+
 pub const Mode = enum {
     development,
     production_dynamic,
@@ -969,11 +984,23 @@ pub const PatternBuffer = struct {
                 pb.prepend(text);
                 pb.prepend("/");
             },
-            .param, .catch_all, .catch_all_optional => |name| {
+            .param => |name| {
                 pb.prepend(name);
                 pb.prepend("/:");
             },
-            .group => {},
+            .catch_all => |name| {
+                pb.prepend(name);
+                pb.prepend("/:*");
+            },
+            .catch_all_optional => |name| {
+                pb.prepend(name);
+                pb.prepend("/:*?");
+            },
+            .group => {
+                pb.prepend(")");
+                pb.prepend(part.group);
+                pb.prepend("/(");
+            },
         }
     }
 

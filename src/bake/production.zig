@@ -109,18 +109,20 @@ pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
     };
 }
 
-pub fn writeSourcemapToDisk(
+pub fn registerSourcemap(
     allocator: std.mem.Allocator,
+    root_dir: std.fs.Dir,
     file: *const OutputFile,
-    bundled_outputs: []const OutputFile,
+    bundled_outputs: []OutputFile,
     source_maps: *bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+    write_to_dist: bool,
 ) !void {
     // don't call this if the file does not have sourcemaps!
     bun.assert(file.source_map_index != std.math.maxInt(u32));
 
     // TODO: should we just write the sourcemaps to disk?
     const source_map_index = file.source_map_index;
-    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+    const source_map_file: *OutputFile = &bundled_outputs[source_map_index];
     bun.assert(source_map_file.output_kind == .sourcemap);
 
     const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
@@ -134,6 +136,13 @@ pub fn writeSourcemapToDisk(
         try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
         OutputFile.Index.init(@intCast(source_map_index)),
     );
+
+    if (write_to_dist) {
+        source_map_file.writeToDisk(root_dir, ".") catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+        };
+    }
 }
 
 pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
@@ -256,6 +265,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     bun.assert(server_transpiler.env == client_transpiler.env);
 
+    const original_roots = brk: {
+        const roots = try allocator.alloc([]const u8, options.framework.file_system_router_types.len);
+        for (options.framework.file_system_router_types, roots) |*in, *out| {
+            out.* = in.root;
+        }
+        break :brk roots;
+    };
+
     framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
         if (framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
@@ -303,8 +320,8 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         });
     }
 
-    var router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
-    try router.scanAll(
+    var _router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
+    try _router.scanAll(
         allocator,
         &server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
@@ -332,7 +349,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     Output.prettyErrorln("Rendering routes", .{});
     Output.flush();
 
-    var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
+    var root_dir = try bun.FD.cwd().stdDir().makeOpenPath("dist", .{});
     defer root_dir.close();
 
     var maybe_runtime_file_index: ?u32 = null;
@@ -392,18 +409,18 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 };
             },
             .server => {
-                if (ctx.bundler_options.bake_debug_dump_server) {
-                    _ = file.writeToDisk(root_dir, ".") catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
-                    };
-                }
+                // Always write server files to disk for SSR support
+                // SSR pages need their server bundles available at runtime
+                _ = file.writeToDisk(root_dir, ".") catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                };
 
                 // If the file has a sourcemap, store it so we can put it on
                 // `PerThread` so we can provide sourcemapped stacktraces for
                 // server components.
                 if (file.source_map_index != std.math.maxInt(u32)) {
-                    try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+                    try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
                 }
 
                 switch (file.output_kind) {
@@ -439,7 +456,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         // TODO: should we just write the sourcemaps to disk?
         if (file.source_map_index != std.math.maxInt(u32)) {
-            try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+            try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
         }
     }
     // Write the runtime file to disk if there are any client chunks
@@ -477,13 +494,34 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     pt.* = try PerThread.init(vm, per_thread_options);
     pt.attach();
+    pt.router = _router;
+    var router = &pt.router.?;
 
     // Static site generator
     const server_render_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const server_param_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const client_entry_urls = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_roots = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_server_entrypoints = try JSValue.createEmptyArray(global, router.types.len);
 
-    for (router.types, 0..) |router_type, i| {
+    if (router.types.len == 0) {
+        Output.prettyln("done", .{});
+        Output.flush();
+        return;
+    }
+
+    for (router.types, original_roots, 0..) |router_type, root, i| {
+        // Add the router type root path to the array (relative path)
+        try router_type_roots.putIndex(global, @intCast(i), try bun.String.createUTF8ForJS(global, root));
+
+        // Add the server entrypoint path for this router type
+        const server_module_key = module_keys[router_type.server_file.get()];
+        const server_entrypoint_js = if (server_module_key.isEmpty())
+            JSValue.null
+        else
+            server_module_key.toJS(global);
+        try router_type_server_entrypoints.putIndex(global, @intCast(i), server_entrypoint_js);
+
         if (router_type.client_file.unwrap()) |client_file| {
             const str = (try bun.String.createFormat("{s}{s}", .{
                 public_path,
@@ -569,9 +607,13 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     // Example: ["/assets/main.css", "/assets/blog.css"]
     const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
 
+    const route_indices = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
     var params_buf: std.ArrayListUnmanaged([]const u8) = .{};
     for (navigatable_routes.items, 0..) |route_index, nav_index| {
         defer params_buf.clearRetainingCapacity();
+
+        try route_indices.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromUint64(route_index.get()));
 
         var pattern = bake.PatternBuffer.empty;
 
@@ -589,7 +631,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 params_buf.append(ctx.allocator, route.part.catch_all) catch unreachable;
             },
             .catch_all_optional => {
-                return global.throw("catch-all routes are not supported in static site generation", .{});
+                return global.throw("catch-all optional routes are not supported in static site generation", .{});
             },
             else => {},
         }
@@ -684,25 +726,79 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     const render_promise = BakeRenderRoutesForProdStatic(
         global,
+        // outBase: string
         bun.String.init(root_dir_path),
+        // allServerFiles: string[]
         pt.all_server_files,
+        // renderStatic: FrameworkPrerender[]
         server_render_funcs,
+        // getParams: FrameworkGetParams[]
         server_param_funcs,
+        // clientEntryUrl: string[]
         client_entry_urls,
+        // routerTypeRoots: string[]
+        router_type_roots,
+        // routerTypeServerEntrypoints: string[]
+        router_type_server_entrypoints,
 
+        // patterns: string[]
         route_patterns,
+        // files: FileIndex[][]
         route_nested_files,
+        // typeAndFlags: TypeAndFlags[]
         route_type_and_flags,
+        // sourceRouteFiles: string[]
         route_source_files,
+        // paramInformation: Array<null | string[]>
         route_param_info,
+        // styles: string[][]
         route_style_references,
+        route_indices,
     );
+
+    const path_buffer = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buffer);
+
     render_promise.setHandled(vm.jsc_vm);
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
-        .fulfilled => {
+        .fulfilled => |manifest_value| {
+            // Add assets field to manifest with all client-side files in _bun directory
+            // First, count how many client assets we have
+            const asset_count: usize = bundled_outputs.len;
+
+            // Create assets array and directly add filenames
+            const assets_js = try JSValue.createEmptyArray(global, asset_count);
+            for (bundled_outputs, 0..) |file, asset_index| {
+                const str = bun.path.joinStringBuf(path_buffer, [_][]const u8{ "/", file.dest_path }, .posix);
+                bun.assert(bun.strings.hasPrefixComptime(str, "/_bun/"));
+                var bunstr = bun.String.init(str);
+                try assets_js.putIndex(global, @intCast(asset_index), bunstr.transferToJS(global));
+            }
+
+            _ = manifest_value.put(global, "assets", assets_js);
+
+            // Write manifest to file
+            const manifest_path = try std.fs.path.join(allocator, &.{ root_dir_path, "manifest.json" });
+            defer allocator.free(manifest_path);
+
+            // Convert JSValue to JSON string
+            var manifest_str = bun.String.empty;
+            defer manifest_str.deref();
+            try manifest_value.jsonStringify(global, 2, &manifest_str);
+
+            // Write the manifest file
+            const manifest_utf8 = manifest_str.toUTF8(allocator);
+            defer manifest_utf8.deinit();
+
+            try bun.FD.cwd().stdDir().writeFile(.{
+                .sub_path = manifest_path,
+                .data = manifest_utf8.slice(),
+            });
+
             Output.prettyln("done", .{});
+            Output.prettyln("Manifest written to: {s}", .{manifest_path});
             Output.flush();
         },
         .rejected => |err| {
@@ -765,6 +861,10 @@ extern fn BakeRenderRoutesForProdStatic(
     get_params: JSValue,
     /// Client entry URLs by router type (e.g., ["/client.js", null])
     client_entry_urls: JSValue,
+    /// Router type root paths by router type (e.g., ["/pages", "/app"])
+    router_type_roots: JSValue,
+    /// Router type server entrypoints by router type (e.g., ["bake://react.server.js"])
+    router_type_server_entrypoints: JSValue,
     /// Route patterns (e.g., ["/", "/about", "/blog/:slug"])
     patterns: JSValue,
     /// File indices per route (e.g., [[0], [1], [2, 0]])
@@ -777,6 +877,7 @@ extern fn BakeRenderRoutesForProdStatic(
     param_information: JSValue,
     /// CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
     styles: JSValue,
+    route_indices: JSValue,
 ) *jsc.JSPromise;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
@@ -924,6 +1025,8 @@ pub const PerThread = struct {
     module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
     source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
 
+    router: ?FrameworkRouter = null,
+
     // Thread-local
     vm: *jsc.VirtualMachine,
     /// Indexed by entry point index (OpaqueFileId)
@@ -945,6 +1048,138 @@ pub const PerThread = struct {
     };
 
     extern fn BakeGlobalObject__attachPerThreadData(global: *jsc.JSGlobalObject, pt: ?*PerThread) void;
+    extern fn BakeGlobalObject__getPerThreadData(global: *jsc.JSGlobalObject) *PerThread;
+
+    pub fn computeRouteWithParams(
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
+        const pt = BakeGlobalObject__getPerThreadData(globalThis);
+        const router = &pt.router.?;
+        if (callframe.argumentsCount() < 3) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams takes three arguments", .{});
+        }
+
+        const route_index_js = callframe.argument(0);
+        const params_js = callframe.argument(1);
+        const pattern_js = callframe.argument(2);
+
+        if (!pattern_js.isString()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams third argument must be a string", .{});
+        }
+
+        if (!route_index_js.isInteger()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams first argument must be an integer", .{});
+        }
+
+        const route_index_raw = route_index_js.toU32();
+        if (route_index_raw < 0 or route_index_raw >= router.routes.items.len) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams first argument must be an integer between 0 and {d}", .{router.routes.items.len});
+        }
+        const route_index = FrameworkRouter.Route.Index.init(@truncate(route_index_raw));
+
+        if (!params_js.isObject()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams second argument must be an object", .{});
+        }
+
+        const JoinerCtx = struct {
+            path: std.ArrayListUnmanaged(u8) = .{},
+            pattern_js: JSValue,
+
+            fn pushString(ctx: *@This(), value: []const u8) !void {
+                try ctx.path.appendSlice(bun.default_allocator, value);
+            }
+
+            fn pushJs(ctx: *@This(), global: *jsc.JSGlobalObject, value: JSValue, param: []const u8) !void {
+                if (!value.isString()) {
+                    const routestr = try ctx.pattern_js.toSlice(global, bun.default_allocator);
+                    defer routestr.deinit();
+                    return global.throw("Parameter \"{s}\" for route \"{s}\" must be a string", .{ param, routestr.slice() });
+                }
+                const bunstr = try value.toBunString(global);
+                defer bunstr.deref();
+                if (bunstr.asUTF8()) |slice| {
+                    if (slice.len > 0) try ctx.path.appendSlice(bun.default_allocator, "/");
+                    try ctx.path.appendSlice(bun.default_allocator, slice);
+                } else {
+                    const slice = bunstr.toUTF8(bun.default_allocator);
+                    defer slice.deinit();
+                    if (slice.len > 0) try ctx.path.appendSlice(bun.default_allocator, "/");
+                    try ctx.path.appendSlice(bun.default_allocator, slice.slice());
+                }
+            }
+        };
+
+        var sfb = std.heap.stackFallback(@sizeOf(FrameworkRouter.Route.Index) * 16, bun.default_allocator);
+        const alloc = sfb.get();
+
+        var route_indices_in_order = std.ArrayList(FrameworkRouter.Route.Index).init(alloc);
+        defer route_indices_in_order.deinit();
+
+        var iter: FrameworkRouter.Route.Index.Optional = route_index.toOptional();
+        while (iter.unwrap()) |ri| {
+            try route_indices_in_order.append(ri);
+            iter = router.routePtr(ri).parent;
+        }
+        std.mem.reverse(FrameworkRouter.Route.Index, route_indices_in_order.items);
+
+        var joiner = JoinerCtx{ .pattern_js = pattern_js };
+        errdefer joiner.path.deinit(bun.default_allocator);
+
+        for (route_indices_in_order.items) |ri| {
+            const route = router.routePtr(ri);
+            defer iter = route.parent;
+            switch (route.part) {
+                .text => |text| {
+                    if (text.len > 0) {
+                        try joiner.pushString("/");
+                        try joiner.pushString(text);
+                    }
+                },
+                .param => |param| {
+                    const value = try params_js.get(globalThis, param) orelse {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Missing parameter \"{s}\" for route \"{s}\"", .{ param, routestr.slice() });
+                    };
+                    try joiner.pushJs(globalThis, value, param);
+                },
+                .catch_all => |catch_all| {
+                    const value = try params_js.get(globalThis, catch_all) orelse {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Missing parameter \"{s}\" for route \"{s}\"", .{ catch_all, routestr.slice() });
+                    };
+                    if (value.isString()) {
+                        try joiner.pushJs(globalThis, value, catch_all);
+                    } else if (value.isArray()) {
+                        const length = try value.getLength(globalThis);
+                        for (0..length) |i| {
+                            const item = try value.getIndex(globalThis, @truncate(i));
+                            try joiner.pushJs(globalThis, item, catch_all);
+                        }
+                    } else {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Parameter \"{s}\" for route {s} must be a string or array of strings", .{ catch_all, routestr.slice() });
+                    }
+                },
+                .catch_all_optional => {
+                    return globalThis.throw("catch-all optional routes are not supported in static site generation", .{});
+                },
+                .group => {
+                    return globalThis.throw("group routes are not supported in static site generation", .{});
+                },
+            }
+        }
+
+        if (joiner.path.items.len == 0) {
+            return bun.String.empty.toJS(globalThis);
+        }
+
+        var string = try bun.String.fromUTF8List(&joiner.path);
+        return string.transferToJS(globalThis);
+    }
 
     /// After initializing, call `attach`
     pub fn init(vm: *VirtualMachine, opts: Options) !PerThread {

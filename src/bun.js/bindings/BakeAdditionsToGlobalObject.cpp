@@ -27,7 +27,7 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     auto& vm = globalObject->vm();
 
     auto* zig = jsCast<Zig::GlobalObject*>(globalObject);
-    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
+    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_FrameworkRequestArgsClassStructure.get(zig));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
@@ -122,10 +122,17 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
     return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, url);
 }
 
-extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getDevNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto value = zig->bakeAdditions().getNewRouteParamsJSFunction(zig);
+    auto value = zig->bakeAdditions().getDevNewRouteParamsJSFunction(zig);
+    return JSValue::encode(value);
+}
+
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getProdNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
+{
+    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto value = zig->bakeAdditions().getProdNewRouteParamsJSFunction(zig);
     return JSValue::encode(value);
 }
 

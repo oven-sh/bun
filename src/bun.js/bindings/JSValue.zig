@@ -381,6 +381,12 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__putIndex, .{ value, globalObject, i, out });
     }
 
+    extern fn JSC__JSValue__putDirectOffset(value: JSValue, globalObject: *JSGlobalObject, i: u32, val: JSValue) void;
+    /// Only use this function if you know the JSC::Structure of `target` supports this
+    pub fn putDirectOffset(target: JSValue, globalObject: *JSGlobalObject, i: u32, val: JSValue) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__putDirectOffset, .{ target, globalObject, i, val });
+    }
+
     extern fn JSC__JSValue__push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void;
     pub fn push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__push, .{ value, globalObject, out });

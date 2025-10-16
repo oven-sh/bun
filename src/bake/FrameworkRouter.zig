@@ -57,7 +57,7 @@ pattern_string_arena: bun.ArenaAllocator,
 /// - As little memory indirection as possible.
 /// - Routes cannot be updated after serilaization.
 pub const Serialized = struct {
-    // TODO:
+    // TODO
 };
 
 const StaticRouteMap = bun.StringArrayHashMapUnmanaged(Route.Index);
@@ -496,7 +496,7 @@ pub const Style = union(enum) {
     pub const UiOrRoutes = enum { ui, routes };
     const NextRoutingConvention = enum { app, pages };
 
-    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
+    pub fn parse(style: Style, file_path: []const u8, ext: ?[]const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         bun.assert(file_path[0] == '/');
 
         return switch (style) {
@@ -513,8 +513,8 @@ pub const Style = union(enum) {
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
-        var file_path = file_path_raw[0 .. file_path_raw.len - ext.len];
+    pub fn parseNextJsPages(file_path_raw: []const u8, ext: ?[]const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
+        var file_path = if (ext) |e| file_path_raw[0 .. file_path_raw.len - e.len] else file_path_raw;
         var kind: ParsedPattern.Kind = .page;
         if (strings.hasSuffixComptime(file_path, "/index")) {
             file_path.len -= "/index".len;
@@ -537,16 +537,15 @@ pub const Style = union(enum) {
     /// https://nextjs.org/docs/getting-started/project-structure#app-routing-conventions
     pub fn parseNextJsApp(
         file_path_raw: []const u8,
-        ext: []const u8,
+        ext: ?[]const u8,
         log: *TinyLog,
         allow_layouts: bool,
         arena: Allocator,
         comptime extract: UiOrRoutes,
     ) !?ParsedPattern {
-        const without_ext = file_path_raw[0 .. file_path_raw.len - ext.len];
+        const without_ext = if (ext) |e| file_path_raw[0 .. file_path_raw.len - e.len] else file_path_raw;
         const basename = std.fs.path.basename(without_ext);
-        const loader = bun.options.Loader.fromString(ext) orelse
-            return null;
+        const loader = if (ext) |e| bun.options.Loader.fromString(e) orelse return null else return null;
 
         // TODO: opengraph-image and metadata friends
         if (!loader.isJavaScriptLike())
@@ -687,7 +686,31 @@ pub const Style = union(enum) {
     }
 };
 
-const InsertError = error{ RouteCollision, OutOfMemory };
+const InsertError = error{ RouteCollision, OutOfMemory, InvalidRouteParam };
+
+/// Validates that a route part doesn't violate any constraints.
+/// Currently enforces that route parameters cannot be numeric values (e.g., "0", "12")
+/// because numeric keys conflict with JSC object structure optimizations.
+fn validateRoutePart(part: Part) InsertError!void {
+    switch (part) {
+        .param, .catch_all, .catch_all_optional => |name| {
+            // Check if the parameter name is a numeric string
+            if (name.len > 0) {
+                // Check if all characters are digits
+                for (name) |c| {
+                    if (c < '0' or c > '9') {
+                        // Not a number, it's valid
+                        return;
+                    }
+                }
+                // If we got here, all characters are digits - this is invalid
+                return error.InvalidRouteParam;
+            }
+        },
+        .text, .group => {},
+    }
+}
+
 const InsertKind = enum {
     static,
     dynamic,
@@ -717,7 +740,7 @@ pub fn insert(
     ctx: InsertionContext,
     /// When `error.RouteCollision` is returned, this is set to the existing file index.
     out_colliding_file_id: *OpaqueFileId,
-) InsertError!void {
+) InsertError!Route.Index {
     // The root route is the index of the type
     const root_route = Type.rootRouteIndex(ty);
 
@@ -745,6 +768,7 @@ pub fn insert(
             }
 
             // Must add to this child
+            try validateRoutePart(current_part);
             var new_route_index = try fr.newRoute(alloc, .{
                 .part = current_part,
                 .type = ty,
@@ -763,6 +787,7 @@ pub fn insert(
             // Build each part out as another node in the routing graph. This makes
             // inserting routes simpler to implement, but could technically be avoided.
             while (input_it.next()) |next_part| {
+                try validateRoutePart(next_part);
                 const newer_route_index = try fr.newRoute(alloc, .{
                     .part = next_part,
                     .type = ty,
@@ -784,7 +809,7 @@ pub fn insert(
     const new_route = fr.routePtr(new_route_index);
     if (new_route.filePtr(file_kind).unwrap()) |existing| {
         if (existing == file_id) {
-            return; // exact match already exists. Hot-reloading code hits this
+            return new_route_index; // exact match already exists. Hot-reloading code hits this
         }
         out_colliding_file_id.* = existing;
         return error.RouteCollision;
@@ -810,6 +835,8 @@ pub fn insert(
             gop.value_ptr.* = new_route_index;
         },
     };
+
+    return new_route_index;
 }
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
@@ -818,10 +845,66 @@ pub const MatchedParams = struct {
 
     params: bun.BoundedArray(Entry, max_count),
 
+    /// Entries with the same key can exist when there is a catch all part (e.g.
+    /// `[...slug].tsx`)
     pub const Entry = struct {
         key: []const u8,
         value: []const u8,
     };
+
+    pub const Iterator = struct {
+        params: *const MatchedParams,
+        offset: usize,
+
+        pub fn strPtrEql(a: []const u8, b: []const u8) bool {
+            return a.ptr == b.ptr and a.len == b.len;
+        }
+
+        pub fn next(it: *Iterator, values: *bun.BoundedArray([]const u8, max_count)) ?[]const u8 {
+            values.len = 0;
+            if (it.offset >= it.params.params.len) return null;
+            const slice = it.params.params.slice();
+
+            var entry = &slice[it.offset];
+            values.append(entry.value) catch unreachable;
+            while (it.offset + 1 < it.params.params.len and strPtrEql(entry.key, slice[it.offset + 1].key)) {
+                entry = &slice[it.offset + 1];
+                values.append(entry.value) catch unreachable;
+                it.offset += 1;
+            }
+            it.offset += 1;
+            return entry.key;
+        }
+    };
+
+    pub const KeyIterator = struct {
+        params: *const MatchedParams,
+        offset: usize,
+
+        pub fn strPtrEql(a: []const u8, b: []const u8) bool {
+            return a.ptr == b.ptr and a.len == b.len;
+        }
+
+        pub fn next(it: *KeyIterator) ?[]const u8 {
+            if (it.offset >= it.params.params.len) return null;
+            const slice = it.params.params.slice();
+            var entry = &slice[it.offset];
+            while (it.offset + 1 < it.params.params.len and strPtrEql(entry.key, slice[it.offset + 1].key)) {
+                entry = &slice[it.offset + 1];
+                it.offset += 1;
+            }
+            it.offset += 1;
+            return entry.key;
+        }
+    };
+
+    pub fn iterator(self: *const MatchedParams) Iterator {
+        return .{ .params = self, .offset = 0 };
+    }
+
+    pub fn keyIterator(self: *const MatchedParams) KeyIterator {
+        return .{ .params = self, .offset = 0 };
+    }
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
@@ -843,6 +926,48 @@ pub const MatchedParams = struct {
             _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
         }
         return obj;
+    }
+
+    pub fn toJSWithStructure(self: *const MatchedParams, global: *jsc.JSGlobalObject, structure: JSValue) bun.JSError!jsc.JSValue {
+        var obj = try jsc.JSObject.createWithStructure(global, structure);
+        var values: bun.BoundedArray([]const u8, max_count) = .{};
+        var it = self.iterator();
+        var offset: u32 = 0;
+        while (it.next(&values)) |_| {
+            const to_put = to_put: {
+                if (values.len == 1) {
+                    var bunstr = bun.String.init(values.get(0));
+                    defer bunstr.deref();
+                    break :to_put bunstr.transferToJS(global);
+                }
+                var array = try jsc.JSArray.createEmpty(global, values.len);
+                for (values.slice(), 0..) |value, i| {
+                    var bunstr = bun.String.init(value);
+                    defer bunstr.deref();
+                    try array.putIndex(global, @intCast(i), bunstr.transferToJS(global));
+                }
+                break :to_put array;
+            };
+            try obj.putDirectOffset(global, offset, to_put);
+            offset += 1;
+        }
+        return obj;
+    }
+
+    pub fn hash(self: *const MatchedParams) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (self.params.slice()) |param| {
+            hasher.update(param.key);
+            switch (param.value) {
+                .single => |val| hasher.update(val),
+                .multiple => |vals| {
+                    for (vals.slice()) |val| {
+                        hasher.update(val);
+                    }
+                },
+            }
+        }
+        return @truncate(hasher.final());
     }
 };
 
@@ -1130,7 +1255,7 @@ fn scanInner(
                         },
                     };
 
-                    result catch |err| switch (err) {
+                    _ = result catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
                         error.RouteCollision => {
                             try ctx.vtable.onRouterCollisionError(
@@ -1140,11 +1265,36 @@ fn scanInner(
                                 file_kind,
                             );
                         },
+                        error.InvalidRouteParam => {
+                            // Log error and skip this route
+                            bun.Output.prettyErrorln("error: Route parameter cannot be a numeric value in '{s}'", .{full_rel_path});
+                            bun.Output.flush();
+                        },
                     };
                 },
             }
         }
     }
+}
+
+// TODO: this is shitty
+pub fn extractPathnameFromUrl(url: []const u8) []const u8 {
+    // Extract pathname from URL (remove protocol, host, query, hash)
+    var pathname = if (std.mem.indexOf(u8, url, "://")) |proto_end| blk: {
+        const after_proto = url[proto_end + 3 ..];
+        break :blk after_proto;
+    } else url;
+
+    if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
+        const path_with_query = pathname[path_start..];
+        // Remove query string and hash
+        const query_index = std.mem.indexOfScalar(u8, path_with_query, '?') orelse path_with_query.len;
+        const hash_index = std.mem.indexOfScalar(u8, path_with_query, '#') orelse path_with_query.len;
+        const end = @min(query_index, hash_index);
+        pathname = path_with_query[0..end];
+    }
+
+    return pathname;
 }
 
 /// This binding is currently only intended for testing FrameworkRouter, and not

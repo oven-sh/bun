@@ -367,7 +367,7 @@ declare module "bun" {
        * A common pattern would be to enforce the object is
        * `{ default: ReactComponent }`
        */
-      render: (request: Request, routeMetadata: RouteMetadata) => MaybePromise<Response>;
+      render: (request: Request, routeMetadata: RouteMetadata, als: AsyncLocalStorage<unknown>) => Awaitable<Response>;
       /**
        * Prerendering does not use a request, and is allowed to generate
        * multiple responses. This is used for static site generation, but not
@@ -491,6 +491,7 @@ declare module "bun" {
        * A list of css files that the route will need to be styled.
        */
       readonly styles: ReadonlyArray<string>;
+      readonly request: Request | undefined;
     }
 
     /**

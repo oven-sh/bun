@@ -730,6 +730,17 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    /// `list` **MUST** be allocated with bun.default_allocator
+    pub fn fromUTF8List(list: *std.ArrayListUnmanaged(u8)) !String {
+        const converted = try bun.strings.toUTF16Alloc(bun.default_allocator, list.items, false, false);
+        if (converted) |val| {
+            return bun.String.createExternalGloballyAllocated(.utf16, val);
+        }
+
+        const slice = try list.toOwnedSlice(bun.default_allocator);
+        return bun.String.createExternalGloballyAllocated(.latin1, slice);
+    }
+
     /// This is the same as toUTF8, but it doesn't increment the reference count for latin1 strings
     pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.tag == .WTFStringImpl) {

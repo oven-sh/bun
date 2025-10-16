@@ -2541,6 +2541,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
 
+        pub fn getBakeProdState(this: *RequestContext) ?*bun.bake.ProductionServerState {
+            if (this.server) |server| {
+                return server.bake_prod.get();
+            }
+
+            return null;
+        }
+
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             if (bun.Environment.export_cpp_apis) {

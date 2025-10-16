@@ -731,6 +731,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.production-server.js", .import = "bake-codegen/bake.production-server.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
         .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },

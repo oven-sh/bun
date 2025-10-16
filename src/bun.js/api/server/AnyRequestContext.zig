@@ -18,6 +18,28 @@ pub fn init(request_ctx: anytype) AnyRequestContext {
     return .{ .tagged_pointer = Pointer.init(request_ctx) };
 }
 
+pub fn getBakeProdState(self: AnyRequestContext) ?*bun.bake.ProductionServerState {
+    if (self.tagged_pointer.isNull()) {
+        return null;
+    }
+
+    switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            return self.tagged_pointer.as(HTTPServer.RequestContext).getBakeProdState();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            return self.tagged_pointer.as(HTTPSServer.RequestContext).getBakeProdState();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getBakeProdState();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getBakeProdState();
+        },
+        else => @panic("Unexpected AnyRequestContext tag"),
+    }
+}
+
 pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAbortCallback) void {
     if (self.tagged_pointer.isNull()) {
         return;

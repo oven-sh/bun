@@ -10,16 +10,20 @@ namespace Bake {
 extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     JSC::JSGlobalObject* global,
     BunString outBase,
-    JSC::JSValue allServerFiles,
-    JSC::JSValue renderStatic,
-    JSC::JSValue getParams,
-    JSC::JSValue clientEntryUrl,
-    JSC::JSValue pattern,
-    JSC::JSValue files,
-    JSC::JSValue typeAndFlags,
-    JSC::JSValue sourceRouteFiles,
-    JSC::JSValue paramInformation,
-    JSC::JSValue styles)
+    JSC::EncodedJSValue allServerFiles,
+    JSC::EncodedJSValue renderStatic,
+    JSC::EncodedJSValue getParams,
+    JSC::EncodedJSValue clientEntryUrl,
+    JSC::EncodedJSValue routerTypeRoots,
+    JSC::EncodedJSValue routerTypeServerEntrypoints,
+    JSC::EncodedJSValue serverRuntime,
+    JSC::EncodedJSValue pattern,
+    JSC::EncodedJSValue files,
+    JSC::EncodedJSValue typeAndFlags,
+    JSC::EncodedJSValue sourceRouteFiles,
+    JSC::EncodedJSValue paramInformation,
+    JSC::EncodedJSValue styles,
+    JSC::EncodedJSValue routeIndices)
 {
     auto& vm = JSC::getVM(global);
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::bakeRenderRoutesForProdStaticCodeGenerator(vm), global);
@@ -27,16 +31,20 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
 
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsString(vm, outBase.toWTFString()));
-    args.append(allServerFiles);
-    args.append(renderStatic);
-    args.append(getParams);
-    args.append(clientEntryUrl);
-    args.append(pattern);
-    args.append(files);
-    args.append(typeAndFlags);
-    args.append(sourceRouteFiles);
-    args.append(paramInformation);
-    args.append(styles);
+    args.append(JSC::JSValue::decode(allServerFiles));
+    args.append(JSC::JSValue::decode(renderStatic));
+    args.append(JSC::JSValue::decode(getParams));
+    args.append(JSC::JSValue::decode(clientEntryUrl));
+    args.append(JSC::JSValue::decode(routerTypeRoots));
+    args.append(JSC::JSValue::decode(routerTypeServerEntrypoints));
+    args.append(JSC::JSValue::decode(serverRuntime));
+    args.append(JSC::JSValue::decode(pattern));
+    args.append(JSC::JSValue::decode(files));
+    args.append(JSC::JSValue::decode(typeAndFlags));
+    args.append(JSC::JSValue::decode(sourceRouteFiles));
+    args.append(JSC::JSValue::decode(paramInformation));
+    args.append(JSC::JSValue::decode(styles));
+    args.append(JSC::JSValue::decode(routeIndices));
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);

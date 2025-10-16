@@ -725,18 +725,13 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-        const json_pipe_windows = if (comptime Environment.isWindows)
-            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory()
-        else
-            undefined;
-
         const spawn_options = if (comptime Environment.isWindows)
             bun.spawn.SpawnOptions{
                 .stdout = .inherit,
                 .stderr = .inherit,
                 .stdin = .inherit,
                 .cwd = spawn_cwd,
-                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = json_pipe_windows } },
+                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory() } },
                 .windows = .{
                     .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
                 },

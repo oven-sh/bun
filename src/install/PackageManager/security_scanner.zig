@@ -733,7 +733,7 @@ pub const SecurityScanSubprocess = struct {
             .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .ipc },
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
-            } else null,
+            },
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();

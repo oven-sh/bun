@@ -206,7 +206,7 @@ for (const format of formats) {
 
             test.concurrent(testName, async () => {
               // Create temp directory for this test
-              using dir = tempDir(`banner-sourcemap-${format}-${target}-${sourcemap}`, testFiles);
+              await using dir = await tempDir(`banner-sourcemap-${format}-${target}-${sourcemap}`, testFiles);
 
               // Build with banner
               const entrypoint = splitting ? join(dir, "main.js") : join(dir, "input.js");
@@ -228,7 +228,10 @@ for (const format of formats) {
                 banner: banner.content,
               });
 
-              expect(result.success, `${testName}: build failed\n${result.logs.join("\n")}`).toBe(true);
+              expect(
+                result.success,
+                `${testName}: build failed\n${result.logs.map(log => (typeof log === "string" ? log : log.message || log.text || JSON.stringify(log))).join("\n")}`,
+              ).toBe(true);
 
               // Always filter to JS chunks only (not assets or sourcemaps)
               // kind can be "entry-point", "chunk", etc. but not "asset" or "sourcemap"
@@ -256,8 +259,9 @@ for (const format of formats) {
                   }
                 }
 
-                // Verify banner presence (skip shebang lines which may be processed differently)
-                {
+                // Verify banner presence - only for entry-point chunks
+                // Non-entry chunks (helpers/runtime) may not receive banners
+                if (output.kind === "entry-point") {
                   const nonShebangBannerLines = banner.content
                     .split("\n")
                     .filter(l => !l.startsWith("#!"))
@@ -267,8 +271,8 @@ for (const format of formats) {
                       line,
                     );
                   }
-                  // Shebang (if present at start) should be the very first line of entry-point chunks only
-                  if (banner.name === "shebang-start" && output.kind === "entry-point") {
+                  // Shebang (if present at start) should be the very first line
+                  if (banner.name === "shebang-start") {
                     expect(outputCode.startsWith("#!"), `${chunkTestName}: shebang should be first line`).toBe(true);
                   }
                 }
@@ -291,7 +295,11 @@ for (const format of formats) {
                   const mapfile = `${outfile}.map`;
                   sourcemapData = await Bun.file(mapfile).text();
                 } else {
-                  // external
+                  // external - verify no sourceMappingURL in JS output
+                  expect(
+                    outputCode,
+                    `${chunkTestName}: external sourcemap should not have sourceMappingURL comment in JS`,
+                  ).not.toMatch(/\/\/[#@] sourceMappingURL=/);
                   const mapfile = `${outfile}.map`;
                   sourcemapData = await Bun.file(mapfile).text();
                 }

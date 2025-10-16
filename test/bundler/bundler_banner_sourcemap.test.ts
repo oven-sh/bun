@@ -204,7 +204,7 @@ for (const format of formats) {
 
             const testName = `format=${format}, target=${target}, sourcemap=${sourcemap}, splitting=${splitting}, minify=${minify.name}, banner=${banner.name}`;
 
-            test(testName, async () => {
+            test.concurrent(testName, async () => {
               // Create temp directory for this test
               using dir = tempDir(`banner-sourcemap-${format}-${target}-${sourcemap}`, testFiles);
 

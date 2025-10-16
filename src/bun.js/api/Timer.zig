@@ -59,8 +59,8 @@ pub const All = struct {
     }
 
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
-        // this.lock.lock();
-        // defer this.lock.unlock();
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.insert(timer);
         timer.state = .ACTIVE;
 
@@ -70,8 +70,8 @@ pub const All = struct {
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
-        // this.lock.lock();
-        // defer this.lock.unlock();
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.remove(timer);
 
         timer.state = .CANCELLED;
@@ -79,8 +79,8 @@ pub const All = struct {
 
     /// Remove the EventLoopTimer if necessary.
     pub fn update(this: *All, timer: *EventLoopTimer, time: *const timespec) void {
-        // this.lock.lock();
-        // defer this.lock.unlock();
+        this.lock.lock();
+        defer this.lock.unlock();
         if (timer.state == .ACTIVE) {
             this.timers.remove(timer);
         }

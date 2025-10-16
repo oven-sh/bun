@@ -65,12 +65,14 @@ foo();
 
     expect(exitCode).toBe(1);
 
+    // stdout should contain the console.log output from the program
+    expect(stdout).toContain("before error");
+
     // Should still contain file path and line numbers in stack trace
     expect(stderr).toContain("test.fixture.ts:");
     expect(stderr).toContain("Test error");
 
-    // Should NOT contain the console.log output (source code should not be displayed)
-    expect(stdout).not.toContain("console.log");
+    // Should NOT contain the console.log source code line in the error output
     expect(stderr).not.toContain("console.log");
 
     // Should NOT contain source code snippets (no pipe characters from source display)

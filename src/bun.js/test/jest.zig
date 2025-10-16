@@ -172,56 +172,56 @@ pub const Jest = struct {
             test_runner.default_timeout_override
         else
             test_options.default_timeout_ms;
-        flags.put(globalObject, ZigString.static("defaultTimeout"), JSValue.jsNumber(timeout));
+        flags.put(globalObject, "defaultTimeout", .jsNumber(timeout));
 
         // updateSnapshots
-        flags.put(globalObject, ZigString.static("updateSnapshots"), JSValue.jsBoolean(test_options.update_snapshots));
+        flags.put(globalObject, "updateSnapshots", .jsBoolean(test_options.update_snapshots));
 
         // rerunEach
         if (test_options.repeat_count > 0) {
-            flags.put(globalObject, ZigString.static("rerunEach"), JSValue.jsNumber(test_options.repeat_count));
+            flags.put(globalObject, "rerunEach", .jsNumber(test_options.repeat_count));
         } else {
-            flags.put(globalObject, ZigString.static("rerunEach"), .js_undefined);
+            flags.put(globalObject, "rerunEach", .js_undefined);
         }
 
         // runTodo
-        flags.put(globalObject, ZigString.static("runTodo"), JSValue.jsBoolean(test_options.run_todo));
+        flags.put(globalObject, "runTodo", .jsBoolean(test_options.run_todo));
 
         // only
-        flags.put(globalObject, ZigString.static("only"), JSValue.jsBoolean(test_options.only));
+        flags.put(globalObject, "only", .jsBoolean(test_options.only));
 
         // passWithNoTests
-        flags.put(globalObject, ZigString.static("passWithNoTests"), JSValue.jsBoolean(test_options.pass_with_no_tests));
+        flags.put(globalObject, "passWithNoTests", .jsBoolean(test_options.pass_with_no_tests));
 
         // concurrent
-        flags.put(globalObject, ZigString.static("concurrent"), JSValue.jsBoolean(test_options.concurrent));
+        flags.put(globalObject, "concurrent", .jsBoolean(test_options.concurrent));
 
         // randomize and seed - use resolved values from TestRunner
-        flags.put(globalObject, ZigString.static("randomize"), JSValue.jsBoolean(test_runner.randomize != null));
+        flags.put(globalObject, "randomize", .jsBoolean(test_runner.randomize != null));
         if (test_runner.randomize != null) {
-            flags.put(globalObject, ZigString.static("seed"), JSValue.jsNumber(test_runner.seed));
+            flags.put(globalObject, "seed", .jsNumber(test_runner.seed));
         } else {
-            flags.put(globalObject, ZigString.static("seed"), .js_undefined);
+            flags.put(globalObject, "seed", .js_undefined);
         }
 
         // bail
         if (test_options.bail > 0) {
-            flags.put(globalObject, ZigString.static("bail"), JSValue.jsNumber(test_options.bail));
+            flags.put(globalObject, "bail", .jsNumber(test_options.bail));
         } else {
-            flags.put(globalObject, ZigString.static("bail"), .js_undefined);
+            flags.put(globalObject, "bail", .js_undefined);
         }
 
         // testFilterPattern
         if (test_options.test_filter_pattern) |filter| {
             const filter_str = bun.String.fromBytes(filter);
             defer filter_str.deref();
-            flags.put(globalObject, ZigString.static("testFilterPattern"), filter_str.toJS(globalObject));
+            flags.put(globalObject, "testFilterPattern", filter_str.toJS(globalObject));
         } else {
-            flags.put(globalObject, ZigString.static("testFilterPattern"), .js_undefined);
+            flags.put(globalObject, "testFilterPattern", .js_undefined);
         }
 
         // maxConcurrency
-        flags.put(globalObject, ZigString.static("maxConcurrency"), JSValue.jsNumber(test_options.max_concurrency));
+        flags.put(globalObject, "maxConcurrency", .jsNumber(test_options.max_concurrency));
 
         return flags;
     }

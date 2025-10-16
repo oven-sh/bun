@@ -725,24 +725,36 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-        const json_fd_option = if (Environment.isWindows) .buffer else .ipc;
+        const json_pipe_windows = if (comptime Environment.isWindows)
+            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory()
+        else
+            undefined;
 
-        const spawn_options = bun.spawn.SpawnOptions{
-            .stdout = .inherit,
-            .stderr = .inherit,
-            .stdin = .inherit,
-            .cwd = spawn_cwd,
-            .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, json_fd_option },
-            .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
-            },
-        };
+        const spawn_options = if (comptime Environment.isWindows)
+            bun.spawn.SpawnOptions{
+                .stdout = .inherit,
+                .stderr = .inherit,
+                .stdin = .inherit,
+                .cwd = spawn_cwd,
+                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = json_pipe_windows } },
+                .windows = .{
+                    .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
+                },
+            }
+        else
+            bun.spawn.SpawnOptions{
+                .stdout = .inherit,
+                .stderr = .inherit,
+                .stdin = .inherit,
+                .cwd = spawn_cwd,
+                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .ipc },
+            };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
         ipc_pipe_fds[1].close();
 
-        const json_write_fd = spawned.extra_pipes.items[1];
+        const json_write_result = spawned.extra_pipes.items[1];
 
         if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
@@ -763,7 +775,7 @@ pub const SecurityScanSubprocess = struct {
             .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
         };
 
-        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_write_fd, json_source);
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_write_result, json_source);
 
         switch (this.stdin_writer.?.start()) {
             .err => |err| {

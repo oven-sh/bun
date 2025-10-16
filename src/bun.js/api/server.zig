@@ -1818,6 +1818,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn doAccept(this: *ThisServer, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            if (callframe.argumentsCount() < 1) {
+                return globalThis.throwNotEnoughArguments("accept", 1, 0);
+            }
+
             const fd_value = callframe.argumentsAsArray(1)[0];
 
             if (!fd_value.isNumber()) {
@@ -1827,9 +1831,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const fd = try fd_value.coerceToInt32(globalThis);
             if (fd < 0) {
                 return globalThis.throwInvalidArguments("accept expects a valid file descriptor", .{});
-            }
-            if (fd > std.math.maxInt(u32)) {
-                return globalThis.throwInvalidArguments("File descriptor value {d} is out of valid range", .{fd});
             }
 
             const app = this.app orelse {

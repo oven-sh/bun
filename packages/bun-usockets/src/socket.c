@@ -324,6 +324,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.is_ipc = ipc;
     s->flags.is_pending_read = 0;
     s->connect_state = NULL;
+    s->next_to_read = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);

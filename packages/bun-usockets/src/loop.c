@@ -69,6 +69,7 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
+    loop->data.pending_read_head = NULL;
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
@@ -126,8 +127,9 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
 void us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
     struct us_socket_t* next = loop->data.pending_read_head;
     while(next != NULL) {
-        us_internal_dispatch_ready_poll(&next->p, 0, 0, LIBUS_SOCKET_READABLE);
+        struct us_poll_t* p = &next->p;
         next = next->next_to_read;
+        us_internal_dispatch_ready_poll(p, 0, 0, LIBUS_SOCKET_READABLE);
     }
 }
 
@@ -388,6 +390,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
                         s->flags.is_pending_read = 0;
+                        s->next_to_read = NULL;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

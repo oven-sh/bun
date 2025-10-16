@@ -410,7 +410,7 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
         events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
     }
-    event.events = events;
+    event.events = events | EPOLLET;
     event.data.ptr = p;
     int ret;
     do {

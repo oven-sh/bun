@@ -388,6 +388,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.is_ipc = 0;
     s->flags.is_pending_read = 0;
     s->next = 0;
+    s->next_to_read = NULL;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -425,6 +426,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.is_ipc = 0;
     s->flags.is_pending_read = 0;
     s->next = 0;
+    s->next_to_read = NULL;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -588,6 +590,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->is_paused = 0;
         flags->is_ipc = 0;
         flags->is_pending_read = 0;
+        s->next_to_read = NULL;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 

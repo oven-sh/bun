@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { describeWithContainer, isDockerEnabled, tempDirWithFiles, bunRun, bunEnv } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -55,6 +55,14 @@ if (isDockerEnabled()) {
           sql = new SQL(getOptions());
         });
 
+        test("process should exit when idle", async () => {
+          const { stderr } = bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
+            ...bunEnv,
+            MYSQL_URL: getOptions().url,
+            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+          });
+          expect(stderr).toBe("");
+        });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();

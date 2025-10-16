@@ -779,6 +779,16 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("runtime")) |runtime_expr| {
+                    if (runtime_expr.get("sourceCodePreview")) |source_code_preview| {
+                        if (source_code_preview.asBool()) |value| {
+                            this.ctx.runtime_options.source_code_preview = value;
+                        } else {
+                            try this.addError(source_code_preview.loc, "Expected boolean");
+                        }
+                    }
+                }
             }
 
             if (json.getObject("serve")) |serve_obj2| {

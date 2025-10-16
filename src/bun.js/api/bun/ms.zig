@@ -1,87 +1,144 @@
-/// Parse a time string like "2d", "1.5h", "5m" to milliseconds
-pub fn parse(input: []const u8) ?f64 {
-    if (input.len == 0 or input.len > 100) return null;
+const Unit = enum {
+    const Self = @This();
 
-    var i: usize = 0;
+    year,
+    month,
+    week,
+    day,
+    hour,
+    minute,
+    second,
+    millisecond,
 
-    next: switch (input[i]) {
-        '-', '.', '0'...'9' => {
-            i += 1;
-            if (i < input.len) continue :next input[i];
-            break :next;
-        },
-        ' ', 'a'...'z', 'A'...'Z' => break :next,
-        else => return null,
+    pub fn ratio(self: Unit) f64 {
+        const days_per_year = 365.25; // Average, accounting for leap years, Matches vercel/ms
+
+        switch (self) {
+            .year => (Unit{.day}).ratio() * days_per_year,
+            .month => (Unit{.year}).ratio() / 12.0,
+            .week => 7 * 24 * 60 * 60 * 1000,
+            .day => 24 * 60 * 60 * 1000,
+            .hour => 60 * 60 * 1000,
+            .minute => 60 * 1000,
+            .second => 1000,
+            .millisecond => 1,
+        }
     }
 
-    const value = std.fmt.parseFloat(f64, input[0..i]) catch return null;
+    const string_repr = bun.ComptimeStringMap(Self, .{
+        .{ "year", .year },
+        .{ "years", .year },
+        .{ "month", .month },
+        .{ "months", .month },
+        .{ "week", .week },
+        .{ "weeks", .week },
+        .{ "day", .day },
+        .{ "days", .day },
+        .{ "hour", .hour },
+        .{ "hours", .hour },
+        .{ "minute", .minute },
+        .{ "minutes", .minute },
+        .{ "second", .second },
+        .{ "seconds", .second },
+        .{ "millisecond", .millisecond },
+        .{ "milliseconds", .millisecond },
+        .{ "y", .year },
+        .{ "mo", .month },
+        .{ "w", .week },
+        .{ "d", .day },
+        .{ "h", .hour },
+        .{ "m", .minute },
+        .{ "s", .second },
+        .{ "ms", .millisecond },
+    });
 
-    const unit = strings.trimLeadingChar(input[i..], ' ');
-    if (unit.len == 0) return value;
+    const StringConversionOpts = struct {
+        long: bool = false,
+        plural: bool = false,
+    };
 
-    if (MultiplierMap.getASCIIICaseInsensitive(unit)) |m| {
-        return value * m;
+    pub fn toString(self: Unit, opts: StringConversionOpts) []const u8 {
+        // TODO(markovejnovic): It's not great that there is repetition between this and
+        //                      string_repr. Maybe there's a comptime way to generate string_repr
+        //                      out of some other table. Perhaps not worth the effort.
+        return switch (self) {
+            .year => if (opts.long) if (opts.plural) "years" else "year" else "y",
+            .month => if (opts.long) if (opts.plural) "months" else "month" else "mo",
+            .week => if (opts.long) if (opts.plural) "weeks" else "week" else "w",
+            .day => if (opts.long) if (opts.plural) "days" else "day" else "d",
+            .hour => if (opts.long) if (opts.plural) "hours" else "hour" else "h",
+            .minute => if (opts.long) if (opts.plural) "minutes" else "minute" else "m",
+            .second => if (opts.long) if (opts.plural) "seconds" else "second" else "s",
+            .millisecond => if (opts.long) "milliseconds" else "ms",
+        };
+    }
+};
+
+const Duration = struct {
+    const Self = @This();
+
+    count: f64,
+    unit: Unit,
+
+    pub fn to(self: *const Self, comptime unit: Unit) Self {
+        const from_ratio = self.unit.ratio();
+        const to_ratio = unit.ratio();
+        return Self{
+            .count = self.count * (from_ratio / to_ratio),
+            .unit = unit,
+        };
     }
 
-    return null;
-}
+    /// Utilities for vercel/ms compatibility
+    pub const VercelMs = struct {
+        /// Parse a time string compliant with `vercel/ms` (e.g. "2d", "1.5h", "5m").
+        ///
+        /// If no unit is specified, defaults to milliseconds.
+        pub fn parse(string: []const u8) !Self {
+            var i: usize = 0;
+            while (string) |c| {
+                switch (c) {
+                    '-', '.', '0'...'9' => i += 1,
+                    ' ', 'a'...'z', 'A'...'Z' => break,
+                    else => return error.InvalidFormat,
+                }
+            }
 
-// Years (365.25 days to account for leap years)
-// (matching the `ms` package implementation)
-const ms_per_year = std.time.ms_per_day * 365.25;
-const ms_per_month = std.time.ms_per_day * (365.25 / 12.0);
+            const numeric_value = std.fmt.parseFloat(f64, string[0..i]) catch {
+                return error.InvalidFormat;
+            };
+            const unit_str = strings.trimLeadingChar(string[i..], ' ');
 
-const MultiplierMap = bun.ComptimeStringMap(f64, .{
-    // Years (365.25 days to account for leap years)
-    .{ "y", ms_per_year },
-    .{ "yr", ms_per_year },
-    .{ "yrs", ms_per_year },
-    .{ "year", ms_per_year },
-    .{ "years", ms_per_year },
+            const unit: Unit =
+                if (unit_str.len == 0)
+                    .millisecond
+                else
+                    Unit.string_repr.getKey(unit_str) orelse return error.InvalidUnit;
 
-    // Months (30.4375 days average)
-    .{ "mo", ms_per_month },
-    .{ "month", ms_per_month },
-    .{ "months", ms_per_month },
+            return .{ .count = numeric_value, .unit = unit };
+        }
 
-    // Weeks
-    .{ "w", std.time.ms_per_week },
-    .{ "week", std.time.ms_per_week },
-    .{ "weeks", std.time.ms_per_week },
+        const FormatOpts = struct {
+            long: bool = false,
+            rounding: bool = true,
+        };
 
-    // Days
-    .{ "d", std.time.ms_per_day },
-    .{ "day", std.time.ms_per_day },
-    .{ "days", std.time.ms_per_day },
+        /// Convert the duration to a string, compatible with `vercel/ms`.
+        ///
+        /// Caller owns the resulting vector.
+        pub fn format(self: *const Self, allocator: std.mem.Allocator, opts: FormatOpts) []u8 {
+            const abs_count = @abs(self.count);
+            const is_plural = abs_count != 1.0;
 
-    // Hours
-    .{ "h", std.time.ms_per_hour },
-    .{ "hr", std.time.ms_per_hour },
-    .{ "hrs", std.time.ms_per_hour },
-    .{ "hour", std.time.ms_per_hour },
-    .{ "hours", std.time.ms_per_hour },
-
-    // Minutes
-    .{ "m", std.time.ms_per_min },
-    .{ "min", std.time.ms_per_min },
-    .{ "mins", std.time.ms_per_min },
-    .{ "minute", std.time.ms_per_min },
-    .{ "minutes", std.time.ms_per_min },
-
-    // Seconds
-    .{ "s", std.time.ms_per_s },
-    .{ "sec", std.time.ms_per_s },
-    .{ "secs", std.time.ms_per_s },
-    .{ "second", std.time.ms_per_s },
-    .{ "seconds", std.time.ms_per_s },
-
-    // Milliseconds
-    .{ "ms", 1 },
-    .{ "msec", 1 },
-    .{ "msecs", 1 },
-    .{ "millisecond", 1 },
-    .{ "milliseconds", 1 },
-});
+            const rounded: f64 = if (opts.rounding) jsMathRound(self.count) else self.count;
+            return std.fmt.allocPrint(
+                allocator,
+                "{d} {s}",
+                .{ rounded, self.unit.toString(.{ .long = opts.long, .plural = is_plural }) },
+            );
+        }
+    };
+};
 
 // To keep the behavior consistent with JavaScript, we can't use @round
 // Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
@@ -90,139 +147,6 @@ fn jsMathRound(x: f64) i64 {
     const i: f64 = @ceil(x);
     if ((i - 0.5) > x) return @intFromFloat(i - 1.0);
     return @intFromFloat(i);
-}
-
-/// Format milliseconds to a human-readable string
-pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
-    const abs_ms = @abs(ms);
-
-    // Years
-    if (abs_ms >= ms_per_year) {
-        const years = jsMathRound(ms / ms_per_year);
-        if (long) {
-            const plural = abs_ms >= ms_per_year * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}y", .{years});
-    }
-
-    // Months
-    if (abs_ms >= ms_per_month) {
-        const months = jsMathRound(ms / ms_per_month);
-        if (long) {
-            const plural = abs_ms >= ms_per_month * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}mo", .{months});
-    }
-
-    // Weeks
-    if (abs_ms >= std.time.ms_per_week) {
-        const weeks = jsMathRound(ms / std.time.ms_per_week);
-        if (long) {
-            const plural = abs_ms >= std.time.ms_per_week * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}w", .{weeks});
-    }
-
-    // Days
-    if (abs_ms >= std.time.ms_per_day) {
-        const days = jsMathRound(ms / std.time.ms_per_day);
-        if (long) {
-            const plural = abs_ms >= std.time.ms_per_day * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}d", .{days});
-    }
-
-    // Hours
-    if (abs_ms >= std.time.ms_per_hour) {
-        const hours = jsMathRound(ms / std.time.ms_per_hour);
-        if (long) {
-            const plural = abs_ms >= std.time.ms_per_hour * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}h", .{hours});
-    }
-
-    // Minutes
-    if (abs_ms >= std.time.ms_per_min) {
-        const minutes = jsMathRound(ms / std.time.ms_per_min);
-        if (long) {
-            const plural = abs_ms >= std.time.ms_per_min * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}m", .{minutes});
-    }
-
-    // Seconds
-    if (abs_ms >= std.time.ms_per_s) {
-        const seconds = jsMathRound(ms / std.time.ms_per_s);
-        if (long) {
-            const plural = abs_ms >= std.time.ms_per_s * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (plural) "s" else "" });
-        }
-        return std.fmt.allocPrint(allocator, "{d}s", .{seconds});
-    }
-
-    // Milliseconds
-    const ms_int: i64 = @intFromFloat(ms);
-    if (long) {
-        return std.fmt.allocPrint(allocator, "{d} ms", .{ms_int});
-    }
-    return std.fmt.allocPrint(allocator, "{d}ms", .{ms_int});
-}
-
-// Same as other format ms, but this is long and doesn't round
-// `ms` package doesn't have this, but it's more useful for some internal bun things
-pub fn formatLong(allocator: std.mem.Allocator, ms: f64) ![]u8 {
-    const abs_ms = @abs(ms);
-
-    // Years
-    if (abs_ms >= ms_per_year) {
-        const years = abs_ms / ms_per_year;
-        return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (years != 1) "s" else "" });
-    }
-
-    // Months
-    if (abs_ms >= ms_per_month) {
-        const months = abs_ms / ms_per_month;
-        return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (months != 1) "s" else "" });
-    }
-
-    // Weeks
-    if (abs_ms >= std.time.ms_per_week) {
-        const weeks = abs_ms / std.time.ms_per_week;
-        return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (weeks != 1) "s" else "" });
-    }
-
-    // Days
-    if (abs_ms >= std.time.ms_per_day) {
-        const days = abs_ms / std.time.ms_per_day;
-        return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (days != 1) "s" else "" });
-    }
-
-    // Hours
-    if (abs_ms >= std.time.ms_per_hour) {
-        const hours = abs_ms / std.time.ms_per_hour;
-        return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (hours != 1) "s" else "" });
-    }
-
-    // Minutes
-    if (abs_ms >= std.time.ms_per_min) {
-        const minutes = abs_ms / std.time.ms_per_min;
-        return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (minutes != 1) "s" else "" });
-    }
-
-    // Seconds
-    if (abs_ms >= std.time.ms_per_s) {
-        const seconds = abs_ms / std.time.ms_per_s;
-        return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (seconds != 1) "s" else "" });
-    }
-
-    // Milliseconds
-    return std.fmt.allocPrint(allocator, "{d} ms", .{abs_ms});
 }
 
 /// JavaScript function: Bun.ms(value, options?)
@@ -247,7 +171,7 @@ pub fn jsFunction(
             }
         }
 
-        const result = try format(bun.default_allocator, ms_value, long);
+        const result = try Duration.VercelMs.format(bun.default_allocator, ms_value, long);
 
         var str = String.createExternalGloballyAllocated(.latin1, result);
         return str.transferToJS(globalThis);
@@ -258,7 +182,7 @@ pub fn jsFunction(
         const str = try input.toSlice(globalThis, bun.default_allocator);
         defer str.deinit();
 
-        const result = parse(str.slice()) orelse std.math.nan(f64);
+        const result = Duration.VercelMs.parse(str.slice()) orelse std.math.nan(f64);
         return JSValue.jsNumber(result);
     }
 
@@ -271,7 +195,7 @@ pub fn astFunction(p: anytype, e_: *const E.Call, loc: logger.Loc) !?Expr {
     const arg = e_.args.at(0).unwrapInlined();
 
     if (arg.asString(p.allocator)) |str| {
-        const ms_value = parse(str) orelse std.math.nan(f64);
+        const ms_value = Duration.VercelMs.parse(str) orelse std.math.nan(f64);
         return p.newExpr(E.Number{ .value = ms_value }, loc);
     }
 
@@ -286,7 +210,10 @@ pub fn astFunction(p: anytype, e_: *const E.Call, loc: logger.Loc) !?Expr {
             }
         }
 
-        const formatted = try format(p.allocator, num, long);
+        const formatted = try (Duration{ .count = num, .unit = .millisecond }).VercelMs.format(
+            p.allocator,
+            .{},
+        );
         return p.newExpr(E.String.init(formatted), loc);
     }
     return null;

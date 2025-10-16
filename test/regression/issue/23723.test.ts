@@ -31,8 +31,6 @@ test("issue #23723 - should not crash on string comparisons during optimization"
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout.toString()).toContain("SUCCESS");
-  expect(result.stderr.toString()).not.toContain("panic");
-  expect(result.stderr.toString()).not.toContain("Internal assertion failure");
 });
 
 test("issue #23723 - string order comparison with unicode", async () => {

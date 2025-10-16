@@ -93,6 +93,45 @@ void us_wakeup_loop(struct us_loop_t *loop) {
     us_internal_async_wakeup(loop->data.wakeup_async);
 }
 
+void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
+    if(!us_socket_is_closed(0, socket) && !socket->flags.is_pending_read) {
+        socket->next_to_read = loop->data.pending_read_head;
+        loop->data.pending_read_head = socket->next_to_read;
+        socket->flags.is_pending_read = true;
+    }
+}
+
+void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
+    if(!socket->flags.is_pending_read) return;
+
+    struct us_socket_t* next = loop->data.pending_read_head;
+    if(next == socket) {
+        loop->data.pending_read_head = socket->next_to_read;
+        socket->flags.is_pending_read = false;
+        return;
+    }
+    struct us_socket_t* prev = next;
+    next = prev->next_to_read;
+    while(next != NULL) {
+        if(next == socket) {
+            prev->next_to_read = socket->next_to_read;
+            socket->flags.is_pending_read = false;
+            break;
+        }
+        prev = next;
+        next = next->next_to_read;
+    }
+}
+
+void us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
+    struct us_socket_t* next = loop->data.pending_read_head;
+    while(next != NULL) {
+        us_internal_dispatch_ready_poll(&next->p, 0, 0, LIBUS_SOCKET_READABLE);
+        next = next->next_to_read;
+    }
+}
+
+
 void us_internal_loop_link(struct us_loop_t *loop, struct us_socket_context_t *context) {
     /* Insert this context as the head of loop */
     context->next = loop->data.head;
@@ -240,6 +279,9 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
+        if(s->flags.is_pending_read) {
+            us_remove_socket_from_pending_read_list(loop, s);
+        }
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
@@ -298,6 +340,7 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -344,6 +387,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
+                        s->flags.is_pending_read = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -364,6 +408,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     }
     case POLL_TYPE_SOCKET_SHUT_DOWN:
     case POLL_TYPE_SOCKET: {
+            bool eagain = false;
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
             /* The context can change after calling a callback but the loop is always the same */
@@ -483,9 +528,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
                                 continue;
                             }
+                            
                         }
+                        
+                        
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif
+                        // We need to register this socket to read later otherwise the event loop will never trigger again
+                        us_add_socket_to_pending_read_list(loop, s);
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
                         break;
@@ -494,8 +544,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_ERR, NULL);
                         return;
+                    } else {
+                        eagain = true;
                     }
 
+                    
                     break;
                 } while (s);
             }
@@ -527,6 +580,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 s = us_socket_close(0, s, error, NULL);
                 return;
             }
+            if(eagain && s && s->flags.is_pending_read) {
+                // At this point we can wait the event loop instead of draining
+                us_remove_socket_from_pending_read_list(loop, s);
+            }
+            
             break;
         }
         case POLL_TYPE_UDP: {

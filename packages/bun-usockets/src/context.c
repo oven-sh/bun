@@ -386,6 +386,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_pending_read = 0;
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
@@ -422,6 +423,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_pending_read = 0;
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -453,8 +455,10 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
     socket->flags.is_ipc = 0;
+    socket->flags.is_pending_read = 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
+    socket->next_to_read = NULL;
 
     us_internal_socket_context_link_socket(0, context, socket);
 
@@ -583,6 +587,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
         flags->is_ipc = 0;
+        flags->is_pending_read = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -760,8 +765,10 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
     connect_socket->flags.is_ipc = 0;
+    connect_socket->flags.is_pending_read = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
+    connect_socket->next_to_read = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);
 
     return connect_socket;

@@ -252,6 +252,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->num_polls == 0) {
         return;
     }
+    
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
@@ -267,6 +268,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     if (loop->data.jsc_vm) 
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+
+    us_internal_drain_socket_from_pending_read_list(loop);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -435,7 +438,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
              // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
             events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
         }
-        event.events = events;
+        event.events = events | EPOLLET;
         event.data.ptr = p;
         int rc;
         do {

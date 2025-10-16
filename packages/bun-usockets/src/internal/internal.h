@@ -115,6 +115,7 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+void us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
@@ -170,7 +171,7 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
-
+    bool is_pending_read: 1;
 } __attribute__((packed));
 
 struct us_socket_t {
@@ -182,6 +183,7 @@ struct us_socket_t {
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
   struct us_socket_t *connect_next;
+  struct us_socket_t *next_to_read;
   struct us_connecting_socket_t *connect_state;
 };
 

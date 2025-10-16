@@ -1818,13 +1818,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn doAccept(this: *ThisServer, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const fd_value = callframe.argumentsAsArray(1)[0];
 
-            if (arguments.len < 1) {
-                return globalThis.throwNotEnoughArguments("accept", 1, arguments.len);
-            }
-
-            const fd_value = arguments.ptr[0];
             if (!fd_value.isNumber()) {
                 return globalThis.throwInvalidArguments("accept expects a file descriptor number", .{});
             }

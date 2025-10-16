@@ -369,7 +369,7 @@ pub fn NewApp(comptime ssl: bool) type {
         /// and will close it when the connection terminates. On failure (return value -1),
         /// the caller retains ownership and must close the file descriptor.
         ///
-        /// Supports both SSL/TLS and non-SSL sockets.
+        /// Supports both SSL/TLS and non-SSL sockets based on the server's SSL configuration.
         ///
         /// Returns 0 on success, -1 on failure.
         pub fn accept(app: *ThisApp, fd: bun.FileDescriptor) i32 {

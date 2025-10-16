@@ -13,7 +13,7 @@ Usage: bun run build.ts [options]
 Common Options:
   --outdir <path>          Output directory (default: "dist")
   --minify                 Enable minification (or --minify.whitespace, --minify.syntax, etc)
-  --sourcemap <type>      Sourcemap type: none|linked|inline|external
+  --sourcemap <type>       Sourcemap type: none|linked|inline|external
   --target <target>        Build target: browser|bun|node
   --format <format>        Output format: esm|cjs|iife
   --splitting              Enable code splitting

@@ -109,6 +109,19 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 telemetry = false
 ```
 
+### `dotenv`
+
+Control whether Bun automatically loads `.env` files. Default `true`.
+
+```toml
+# Disable automatic .env file loading
+dotenv = false
+```
+
+When set to `false`, Bun will not automatically load `.env`, `.env.local`, `.env.production`, `.env.development`, or `.env.test` files at runtime. Environment variables set in your shell or passed to the process will still be available via `process.env`.
+
+See [Runtime > Environment variables](/docs/runtime/env#disabling-automatic-env-file-loading) for more details.
+
 ### `console`
 
 Configure console output behavior.

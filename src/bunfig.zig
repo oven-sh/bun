@@ -779,6 +779,18 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("dotenv")) |dotenv_expr| {
+                    if (dotenv_expr.asBool()) |value| {
+                        // When dotenv is set to false, disable .env loading
+                        // When true or not set, keep the default behavior
+                        if (!value) {
+                            this.bunfig.disable_dotenv = true;
+                        }
+                    } else {
+                        try this.addError(dotenv_expr.loc, "Expected boolean");
+                    }
+                }
             }
 
             if (json.getObject("serve")) |serve_obj2| {

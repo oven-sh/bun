@@ -363,8 +363,15 @@ pub fn NewApp(comptime ssl: bool) type {
             return c.uws_filter(ssl_flag, @as(*uws_app_t, @ptrCast(app)), handler, user_data);
         }
 
-        /// Accept a file descriptor and integrate it as an HTTP connection
-        /// Returns 0 on success, -1 on failure
+        /// Accept a file descriptor and integrate it as an HTTP connection.
+        ///
+        /// On success (return value 0), the app takes ownership of the file descriptor
+        /// and will close it when the connection terminates. On failure (return value -1),
+        /// the caller retains ownership and must close the file descriptor.
+        ///
+        /// Note: SSL/TLS sockets are not currently supported and will return -1.
+        ///
+        /// Returns 0 on success, -1 on failure.
         pub fn accept(app: *ThisApp, fd: bun.FileDescriptor) i32 {
             return c.uws_app_accept(ssl_flag, @as(*uws_app_t, @ptrCast(app)), fd);
         }

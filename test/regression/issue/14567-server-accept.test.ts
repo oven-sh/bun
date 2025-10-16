@@ -189,7 +189,7 @@ test.todoIf(isWindows)("server.accept() handles POST request with large body", a
         },
         open(socket) {
           // Send POST with a large body
-          const largeBody = "x".repeat(10000);
+          const largeBody = Buffer.alloc(10000, 0x78).toString(); // 0x78 is 'x'
           socket.write(
             "POST /upload HTTP/1.1\r\n" +
               "Host: localhost\r\n" +
@@ -275,9 +275,9 @@ test.todoIf(isWindows)("server.accept() handles file upload with binary data", a
         },
         open(socket) {
           // Create binary data to upload (1000 bytes with values 0-255 repeating)
-          const uploadData = Buffer.alloc(1000);
+          const uploadData = Buffer.allocUnsafe(1000);
           for (let i = 0; i < 1000; i++) {
-            uploadData[i] = i % 256;
+            uploadData[i] = i & 0xff;
           }
 
           // Send POST with binary data

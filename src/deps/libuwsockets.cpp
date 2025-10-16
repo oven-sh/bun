@@ -5,6 +5,7 @@
 #include <bun-uws/src/AsyncSocket.h>
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
+#include <new>
 
 extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
@@ -511,56 +512,36 @@ extern "C"
 
   int uws_app_accept(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd)
   {
+    // SSL/TLS socket acceptance is not currently supported
+    // Proper implementation requires calling us_socket_wrap_with_tls() + us_socket_open()
+    // to initiate the TLS handshake, which is beyond the scope of the initial implementation
     if (ssl)
     {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      // Access the httpContext pointer from the app - it's the first member of the App struct
-      // We use pointer arithmetic since httpContext is private
-      uWS::HttpContext<true> *httpContext = *(uWS::HttpContext<true> **)uwsApp;
-      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
-
-      // Create a socket from the file descriptor with the proper extension size
-      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<true>), fd, 0);
-      if (socket == nullptr) {
-        return -1;
-      }
-
-      // Initialize the socket extension with HttpResponseData
-      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<true>;
-
-      // Trigger the on_open callback that was registered by HttpContext
-      // This will properly initialize the HTTP response and call filters
-      if (socketContext->on_open) {
-        socketContext->on_open(socket, 0, nullptr, 0);
-      }
-
-      return 0;
+      return -1;
     }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      // Access the httpContext pointer from the app - it's the first member of the App struct
-      // We use pointer arithmetic since httpContext is private
-      uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
-      us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 
-      // Create a socket from the file descriptor with the proper extension size
-      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);
-      if (socket == nullptr) {
-        return -1;
-      }
+    uWS::App *uwsApp = (uWS::App *)app;
+    // Access the httpContext pointer from the app - it's the first member of the App struct
+    // We use pointer arithmetic since httpContext is private
+    uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
+    us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 
-      // Initialize the socket extension with HttpResponseData
-      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<false>;
-
-      // Trigger the on_open callback that was registered by HttpContext
-      // This will properly initialize the HTTP response and call filters
-      if (socketContext->on_open) {
-        socketContext->on_open(socket, 0, nullptr, 0);
-      }
-
-      return 0;
+    // Create a socket from the file descriptor with the proper extension size
+    struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);
+    if (socket == nullptr) {
+      return -1;
     }
+
+    // Initialize the socket extension with HttpResponseData
+    new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<false>;
+
+    // Trigger the on_open callback that was registered by HttpContext
+    // This will properly initialize the HTTP response and call filters
+    if (socketContext->on_open) {
+      socketContext->on_open(socket, 0, nullptr, 0);
+    }
+
+    return 0;
   }
 
   void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)

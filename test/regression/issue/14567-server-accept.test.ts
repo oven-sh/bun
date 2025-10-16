@@ -380,6 +380,14 @@ test.todoIf(isWindows)("server.accept() handles file upload with binary data", a
 
           socket.write(Buffer.concat([Buffer.from(headers), uploadData]));
         },
+        close(socket) {
+          // Connection closed - resolve if not already resolved
+          // This ensures test doesn't hang if server closes connection early
+          if (resolveData) {
+            resolveData();
+            resolveData = null;
+          }
+        },
       },
       fd: clientFd,
     });

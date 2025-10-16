@@ -326,7 +326,7 @@ for (const format of formats) {
 
                 // Test mappings based on which chunk we're in - require at least one anchor match
                 if (isInputChunk) {
-                  // Test 1: Check mapping in the middle of the file - the flush() method (line 42, 0-indexed: 41)
+                  // Test 1: Check mapping in the middle of the file - the flush() method (line 35, 0-indexed: 34)
                   // Use minification-resistant pattern
                   const flushMatch = outputCode.match(/flush\s*\(/);
                   expect(flushMatch, `${chunkTestName}: flush method not found in input chunk`).not.toBeNull();
@@ -345,7 +345,7 @@ for (const format of formats) {
                     /input\.js$/,
                   );
 
-                  // Test 2: Check mapping for this.buffer.push (line 39, 0-indexed: 38)
+                  // Test 2: Check mapping for this.buffer.push (line 32, 0-indexed: 31)
                   // Use minification-resistant pattern - match the call structure, not argument names
                   const bufferPushMatch = outputCode.match(/this\.buffer\.push\s*\(/);
                   if (bufferPushMatch) {
@@ -363,7 +363,7 @@ for (const format of formats) {
                 }
 
                 if (isUtilsChunk) {
-                  // Test for utils.js - use minification-resistant pattern
+                  // Test for utils.js - connect() at line 8 (0-indexed: 7)
                   const connectMatch = outputCode.match(/\bconnect\s*\(/);
                   expect(connectMatch, `${chunkTestName}: connect method not found in utils chunk`).not.toBeNull();
 
@@ -375,10 +375,10 @@ for (const format of formats) {
 
                   expect(
                     connectPosition?.originalLine,
-                    `${chunkTestName}: connect() should map to utils.js line 11 (0-indexed), got ${connectPosition?.originalLine}`,
-                  ).toBe(11);
+                    `${chunkTestName}: connect() should map to utils.js line 7 (0-indexed), got ${connectPosition?.originalLine}`,
+                  ).toBe(7);
 
-                  // Test validateEmail - match identifier only
+                  // Test validateEmail - match identifier only (line 28, 0-indexed: 27)
                   const validateMatch = outputCode.match(/\bvalidateEmail\b/);
                   if (validateMatch) {
                     const validateIndex = validateMatch.index!;
@@ -389,8 +389,8 @@ for (const format of formats) {
 
                     expect(
                       validatePosition?.originalLine,
-                      `${chunkTestName}: validateEmail should map to utils.js line 31 (0-indexed), got ${validatePosition?.originalLine}`,
-                    ).toBe(31);
+                      `${chunkTestName}: validateEmail should map to utils.js line 27 (0-indexed), got ${validatePosition?.originalLine}`,
+                    ).toBe(27);
                   }
                 }
 

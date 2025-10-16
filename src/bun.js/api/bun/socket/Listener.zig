@@ -651,16 +651,21 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 tls.poll_ref.ref(handlers.vm);
                 tls.ref();
 
-                const named_pipe = WindowsNamedPipeContext.connect(
-                    globalObject,
-                    switch (connection) {
-                        .unix => pipe_name.?,
-                        .fd => |fd| fd,
-                        else => unreachable,
-                    },
-                    ssl,
-                    .{ .tls = tls },
-                ) catch return promise_value;
+                const named_pipe = switch (connection) {
+                    .unix => WindowsNamedPipeContext.connect(
+                        globalObject,
+                        pipe_name.?,
+                        if (ssl) |s| s.* else null,
+                        .{ .tls = tls },
+                    ) catch return promise_value,
+                    .fd => |fd| WindowsNamedPipeContext.open(
+                        globalObject,
+                        fd,
+                        if (ssl) |s| s.* else null,
+                        .{ .tls = tls },
+                    ) catch return promise_value,
+                    else => unreachable,
+                };
                 tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
             } else {
                 var tcp = if (prev_maybe_tcp) |prev| blk: {
@@ -690,16 +695,21 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 TCPSocket.js.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
                 tcp.poll_ref.ref(handlers.vm);
 
-                const named_pipe = WindowsNamedPipeContext.connectl(
-                    globalObject,
-                    switch (connection) {
-                        .unix => pipe_name.?,
-                        .fd => |fd| fd,
-                        else => unreachable,
-                    },
-                    null,
-                    .{ .tcp = tcp },
-                ) catch return promise_value;
+                const named_pipe = switch (connection) {
+                    .unix => WindowsNamedPipeContext.connect(
+                        globalObject,
+                        pipe_name.?,
+                        null,
+                        .{ .tcp = tcp },
+                    ) catch return promise_value,
+                    .fd => |fd| WindowsNamedPipeContext.open(
+                        globalObject,
+                        fd,
+                        null,
+                        .{ .tcp = tcp },
+                    ) catch return promise_value,
+                    else => unreachable,
+                };
                 tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
             }
             return promise_value;

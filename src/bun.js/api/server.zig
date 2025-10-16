@@ -1817,6 +1817,35 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return this_value;
         }
 
+        pub fn doAccept(this: *ThisServer, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const arguments = callframe.arguments_old(1);
+
+            if (arguments.len < 1) {
+                return globalThis.throwNotEnoughArguments("accept", 1, arguments.len);
+            }
+
+            const fd_value = arguments.ptr[0];
+            if (!fd_value.isNumber()) {
+                return globalThis.throwInvalidArguments("accept expects a file descriptor number", .{});
+            }
+
+            const fd = try fd_value.coerceToInt32(globalThis);
+            if (fd < 0) {
+                return globalThis.throwInvalidArguments("accept expects a valid file descriptor", .{});
+            }
+
+            const app = this.app orelse {
+                return globalThis.throwInvalidArguments("Server is not listening", .{});
+            };
+
+            const result = app.accept(bun.FileDescriptor.fromUV(@intCast(fd)));
+            if (result != 0) {
+                return globalThis.throwInvalidArguments("Failed to accept file descriptor", .{});
+            }
+
+            return .js_undefined;
+        }
+
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             jsc.markBinding(@src());
             this.pending_requests += 1;

@@ -509,6 +509,58 @@ extern "C"
     }
   }
 
+  int uws_app_accept(int ssl, uws_app_t *app, LIBUS_SOCKET_DESCRIPTOR fd)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      // The HttpContext is the same as the App
+      // and can be cast to us_socket_context_t
+      us_socket_context_t *socketContext = (us_socket_context_t *)uwsApp;
+
+      // Create a socket from the file descriptor with the proper extension size
+      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<true>), fd, 0);
+      if (socket == nullptr) {
+        return -1;
+      }
+
+      // Initialize the socket extension with HttpResponseData
+      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<true>;
+
+      // Trigger the on_open callback that was registered by HttpContext
+      // This will properly initialize the HTTP response and call filters
+      if (socketContext->on_open) {
+        socketContext->on_open(socket, 0, nullptr, 0);
+      }
+
+      return 0;
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      // The HttpContext is the same as the App
+      // and can be cast to us_socket_context_t
+      us_socket_context_t *socketContext = (us_socket_context_t *)uwsApp;
+
+      // Create a socket from the file descriptor with the proper extension size
+      struct us_socket_t *socket = us_socket_from_fd(socketContext, sizeof(uWS::HttpResponseData<false>), fd, 0);
+      if (socket == nullptr) {
+        return -1;
+      }
+
+      // Initialize the socket extension with HttpResponseData
+      new (us_socket_ext(ssl, socket)) uWS::HttpResponseData<false>;
+
+      // Trigger the on_open callback that was registered by HttpContext
+      // This will properly initialize the HTTP response and call filters
+      if (socketContext->on_open) {
+        socketContext->on_open(socket, 0, nullptr, 0);
+      }
+
+      return 0;
+    }
+  }
+
   void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
   {
     if (ssl)

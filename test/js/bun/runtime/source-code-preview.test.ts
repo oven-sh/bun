@@ -6,7 +6,7 @@ describe("sourceCodePreview config option", () => {
     using dir = tempDir("source-code-preview-default", {
       "test.js": `
 function foo() {
-  console.log(new Error().stack);
+  throw new Error("Test error");
 }
 foo();
       `,
@@ -19,14 +19,22 @@ foo();
       stdout: "pipe",
       stderr: "pipe",
     });
-    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
     const exitCode = await proc.exited;
 
-    expect(exitCode).toBe(0);
-    // Should contain line numbers and source code
-    expect(stdout).toContain("test.js:");
-    // Should contain the function call location with source code or line number
-    expect(stdout.length).toBeGreaterThan(10);
+    expect(exitCode).toBe(1);
+
+    // Should contain file path and line numbers
+    expect(stderr).toContain("test.js:");
+
+    // Should contain source code preview with line numbers and pipes
+    expect(stderr).toMatch(/\d+\s+\|/);
+
+    // Should contain the source line with "throw new Error"
+    expect(stderr).toContain('throw new Error("Test error")');
+
+    // Should contain caret indicator
+    expect(stderr).toContain("^");
   });
 
   test("sourceCodePreview=false disables source code in error stack traces", async () => {
@@ -37,7 +45,8 @@ sourceCodePreview = false
       `,
       "test.fixture.ts": `
 function foo() {
-  console.log(new Error().stack);
+  console.log("before error");
+  throw new Error("Test error");
 }
 foo();
       `,
@@ -54,23 +63,26 @@ foo();
     const stderr = await proc2.stderr.text();
     const exitCode = await proc2.exited;
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
 
-    const output = stdout + stderr;
-    // Should still contain file path and line numbers
-    expect(output).toContain("test.fixture.ts:");
+    // Should still contain file path and line numbers in stack trace
+    expect(stderr).toContain("test.fixture.ts:");
+    expect(stderr).toContain("Test error");
+
+    // Should NOT contain the console.log output (source code should not be displayed)
+    expect(stdout).not.toContain("console.log");
+    expect(stderr).not.toContain("console.log");
 
     // Should NOT contain source code snippets (no pipe characters from source display)
-    // The source code preview typically shows lines like:
-    //   3 |   console.log(new Error().stack);
+    // The source code preview shows lines like:
+    //   3 |   throw new Error("Test error");
     //       ^
-    // We check that these formatted source lines are not present
-    const lines = output.split("\n");
-    const hasSourceCodeDisplay = lines.some(
-      line =>
-        /^\s*\d+\s+\|/.test(line) || // Lines with line numbers and pipe
-        /^\s*\^/.test(line), // Caret indicators
-    );
-    expect(hasSourceCodeDisplay).toBe(false);
+    expect(stderr).not.toMatch(/\d+\s+\|/);
+
+    // Should NOT contain caret indicators
+    expect(stderr).not.toContain("    ^");
+
+    // Should NOT show the actual source line "throw new Error"
+    expect(stderr).not.toContain('throw new Error("Test error")');
   });
 });

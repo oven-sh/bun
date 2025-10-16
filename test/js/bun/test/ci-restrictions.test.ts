@@ -145,7 +145,7 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
     });
@@ -172,7 +172,7 @@ test("new snapshot", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Snapshot name: "new snapshot 1"');
       expect(stderr).toContain('Received: "this is new"');
     });
@@ -250,7 +250,7 @@ test("new inline snapshot", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Inline snapshot creation is not allowed in CI environments");
+      expect(stderr).toContain("Inline snapshot creation is disabled in CI environments");
       expect(stderr).toContain('Received: "this is new"');
     });
 

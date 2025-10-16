@@ -748,7 +748,7 @@ pub const Expect = struct {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is not allowed in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
                 }
             }
             var buntest_strong = this.bunTest() orelse {
@@ -845,9 +845,9 @@ pub const Expect = struct {
                         runner.snapshots.last_error_snapshot_name = null;
                     };
                     if (snapshot_name) |name| {
-                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {s}", .{ name, pretty_value.slice() });
+                        break :blk globalThis.throw("Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {s}", .{ name, pretty_value.slice() });
                     } else {
-                        break :blk globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
+                        break :blk globalThis.throw("Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
                     }
                 },
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),

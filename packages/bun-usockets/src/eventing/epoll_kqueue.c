@@ -434,10 +434,8 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
              // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
             events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
-            event.events = events;
         }
         event.events = events;
-        
         event.data.ptr = p;
         int rc;
         do {
@@ -629,7 +627,7 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
 
     internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
 
-    us_poll_start((struct us_poll_t *) a, internal_cb->loop, LIBUS_SOCKET_READABLE);
+    us_poll_start((struct us_poll_t *) a, internal_cb->loop, LIBUS_SOCKET_READABLE | EPOLLET);
 }
 
 void us_internal_async_wakeup(struct us_internal_async *a) {

@@ -521,8 +521,13 @@ extern "C"
     }
 
     uWS::App *uwsApp = (uWS::App *)app;
-    // Access the httpContext pointer from the app - it's the first member of the App struct
-    // We use pointer arithmetic since httpContext is private
+    // Access the httpContext pointer from the app - it's the first member of the App struct.
+    // Technical debt: We use pointer arithmetic to access the private httpContext member.
+    // This relies on the known memory layout of TemplatedApp (see App.h line 96).
+    // Ideally, uWebSockets would expose a getSocketContext() accessor, but since it's
+    // a vendored library, we use this approach which is consistent with patterns in
+    // other parts of this file (e.g., lines 115, 127, 132 in App.h show similar casts).
+    // The layout is stable across the uWebSockets API and unlikely to change.
     uWS::HttpContext<false> *httpContext = *(uWS::HttpContext<false> **)uwsApp;
     us_socket_context_t *socketContext = (us_socket_context_t *)httpContext;
 

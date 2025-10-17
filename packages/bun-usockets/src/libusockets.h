@@ -16,6 +16,12 @@
  */
 // clang-format off
 #pragma once
+
+
+#ifndef LIBUSOCKETS_H
+#define LIBUSOCKETS_H
+
+
 #include <mimalloc.h>
 
 
@@ -38,9 +44,6 @@
 #define us_usable_size mi_usable_size
 #endif
 
-
-#ifndef LIBUSOCKETS_H
-#define LIBUSOCKETS_H
 
 #ifdef BUN_DEBUG
 #define nonnull_arg

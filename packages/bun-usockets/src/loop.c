@@ -333,8 +333,7 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;
 }
 
-/* These may have som
-ewhat different meaning depending on the underlying event library */
+/* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
     us_internal_handle_dns_results(loop);

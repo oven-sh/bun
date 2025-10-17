@@ -70,7 +70,7 @@ export function enumeration(
     toCpp(value: string): string {
       const index = valueMap.get(value);
       if (index == null) {
-        throw RangeError(`not a member of this enumeration: ${value}`);
+        throw RangeError(`not a member of this ${name}: ${util.inspect(value)}`);
       }
       return `::Bun::Bindgen::Generated::${name}::${cppMembers[index]}`;
     }

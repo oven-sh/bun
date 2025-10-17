@@ -12,7 +12,9 @@ pub const AnyPostgresError = error{
     InvalidQueryBinding,
     InvalidServerKey,
     InvalidServerSignature,
+    InvalidTimeFormat,
     JSError,
+    JSTerminated,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
     OutOfMemory,
@@ -59,7 +61,7 @@ pub fn createPostgresError(
     message: []const u8,
     options: PostgresErrorOptions,
 ) bun.JSError!JSValue {
-    const opts_obj = JSValue.createEmptyObject(globalObject, 18);
+    const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.ensureStillAlive();
     opts_obj.put(globalObject, jsc.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
     inline for (std.meta.fields(PostgresErrorOptions)) |field| {
@@ -90,6 +92,7 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.InvalidQueryBinding => "ERR_POSTGRES_INVALID_QUERY_BINDING",
         error.InvalidServerKey => "ERR_POSTGRES_INVALID_SERVER_KEY",
         error.InvalidServerSignature => "ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
+        error.InvalidTimeFormat => "ERR_POSTGRES_INVALID_TIME_FORMAT",
         error.MultidimensionalArrayNotSupportedYet => "ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET",
         error.NullsInArrayNotSupportedYet => "ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
         error.Overflow => "ERR_POSTGRES_OVERFLOW",
@@ -108,6 +111,9 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.UnknownFormatCode => "ERR_POSTGRES_UNKNOWN_FORMAT_CODE",
         error.JSError => {
             return globalObject.takeException(error.JSError);
+        },
+        error.JSTerminated => {
+            return globalObject.takeException(error.JSTerminated);
         },
         error.OutOfMemory => {
             // TODO: add binding for creating an out of memory error?

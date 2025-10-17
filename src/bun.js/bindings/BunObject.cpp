@@ -470,7 +470,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     return JSC::JSValue::encode(promise);
 }
 
-extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const Latin1Character* ptr, size_t length);
 extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const char16_t* ptr, size_t length);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -874,6 +874,25 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 #define bunObjectReadableStreamToFormDataCodeGenerator WebCore::readableStreamReadableStreamToFormDataCodeGenerator
 #define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
 #define bunObjectReadableStreamToTextCodeGenerator WebCore::readableStreamReadableStreamToTextCodeGenerator
+
+// LazyProperty wrappers for stdin/stderr/stdout
+static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+}
+
+static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+}
+
+static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+}
 
 #include "BunObject.lut.h"
 

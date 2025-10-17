@@ -1,0 +1,6 @@
+{
+  "name": "transitive-root-link-pkg",
+  "dependencies": {
+    "two-range-deps": "1.0.0"
+  }
+}

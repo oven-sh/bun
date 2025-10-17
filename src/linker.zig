@@ -112,14 +112,10 @@ pub const Linker = struct {
 
         const is_deferred = result.pending_imports.len > 0;
 
-        const import_records = result.ast.import_records.listManaged(linker.allocator);
-        defer {
-            result.ast.import_records = ImportRecord.List.fromList(import_records);
-        }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                for (import_records.items, 0..) |*import_record, record_i| {
+                for (result.ast.import_records.slice(), 0..) |*import_record, record_i| {
                     if (import_record.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 
@@ -146,7 +142,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target, .{ .rewrite_jest_for_tests = linker.options.rewrite_jest_for_tests })) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -163,29 +159,9 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        // TODO: this is technical debt
-                        if (linker.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
-                                import_record.path.text = "test";
-                                continue;
-                            }
-                        }
-
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
 
                             // don't link bun
                             continue;

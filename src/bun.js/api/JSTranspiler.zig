@@ -171,7 +171,7 @@ pub const Config = struct {
                 }
 
                 if (out.isEmpty()) break :tsconfig;
-                this.tsconfig_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
+                this.tsconfig_buf = bun.handleOom(out.toOwnedSlice(allocator));
 
                 // TODO: JSC -> Ast conversion
                 if (TSConfigJSON.parse(
@@ -210,7 +210,7 @@ pub const Config = struct {
                 }
 
                 if (out.isEmpty()) break :macros;
-                this.macros_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
+                this.macros_buf = bun.handleOom(out.toOwnedSlice(allocator));
                 const source = &logger.Source.initPathString("macros.json", this.macros_buf);
                 const json = (jsc.VirtualMachine.get().transpiler.resolver.caches.json.parseJSON(
                     &this.log,
@@ -486,7 +486,7 @@ pub const TransformTask = struct {
         defer arena.deinit();
 
         const allocator = arena.allocator();
-        var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+        var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
         var ast_scope = ast_memory_allocator.enter(allocator);
         defer ast_scope.exit();
 
@@ -540,11 +540,11 @@ pub const TransformTask = struct {
         }
     }
 
-    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) void {
+    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
 
         if (this.log.hasAny() or this.err != null) {
-            const error_value: bun.OOM!JSValue = brk: {
+            const error_value: bun.JSError!JSValue = brk: {
                 if (this.err) |err| {
                     if (!this.log.hasAny()) {
                         break :brk bun.api.BuildMessage.create(
@@ -557,18 +557,18 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            promise.reject(this.global, error_value);
+            try promise.reject(this.global, error_value);
             return;
         }
 
-        finish(this, promise);
+        try finish(this, promise);
     }
 
-    fn finish(this: *TransformTask, promise: *jsc.JSPromise) void {
-        promise.resolve(this.global, this.output_code.transferToJS(this.global));
+    fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
+        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
     }
 
     pub fn deinit(this: *TransformTask) void {
@@ -649,8 +649,12 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         .transpiler = undefined,
         .scan_pass_result = ScanPassResult.init(bun.default_allocator),
     });
-    errdefer bun.destroy(this);
-    errdefer this.arena.deinit();
+    errdefer {
+        this.config.log.deinit();
+        this.arena.deinit();
+        this.ref_count.clearWithoutDestructor();
+        bun.destroy(this);
+    }
 
     const config_arg = if (arguments.len > 0) arguments.ptr[0] else .js_undefined;
     const allocator = this.arena.allocator();
@@ -800,7 +804,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
         this.transpiler.setAllocator(prev_allocator);
         arena.deinit();
     }
-    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
@@ -935,7 +939,7 @@ pub fn transformSync(
 
     const allocator = arena.allocator();
 
-    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
@@ -1010,7 +1014,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.cloneUTF8(entry.key_ptr.*);
+        names[i] = bun.String.fromBytes(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);
@@ -1069,7 +1073,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     var arena = MimallocArena.init();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
-    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 

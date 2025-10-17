@@ -567,9 +567,9 @@ pub fn Visit(
                         // Make it an error to use "arguments" in a static class block
                         p.current_scope.forbid_arguments = true;
 
-                        var list = property.class_static_block.?.stmts.listManaged(p.allocator);
+                        var list = property.class_static_block.?.stmts.moveToListManaged(p.allocator);
                         p.visitStmts(&list, .fn_body) catch unreachable;
-                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).moveFromList(&list);
                         p.popScope();
 
                         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -820,7 +820,9 @@ pub fn Visit(
                                 const enum_stmts = preprocessed_enums.items[preprocessed_enum_i];
                                 preprocessed_enum_i += 1;
                                 try visited.appendSlice(enum_stmts);
-                                p.scope_order_to_visit = p.scope_order_to_visit[1..];
+
+                                const enum_scope_count = p.scopes_in_order_for_enum.get(stmt.loc).?.len;
+                                p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..];
                                 continue;
                             },
                             else => {},
@@ -860,11 +862,11 @@ pub fn Visit(
                                         // Merge the two identifiers back into a single one
                                         p.symbols.items[hoisted_ref.innerIndex()].link = name_ref;
                                     }
-                                    non_fn_stmts.append(stmt) catch bun.outOfMemory();
+                                    bun.handleOom(non_fn_stmts.append(stmt));
                                     continue;
                                 }
 
-                                const gpe = fn_stmts.getOrPut(name_ref) catch bun.outOfMemory();
+                                const gpe = bun.handleOom(fn_stmts.getOrPut(name_ref));
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
                                     index = @as(u32, @intCast(let_decls.items.len));
@@ -889,7 +891,7 @@ pub fn Visit(
                                                 },
                                                 data.func.name.?.loc,
                                             ),
-                                        }) catch bun.outOfMemory();
+                                        }) catch |err| bun.handleOom(err);
                                     }
                                 }
 
@@ -912,12 +914,13 @@ pub fn Visit(
                     before.ensureUnusedCapacity(@as(usize, @intFromBool(let_decls.items.len > 0)) + @as(usize, @intFromBool(var_decls.items.len > 0)) + non_fn_stmts.items.len) catch unreachable;
 
                     if (let_decls.items.len > 0) {
+                        const decls: Decl.List = .moveFromList(&let_decls);
                         before.appendAssumeCapacity(p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = Decl.List.fromList(let_decls),
+                                .decls = decls,
                             },
-                            let_decls.items[0].value.?.loc,
+                            decls.at(0).value.?.loc,
                         ));
                     }
 
@@ -928,12 +931,13 @@ pub fn Visit(
                                 before.appendAssumeCapacity(new);
                             }
                         } else {
+                            const decls: Decl.List = .moveFromList(&var_decls);
                             before.appendAssumeCapacity(p.s(
                                 S.Local{
                                     .kind = .k_var,
-                                    .decls = Decl.List.fromList(var_decls),
+                                    .decls = decls,
                                 },
-                                var_decls.items[0].value.?.loc,
+                                decls.at(0).value.?.loc,
                             ));
                         }
                     }
@@ -1166,7 +1170,10 @@ pub fn Visit(
                             if (prev_stmt.data == .s_local and
                                 local.canMergeWith(prev_stmt.data.s_local))
                             {
-                                prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                prev_stmt.data.s_local.decls.appendSlice(
+                                    p.allocator,
+                                    local.decls.slice(),
+                                ) catch |err| bun.handleOom(err);
                                 continue;
                             }
                         }

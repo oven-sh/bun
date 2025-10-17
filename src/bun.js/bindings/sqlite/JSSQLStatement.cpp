@@ -147,20 +147,19 @@ static WTF::String sqliteString(const char* str)
     return res;
 }
 
-static void sqlite_free_typed_array(void* ctx, void* buf)
+static void sqlite_free_typed_array(void* buf, void* ctx)
 {
     sqlite3_free((void*)buf);
 }
 
-static constexpr int DEFAULT_SQLITE_FLAGS
-    = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+static constexpr int DEFAULT_SQLITE_FLAGS = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 static constexpr unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
 static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
 
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {
     int64_t num = sqlite3_column_int64(stmt, i);
-    return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+    return JSC::jsNumber(num);
 }
 
 static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, unsigned int i)
@@ -561,7 +560,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
     }
     case SQLITE_FLOAT: {
-        return jsDoubleNumber(sqlite3_column_double(stmt, i));
+        return jsNumber(sqlite3_column_double(stmt, i));
     }
     // > Note that the SQLITE_TEXT constant was also used in SQLite version
     // > 2 for a completely different meaning. Software that links against
@@ -1280,7 +1279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSBuffer__bufferFromPointerAndLengthAndDeinit(lexicalGlobalObject, reinterpret_cast<char*>(data), static_cast<unsigned int>(length), data, sqlite_free_typed_array));
+    RELEASE_AND_RETURN(scope, JSBuffer__bufferFromPointerAndLengthAndDeinit(lexicalGlobalObject, reinterpret_cast<char*>(data), static_cast<unsigned int>(length), NULL, sqlite_free_typed_array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1599,7 +1598,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
+        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1860,7 +1859,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
     Base::finishCreation(vm);
 
     // TODO: use LazyClassStructure?
-    auto* instanceObject = JSSQLStatement::create(reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
+    auto* instanceObject = JSSQLStatement::create(static_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
     JSValue proto = instanceObject->getPrototype(globalObject());
 
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

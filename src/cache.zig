@@ -140,7 +140,7 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        return c.readFileWithAllocator(bun.fs_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
+        return c.readFileWithAllocator(bun.default_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
     }
 
     pub fn readFileWithAllocator(

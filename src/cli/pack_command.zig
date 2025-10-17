@@ -293,7 +293,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(allocator, include.glob.slice(), match_path)) {
+                        switch (glob.match(include.glob.slice(), match_path)) {
                             .match => included = true,
                             .negate_no_match, .negate_match => unreachable,
                             else => {},
@@ -310,7 +310,7 @@ pub const PackCommand = struct {
                         const match_path = if (exclude.flags.@"leading **/") entry_name else entry_subpath;
                         // NOTE: These patterns have `!` so `.match` logic is
                         // inverted here
-                        switch (glob.walk.matchImpl(allocator, exclude.glob.slice(), match_path)) {
+                        switch (glob.match(exclude.glob.slice(), match_path)) {
                             .negate_no_match => included = false,
                             else => {},
                         }
@@ -1034,7 +1034,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
+                switch (glob.match(pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1061,7 +1061,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
+            switch (glob.match(pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1103,7 +1103,7 @@ pub const PackCommand = struct {
                 if (pattern.flags.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.flags.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob.slice(), match_path)) {
+                switch (glob.match(pattern.glob.slice(), match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob.slice();
@@ -2518,7 +2518,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = bun.handleOom(String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}));
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();
@@ -2527,7 +2527,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
+        const integrity_value = try String.createUTF8ForJS(global, base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2591,7 +2591,7 @@ pub const bindings = struct {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
                         const pathname_w = archive_entry.pathnameW();
                         const list = std.ArrayList(u8).init(bun.default_allocator);
-                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch bun.outOfMemory();
+                        var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, pathname_w));
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);
                     } else String.cloneUTF8(archive_entry.pathname());
@@ -2607,7 +2607,7 @@ pub const bindings = struct {
 
                     if (kind == .file) {
                         const size: usize = @intCast(archive_entry.size());
-                        read_buf.resize(size) catch bun.outOfMemory();
+                        bun.handleOom(read_buf.resize(size));
                         defer read_buf.clearRetainingCapacity();
 
                         const read = archive.readData(read_buf.items);
@@ -2623,7 +2623,7 @@ pub const bindings = struct {
                         entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
-                    entries_info.append(entry_info) catch bun.outOfMemory();
+                    bun.handleOom(entries_info.append(entry_info));
                 },
             }
         }
@@ -2658,7 +2658,7 @@ pub const bindings = struct {
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
         result.put(global, "shasum", shasum_str.toJS(global));
-        result.put(global, "integrity", integrity_str.toJS(global));
+        result.put(global, "integrity", integrity_value);
 
         return result;
     }

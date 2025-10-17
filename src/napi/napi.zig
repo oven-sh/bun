@@ -324,9 +324,11 @@ pub export fn napi_create_array_with_length(env_: napi_env, length: usize, resul
         return env.invalidArg();
     };
 
-    // JSC createEmptyArray takes u32
-    // Node and V8 convert out-of-bounds array sizes to 0
-    const len = std.math.cast(u32, length) orelse 0;
+    // https://github.com/nodejs/node/blob/14c68e3b536798e25f810ed7ae180a5cde9e47d3/deps/v8/src/api/api.cc#L8163-L8174
+    // size_t immediately cast to int as argument to Array::New, then min 0
+    const len_i64: i64 = @bitCast(length);
+    const len_i32: i32 = @truncate(len_i64);
+    const len: u32 = if (len_i32 > 0) @bitCast(len_i32) else 0;
 
     const array = jsc.JSValue.createEmptyArray(env.toJS(), len) catch return env.setLastError(.pending_exception);
     array.ensureStillAlive();
@@ -542,7 +544,7 @@ pub export fn napi_get_prototype(env_: napi_env, object_: napi_value, result_: ?
 pub extern fn napi_set_element(env_: napi_env, object_: napi_value, index: c_uint, value_: napi_value) napi_status;
 pub extern fn napi_has_element(env_: napi_env, object_: napi_value, index: c_uint, result_: ?*bool) napi_status;
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
-pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(env_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_array", .{});
@@ -583,8 +585,7 @@ pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_va
         return env.invalidArg();
     };
     const lhs, const rhs = .{ lhs_.get(), rhs_.get() };
-    // TODO: this needs to be strictEquals not isSameValue (NaN !== NaN and -0 === 0)
-    result.* = lhs.isSameValue(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
+    result.* = lhs.isStrictEqual(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
@@ -831,7 +832,7 @@ pub export fn napi_get_typedarray_info(
     maybe_length: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize,
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_typedarray_info", .{});
     const env = env_ orelse {
@@ -858,7 +859,10 @@ pub export fn napi_get_typedarray_info(
         arraybuffer.set(env, JSValue.c(jsc.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), typedarray.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
-        byte_offset.* = array_buffer.offset;
+        // `jsc.ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+        //byte_offset.* = array_buffer.offset;
+        byte_offset.* = 0;
     return env.ok();
 }
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
@@ -880,7 +884,7 @@ pub export fn napi_get_dataview_info(
     maybe_bytelength: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize,
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_dataview_info", .{});
     const env = env_ orelse {
@@ -899,7 +903,10 @@ pub export fn napi_get_dataview_info(
         arraybuffer.set(env, JSValue.c(jsc.C.JSObjectGetTypedArrayBuffer(env.toJS().ref(), dataview.asObjectRef(), null)));
 
     if (maybe_byte_offset) |byte_offset|
-        byte_offset.* = array_buffer.offset;
+        // `jsc.ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+        //byte_offset.* = array_buffer.offset;
+        byte_offset.* = 0;
 
     return env.ok();
 }
@@ -936,11 +943,11 @@ pub export fn napi_resolve_deferred(env_: napi_env, deferred: napi_deferred, res
     const env = env_ orelse {
         return envIsNull();
     };
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
     const resolution = resolution_.get();
     var prom = deferred.get();
-    prom.resolve(env.toJS(), resolution);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    prom.resolve(env.toJS(), resolution) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, rejection_: napi_value) napi_status {
@@ -948,11 +955,11 @@ pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, reje
     const env = env_ orelse {
         return envIsNull();
     };
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
     const rejection = rejection_.get();
     var prom = deferred.get();
-    prom.reject(env.toJS(), rejection);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    prom.reject(env.toJS(), rejection) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_is_promise(env_: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
@@ -1572,7 +1579,7 @@ pub const ThreadSafeFunction = struct {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSExecutionTerminated!void {
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSTerminated!void {
         const env = this.env;
         if (!is_first) {
             try this.event_loop.drainMicrotasks();
@@ -1625,7 +1632,7 @@ pub const ThreadSafeFunction = struct {
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
-        this.queue.data.writeItem(ctx) catch bun.outOfMemory();
+        bun.handleOom(this.queue.data.writeItem(ctx));
         this.scheduleDispatch();
         return @intFromEnum(NapiStatus.ok);
     }
@@ -2459,7 +2466,7 @@ pub const NapiFinalizerTask = struct {
     const AnyTask = jsc.AnyTask.New(@This(), runOnJSThread);
 
     pub fn init(finalizer: Finalizer) *NapiFinalizerTask {
-        const finalizer_task = bun.default_allocator.create(NapiFinalizerTask) catch bun.outOfMemory();
+        const finalizer_task = bun.handleOom(bun.default_allocator.create(NapiFinalizerTask));
         finalizer_task.* = .{
             .finalizer = finalizer,
         };

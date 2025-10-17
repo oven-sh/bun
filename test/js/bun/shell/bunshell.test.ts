@@ -195,6 +195,28 @@ describe("bunshell", () => {
     test("cmd subst", async () => {
       await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run();
     });
+
+    test.each([
+      { value: undefined, expectedQuiet: true, description: "quiet()" },
+      { value: true, expectedQuiet: true, description: "quiet(true)" },
+      { value: false, expectedQuiet: false, description: "quiet(false)" },
+    ])("$description suppresses output: $expectedQuiet", async ({ value, expectedQuiet }) => {
+      // Test with spawned process to check actual stdout
+      const quietArg = value === undefined ? "" : value.toString();
+      const { stdout, stderr } = Bun.spawnSync(
+        [BUN, "-e", `await Bun.$\`echo "test output"\`.quiet(${quietArg === undefined ? "" : quietArg})`],
+        {
+          env: { BUN_DEBUG_QUIET_LOGS: "1" },
+        },
+      );
+
+      if (expectedQuiet) {
+        expect(stdout.toString()).toBe("");
+      } else {
+        expect(stdout.toString()).toBe("test output\n");
+      }
+      expect(stderr.toString()).toBe("");
+    });
   });
 
   test("failing stmt edgecase", async () => {
@@ -754,7 +776,7 @@ booga"
           .split("\n")
           .filter(s => s.length > 0)
           .sort(),
-      ).toEqual(temp_files.sort());
+      ).toEqual([...temp_files, "foo", "lmao.txt"].sort());
     });
 
     test("cd -", async () => {

@@ -19,6 +19,9 @@ pub const LinkerContext = struct {
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
+    /// We may need to refer to the "__promiseAll" runtime symbol
+    promise_all_runtime_ref: Ref = Ref.None,
+
     options: LinkerOptions = .{},
 
     loop: EventLoop,
@@ -151,9 +154,7 @@ pub const LinkerContext = struct {
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
-            if (quoted_source_contents.take()) |old| {
-                old.deinit();
-            }
+            quoted_source_contents.reset();
 
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             if (!loader.canHaveSourceMap()) {
@@ -162,8 +163,9 @@ pub const LinkerContext = struct {
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
-            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
-            quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
+            bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
+            var mutableOwned = mutable.toDefaultOwned();
+            quoted_source_contents.* = mutableOwned.toOptional();
         }
     };
 
@@ -211,13 +213,14 @@ pub const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
+        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys(), &this.parse_graph.entry_point_original_names);
         bundle.dynamic_import_entry_points.deinit();
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+        this.promise_all_runtime_ref = runtime_named_exports.get("__promiseAll").?.ref;
 
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
@@ -304,11 +307,11 @@ pub const LinkerContext = struct {
 
             for (server_source_indices.slice()) |html_import| {
                 const source = &input_files[html_import];
-                const source_index = map.get(source.path.hashKey()) orelse {
+                const source_index = map.get(source.path.text) orelse {
                     @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 };
 
-                html_source_indices.push(this.allocator(), source_index) catch bun.outOfMemory();
+                bun.handleOom(html_source_indices.append(this.allocator(), source_index));
 
                 // S.LazyExport is a call to __jsonParse.
                 const original_ref = parts[html_import]
@@ -332,10 +335,15 @@ pub const LinkerContext = struct {
                     actual_ref,
                     1,
                     Index.runtime,
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
         }
     }
+
+    const LinkError = OOM || error{
+        BuildFailed,
+        ImportResolutionFailed,
+    };
 
     pub noinline fn link(
         this: *LinkerContext,
@@ -343,7 +351,7 @@ pub const LinkerContext = struct {
         entry_points: []Index,
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
-    ) ![]Chunk {
+    ) LinkError![]Chunk {
         try this.load(
             bundle,
             entry_points,
@@ -361,10 +369,8 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
-        // Validate top-level await for all files first, like esbuild does.
-        // This must be done before scanImportsAndExports to ensure async
-        // status is properly propagated through cyclic imports.
-        {
+        // Validate top-level await for all files first.
+        if (bundle.has_any_top_level_await_modules) {
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
             const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
             const tla_checks = this.parse_graph.ast.items(.tla_check);
@@ -389,6 +395,9 @@ pub const LinkerContext = struct {
 
                 _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
             }
+
+            // after validation propagate async through all importers.
+            try this.graph.propagateAsyncDependencies();
         }
 
         try this.scanImportsAndExports();
@@ -409,6 +418,10 @@ pub const LinkerContext = struct {
         }
 
         const chunks = try this.computeChunks(bundle.unique_key);
+
+        if (this.log.hasErrors()) {
+            return error.BuildFailed;
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -438,32 +451,32 @@ pub const LinkerContext = struct {
     pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
     pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
 
-    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
+    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) bun.OOM!struct { Ref, u32 } {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
-        const part_index = this.graph.addPartToFile(source_index, .{
-            .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
+        const part_index = try this.graph.addPartToFile(source_index, .{
+            .declared_symbols = try js_ast.DeclaredSymbol.List.fromSlice(
                 this.allocator(),
                 &[_]js_ast.DeclaredSymbol{
                     .{ .ref = ref, .is_top_level = true },
                 },
-            ) catch unreachable,
+            ),
             .can_be_removed_if_unused = true,
-        }) catch unreachable;
+        });
 
         try this.graph.generateSymbolImportAndUse(source_index, part_index, module_ref, 1, Index.init(source_index));
         var top_level = &this.graph.meta.items(.top_level_symbol_to_parts_overlay)[source_index];
-        var parts_list = this.allocator().alloc(u32, 1) catch unreachable;
+        var parts_list = try this.allocator().alloc(u32, 1);
         parts_list[0] = part_index;
 
-        top_level.put(this.allocator(), ref, BabyList(u32).init(parts_list)) catch unreachable;
+        try top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list));
 
         var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
-        resolved_exports.put(this.allocator(), alias, ExportData{
+        try resolved_exports.put(this.allocator(), alias, ExportData{
             .data = ImportTracker{
                 .source_index = Index.init(source_index),
                 .import_ref = ref,
             },
-        }) catch unreachable;
+        });
         return .{ ref, part_index };
     }
 
@@ -497,7 +510,7 @@ pub const LinkerContext = struct {
                                 this.allocator(),
                                 "Cannot import a \".{s}\" file into a CSS file",
                                 .{@tagName(loader)},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         },
                         .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
@@ -545,7 +558,7 @@ pub const LinkerContext = struct {
         return &c.parse_graph.input_files.items(.source)[index];
     }
 
-    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
+    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) OOM!void {
         const trace = bun.perf.trace("Bundler.treeShakingAndCodeSplitting");
         defer trace.end();
 
@@ -708,7 +721,7 @@ pub const LinkerContext = struct {
                 try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -728,7 +741,7 @@ pub const LinkerContext = struct {
                 var path = sources[index].path;
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -748,12 +761,12 @@ pub const LinkerContext = struct {
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
             j.pushStatic(
-                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
+                quoted_source_map_contents[source_indices_for_contents[0]].get() orelse "",
             );
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                j.pushStatic(quoted_source_map_contents[index].get() orelse "");
             }
         }
         j.pushStatic(
@@ -840,7 +853,7 @@ pub const LinkerContext = struct {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         if (source.path.text.ptr == source.path.pretty.ptr) {
-                            source.path = c.pathWithPrettyInitialized(source.path) catch bun.outOfMemory();
+                            source.path = bun.handleOom(c.pathWithPrettyInitialized(source.path));
                         }
                         source.path.assertPrettyIsValid();
 
@@ -932,7 +945,7 @@ pub const LinkerContext = struct {
         import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
         ast_import_records: []const bun.BabyList(ImportRecord),
-    ) bun.OOM!js_ast.TlaCheck {
+    ) OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -981,9 +994,9 @@ pub const LinkerContext = struct {
                                 const source = &input_files[other_source_index];
                                 tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
-                                    .text = std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
+                                    .text = bun.handleOom(std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path})),
                                     .location = .initOrNull(source, parent_result_tla_keyword),
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                                 break;
                             }
 
@@ -1029,32 +1042,129 @@ pub const LinkerContext = struct {
     }
 
     pub const StmtList = struct {
-        inside_wrapper_prefix: std.ArrayList(Stmt),
-        outside_wrapper_prefix: std.ArrayList(Stmt),
-        inside_wrapper_suffix: std.ArrayList(Stmt),
+        const InsideWrapperPrefix = struct {
+            allocator: std.mem.Allocator,
+            stmts: std.ArrayListUnmanaged(Stmt),
 
-        all_stmts: std.ArrayList(Stmt),
+            sync_dependencies_end: usize,
+
+            // if true it will exist at `sync_dependencies_end`
+            has_async_dependency: bool,
+
+            pub fn init(alloc: std.mem.Allocator) InsideWrapperPrefix {
+                return .{ .stmts = .{}, .allocator = alloc, .sync_dependencies_end = 0, .has_async_dependency = false };
+            }
+
+            pub fn deinit(this: *InsideWrapperPrefix) void {
+                this.stmts.deinit(this.allocator);
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn reset(this: *InsideWrapperPrefix) void {
+                this.stmts.clearRetainingCapacity();
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn appendNonDependency(this: *InsideWrapperPrefix, stmt: Stmt) OOM!void {
+                try this.stmts.append(this.allocator, stmt);
+            }
+
+            pub fn appendNonDependencySlice(this: *InsideWrapperPrefix, stmts: []const Stmt) OOM!void {
+                try this.stmts.appendSlice(this.allocator, stmts);
+            }
+
+            pub fn appendSyncDependency(this: *InsideWrapperPrefix, call_expr: Expr) OOM!void {
+                try this.stmts.insert(this.allocator, this.sync_dependencies_end, Stmt.alloc(S.SExpr, .{ .value = call_expr }, call_expr.loc));
+                this.sync_dependencies_end += 1;
+            }
+
+            pub fn appendAsyncDependency(this: *InsideWrapperPrefix, call_expr: Expr, promise_all_ref: Ref) OOM!void {
+                if (!this.has_async_dependency) {
+                    this.has_async_dependency = true;
+                    try this.stmts.insert(
+                        this.allocator,
+                        this.sync_dependencies_end,
+                        Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = call_expr }, .Empty) }, .Empty),
+                    );
+                    return;
+                }
+
+                const first_dep_call_expr = this.stmts.items[this.sync_dependencies_end].data.s_expr.value.data.e_await.value;
+                const call = first_dep_call_expr.data.e_call;
+
+                if (call.target.data.e_identifier.ref.eql(promise_all_ref)) {
+                    // `await __promiseAll` already in place, append to the array argument
+                    try call.args.at(0).data.e_array.items.append(this.allocator, call_expr);
+                } else {
+                    // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
+
+                    const promise_all = Expr.init(E.Identifier, .{ .ref = promise_all_ref }, .Empty);
+
+                    var items: BabyList(Expr) = try .initCapacity(this.allocator, 2);
+                    items.appendSliceAssumeCapacity(&.{ first_dep_call_expr, call_expr });
+
+                    var args: BabyList(Expr) = try .initCapacity(this.allocator, 1);
+                    args.appendAssumeCapacity(Expr.init(E.Array, .{ .items = items }, .Empty));
+
+                    const promise_all_call = Expr.init(E.Call, .{ .target = promise_all, .args = args }, .Empty);
+
+                    // replace the `await init_` expr with `await __promiseAll`
+                    this.stmts.items[this.sync_dependencies_end] = Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = promise_all_call }, .Empty) }, .Empty);
+                }
+            }
+        };
+
+        allocator: std.mem.Allocator,
+        inside_wrapper_prefix: InsideWrapperPrefix,
+        outside_wrapper_prefix: std.ArrayListUnmanaged(Stmt),
+        inside_wrapper_suffix: std.ArrayListUnmanaged(Stmt),
+        all_stmts: std.ArrayListUnmanaged(Stmt),
 
         pub fn reset(this: *StmtList) void {
-            this.inside_wrapper_prefix.clearRetainingCapacity();
+            this.inside_wrapper_prefix.reset();
             this.outside_wrapper_prefix.clearRetainingCapacity();
             this.inside_wrapper_suffix.clearRetainingCapacity();
             this.all_stmts.clearRetainingCapacity();
         }
 
         pub fn deinit(this: *StmtList) void {
-            this.inside_wrapper_prefix.deinit();
-            this.outside_wrapper_prefix.deinit();
-            this.inside_wrapper_suffix.deinit();
-            this.all_stmts.deinit();
+            this.inside_wrapper_prefix.deinit(this.allocator);
+            this.outside_wrapper_prefix.deinit(this.allocator);
+            this.inside_wrapper_suffix.deinit(this.allocator);
+            this.all_stmts.deinit(this.allocator);
         }
 
         pub fn init(alloc: std.mem.Allocator) StmtList {
             return .{
-                .inside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .outside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .inside_wrapper_suffix = std.ArrayList(Stmt).init(alloc),
-                .all_stmts = std.ArrayList(Stmt).init(alloc),
+                .allocator = alloc,
+                .inside_wrapper_prefix = .init(alloc),
+                .outside_wrapper_prefix = .{},
+                .inside_wrapper_suffix = .{},
+                .all_stmts = .{},
+            };
+        }
+
+        const List = enum {
+            outside_wrapper_prefix,
+            inside_wrapper_suffix,
+            all_stmts,
+        };
+
+        pub fn appendSlice(this: *StmtList, list: List, stmts: []const Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.appendSlice(this.allocator, stmts),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.appendSlice(this.allocator, stmts),
+                .all_stmts => this.all_stmts.appendSlice(this.allocator, stmts),
+            };
+        }
+
+        pub fn append(this: *StmtList, list: List, stmt: Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.append(this.allocator, stmt),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.append(this.allocator, stmt),
+                .all_stmts => this.all_stmts.append(this.allocator, stmt),
             };
         }
     };
@@ -1077,7 +1187,7 @@ pub const LinkerContext = struct {
             }
 
             // Otherwise, replace this statement with a call to "require()"
-            stmts.inside_wrapper_prefix.append(
+            stmts.inside_wrapper_prefix.appendNonDependency(
                 Stmt.alloc(
                     S.Local,
                     S.Local{
@@ -1120,7 +1230,7 @@ pub const LinkerContext = struct {
             .none => {},
             .cjs => {
                 // Replace the statement with a call to "require()" if this module is not wrapped
-                try stmts.inside_wrapper_prefix.append(
+                try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
                             alloc,
@@ -1152,31 +1262,18 @@ pub const LinkerContext = struct {
                 }
 
                 // Replace the statement with a call to "init()"
-                const value: Expr = brk: {
-                    const default = Expr.init(E.Call, .{
-                        .target = Expr.initIdentifier(
-                            wrapper_ref,
-                            loc,
-                        ),
-                    }, loc);
+                const init_call = Expr.init(E.Call, .{
+                    .target = Expr.initIdentifier(
+                        wrapper_ref,
+                        loc,
+                    ),
+                }, loc);
 
-                    if (other_flags.is_async_or_has_async_dependency) {
-                        // This currently evaluates sibling dependencies in serial instead of in
-                        // parallel, which is incorrect. This should be changed to store a promise
-                        // and await all stored promises after all imports but before any code.
-                        break :brk Expr.init(E.Await, .{
-                            .value = default,
-                        }, loc);
-                    }
-
-                    break :brk default;
-                };
-
-                try stmts.inside_wrapper_prefix.append(
-                    Stmt.alloc(S.SExpr, .{
-                        .value = value,
-                    }, loc),
-                );
+                if (other_flags.is_async_or_has_async_dependency) {
+                    try stmts.inside_wrapper_prefix.appendAsyncDependency(init_call, c.promise_all_runtime_ref);
+                } else {
+                    try stmts.inside_wrapper_prefix.appendSyncDependency(init_call);
+                }
             },
         }
 
@@ -1346,7 +1443,7 @@ pub const LinkerContext = struct {
                             break :ref ref;
                         };
 
-                        const entry = local_css_names.getOrPut(ref) catch bun.outOfMemory();
+                        const entry = bun.handleOom(local_css_names.getOrPut(ref));
                         if (entry.found_existing) continue;
 
                         const source = all_sources[ref.source_index];
@@ -1360,8 +1457,8 @@ pub const LinkerContext = struct {
                             false,
                         );
 
-                        const final_generated_name = std.fmt.allocPrint(c.allocator(), "{s}_{s}", .{ original_name, path_hash }) catch bun.outOfMemory();
-                        c.mangled_props.put(c.allocator(), ref, final_generated_name) catch bun.outOfMemory();
+                        const final_generated_name = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{s}_{s}", .{ original_name, path_hash }));
+                        bun.handleOom(c.mangled_props.put(c.allocator(), ref, final_generated_name));
                     }
                 }
             }
@@ -1761,7 +1858,7 @@ pub const LinkerContext = struct {
             }
 
             const prev_source_index = tracker.source_index.get();
-            c.cycle_detector.append(tracker) catch bun.outOfMemory();
+            bun.handleOom(c.cycle_detector.append(tracker));
 
             // Resolve the import by one step
             const advanced = c.advanceImportTracker(&tracker);
@@ -1866,7 +1963,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun, .{})) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -2051,7 +2148,7 @@ pub const LinkerContext = struct {
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
                 const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_bake_dev) brk: {
-                    const dependencies = c.allocator().alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
+                    const dependencies = bun.handleOom(c.allocator().alloc(js_ast.Dependency, common_js_parts.len));
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
                             .part_index = part,
@@ -2061,7 +2158,7 @@ pub const LinkerContext = struct {
                     break :brk dependencies;
                 } else &.{};
                 var symbol_uses: Part.SymbolUseMap = .empty;
-                symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
+                bun.handleOom(symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }));
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
@@ -2075,7 +2172,7 @@ pub const LinkerContext = struct {
                                 .{ .ref = c.graph.ast.items(.wrapper_ref)[source_index], .is_top_level = true },
                             },
                         ) catch unreachable,
-                        .dependencies = Dependency.List.init(dependencies),
+                        .dependencies = Dependency.List.fromOwnedSlice(dependencies),
                     },
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
@@ -2104,22 +2201,57 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
+
+                // Count async dependencies to determine if we need __promiseAll
+                var async_import_count: usize = 0;
+                const import_records = c.graph.ast.items(.import_records)[source_index].slice();
+                const meta_flags = c.graph.meta.items(.flags);
+
+                for (import_records) |record| {
+                    if (!record.source_index.isValid()) {
+                        continue;
+                    }
+                    const other_flags = meta_flags[record.source_index.get()];
+                    if (other_flags.is_async_or_has_async_dependency) {
+                        async_import_count += 1;
+                        if (async_import_count >= 2) {
+                            break;
+                        }
+                    }
+                }
+
+                const needs_promise_all = async_import_count >= 2;
+
                 const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
 
-                // generate a dummy part that depends on the "__esm" symbol
-                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
-                for (esm_parts, dependencies) |part, *esm| {
-                    esm.* = .{
+                const promise_all_parts = if (needs_promise_all and wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
+                    c.topLevelSymbolsToPartsForRuntime(c.promise_all_runtime_ref)
+                else
+                    &.{};
+
+                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
+                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len) catch unreachable;
+                var dep_index: usize = 0;
+                for (esm_parts) |part| {
+                    dependencies[dep_index] = .{
                         .part_index = part,
                         .source_index = Index.runtime,
                     };
+                    dep_index += 1;
+                }
+                for (promise_all_parts) |part| {
+                    dependencies[dep_index] = .{
+                        .part_index = part,
+                        .source_index = Index.runtime,
+                    };
+                    dep_index += 1;
                 }
 
                 var symbol_uses: Part.SymbolUseMap = .empty;
-                symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
+                bun.handleOom(symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }));
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
@@ -2127,7 +2259,7 @@ pub const LinkerContext = struct {
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator(), &[_]js_ast.DeclaredSymbol{
                             .{ .ref = wrapper_ref, .is_top_level = true },
                         }) catch unreachable,
-                        .dependencies = Dependency.List.init(dependencies),
+                        .dependencies = Dependency.List.fromOwnedSlice(dependencies),
                     },
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
@@ -2139,7 +2271,18 @@ pub const LinkerContext = struct {
                         c.esm_runtime_ref,
                         1,
                         Index.runtime,
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
+
+                    // Only mark __promiseAll as used if we have multiple async dependencies
+                    if (needs_promise_all) {
+                        c.graph.generateSymbolImportAndUse(
+                            source_index,
+                            part_index,
+                            c.promise_all_runtime_ref,
+                            1,
+                            Index.runtime,
+                        ) catch |err| bun.handleOom(err);
+                    }
                 }
             },
             else => {},
@@ -2280,7 +2423,7 @@ pub const LinkerContext = struct {
         imports_to_bind: *RefImportData,
         source_index: Index.Int,
     ) void {
-        var named_imports = named_imports_ptr.clone(c.allocator()) catch bun.outOfMemory();
+        var named_imports = bun.handleOom(named_imports_ptr.clone(c.allocator()));
         defer named_imports_ptr.* = named_imports;
 
         const Sorter = struct {
@@ -2316,7 +2459,7 @@ pub const LinkerContext = struct {
                         c.allocator(),
                         import_ref,
                         .{
-                            .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
+                            .re_exports = bun.BabyList(js_ast.Dependency).fromOwnedSlice(re_exports.items),
                             .data = .{
                                 .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
@@ -2335,7 +2478,7 @@ pub const LinkerContext = struct {
                         c.allocator(),
                         import_ref,
                         .{
-                            .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
+                            .re_exports = bun.BabyList(js_ast.Dependency).fromOwnedSlice(re_exports.items),
                             .data = .{
                                 .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
@@ -2498,7 +2641,7 @@ pub const LinkerContext = struct {
         try pieces.append(OutputPiece.init(output, OutputPiece.Query.none));
 
         return .{
-            .pieces = bun.BabyList(Chunk.OutputPiece).init(pieces.items),
+            .pieces = bun.BabyList(Chunk.OutputPiece).fromOwnedSlice(pieces.items),
         };
     }
 };
@@ -2538,6 +2681,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
+const OOM = bun.OOM;
 const Output = bun.Output;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;

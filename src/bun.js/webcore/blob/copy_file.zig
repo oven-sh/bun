@@ -44,7 +44,7 @@ pub const CopyFile = struct {
         });
         store.ref();
         source_store.ref();
-        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file) catch bun.outOfMemory();
+        return bun.handleOom(CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file));
     }
 
     const linux = std.os.linux;
@@ -61,7 +61,7 @@ pub const CopyFile = struct {
         bun.destroy(this);
     }
 
-    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) void {
+    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
@@ -76,18 +76,18 @@ pub const CopyFile = struct {
         if (this.store) |store| {
             store.deref();
         }
-        promise.reject(globalThis, instance);
+        try promise.reject(globalThis, instance);
     }
 
-    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) void {
+    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         this.source_store.?.deref();
 
         if (this.system_error != null) {
-            this.reject(promise);
+            try this.reject(promise);
             return;
         }
 
-        promise.resolve(this.globalThis, jsc.JSValue.jsNumberFromUint64(this.read_len));
+        try promise.resolve(this.globalThis, .jsNumberFromUint64(this.read_len));
     }
 
     pub fn run(this: *CopyFile) void {
@@ -593,7 +593,7 @@ pub const CopyFileWindows = struct {
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
         pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
-            read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();
+            bun.handleOom(read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024));
 
             return read(read_write_loop, this);
         }
@@ -1003,7 +1003,7 @@ pub const CopyFileWindows = struct {
         event_loop.enter();
         defer event_loop.exit();
         this.deinit();
-        promise.reject(globalThis, err_instance);
+        promise.reject(globalThis, err_instance) catch {}; // TODO: properly propagate exception upwards
     }
 
     fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
@@ -1057,7 +1057,7 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
+        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written)) catch {}; // TODO: properly propagate exception upwards
     }
 
     fn truncate(this: *CopyFileWindows) void {

@@ -123,6 +123,7 @@ pub fn LinearFifo(
         pub fn ensureTotalCapacity(self: *Self, size: usize) !void {
             if (self.buf.len >= size) return;
             if (buffer_type == .Dynamic) {
+                self.realign();
                 const new_size = if (powers_of_two) math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory else size;
                 const buf = try self.allocator.alloc(T, new_size);
                 if (self.count > 0) {

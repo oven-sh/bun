@@ -121,10 +121,18 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     case JSC::ErrorType::SyntaxError:
         prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
         break;
-    default: {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+    case JSC::ErrorType::EvalError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_evalErrorStructure.prototype(globalObject));
         break;
-    }
+    case JSC::ErrorType::ReferenceError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_referenceErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::AggregateError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_aggregateErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SuppressedError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_suppressedErrorStructure.prototype(globalObject));
+        break;
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
@@ -271,7 +279,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
             if (str->contains('\'')) {
                 builder.append('"');
                 if (str->is8Bit()) {
-                    const auto span = str->span<LChar>();
+                    const auto span = str->span<Latin1Character>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -420,7 +428,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
-                const auto span = view.span<LChar>();
+                const auto span = view.span<Latin1Character>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -590,10 +598,10 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
 {
-    auto arg_name = std::span<const LChar>(arg_name_string->ptr, arg_name_string->len);
+    auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto expected_type = std::span<const LChar>(expected_type_string->ptr, expected_type_string->len);
+    auto expected_type = std::span<const Latin1Character>(expected_type_string->ptr, expected_type_string->len);
     ASSERT(WTF::charactersAreAllASCII(expected_type));
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value);
@@ -1602,7 +1610,6 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {
@@ -2501,6 +2508,20 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
     case ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+    case ErrorCode::ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS, "The ALPNCallback and ALPNProtocols TLS options are mutually exclusive"_s));
+    case ErrorCode::ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS, "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_AUTHORITY:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_AUTHORITY, ":authority header is required for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_SCHEME:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_SCHEME, "The :scheme header is forbidden for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_PATH:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_PATH, "The :path header is forbidden for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES, "Too many invalid HTTP/2 frames"_s));
+    case ErrorCode::ERR_HTTP2_PING_CANCEL:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled"_s));
 
     default: {
         break;

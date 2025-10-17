@@ -67,7 +67,7 @@ pub const WorkPool = jsc.WorkPool;
 pub const Pipe = [2]bun.FileDescriptor;
 pub const SmolList = shell.SmolList;
 
-pub const GlobWalker = Glob.BunGlobWalkerZ;
+pub const GlobWalker = bun.glob.BunGlobWalkerZ;
 
 pub const stdin_no = 0;
 pub const stdout_no = 1;
@@ -143,7 +143,7 @@ pub const CowFd = struct {
     const debug = bun.Output.scoped(.CowFd, .hidden);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
-        const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
+        const this = bun.handleOom(bun.default_allocator.create(CowFd));
         this.* = .{
             .__fd = fd,
         };
@@ -417,10 +417,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinit(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinit(bun.default_allocator);
                 }
             }
 
@@ -441,7 +441,7 @@ pub const Interpreter = struct {
             io: IO,
             kind: Kind,
         ) Maybe(*ShellExecEnv) {
-            const duped = alloc.create(ShellExecEnv) catch bun.outOfMemory();
+            const duped = bun.handleOom(alloc.create(ShellExecEnv));
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
                 .err => |err| return .{ .err = err },
@@ -480,8 +480,8 @@ pub const Interpreter = struct {
                 .cmd_local_env = EnvMap.init(alloc),
                 .export_env = this.export_env.clone(),
 
-                .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
-                .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
+                .__prev_cwd = bun.handleOom(this.__prev_cwd.clone()),
+                .__cwd = bun.handleOom(this.__cwd.clone()),
                 // TODO probably need to use os.dup here
                 .cwd_fd = dupedfd,
                 .__alloc_scope = alloc_scope,
@@ -562,10 +562,10 @@ pub const Interpreter = struct {
             _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
-            this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
+            bun.handleOom(this.__prev_cwd.appendSlice(this.__cwd.items[0..]));
 
             this.__cwd.clearRetainingCapacity();
-            this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch bun.outOfMemory();
+            bun.handleOom(this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]));
 
             if (comptime bun.Environment.allow_assert) {
                 assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
@@ -605,7 +605,7 @@ pub const Interpreter = struct {
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
-                    bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+                    bun.handleOom(bufio.appendFmt(bun.default_allocator, fmt, args));
                     return ctx.parent.childDone(ctx, 1);
                 },
                 // FIXME: This is not correct? This would just make the entire shell hang I think?
@@ -707,15 +707,22 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
-        const js_value = jsc.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
 
+        const js_value = Bun__createShellInterpreter(
+            globalThis,
+            interpreter,
+            parsed_shell_script_js,
+            resolve,
+            reject,
+        );
         interpreter.this_jsvalue = js_value;
-        jsc.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
-        jsc.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
+
         interpreter.keep_alive.ref(globalThis.bunVM());
         bun.analytics.Features.shell += 1;
         return js_value;
     }
+
+    extern fn Bun__createShellInterpreter(globalThis: *jsc.JSGlobalObject, ptr: *Interpreter, parsed_shell_script: JSValue, resolve: JSValue, reject: JSValue) callconv(jsc.conv) JSValue;
 
     pub fn parse(
         arena_allocator: std.mem.Allocator,
@@ -814,8 +821,8 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
-        cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
+        var cwd_arr = bun.handleOom(std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1));
+        bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
         if (comptime bun.Environment.allow_assert) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
@@ -829,7 +836,7 @@ pub const Interpreter = struct {
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
 
-        const interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
+        const interpreter = bun.handleOom(allocator.create(ThisInterpreter));
         interpreter.* = .{
             .command_ctx = ctx,
             .event_loop = event_loop,
@@ -844,7 +851,7 @@ pub const Interpreter = struct {
                 .export_env = export_env,
 
                 .__cwd = cwd_arr,
-                .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
+                .__prev_cwd = bun.handleOom(cwd_arr.clone()),
                 .cwd_fd = cwd_fd,
 
                 .__alloc_scope = undefined,
@@ -1170,9 +1177,6 @@ pub const Interpreter = struct {
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
@@ -1181,10 +1185,10 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
@@ -1192,9 +1196,6 @@ pub const Interpreter = struct {
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
@@ -1245,12 +1246,12 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
             var value = object_iter.value;
             if (value.isUndefined()) continue;
 
             const value_str = value.getZigString(globalThis);
-            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
             const valueref = EnvStr.initRefCounted(slice);
@@ -1306,9 +1307,9 @@ pub const Interpreter = struct {
 
     pub fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
         if (this.vm_args_utf8.items.len != argv.len) {
-            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
+            bun.handleOom(this.vm_args_utf8.ensureTotalCapacity(argv.len));
             for (argv) |arg| {
-                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+                bun.handleOom(this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)));
             }
         }
         return this.vm_args_utf8.items[idx].slice();
@@ -1395,9 +1396,9 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         pub fn create(this: @This(), comptime Ty: type) *Ty {
             if (comptime bun.Environment.enableAllocScopes) {
-                return this.allocator().create(Ty) catch bun.outOfMemory();
+                return bun.handleOom(this.allocator().create(Ty));
             }
-            return bun.default_allocator.create(Ty) catch bun.outOfMemory();
+            return bun.handleOom(bun.default_allocator.create(Ty));
         }
 
         pub fn destroy(this: @This(), ptr: anytype) void {
@@ -1957,7 +1958,6 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
     return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }
 
-const Glob = @import("../glob.zig");
 const builtin = @import("builtin");
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 

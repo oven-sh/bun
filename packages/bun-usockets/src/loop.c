@@ -68,8 +68,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     // We allocate with calloc, so we only need to initialize the specific fields in use.
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
-    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
+    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
@@ -87,8 +87,8 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_free_loop_ssl_data(loop);
 #endif
 
-    free(loop->data.recv_buf);
-    free(loop->data.send_buf);
+    us_free(loop->data.recv_buf);
+    us_free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);

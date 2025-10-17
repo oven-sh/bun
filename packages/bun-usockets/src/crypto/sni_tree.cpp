@@ -29,7 +29,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
-
+#include <libusockets.h>
 /* We only handle a maximum of 10 labels per hostname */
 #define MAX_LABELS 10
 
@@ -44,7 +44,7 @@ struct sni_node {
     ~sni_node() {
         for (auto &p : children) {
             /* The data of our string_views are managed by malloc */
-            free((void *) p.first.data());
+           us_free((void *) p.first.data());
 
             /* Call destructor passed to sni_free only if we hold data.
              * This is important since sni_remove does not have sni_free_cb set */
@@ -80,7 +80,7 @@ void *removeUser(struct sni_node *root, unsigned int label, std::string_view *la
     if (it->second.get()->children.empty() && it->second.get()->user == nullptr) {
 
         /* The data of our string_views are managed by malloc */
-        free((void *) it->first.data());
+        us_free((void *) it->first.data());
 
         /* This can only happen with user set to null, otherwise we use sni_free_cb which is unset by sni_remove */
         root->children.erase(it);
@@ -142,7 +142,7 @@ extern "C" {
             auto it = root->children.find(label);
             if (it == root->children.end()) {
                 /* Duplicate this label for our kept string_view of it */
-                void *labelString = malloc(label.length());
+                void *labelString = us_malloc(label.length());
                 memcpy(labelString, label.data(), label.length());
 
                 it = root->children.emplace(std::string_view((char *) labelString, label.length()),

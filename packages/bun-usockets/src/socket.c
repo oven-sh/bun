@@ -186,7 +186,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
     if (!us_socket_is_closed(0, s)) {
         /* make sure the context is alive until the callback ends */
         us_socket_context_ref(ssl, s->context);
-
+        us_remove_socket_from_pending_read_list(s->context->loop, s);
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
@@ -215,7 +215,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             struct linger l = { 1, 0 };
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
-        us_remove_socket_from_pending_read_list(s->context->loop, s);
+        
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
 
@@ -247,6 +247,8 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 // - does not close
 struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
     if (!us_socket_is_closed(0, s)) {
+        us_remove_socket_from_pending_read_list(s->context->loop, s);
+
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
@@ -263,6 +265,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
+        
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->context->loop->data.closed_head;

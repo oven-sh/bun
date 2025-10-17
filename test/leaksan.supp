@@ -96,7 +96,6 @@ leak:sql.postgres.protocol.FieldMessage.FieldMessage.init
 leak:JSC::intlCollatorAvailableLocales
 leak:Bun__canonicalizeIP
 leak:dlopen
-leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:bun.js.webcore.fetch.FetchTasklet.toResponse
@@ -194,3 +193,4 @@ leak:ast.parseStmt.ParseStmt
 leak:bun.js.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.run
 leak:bun.js.BuildMessage.BuildMessage.getNotes
 leak:sql.postgres.PostgresSQLQuery.doRun
+leak:bun.js.node.node_fs.Arguments.Realpath.fromJS

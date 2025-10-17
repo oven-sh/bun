@@ -1,7 +1,7 @@
 /// POSIX-like stat structure with birthtime support for node:fs
 /// This extends the standard POSIX stat with birthtime (creation time)
 pub const PosixStat = extern struct {
-    dev: u64,
+    dev: i64,
     ino: u64,
     mode: u32,
     nlink: u64,

@@ -2,13 +2,13 @@ const JSCScheduler = @This();
 
 pub const JSCDeferredWorkTask = opaque {
     extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;
-    pub fn run(task: *JSCScheduler.JSCDeferredWorkTask) bun.JSTerminated!void {
+    pub fn run(task: *JSCScheduler.JSCDeferredWorkTask) bun.JSError!void {
         const globalThis = bun.jsc.VirtualMachine.get().global;
-        var scope: bun.jsc.ExceptionValidationScope = undefined;
+        var scope: bun.jsc.CatchScope = undefined;
         scope.init(globalThis, @src());
         defer scope.deinit();
         Bun__runDeferredWork(task);
-        try scope.assertNoExceptionExceptTermination();
+        try scope.returnIfException();
     }
 };
 

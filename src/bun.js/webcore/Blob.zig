@@ -4789,6 +4789,7 @@ export fn Blob__ref(self: *Blob) void {
 export fn Blob__deref(self: *Blob) void {
     bun.assertf(self.isHeapAllocated(), "cannot deref: this Blob is not heap-allocated", .{});
     if (self.#ref_count.decrement() == .should_destroy) {
+        self.#ref_count.increment(); // deinit has its own isHeapAllocated() guard around bun.destroy(this), so this is needed to ensure that returns true.
         self.deinit();
     }
 }

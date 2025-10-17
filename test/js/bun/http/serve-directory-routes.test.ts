@@ -101,8 +101,7 @@ describe("Bun.serve() directory routes", () => {
     expect(await res.text()).toBe("Not Found");
   });
 
-  it.skip("should work with custom route prefixes", async () => {
-    // TODO: This functionality needs more investigation
+  it("should work with custom route prefixes", async () => {
     using dir = tempDir("serve-custom-prefix", {
       "assets/file.txt": "Hello from assets",
     });
@@ -121,8 +120,7 @@ describe("Bun.serve() directory routes", () => {
     expect(await res.text()).toBe("Hello from assets");
   });
 
-  it.skip("should handle multiple directory routes", async () => {
-    // TODO: Multiple prefixed directory routes need investigation
+  it("should handle multiple directory routes", async () => {
     using dir = tempDir("serve-multiple-dirs", {
       "public/page.html": "<h1>Public Page</h1>",
       "assets/image.png": "fake-png-data",

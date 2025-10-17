@@ -284,7 +284,14 @@ pub const AnyRoute = union(enum) {
         if (try argument.getOptional(global, "dir", bun.String.Slice)) |dir| {
             errdefer dir.deinit();
 
-            switch (DirectoryRoute.create(dir, path, null)) {
+            // Strip the /* suffix from the path to get the prefix
+            // e.g., "/*" -> "/", "/static/*" -> "/static"
+            const prefix = if (bun.strings.endsWith(path, "/*"))
+                path[0 .. path.len - 2]
+            else
+                path;
+
+            switch (DirectoryRoute.create(dir, prefix, null)) {
                 .result => |route| return .{ .dir = route },
                 .err => |*err| return global.throwValue(err.toJS(global)),
             }

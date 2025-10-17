@@ -129,3 +129,17 @@ describe("advanceTimersByTime", () => {
     vi.useRealTimers();
   });
 });
+describe("runOnlyPendingTimers", () => {
+  test("two setIntervals", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setInterval(() => order.add("100"), 100);
+    setInterval(() => order.add("24"), 24);
+    expect(order.takeOrderMessages()).toEqual([]);
+    vi.runOnlyPendingTimers();
+    expect(order.takeOrderMessages()).toEqual(["24", "24", "24", "24", "100"]);
+    vi.runOnlyPendingTimers();
+    expect(order.takeOrderMessages()).toEqual(["24", "24", "24", "24", "100"]);
+    vi.useRealTimers();
+  });
+});

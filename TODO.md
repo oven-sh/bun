@@ -9,3 +9,4 @@
   - since test timeouts must be unmocked, we need BunTest timeouts to use unmocked time
   - [ ] audit all timespec.now() calls to replace some with timespec.nowUnmocked()
 - [ ] add a test that fake timers do not break test duration calculations
+- [ ] test the order of '0' timeouts, decide if we will match or not

@@ -1985,7 +1985,9 @@ pub fn getStream(
             return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
         }
 
-        recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
+        if (arguments[0].isNumber()) {
+            recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
+        }
     }
     const stream = try jsc.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,

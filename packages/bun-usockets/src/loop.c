@@ -135,10 +135,6 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
 bool us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
     struct us_socket_t* next = loop->data.pending_read_head;
     while(next != NULL) {
-        if(us_socket_is_closed(0, next)) {
-            next = next->next_to_read;
-            continue;
-        }
         next = next->next_to_read;
         struct us_poll_t* p = &next->p;
         us_internal_dispatch_ready_poll(p, 0, 0, LIBUS_SOCKET_READABLE);

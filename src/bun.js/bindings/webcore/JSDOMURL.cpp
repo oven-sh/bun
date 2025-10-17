@@ -533,6 +533,14 @@ static inline bool setJSDOMURL_pathnameSetter(JSGlobalObject& lexicalGlobalObjec
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    // Check for potential stack overflow before string conversion
+    // This prevents crashes from deeply recursive toString() calls
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwScope.throwException(&lexicalGlobalObject, JSC::createStackOverflowError(&lexicalGlobalObject));
+        return false;
+    }
+
     auto& impl = thisObject.wrapped();
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);

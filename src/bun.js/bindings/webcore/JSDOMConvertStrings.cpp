@@ -23,6 +23,7 @@
 #include "JSDOMConvertStrings.h"
 
 #include "JSDOMExceptionHandling.h"
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -68,6 +69,12 @@ String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Check for stack overflow before attempting string conversion
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        scope.throwException(&lexicalGlobalObject, createStackOverflowError(&lexicalGlobalObject));
+        return {};
+    }
+
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -80,6 +87,12 @@ AtomString valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Check for stack overflow before attempting string conversion
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        scope.throwException(&lexicalGlobalObject, createStackOverflowError(&lexicalGlobalObject));
+        return nullAtom();
+    }
 
     AtomString string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
     RETURN_IF_EXCEPTION(scope, {});
@@ -100,6 +113,13 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Check for stack overflow before attempting string conversion
+    // This prevents crashes from deeply recursive toString() calls
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        scope.throwException(&lexicalGlobalObject, createStackOverflowError(&lexicalGlobalObject));
+        return {};
+    }
+
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -110,6 +130,12 @@ AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue val
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Check for stack overflow before attempting string conversion
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        scope.throwException(&lexicalGlobalObject, createStackOverflowError(&lexicalGlobalObject));
+        return nullAtom();
+    }
 
     auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});

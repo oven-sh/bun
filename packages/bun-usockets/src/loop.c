@@ -99,16 +99,17 @@ void us_wakeup_loop(struct us_loop_t *loop) {
 }
 
 void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
+    #ifndef LIBUS_USE_LIBUV
     if(socket && !us_socket_is_closed(0, socket) && !socket->flags.is_pending_read) {
         socket->flags.is_pending_read = true;
         socket->next_to_read = loop->data.pending_read_head;
         loop->data.pending_read_head = socket;
-
     }
+    #endif
 }
 
 void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
-    
+    #ifndef LIBUS_USE_LIBUV
     if(!socket || !socket->flags.is_pending_read) return;
     struct us_socket_t* next = loop->data.pending_read_head;
     if(!next) return;
@@ -131,9 +132,11 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
         prev = next;
         next = next->next_to_read;
     }
+    #endif
 }
 
 void us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
+    #ifndef LIBUS_USE_LIBUV
     struct us_socket_t* next;
     while ((next = loop->data.pending_read_head) != NULL) {
         us_remove_socket_from_pending_read_list(loop, next);
@@ -141,6 +144,7 @@ void us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
             us_internal_dispatch_ready_poll(&next->p, 0, 0, LIBUS_SOCKET_READABLE);
         }
     }
+    #endif
 }
 
 

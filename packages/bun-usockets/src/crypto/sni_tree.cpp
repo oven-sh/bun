@@ -119,14 +119,14 @@ void *getUser(struct sni_node *root, unsigned int label, std::string_view *label
 extern "C" {
 
     void *sni_new() {
-        return new sni_node;
+        return us_malloc(sizeof(sni_node));
     }
 
     void sni_free(void *sni, void (*cb)(void *)) {
         /* We want to run this callback for every remaining name */
         sni_free_cb = cb;
 
-        delete (sni_node *) sni;
+        us_free(sni);
     }
 
     /* Returns non-null if this name already exists */

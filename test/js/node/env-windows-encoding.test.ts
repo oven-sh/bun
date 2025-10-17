@@ -1,4 +1,3 @@
-import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
@@ -13,7 +12,7 @@ import path from "path";
 // For issue:https://github.com/oven-sh/bun/issues/17773
 // PR: https://github.com/oven-sh/bun/pull/22114
 describe("Windows environment variable encoding regression test", () => {
-  test.if(isWindows)("correctly handles multibyte characters in environment variables", () => {
+  test.if(isWindows)("correctly handles multibyte characters in environment variables", async () => {
     // This test would fail before the fix because std.os.environ on Windows
     // could return multibyte encoded data that wasn't properly decoded
     const testVar = "MULTIBYTE_TEST";
@@ -28,7 +27,7 @@ describe("Windows environment variable encoding regression test", () => {
             `,
     });
 
-    const result = spawnSync({
+    const proc = Bun.spawn({
       cmd: [bunExe(), path.join(dir, "test.ts")],
       env: {
         ...bunEnv,
@@ -39,8 +38,12 @@ describe("Windows environment variable encoding regression test", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString("utf-8");
+    await proc.exited;
+
+    const output = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+
+    expect(proc.exitCode).toBe(0);
 
     // With the fix, these should work correctly
     expect(output).toContain(`Value: ${testValue}`);
@@ -48,7 +51,7 @@ describe("Windows environment variable encoding regression test", () => {
     expect(output).toContain(`Length: ${testValue.length}`);
   });
 
-  test.if(isWindows)("handles various Unicode characters correctly", () => {
+  test.if(isWindows)("handles various Unicode characters correctly", async () => {
     // Test various Unicode categories that were problematic before the fix
     const testCases = [
       { name: "CHINESE", value: "中文测试" },
@@ -71,7 +74,7 @@ describe("Windows environment variable encoding regression test", () => {
       "test.ts": testScript,
     });
 
-    const result = spawnSync({
+    const proc = Bun.spawn({
       cmd: [bunExe(), path.join(dir, "test.ts")],
       env: {
         ...bunEnv,
@@ -82,8 +85,11 @@ describe("Windows environment variable encoding regression test", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString("utf-8");
+    await proc.exited;
+
+    const output = await proc.stdout.text();
+
+    expect(proc.exitCode).toBe(0);
 
     // All should be true with the fix
     for (const testCase of testCases) {
@@ -94,7 +100,7 @@ describe("Windows environment variable encoding regression test", () => {
 
 // Ensure ASCII variables still work (they should work both before and after the fix)
 describe("Environment variable compatibility", () => {
-  test("ASCII environment variables work correctly", () => {
+  test("ASCII environment variables work correctly", async () => {
     const testVar = "ASCII_TEST";
     const testValue = "simple_ascii_123";
 
@@ -102,7 +108,7 @@ describe("Environment variable compatibility", () => {
       "test.ts": `console.log("Result:", process.env.${testVar} === "${testValue}");`,
     });
 
-    const result = spawnSync({
+    const proc = Bun.spawn({
       cmd: [bunExe(), path.join(dir, "test.ts")],
       env: {
         ...bunEnv,
@@ -113,11 +119,15 @@ describe("Environment variable compatibility", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString("utf-8")).toContain("Result: true");
+    await proc.exited;
+
+    const output = await proc.stdout.text();
+
+    expect(proc.exitCode).toBe(0);
+    expect(output).toContain("Result: true");
   });
 
-  test.if(isWindows)("case insensitive behavior", () => {
+  test.if(isWindows)("case insensitive behavior", async () => {
     const testCases = [
       { name: "ASCII_TEST_VAR", mixedCase: "ascii_test_var", value: "ascii_value" },
       { name: "SIMPLE_VAR", mixedCase: "Simple_Var", value: "simple_value" },
@@ -147,7 +157,7 @@ describe("Environment variable compatibility", () => {
       "test.ts": testScript,
     });
 
-    const result = spawnSync({
+    const proc = Bun.spawn({
       cmd: [bunExe(), path.join(dir, "test.ts")],
       env: {
         ...bunEnv,
@@ -158,8 +168,11 @@ describe("Environment variable compatibility", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
-    const output = result.stdout.toString("utf-8");
+    await proc.exited;
+
+    const output = await proc.stdout.text();
+
+    expect(proc.exitCode).toBe(0);
 
     expect(output).toContain("ASCII_TEST_VAR_original: true");
     expect(output).toContain("ASCII_TEST_VAR_mixed: true");

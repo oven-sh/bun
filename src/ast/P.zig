@@ -298,6 +298,10 @@ pub fn NewParser_(
         export_star_import_records: List(u32) = .{},
         import_symbol_property_uses: SymbolPropertyUseMap = .{},
 
+        // Track generated import statements from eager globs
+        eager_glob_import_stmts: List(Stmt) = .{},
+        glob_call_counter: u32 = 0,
+
         // These are for handling ES6 imports and exports
         esm_import_keyword: logger.Range = logger.Range.None,
         esm_export_keyword: logger.Range = logger.Range.None,
@@ -6066,6 +6070,11 @@ pub fn NewParser_(
                         import_name = import_value.data.e_string.slice(p.allocator);
                     }
                 }
+                if (obj.get("eager")) |eager_value| {
+                    if (eager_value.data == .e_boolean) {
+                        eager = eager_value.data.e_boolean.value;
+                    }
+                }
                 if (obj.get("base")) |base_value| {
                     if (base_value.data == .e_string) {
                         const _base_path = base_value.data.e_string.slice(p.allocator);
@@ -6082,17 +6091,6 @@ pub fn NewParser_(
                             if (type_value.data == .e_string) {
                                 loader = options.Loader.fromString(type_value.data.e_string.slice(p.allocator));
                             }
-                        }
-                    }
-                }
-                if (obj.get("eager")) |eager_value| {
-                    if (eager_value.data == .e_boolean) {
-                        eager = eager_value.data.e_boolean.value;
-
-                        // todo: support eager mode
-                        if (eager) {
-                            bun.handleOom(p.log.addError(p.source, eager_value.loc, "import.meta.glob() eager mode is not yet supported"));
-                            return p.newExpr(E.Object{}, loc);
                         }
                     }
                 }
@@ -6160,11 +6158,9 @@ pub fn NewParser_(
                 }
             }.lessThan);
 
-            // Create dynamic imports
             var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, matched_files.items.len));
 
             for (matched_files.items, 0..) |file_path, i| {
-                // add the base path and/or query string to the import path
                 const import_path: []const u8 = if (base_path) |base|
                     if (query) |q|
                         bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}{s}", .{ base, file_path, q }))
@@ -6175,67 +6171,150 @@ pub fn NewParser_(
                 else
                     file_path;
 
-                const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
+                // For eager mode, always use static import (synchronous)
+                // For lazy mode, use dynamic import (returns Promise)
+                const import_kind = if (eager)
+                    ImportKind.stmt
+                else
+                    ImportKind.dynamic;
+                const import_record_index = p.addImportRecord(import_kind, loc, import_path);
                 bun.handleOom(p.import_records_for_current_part.append(p.allocator, import_record_index));
 
                 if (loader) |l| p.import_records.items[import_record_index].loader = l;
 
-                const import_expr = p.newExpr(E.Import{
-                    .expr = p.newExpr(E.String{ .data = import_path }, loc),
-                    .options = if (with_attrs) |attrs| blk: {
-                        var with_props: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, 1));
-                        with_props[0] = .{
-                            .key = p.newExpr(E.String{ .data = "with" }, loc),
-                            .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
+                if (eager) {
+                    // Mark file as ESM since we're adding imports
+                    if (p.esm_import_keyword.len == 0) {
+                        p.esm_import_keyword = logger.Range{ .loc = loc, .len = 0 };
+                    }
+
+                    const namespace_name = bun.handleOom(std.fmt.allocPrint(p.allocator, "__glob_{d}_{d}", .{ p.glob_call_counter, i }));
+
+                    if (import_name) |name| {
+                        p.import_records.items[import_record_index].contains_default_alias = strings.eqlComptime(name, "default");
+                    } else {
+                        p.import_records.items[import_record_index].contains_import_star = true;
+                    }
+
+                    // Create symbol in module scope since imports must be at top level
+                    const saved_scope = p.current_scope;
+                    p.current_scope = p.module_scope;
+                    const namespace_ref = bun.handleOom(p.newSymbol(.import, namespace_name));
+                    p.current_scope = saved_scope;
+
+                    bun.handleOom(p.is_import_item.put(p.allocator, namespace_ref, {}));
+
+                    if (import_name) |name| {
+                        bun.handleOom(p.named_imports.put(p.allocator, namespace_ref, js_ast.NamedImport{
+                            .alias_is_star = false,
+                            .alias = name,
+                            .alias_loc = loc,
+                            .namespace_ref = Ref.None,
+                            .import_record_index = import_record_index,
+                        }));
+                    } else {
+                        bun.handleOom(p.named_imports.put(p.allocator, namespace_ref, js_ast.NamedImport{
+                            .alias_is_star = true,
+                            .alias = "",
+                            .alias_loc = loc,
+                            .namespace_ref = Ref.None,
+                            .import_record_index = import_record_index,
+                        }));
+                        bun.handleOom(p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)));
+                    }
+
+                    const import_stmt = if (import_name) |name| blk: {
+                        var items = bun.handleOom(p.allocator.alloc(js_ast.ClauseItem, 1));
+                        items[0] = js_ast.ClauseItem{
+                            .alias = name,
+                            .alias_loc = loc,
+                            .name = LocRef{
+                                .loc = loc,
+                                .ref = namespace_ref,
+                            },
+                            .original_name = namespace_name,
                         };
-                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.fromOwnedSlice(with_props) }, loc);
-                    } else Expr.empty,
-                    .import_record_index = import_record_index,
-                }, loc);
 
-                const return_expr = if (import_name) |name| blk: {
-                    // Create import('./file').then(m => m.name)
-                    const m_ref: Ref = bun.handleOom(p.newSymbol(.other, "m"));
+                        break :blk p.s(S.Import{
+                            .namespace_ref = Ref.None,
+                            .import_record_index = import_record_index,
+                            .items = items,
+                            .is_single_line = true,
+                        }, loc);
+                    } else p.s(S.Import{
+                        .namespace_ref = namespace_ref,
+                        .import_record_index = import_record_index,
+                        .star_name_loc = null,
+                        .is_single_line = true,
+                    }, loc);
 
-                    var arrow_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
-                    arrow_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier{ .ref = m_ref }, loc),
-                        .name = name,
-                        .name_loc = loc,
-                    }, loc) }, loc);
+                    bun.handleOom(p.eager_glob_import_stmts.append(p.allocator, import_stmt));
 
-                    var arrow_args: []G.Arg = bun.handleOom(p.allocator.alloc(G.Arg, 1));
-                    arrow_args[0] = .{
-                        .binding = p.b(B.Identifier{ .ref = m_ref }, logger.Loc.Empty),
+                    const namespace_expr = p.newExpr(E.Identifier{ .ref = namespace_ref }, loc);
+                    p.recordUsage(namespace_ref);
+                    const value_expr = namespace_expr;
+
+                    properties[i] = .{
+                        .key = p.newExpr(E.String{ .data = file_path }, loc),
+                        .value = value_expr,
                     };
-
-                    const arrow_fn = p.newExpr(E.Arrow{
-                        .args = arrow_args,
-                        .body = .{ .loc = loc, .stmts = arrow_stmts },
-                        .prefer_expr = true,
+                } else {
+                    const import_expr = p.newExpr(E.Import{
+                        .expr = p.newExpr(E.String{ .data = import_path }, loc),
+                        .options = if (with_attrs) |attrs| blk: {
+                            var with_props: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, 1));
+                            with_props[0] = .{
+                                .key = p.newExpr(E.String{ .data = "with" }, loc),
+                                .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
+                            };
+                            break :blk p.newExpr(E.Object{ .properties = G.Property.List.fromOwnedSlice(with_props) }, loc);
+                        } else Expr.empty,
+                        .import_record_index = import_record_index,
                     }, loc);
 
-                    break :blk p.newExpr(E.Call{
-                        .target = p.newExpr(E.Dot{
-                            .target = import_expr,
-                            .name = "then",
+                    const return_expr = if (import_name) |name| blk: {
+                        const m_ref: Ref = bun.handleOom(p.newSymbol(.other, "m"));
+
+                        var arrow_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                        arrow_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Dot{
+                            .target = p.newExpr(E.Identifier{ .ref = m_ref }, loc),
+                            .name = name,
                             .name_loc = loc,
+                        }, loc) }, loc);
+
+                        var arrow_args: []G.Arg = bun.handleOom(p.allocator.alloc(G.Arg, 1));
+                        arrow_args[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = m_ref }, logger.Loc.Empty),
+                        };
+
+                        const arrow_fn = p.newExpr(E.Arrow{
+                            .args = arrow_args,
+                            .body = .{ .loc = loc, .stmts = arrow_stmts },
+                            .prefer_expr = true,
+                        }, loc);
+
+                        break :blk p.newExpr(E.Call{
+                            .target = p.newExpr(E.Dot{
+                                .target = import_expr,
+                                .name = "then",
+                                .name_loc = loc,
+                            }, loc),
+                            .args = bun.handleOom(ExprNodeList.fromSlice(p.allocator, &.{arrow_fn})),
+                        }, loc);
+                    } else import_expr;
+
+                    var outer_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                    outer_stmts[0] = p.s(S.Return{ .value = return_expr }, loc);
+
+                    properties[i] = .{
+                        .key = p.newExpr(E.String{ .data = file_path }, loc),
+                        .value = p.newExpr(E.Arrow{
+                            .args = &.{},
+                            .body = .{ .loc = loc, .stmts = outer_stmts },
+                            .prefer_expr = true,
                         }, loc),
-                        .args = bun.handleOom(ExprNodeList.fromSlice(p.allocator, &.{arrow_fn})),
-                    }, loc);
-                } else import_expr;
-
-                var outer_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
-                outer_stmts[0] = p.s(S.Return{ .value = return_expr }, loc);
-
-                properties[i] = .{
-                    .key = p.newExpr(E.String{ .data = file_path }, loc),
-                    .value = p.newExpr(E.Arrow{
-                        .args = &.{},
-                        .body = .{ .loc = loc, .stmts = outer_stmts },
-                        .prefer_expr = true,
-                    }, loc),
-                };
+                    };
+                }
             }
 
             return p.newExpr(E.Object{
@@ -6467,6 +6546,19 @@ pub fn NewParser_(
             hashbang: []const u8,
         ) !js_ast.Ast {
             const allocator = p.allocator;
+
+            // Inject eager glob imports as real import statements
+            if (p.eager_glob_import_stmts.items.len > 0 and parts.items.len > 0) {
+                // Mark as ESM since we're adding import statements
+                p.has_es_module_syntax = true;
+
+                // Prepend import statements to the first part
+                const old_stmts = parts.items[0].stmts;
+                const new_stmts = try allocator.alloc(Stmt, p.eager_glob_import_stmts.items.len + old_stmts.len);
+                @memcpy(new_stmts[0..p.eager_glob_import_stmts.items.len], p.eager_glob_import_stmts.items);
+                @memcpy(new_stmts[p.eager_glob_import_stmts.items.len..], old_stmts);
+                parts.items[0].stmts = new_stmts;
+            }
 
             // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
             //     p.treeShake(&parts, false);

@@ -82,11 +82,14 @@ export function createTelemetryBridge(options: TelemetryBridgeOptions): Telemetr
       spans.delete(id);
     },
 
-    onResponseHeaders(id: number, statusCode: number) {
+    onResponseHeaders(id: number, statusCode: number, contentLength: number) {
       const span = spans.get(id);
       if (!span) return;
 
       span.setAttribute("http.status_code", statusCode);
+      if (contentLength > 0) {
+        span.setAttribute("http.response_content_length", contentLength);
+      }
     },
   });
 

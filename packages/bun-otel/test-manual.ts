@@ -44,9 +44,9 @@ if (spans.length > 0) {
   console.log(`  Name: ${span.name}`);
   console.log(`  Status: ${span.status.code === 1 ? "OK" : "ERROR"}`);
   console.log(`  Attributes:`);
-  console.log(`    http.method: ${span.attributes["http.method"]}`);
-  console.log(`    http.status_code: ${span.attributes["http.status_code"]}`);
-  console.log(`    http.url: ${span.attributes["http.url"]}`);
+  for (const [key, value] of Object.entries(span.attributes)) {
+    console.log(`    ${key}: ${value}`);
+  }
 } else {
   console.error("\n✗ No spans found! Telemetry may not be working.");
 }

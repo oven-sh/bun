@@ -2235,16 +2235,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             var response: *jsc.WebCore.Response = this.response_ptr.?;
 
-            // Notify telemetry about response headers
-            if (this.telemetry_request_id != 0) {
-                if (telemetry.Telemetry.getInstance()) |t| {
-                    // Pass status code directly instead of full Response object
-                    // to avoid lifecycle issues
-                    const status_code = response.statusCode();
-                    t.notifyResponseStatus(this.telemetry_request_id, status_code);
-                }
-            }
-
             var status = response.statusCode();
             var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
 
@@ -2252,6 +2242,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.sendfile.remain
             else
                 this.blob.size();
+
+            // Notify telemetry about response headers (status code and content length)
+            if (this.telemetry_request_id != 0) {
+                if (telemetry.Telemetry.getInstance()) |t| {
+                    t.notifyResponseStatus(this.telemetry_request_id, status, size);
+                }
+            }
 
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204

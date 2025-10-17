@@ -208,19 +208,20 @@ pub const Telemetry = struct {
             self.global.takeException(err);
     }
 
-    /// Called when response headers are about to be sent (with status code only)
-    pub fn notifyResponseStatus(self: *Self, id: RequestId, status_code: u16) void {
+    /// Called when response headers are about to be sent (with status code and content length)
+    pub fn notifyResponseStatus(self: *Self, id: RequestId, status_code: u16, content_length: u64) void {
         if (!self.enabled or self.on_response_headers == .zero) {
             return;
         }
 
         const id_js = jsRequestId(id);
         const status_js = JSValue.jsNumber(@as(f64, @floatFromInt(status_code)));
+        const content_length_js = JSValue.jsNumber(@as(f64, @floatFromInt(content_length)));
 
         _ = self.on_response_headers.call(
             self.global,
             .js_undefined,
-            &.{ id_js, status_js },
+            &.{ id_js, status_js, content_length_js },
         ) catch |err|
             self.global.takeException(err);
     }

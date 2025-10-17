@@ -18,7 +18,7 @@ pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.cli.Bun__Node__ProcessTitle;
-    title.* = ZigString.init(str orelse "bun");
+    title.* = ZigString.fromUTF8(str orelse "bun");
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c

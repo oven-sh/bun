@@ -618,6 +618,9 @@ pub const ZigString = extern struct {
     }
 
     pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
+        if (this.is16Bit()) {
+            return try this.toOwnedSlice(allocator);
+        }
         return try allocator.dupe(u8, this.slice());
     }
 

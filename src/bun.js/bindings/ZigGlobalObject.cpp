@@ -3229,11 +3229,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         sourceOriginZ.deref();
     }
 
-    // This gets passed through the "parameters" argument to moduleLoaderFetch.
-    // Therefore, we modify it in place.
-    // Extract the type attribute and append it to the resolved identifier to differentiate
-    // the same file imported with different loaders in JSC's module cache.
-    String typeAttributeForCacheKey;
+    // Extract the type attribute from import attributes and create JSScriptFetchParameters
+    // This gets passed through the "parameters" argument to the module loader.
     if (parameters && parameters.isObject()) {
         auto* object = parameters.toObject(globalObject);
         auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
@@ -3246,20 +3243,13 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                 if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
-                        typeAttributeForCacheKey = typeString;
+                        // Create JSScriptFetchParameters with the type string
+                        // JSC's module loader will use this to differentiate cache entries
                         parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
                     }
                 }
             }
         }
-    }
-
-    // Append the type attribute to the resolved identifier using the query string mechanism
-    // to make JSC's module cache differentiate imports with different loaders.
-    // e.g., "/path/file.json" becomes "/path/file.json?type=text"
-    if (!typeAttributeForCacheKey.isEmpty()) {
-        auto identifierString = resolvedIdentifier.string();
-        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(identifierString, "?type="_s, typeAttributeForCacheKey));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,

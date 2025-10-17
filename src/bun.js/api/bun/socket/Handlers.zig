@@ -280,16 +280,20 @@ pub const SocketConfig = struct {
         generated: *const jsc.generated.SocketConfig,
         is_server: bool,
     ) bun.JSError!SocketConfig {
-        var result: SocketConfig = .{
-            .hostname_or_unix = .empty,
-            .fd = if (generated.fd) |fd| .fromUV(fd) else null,
-            .ssl = switch (generated.tls) {
+        var result: SocketConfig = blk: {
+            var ssl: ?SSLConfig = switch (generated.tls) {
                 .none => null,
                 .boolean => |b| if (b) .zero else null,
                 .object => |*ssl| try .fromGenerated(vm, global, ssl),
-            },
-            .handlers = try .fromGenerated(global, &generated.handlers, is_server),
-            .default_data = if (generated.data.isUndefined()) .zero else generated.data,
+            };
+            errdefer bun.memory.deinit(&ssl);
+            break :blk .{
+                .hostname_or_unix = .empty,
+                .fd = if (generated.fd) |fd| .fromUV(fd) else null,
+                .ssl = ssl,
+                .handlers = try .fromGenerated(global, &generated.handlers, is_server),
+                .default_data = if (generated.data.isUndefined()) .zero else generated.data,
+            };
         };
         errdefer result.deinit();
 

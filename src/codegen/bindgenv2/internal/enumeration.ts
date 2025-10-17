@@ -79,7 +79,7 @@ export function enumeration(name: string, values: (string | string[])[]): EnumTy
       return true;
     }
     get cppHeader() {
-      const quotedValues = values.map(v => `"${v}"`);
+      const quotedValues = uniqueValues.map(v => `"${v}"`);
       let humanReadableName;
       if (quotedValues.length == 0) {
         assert(false); // unreachable

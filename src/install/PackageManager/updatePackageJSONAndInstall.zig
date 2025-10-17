@@ -547,6 +547,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         if (prop.key) |key| {
                             if (key.data == .e_string) {
                                 const dep_name = key.data.e_string.string(manager.allocator) catch continue;
+                                defer manager.allocator.free(dep_name);
                                 const dep_hash = String.Builder.stringHash(dep_name);
                                 try root_production_deps.append(dep_hash);
                             }
@@ -562,6 +563,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         if (prop.key) |key| {
                             if (key.data == .e_string) {
                                 const dep_name = key.data.e_string.string(manager.allocator) catch continue;
+                                defer manager.allocator.free(dep_name);
                                 const dep_hash = String.Builder.stringHash(dep_name);
                                 try root_production_deps.append(dep_hash);
                             }
@@ -591,24 +593,26 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     break :blk false;
                 };
 
-                if (is_production_dep and pkg_id != invalid_package_id) {
+                if (is_production_dep and pkg_id != invalid_package_id and !dep.behavior.dev) {
                     try queue.append(pkg_id);
                     try visited.put(pkg_id, {});
                     try reachable.put(name_hashes[pkg_id], {});
                 }
             }
 
-            // BFS to traverse all transitive dependencies
-            while (queue.items.len > 0) {
-                const current_pkg_id = queue.orderedRemove(0);
+            // BFS to traverse all transitive dependencies (using index-based dequeue for O(n))
+            var qi: usize = 0;
+            while (qi < queue.items.len) : (qi += 1) {
+                const current_pkg_id = queue.items[qi];
 
                 const dep_list = dependencies_lists[current_pkg_id];
                 const res_list = resolutions_lists[current_pkg_id];
                 const deps = dep_list.get(manager.lockfile.buffers.dependencies.items);
                 const pkg_ids = res_list.get(manager.lockfile.buffers.resolutions.items);
 
-                for (deps, pkg_ids) |_, pkg_id| {
+                for (deps, pkg_ids) |dep2, pkg_id| {
                     if (pkg_id == invalid_package_id) continue;
+                    if (dep2.behavior.dev) continue; // skip dev edges in production graph
                     if (visited.contains(pkg_id)) continue;
 
                     try queue.append(pkg_id);
@@ -651,7 +655,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     // Check if this is a symlink (workspace packages are symlinked into node_modules)
                     const scoped_stat = std.posix.fstatat(scope_dir.fd, scoped_entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
                     if (scoped_stat) |stat| {
-                        if (stat.mode & std.posix.S.IFLNK == std.posix.S.IFLNK) {
+                        if ((stat.mode & std.posix.S.IFMT) == std.posix.S.IFLNK) {
                             // It's a symlink, likely a workspace package - skip it
                             continue;
                         }
@@ -702,7 +706,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             // Check if this is a symlink (workspace packages are symlinked into node_modules)
             const stat_result = std.posix.fstatat(node_modules_dir.fd, entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
             if (stat_result) |stat| {
-                if (stat.mode & std.posix.S.IFLNK == std.posix.S.IFLNK) {
+                if ((stat.mode & std.posix.S.IFMT) == std.posix.S.IFLNK) {
                     // It's a symlink, likely a workspace package - skip it
                     continue;
                 }

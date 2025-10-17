@@ -44,12 +44,12 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
     defer stringifier.deinit();
 
     stringifier.findAnchorsAndAliases(global, value, .root) catch |err| return switch (err) {
-        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.OutOfMemory, error.JSError, error.JSTerminated => |js_err| js_err,
         error.StackOverflow => global.throwStackOverflow(),
     };
 
     stringifier.stringify(global, value) catch |err| return switch (err) {
-        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.OutOfMemory, error.JSError, error.JSTerminated => |js_err| js_err,
         error.StackOverflow => global.throwStackOverflow(),
     };
 
@@ -978,7 +978,7 @@ const ParserCtx = struct {
                 ctx.result = ctx.global.throwOutOfMemoryValue();
                 return;
             },
-            error.JSError => {
+            error.JSError, error.JSTerminated => {
                 ctx.result = .zero;
                 return;
             },

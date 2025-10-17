@@ -143,3 +143,22 @@ describe("runOnlyPendingTimers", () => {
     vi.useRealTimers();
   });
 });
+describe("runAllTimers", () => {
+  test("two setIntervals", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setTimeout(() => {
+      order.add("10");
+    }, 10);
+    setTimeout(() => {
+      order.add("9");
+      setTimeout(() => order.add("14"), 5);
+    }, 9);
+    setTimeout(() => {
+      order.add("20");
+    }, 20);
+    expect(order.takeOrderMessages()).toEqual([]);
+    vi.runAllTimers();
+    expect(order.takeOrderMessages()).toEqual(["9", "10", "14", "20"]);
+  });
+});

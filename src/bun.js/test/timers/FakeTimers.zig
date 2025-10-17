@@ -134,6 +134,12 @@ fn executeOnlyPendingTimers(this: *FakeTimers, globalObject: *jsc.JSGlobalObject
     const until = target.next;
     this.executeUntil(globalObject, until);
 }
+fn executeAllTimers(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
+    this.assertValid(.unlocked);
+    defer this.assertValid(.unlocked);
+
+    while (this.executeNext(globalObject)) {}
+}
 
 // ===
 // JS Functions
@@ -216,6 +222,16 @@ fn runOnlyPendingTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallF
 
     return callframe.this();
 }
+fn runAllTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    _ = this.executeAllTimers(globalObject);
+
+    return callframe.this();
+}
 
 const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObject, *jsc.CallFrame) bun.JSError!jsc.JSValue) } = &.{
     .{ "useFakeTimers", 0, useFakeTimers },
@@ -223,6 +239,7 @@ const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObj
     .{ "advanceTimersToNextTimer", 0, advanceTimersToNextTimer },
     .{ "advanceTimersByTime", 1, advanceTimersByTime },
     .{ "runOnlyPendingTimers", 0, runOnlyPendingTimers },
+    .{ "runAllTimers", 0, runAllTimers },
 };
 pub const timerFnsCount = fake_timers_fns.len;
 pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: jsc.JSValue) void {

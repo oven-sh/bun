@@ -1,4 +1,32 @@
+- [ ] support performance.now
+- [ ] support Date.now()
+- [ ] support functions:
+  - [ ] advanceTimersByTime
+  - [ ] advanceTimersByTimeAsync\*
+  - [x] advanceTimersToNextTimer
+  - [ ] advanceTimersToNextTimerAsync\*
+  - [ ] advanceTimersToNextFrame
+  - [ ] getTimerCount
+  - [ ] clearAllTimers
+  - [x] getMockedSystemTime
+  - [x] getRealSystemTime
+  - [x] runAllTicks
+  - [x] runAllTimers
+  - [ ] runAllTimersAsync\*
+  - [ ] runOnlyPendingTimers
+  - [ ] make sure `[10, [20]], [30, [40]]` runs 10, 20, and 30
+  - [ ] runOnlyPendingTimersAsync
+  - [x] setSystemTime
+  - [x] useFakeTimers
+  - [x] isFakeTimers
+  - [x] useRealTimers
+    - [ ] \* support async functions (maybe defer these for later? the first PR does not need to have everything. we can stub the unimplemented functions.)
+    - [ ] add types for all functions
+    - [ ] add docs for all functions (at minimum: documentatino comments in the types)
+    - [ ] determine which tags should have timer-faking enabled (eg should subprocess timeout? probably not but maybe)
+    - [ ] find real projects using fake timers, see if they work
 - [ ] the result of 'arm' ('.disarm'/'.rearm') seems to be ignored? both disarm and rearm? we should change it to return void if it's actually ignored
+  - [ ] we can make this change seperately in main
 - [ ] see how fake timers works with setSystemTime
 - [ ] handle the config argument for useFakeTimers
   - vitest has the toFake parameter for enabling nextTick and queueMicrotask
@@ -10,3 +38,4 @@
   - [ ] audit all timespec.now() calls to replace some with timespec.nowUnmocked()
 - [ ] add a test that fake timers do not break test duration calculations
 - [ ] test the order of '0' timeouts, decide if we will match or not
+  - [ ] consider supporting edge-case where `timeout0(A, timeout0(B)), timeout0(C)` prints `A=0, C=0, B=1` (date.now())

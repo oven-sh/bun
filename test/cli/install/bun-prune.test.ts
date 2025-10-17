@@ -275,10 +275,11 @@ describe("bun prune", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await pruneProc.exited;
+    const [stderr, exitCode] = await Promise.all([pruneProc.stderr.text(), pruneProc.exited]);
 
     // Should fail gracefully when no package.json exists
     expect(exitCode).not.toBe(0);
+    expect(stderr.toLowerCase()).toContain("nothing to prune");
   });
 
   it("should preserve optionalDependencies", async () => {

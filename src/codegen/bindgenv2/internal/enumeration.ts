@@ -27,9 +27,16 @@ export function enumeration(name: string, values: (string | string[])[]): EnumTy
   if (uniqueValues.length > 1n << 32n) {
     throw RangeError("too many enum values: " + name);
   }
-  const valueMap = new Map(
-    values.map(v => (typeof v === "object" ? v : [v])).flatMap((arr, i) => arr.map(v => [v, i])),
-  );
+
+  const indexedValues = values
+    .map(v => (typeof v === "object" ? v : [v]))
+    .flatMap((arr, i) => arr.map((v): [string, number] => [v, i]));
+  const valueMap = new Map<string, number>();
+  for (const [value, index] of indexedValues) {
+    if (valueMap.size === valueMap.set(value, index).size) {
+      throw RangeError(`duplicate enum value: ${util.inspect(value)}`);
+    }
+  }
 
   const valueSet = new Set<string>();
   const cppMemberSet = new Set<string>();

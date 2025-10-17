@@ -19,11 +19,16 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
+pub const DirectoryRoute = @import("./server/DirectoryRoute.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
     /// "/robots.txt": new Response(...),
     static: *StaticRoute,
+
+    /// Serve a directory from disk
+    dir: *DirectoryRoute,
+
     /// Serve a file from disk
     file: *FileRoute,
     /// Bundle an HTML import
@@ -41,6 +46,7 @@ pub const AnyRoute = union(enum) {
         return switch (this) {
             .static => |static_route| static_route.memoryCost(),
             .file => |file_route| file_route.memoryCost(),
+            .dir => |dir| dir.memoryCost(),
             .html => |html_bundle_route| html_bundle_route.data.memoryCost(),
             .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
@@ -51,6 +57,7 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.server = server,
             .file => |file_route| file_route.server = server,
             .html => |html_bundle_route| html_bundle_route.server = server,
+            .dir => |dir_route| dir_route.server = server,
             .framework_router => {}, // DevServer contains .server field
         }
     }
@@ -60,6 +67,7 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.deref(),
             .file => |file_route| file_route.deref(),
             .html => |html_bundle_route| html_bundle_route.deref(),
+            .dir => |dir_route| dir_route.deref(),
             .framework_router => {}, // not reference counted
         }
     }
@@ -69,6 +77,7 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.ref(),
             .file => |file_route| file_route.ref(),
             .html => |html_bundle_route| html_bundle_route.ref(),
+            .dir => |dir_route| dir_route.ref(),
             .framework_router => {}, // not reference counted
         }
     }
@@ -224,49 +233,63 @@ pub const AnyRoute = union(enum) {
             return html_route;
         }
 
-        if (argument.isObject()) {
+        if (argument.isObject()) framework: {
             const FrameworkRouter = bun.bake.FrameworkRouter;
-            if (try argument.getOptional(global, "dir", bun.String.Slice)) |dir| {
-                var alloc = init_ctx.js_string_allocations;
-                const relative_root = alloc.track(dir);
+            var style: FrameworkRouter.Style = if (try argument.get(global, "style")) |style|
+                try FrameworkRouter.Style.fromJS(style, global)
+            else
+                break :framework;
 
-                var style: FrameworkRouter.Style = if (try argument.get(global, "style")) |style|
-                    try FrameworkRouter.Style.fromJS(style, global)
-                else
-                    .nextjs_pages;
-                errdefer style.deinit();
+            errdefer style.deinit();
 
-                if (!bun.strings.endsWith(path, "/*")) {
-                    return global.throwInvalidArguments("To mount a directory, make sure the path ends in `/*`", .{});
-                }
+            const dir = try argument.getOptional(global, "dir", bun.String.Slice) orelse {
+                style.deinit();
+                break :framework;
+            };
 
-                try init_ctx.framework_router_list.append(.{
-                    .root = relative_root,
-                    .style = style,
+            var alloc = init_ctx.js_string_allocations;
+            const relative_root = alloc.track(dir);
 
-                    // trim the /*
-                    .prefix = if (path.len == 2) "/" else path[0 .. path.len - 2],
-
-                    // TODO: customizable framework option.
-                    .entry_client = "bun-framework-react/client.tsx",
-                    .entry_server = "bun-framework-react/server.tsx",
-                    .ignore_underscores = true,
-                    .ignore_dirs = &.{ "node_modules", ".git" },
-                    .extensions = &.{ ".tsx", ".jsx" },
-                    .allow_layouts = true,
-                });
-
-                const limit = std.math.maxInt(@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type);
-                if (init_ctx.framework_router_list.items.len > limit) {
-                    return global.throwInvalidArguments("Too many framework routers. Maximum is {d}.", .{limit});
-                }
-                return .{ .framework_router = .init(@intCast(init_ctx.framework_router_list.items.len - 1)) };
+            if (!bun.strings.endsWith(path, "/*")) {
+                return global.throwInvalidArguments("To mount a directory, make sure the path ends in `/*`", .{});
             }
+
+            try init_ctx.framework_router_list.append(.{
+                .root = relative_root,
+                .style = style,
+
+                // trim the /*
+                .prefix = if (path.len == 2) "/" else path[0 .. path.len - 2],
+
+                // TODO: customizable framework option.
+                .entry_client = "bun-framework-react/client.tsx",
+                .entry_server = "bun-framework-react/server.tsx",
+                .ignore_underscores = true,
+                .ignore_dirs = &.{ "node_modules", ".git" },
+                .extensions = &.{ ".tsx", ".jsx" },
+                .allow_layouts = true,
+            });
+
+            const limit = std.math.maxInt(@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type);
+            if (init_ctx.framework_router_list.items.len > limit) {
+                return global.throwInvalidArguments("Too many framework routers. Maximum is {d}.", .{limit});
+            }
+            return .{ .framework_router = .init(@intCast(init_ctx.framework_router_list.items.len - 1)) };
         }
 
         if (try FileRoute.fromJS(global, argument)) |file_route| {
             return .{ .file = file_route };
         }
+
+        if (try argument.getOptional(global, "dir", bun.String.Slice)) |dir| {
+            errdefer dir.deinit();
+
+            switch (DirectoryRoute.create(dir, path, null)) {
+                .result => |route| return .{ .dir = route },
+                .err => |*err| return global.throwValue(err.toJS(global)),
+            }
+        }
+
         return .{ .static = try StaticRoute.fromJS(global, argument) orelse return null };
     }
 };
@@ -2604,6 +2627,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         },
                         .file => |file_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
+                        },
+                        .dir => |dir_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *DirectoryRoute, dir_route, entry.path, entry.method);
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);

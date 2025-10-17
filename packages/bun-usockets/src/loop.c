@@ -97,7 +97,7 @@ void us_wakeup_loop(struct us_loop_t *loop) {
 void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
     if(!us_socket_is_closed(0, socket) && !socket->flags.is_pending_read) {
         socket->next_to_read = loop->data.pending_read_head;
-        loop->data.pending_read_head = socket->next_to_read;
+        loop->data.pending_read_head = socket;
         socket->flags.is_pending_read = true;
     }
 }
@@ -106,6 +106,8 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
     if(!socket->flags.is_pending_read) return;
 
     struct us_socket_t* next = loop->data.pending_read_head;
+    if(!next) return;
+    
     if(next == socket) {
         loop->data.pending_read_head = socket->next_to_read;
         socket->flags.is_pending_read = false;

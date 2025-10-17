@@ -3425,9 +3425,19 @@ pub const BundleV2 = struct {
             }
 
             const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+            const loader_from_import_attribute = import_record.loader != null;
             import_record.loader = import_record_loader;
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
+
+            // When import attributes specify a different loader than the file extension default,
+            // append the loader to the path to create a unique cache key.
+            // This ensures importing the same file with different loaders creates separate module instances.
+            // e.g., `import x from "./file.js" with { type: "text" }` vs `import y from "./file.js"`
+            if (loader_from_import_attribute and import_record_loader != path.loader(&transpiler.options.loaders)) {
+                const path_with_loader = std.fmt.allocPrint(this.allocator(), "{s}#loader={s}", .{ path.text, @tagName(import_record_loader) }) catch bun.outOfMemory();
+                path.text = path_with_loader;
+            }
 
             if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {

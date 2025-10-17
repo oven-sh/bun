@@ -3120,11 +3120,21 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     referrerZ.deref();
 
     if (res.success) {
+        String resolvedPath = res.result.value.toWTFString(BunString::ZeroCopy);
+
+        // NOTE: For static imports, JSC doesn't pass import attributes to moduleLoaderResolve.
+        // They're only available in moduleLoaderFetch, but by then JSC has already decided
+        // on the cache key. This means static imports with different attributes to the same
+        // file will incorrectly share a cache entry.
+        //
+        // For dynamic imports, we handle this in moduleLoaderImportModule by appending
+        // the type attribute to the resolved identifier before calling JSC::importModule.
+
         if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(resolvedPath, Zig::toString(queryString)));
         }
 
-        return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
+        return Identifier::fromString(globalObject->vm(), resolvedPath);
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err, globalObject);
@@ -3231,6 +3241,11 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
     // This gets passed through the "parameters" argument to moduleLoaderFetch.
     // Therefore, we modify it in place.
+    //
+    // IMPORTANT: We also need to modify the resolvedIdentifier to include the import
+    // attribute in the cache key, so that the same file with different import attributes
+    // gets cached separately.
+    String typeAttributeForCacheKey;
     if (parameters && parameters.isObject()) {
         auto* object = parameters.toObject(globalObject);
         auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
@@ -3243,11 +3258,18 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                 if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
+                        typeAttributeForCacheKey = typeString;
                         parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
                     }
                 }
             }
         }
+    }
+
+    // Append the type attribute to the resolved identifier to make the cache key unique
+    // Format: /path/to/file.js#type=text
+    if (!typeAttributeForCacheKey.isEmpty()) {
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolvedIdentifier.string(), "#type="_s, typeAttributeForCacheKey));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
@@ -3279,11 +3301,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto moduleKey = moduleKeyJS->value(globalObject);
+    auto moduleKeyOrig = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey->endsWith(".node"_s)) {
+    // Strip the #type= suffix that we added for cache key differentiation (for dynamic imports)
+    // We need to use the actual file path for loading, not the cache key
+    String moduleKey = moduleKeyOrig;
+    size_t typeMarkerPos = moduleKey.find("#type="_s);
+    if (typeMarkerPos != notFound) {
+        moduleKey = moduleKey.substring(0, typeMarkerPos);
+    }
+
+    if (moduleKey.endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
@@ -3340,6 +3370,16 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     JSValue val)
 {
+    // Strip the #type= suffix that we added for cache key differentiation
+    // so that import.meta.url shows the actual file path
+    if (key.isString()) {
+        String keyString = key.toString(globalObject)->value(globalObject);
+        size_t typeMarkerPos = keyString.find("#type="_s);
+        if (typeMarkerPos != notFound) {
+            keyString = keyString.substring(0, typeMarkerPos);
+            key = JSC::jsString(globalObject->vm(), keyString);
+        }
+    }
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 

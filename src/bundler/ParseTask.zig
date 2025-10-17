@@ -655,6 +655,15 @@ fn getCodeForParseTaskWithoutPlugins(
                 };
             }
 
+            // Strip #loader= suffix that was added for cache key differentiation
+            const actual_file_path = if (strings.indexOfChar(file_path.text, '#')) |hash_pos|
+                if (strings.hasPrefixComptime(file_path.text[hash_pos..], "#loader="))
+                    file_path.text[0..hash_pos]
+                else
+                    file_path.text
+            else
+                file_path.text;
+
             break :brk resolver.caches.fs.readFileWithAllocator(
                 // TODO: this allocator may be wrong for native plugins
                 if (loader.shouldCopyForBundling())
@@ -663,12 +672,12 @@ fn getCodeForParseTaskWithoutPlugins(
                 else
                     allocator,
                 transpiler.fs,
-                file_path.text,
+                actual_file_path,
                 task.contents_or_fd.fd.dir,
                 false,
                 contents.file.unwrapValid(),
             ) catch |err| {
-                const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
+                const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, actual_file_path) catch unreachable);
                 switch (err) {
                     error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(

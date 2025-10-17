@@ -1032,15 +1032,24 @@ pub const Transpiler = struct {
                 break :brk logger.Source.initPathString(path.text, body);
             }
 
+            // Strip #loader= suffix that was added for cache key differentiation
+            const file_path_to_read = if (strings.indexOfChar(path.text, '#')) |hash_pos|
+                if (strings.hasPrefixComptime(path.text[hash_pos..], "#loader="))
+                    path.text[0..hash_pos]
+                else
+                    path.text
+            else
+                path.text;
+
             const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
                 if (use_shared_buffer) bun.default_allocator else this_parse.allocator,
                 transpiler.fs,
-                path.text,
+                file_path_to_read,
                 dirname_fd,
                 use_shared_buffer,
                 file_descriptor,
             ) catch |err| {
-                transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path_to_read }) catch {};
                 return null;
             };
             input_fd = entry.fd;

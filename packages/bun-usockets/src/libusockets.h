@@ -74,6 +74,7 @@
 #elif _WIN32
 #define us_usable_size _msize
 #else
+#include <malloc.h>
 #define us_usable_size malloc_usable_size
 #endif
 #endif

@@ -103,7 +103,6 @@ void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket
         socket->flags.is_pending_read = true;
         socket->next_to_read = loop->data.pending_read_head;
         loop->data.pending_read_head = socket;
-        us_socket_context_ref(0, socket->context);
 
     }
 }
@@ -118,7 +117,6 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
         loop->data.pending_read_head = socket->next_to_read;
         socket->flags.is_pending_read = false;
         socket->next_to_read = NULL;
-        us_socket_context_unref(0, socket->context);
         return;
     }
     struct us_socket_t* prev = next;
@@ -128,7 +126,6 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
             prev->next_to_read = socket->next_to_read;
             socket->flags.is_pending_read = false;
             socket->next_to_read = NULL;
-            us_socket_context_unref(0, socket->context);
             return;
         }
         prev = next;

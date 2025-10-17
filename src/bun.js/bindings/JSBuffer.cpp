@@ -2461,8 +2461,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     size_t offset = offsetD;
     if (offset < 0) [[unlikely]]
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+    if (byteLength < 8 || offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength >= 8 ? byteLength - 8 : 0, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
@@ -2501,8 +2501,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     size_t offset = offsetD;
     if (offset < 0) [[unlikely]]
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+    if (byteLength < 8 || offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength >= 8 ? byteLength - 8 : 0, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
@@ -2540,8 +2540,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     size_t offset = offsetD;
     if (offset < 0) [[unlikely]]
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+    if (byteLength < 8 || offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength >= 8 ? byteLength - 8 : 0, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
@@ -2579,8 +2579,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     size_t offset = offsetD;
     if (offset < 0) [[unlikely]]
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+    if (byteLength < 8 || offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength >= 8 ? byteLength - 8 : 0, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));

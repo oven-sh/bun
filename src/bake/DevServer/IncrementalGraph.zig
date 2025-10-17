@@ -1564,9 +1564,20 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             _ = bv2.transpiler.resolver.bustDirCache(dirname);
 
             // Additionally, clear the cached entry of the file from the path to
-            // source index map.
-            for (&bv2.graph.build_graphs.values) |*map| {
-                _ = map.remove(abs_path);
+            // source index map. We don't know which loader was used, so we iterate
+            // through the map and remove all entries that match the path.
+            const PathToSourceIndexMap = @import("../../bundler/PathToSourceIndexMap.zig");
+            for (&bv2.graph.build_graphs.values) |*path_map| {
+                var iter = path_map.map.iterator();
+                var to_remove = std.BoundedArray(PathToSourceIndexMap.CacheKey, 16){};
+                while (iter.next()) |entry| {
+                    if (bun.strings.eql(entry.key_ptr.path, abs_path)) {
+                        to_remove.append(entry.key_ptr.*) catch break;
+                    }
+                }
+                for (to_remove.slice()) |key| {
+                    _ = path_map.map.remove(key);
+                }
             }
         }
 

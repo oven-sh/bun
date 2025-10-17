@@ -512,6 +512,7 @@ pub const BundleV2 = struct {
         for (ast_import_records, targets) |*ast_import_record_list, target| {
             const import_records: []ImportRecord = ast_import_record_list.slice();
             const path_to_source_index_map = this.pathToSourceIndexMap(target);
+            const loaders: []const Loader = this.graph.input_files.items(.loader);
             for (import_records) |*import_record| {
                 const source_index = import_record.source_index.get();
                 if (source_index >= max_valid_source_index.get()) {
@@ -519,7 +520,7 @@ pub const BundleV2 = struct {
                 }
                 const secondary_path = secondary_paths[source_index];
                 if (secondary_path.len > 0) {
-                    const secondary_source_index = path_to_source_index_map.get(secondary_path) orelse continue;
+                    const secondary_source_index = path_to_source_index_map.get(secondary_path, loaders[source_index]) orelse continue;
                     import_record.source_index = Index.init(secondary_source_index);
                     // Keep path in sync for determinism, diagnostics, and dev tooling.
                     import_record.path = this.graph.input_files.items(.source)[secondary_source_index].path;
@@ -654,18 +655,18 @@ pub const BundleV2 = struct {
         path.assertPrettyIsValid();
 
         path.assertFilePathIsAbsolute();
-        const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text));
+        const loader: Loader = brk: {
+            const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+            if (record.loader) |out_loader| {
+                break :brk out_loader;
+            }
+            break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
+            // HTML is only allowed at the entry point.
+        };
+        const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text, loader));
         if (!entry.found_existing) {
             path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
-            entry.key_ptr.* = path.text;
-            const loader: Loader = brk: {
-                const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
-                if (record.loader) |out_loader| {
-                    break :brk out_loader;
-                }
-                break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
-                // HTML is only allowed at the entry point.
-            };
+            entry.key_ptr.* = .{ .path = path.text, .loader = loader };
             const idx = this.enqueueParseTask(
                 &resolve_result,
                 &.{
@@ -699,9 +700,9 @@ pub const BundleV2 = struct {
                     .browser => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.bake_server_components_ssr) },
                     .bake_server_components_ssr => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.browser) },
                 };
-                bun.handleOom(a.put(this.allocator(), entry.key_ptr.*, entry.value_ptr.*));
+                bun.handleOom(a.put(this.allocator(), entry.key_ptr.path, loader, entry.value_ptr.*));
                 if (this.framework.?.server_components.?.separate_ssr_graph)
-                    bun.handleOom(b.put(this.allocator(), entry.key_ptr.*, entry.value_ptr.*));
+                    bun.handleOom(b.put(this.allocator(), entry.key_ptr.path, loader, entry.value_ptr.*));
             }
         } else {
             out_source_index = Index.init(entry.value_ptr.*);
@@ -719,24 +720,24 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) !void {
         // TODO: plugins with non-file namespaces
-        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_slice);
-        if (entry.found_existing) {
-            return;
-        }
         const t = this.transpilerForTarget(target);
         const result = t.resolveEntryPoint(path_slice) catch
             return;
         var path = result.path_pair.primary;
-        this.incrementScanCounter();
-        const source_index = Index.source(this.graph.input_files.len);
         const loader = brk: {
             const default = path.loader(&this.transpiler.options.loaders) orelse .file;
             break :brk default;
         };
+        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_slice, loader);
+        if (entry.found_existing) {
+            return;
+        }
+        this.incrementScanCounter();
+        const source_index = Index.source(this.graph.input_files.len);
 
         path = bun.handleOom(this.pathWithPrettyInitialized(path, target));
         path.assertPrettyIsValid();
-        entry.key_ptr.* = path.text;
+        entry.key_ptr.* = .{ .path = path.text, .loader = loader };
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -784,21 +785,20 @@ pub const BundleV2 = struct {
         var path = result.path() orelse return null;
 
         path.assertFilePathIsAbsolute();
-        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text);
+        const loader = brk: {
+            const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
+            break :brk loader;
+        };
+        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text, loader);
         if (entry.found_existing) {
             return null;
         }
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
 
-        const loader = brk: {
-            const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
-            break :brk loader;
-        };
-
         path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
         path.assertPrettyIsValid();
-        entry.key_ptr.* = path.text;
+        entry.key_ptr.* = .{ .path = path.text, .loader = loader };
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -996,7 +996,7 @@ pub const BundleV2 = struct {
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
             try this.graph.ast.append(this.allocator(), JSAst.empty);
-            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:wrap", Index.runtime.get());
+            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:wrap", .js, Index.runtime.get());
             var runtime_parse_task = try this.allocator().create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -2450,19 +2450,19 @@ pub const BundleV2 = struct {
                         path.namespace = result.namespace;
                     }
 
+                    const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
                     const existing = this.pathToSourceIndexMap(resolve.import_record.original_target)
-                        .getOrPutPath(this.allocator(), &path) catch |err| bun.handleOom(err);
+                        .getOrPutPath(this.allocator(), &path, loader) catch |err| bun.handleOom(err);
                     if (!existing.found_existing) {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
                         path = bun.handleOom(this.pathWithPrettyInitialized(path, resolve.import_record.original_target));
-                        existing.key_ptr.* = path.text;
+                        existing.key_ptr.* = .{ .path = path.text, .loader = loader };
 
                         // We need to parse this
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
-                        const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
                         this.graph.input_files.append(this.allocator(), .{
                             .source = .{
@@ -3429,7 +3429,7 @@ pub const BundleV2 = struct {
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 
-            if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
+            if (this.pathToSourceIndexMap(target).get(path.text, import_record_loader)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
@@ -3549,7 +3549,7 @@ pub const BundleV2 = struct {
         try graph.ast.append(this.allocator(), ast_for_html_entrypoint);
 
         import_record.source_index = fake_input_file.source.index;
-        try this.pathToSourceIndexMap(target).put(this.allocator(), path_text, fake_input_file.source.index.get());
+        try this.pathToSourceIndexMap(target).put(this.allocator(), path_text, .json, fake_input_file.source.index.get());
         try graph.html_imports.server_source_indices.append(this.allocator(), fake_input_file.source.index.get());
         this.ensureClientTranspiler();
     }
@@ -3683,7 +3683,7 @@ pub const BundleV2 = struct {
                     const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
                     const is_html_entrypoint = loader == .html and original_target.isServerSide() and this.transpiler.options.dev_server == null;
                     const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
-                    const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;
+                    const existing = map.getOrPut(this.allocator(), entry.key_ptr.*, loader) catch unreachable;
 
                     // Originally, we attempted to avoid the "dual package
                     // hazard" right here by checking if pathToSourceIndexMap
@@ -3774,7 +3774,8 @@ pub const BundleV2 = struct {
                 }
 
                 for (import_records.slice(), 0..) |*record, i| {
-                    if (path_to_source_index_map.getPath(&record.path)) |source_index| {
+                    const record_loader = record.loader orelse record.path.loader(&this.transpiler.options.loaders) orelse .file;
+                    if (path_to_source_index_map.getPath(&record.path, record_loader)) |source_index| {
                         if (save_import_record_source_index or input_file_loaders[source_index] == .css)
                             record.source_index.value = source_index;
 
@@ -3783,6 +3784,7 @@ pub const BundleV2 = struct {
                                 path_to_source_index_map.put(
                                     this.allocator(),
                                     result.source.path.text,
+                                    input_file_loaders[result.source.index.get()],
                                     source_index,
                                 ) catch unreachable;
                             }
@@ -3839,6 +3841,7 @@ pub const BundleV2 = struct {
                     graph.pathToSourceIndexMap(result.ast.target).put(
                         this.allocator(),
                         result.source.path.text,
+                        graph.input_files.items(.loader)[result.source.index.get()],
                         reference_source_index,
                     ) catch |err| bun.handleOom(err);
 

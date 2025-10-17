@@ -681,12 +681,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                     // Remove if marked for removal
                     if (should_remove) {
-                        manager.summary.remove += 1;
                         if (!is_dry_run) {
-                            var path_buf: bun.PathBuffer = undefined;
-                            const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{scoped_name}) catch continue;
-                            cwd.deleteTree(path) catch {};
+                            scope_dir.deleteTree(scoped_entry.name) catch continue;
                         }
+                        manager.summary.remove += 1;
                     }
                 }
                 continue;
@@ -732,12 +730,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
             // Remove if marked for removal
             if (should_remove) {
-                manager.summary.remove += 1;
                 if (!is_dry_run) {
-                    var path_buf: bun.PathBuffer = undefined;
-                    const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{entry.name}) catch continue;
-                    cwd.deleteTree(path) catch {};
+                    node_modules_dir.deleteTree(entry.name) catch continue;
                 }
+                manager.summary.remove += 1;
             }
         }
     }

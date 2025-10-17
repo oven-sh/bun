@@ -39,3 +39,4 @@
 - [ ] add docs for all functions (at minimum: documentatino comments in the types)
 - [ ] determine which tags should have timer-faking enabled (eg should subprocess timeout? probably not but maybe)
 - [ ] find real projects using fake timers, see if they work
+- [ ] make sure we match jest fake timers also

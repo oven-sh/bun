@@ -1,6 +1,10 @@
 import { isAny } from "./any";
 import { CodeStyle, Type } from "./base";
 
+function bindgenOptional(payload: Type): string {
+  return `bindgen.BindgenOptional(${payload.bindgenType})`;
+}
+
 export abstract class OptionalType extends Type {}
 
 /** Treats `undefined` as a not-provided value. */
@@ -13,7 +17,7 @@ export function optional(payload: Type): OptionalType {
       return `::WebCore::IDLOptional<${payload.idlType}>`;
     }
     get bindgenType() {
-      return `bindgen.BindgenOptional(${payload.bindgenType})`;
+      return bindgenOptional(payload);
     }
     zigType(style?: CodeStyle) {
       return payload.optionalZigType(style);
@@ -27,14 +31,15 @@ export function optional(payload: Type): OptionalType {
   })();
 }
 
-export abstract class NullableType extends OptionalType {}
+export abstract class NullableType extends Type {
+  abstract loose: LooseNullableType;
+}
 
 /** Treats `null` or `undefined` as a not-provided value. */
 export function nullable(payload: Type): NullableType {
-  const asOptional = optional(payload);
   return new (class extends NullableType {
     /** Treats all falsy values as null. */
-    get loose(): LooseNullableType {
+    get loose() {
       return looseNullable(payload);
     }
 
@@ -42,10 +47,10 @@ export function nullable(payload: Type): NullableType {
       return `::WebCore::IDLNullable<${payload.idlType}>`;
     }
     get bindgenType() {
-      return asOptional.bindgenType;
+      return bindgenOptional(payload);
     }
     zigType(style?: CodeStyle) {
-      return asOptional.zigType(style);
+      return payload.optionalZigType(style);
     }
     toCpp(value: any): string {
       if (value == null) {
@@ -56,20 +61,19 @@ export function nullable(payload: Type): NullableType {
   })();
 }
 
-export abstract class LooseNullableType extends NullableType {}
+export abstract class LooseNullableType extends Type {}
 
 /** Treats all falsy values as null. */
 export function looseNullable(payload: Type): LooseNullableType {
-  const asNullable = nullable(payload);
   return new (class extends LooseNullableType {
     get idlType() {
       return `::Bun::IDLLooseNullable<${payload.idlType}>`;
     }
     get bindgenType() {
-      return asNullable.bindgenType;
+      return bindgenOptional(payload);
     }
     zigType(style?: CodeStyle) {
-      return asNullable.zigType(style);
+      return payload.optionalZigType(style);
     }
     toCpp(value: any): string {
       if (!value) {

@@ -270,6 +270,7 @@ pub const SocketConfig = struct {
             .handlers = try .fromGenerated(global, &generated.handlers, is_server),
             .default_data = if (generated.data.isUndefined()) .zero else generated.data,
         };
+        result.handlers.withAsyncContextIfNeeded(global);
         result.handlers.protect();
         errdefer result.deinit();
 

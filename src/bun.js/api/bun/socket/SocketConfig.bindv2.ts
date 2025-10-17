@@ -58,7 +58,7 @@ export const SocketConfig = b.dictionary(
       type: b.String.nullable.loose,
       altNames: ["host"],
     },
-    port: b.u16.optional,
+    port: b.u16.loose.nullable,
     tls: TLS,
     exclusive: {
       type: b.bool,

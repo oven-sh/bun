@@ -93,8 +93,8 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
 
     var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
     this.handlers.unprotect();
-    handlers.protect();
     handlers.withAsyncContextIfNeeded(globalObject);
+    handlers.protect();
     this.handlers = handlers; // TODO: this is a memory leak
 
     return .js_undefined;

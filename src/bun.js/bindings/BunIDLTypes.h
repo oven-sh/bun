@@ -45,6 +45,10 @@ struct IDLFiniteDouble : WebCore::IDLDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
 
+// Converts to a number first.
+template<std::integral T>
+struct IDLLooseInteger : IDLStrictInteger<T> {};
+
 template<typename... IDL>
 struct IDLOrderedUnion : WebCore::IDLType<std::variant<typename IDL::ImplementationType...>> {};
 

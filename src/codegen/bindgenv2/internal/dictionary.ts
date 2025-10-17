@@ -436,6 +436,8 @@ function memberConversion(
 function basicPermitsUndefined(type: Type): boolean {
   return (
     type instanceof optional.OptionalType ||
+    type instanceof optional.NullableType ||
+    type instanceof optional.LooseNullableType ||
     type === optional.undefined ||
     type === optional.null ||
     isAny(type)

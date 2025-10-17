@@ -3245,7 +3245,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                         const auto typeString = type.toWTFString(globalObject);
                         // Create JSScriptFetchParameters with the type string
                         // JSC's module loader will use this to differentiate cache entries
-                        parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
+                        auto* fetchParams = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
+                        // Attach the type string as a property so ModuleLoader.js can access it easily
+                        fetchParams->putDirect(vm, vm.propertyNames->builtinNames().typePublicName(), JSC::jsString(vm, typeString));
+                        parameters = fetchParams;
                     }
                 }
             }

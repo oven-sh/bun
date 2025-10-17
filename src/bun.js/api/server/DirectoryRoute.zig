@@ -111,11 +111,13 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-const bun = @import("bun");
-const std = @import("std");
-const jsc = bun.jsc;
-const uws = bun.uws;
-const AnyServer = jsc.API.AnyServer;
-const AnyResponse = uws.AnyResponse;
-const FileRoute = @import("./FileRoute.zig");
 const log = bun.Output.scoped(.DirectoryRoute, .hidden);
+
+const FileRoute = @import("./FileRoute.zig");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const AnyServer = jsc.API.AnyServer;
+
+const uws = bun.uws;
+const AnyResponse = uws.AnyResponse;

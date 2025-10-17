@@ -220,11 +220,11 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
                                  unsigned int ext_size) {
 
   size_t old_size = us_usable_size(p);
-  if(old_size >= ext_size) {
-      return p;
-  }
+  if(old_size >= ext_size + sizeof(struct us_poll_t)) {
+    return p;
+}
   struct us_poll_t *new_p = us_calloc(1, sizeof(struct us_poll_t) + ext_size);
-  memcpy(new_p, p, sizeof(struct us_poll_t) + old_size);
+  memcpy(new_p, p, old_size);
 
   new_p->uv_p->data = new_p;
 

@@ -385,13 +385,13 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
     size_t old_size = us_usable_size(p);
-    if(old_size >= ext_size) {
+    if(old_size >= ext_size + sizeof(struct us_poll_t)) {
         return p;
     }
     int events = us_poll_events(p);
     
     struct us_poll_t *new_p = us_calloc(1, sizeof(struct us_poll_t) + ext_size);
-    memcpy(new_p, p, sizeof(struct us_poll_t) + old_size);
+    memcpy(new_p, p, old_size);
     if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */

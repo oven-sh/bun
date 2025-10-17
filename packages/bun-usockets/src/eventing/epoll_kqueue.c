@@ -387,8 +387,12 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     int events = us_poll_events(p);
     
     // TODO: optimize it checking if the ext_size is the same as the current one
+    size_t old_size = us_usable_size(p);
+    if(old_size >= ext_size) {
+        return p;
+    }
     struct us_poll_t *new_p = us_calloc(1, sizeof(struct us_poll_t) + ext_size);
-    memcpy(new_p, p, sizeof(struct us_poll_t));
+    memcpy(new_p, p, sizeof(struct us_poll_t) + old_size);
     if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */

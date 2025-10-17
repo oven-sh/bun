@@ -115,7 +115,6 @@ pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, args: *const [2]JSV
     return true;
 }
 
-/// Does not `protect` the handlers.
 pub fn fromJS(
     globalObject: *jsc.JSGlobalObject,
     opts: jsc.JSValue,

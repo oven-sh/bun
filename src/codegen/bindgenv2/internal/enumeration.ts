@@ -15,8 +15,11 @@ abstract class EnumType extends NamedType {}
  * If `values[x]` is an array, all elements of that array will map to the same underlying integral
  * value (that is, `x`). Essentially, they become different spellings of the same enum value.
  */
-export function enumeration(name: string, values: (string | string[])[]): EnumType {
-  const uniqueValues = values.map((v, i) => {
+export function enumeration(
+  name: string,
+  values: readonly (string | readonly string[])[],
+): EnumType {
+  const uniqueValues: string[] = values.map((v, i) => {
     if (!Array.isArray(v)) return v;
     if (v.length === 0) throw RangeError(`enum value cannot be empty (index ${i})`);
     return v[0];

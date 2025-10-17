@@ -3089,3 +3089,23 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   expect(buf.byteLength).toBe(5);
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });
+
+describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
+  for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method](0n)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0n, 0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
+});

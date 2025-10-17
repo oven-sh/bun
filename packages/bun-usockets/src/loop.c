@@ -134,18 +134,12 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
 }
 
 bool us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
-    struct us_socket_t* next = loop->data.pending_read_head;
-    while(next != NULL) {
-        
-        if(us_socket_is_closed(0, next)) {
-            struct us_socket_t* s = next->next_to_read;
-            us_remove_socket_from_pending_read_list(loop, next);
-            next = s;
-            continue;
+    struct us_socket_t* next;
+    while ((next = loop->data.pending_read_head) != NULL) {
+        us_remove_socket_from_pending_read_list(loop, next);
+        if (!us_socket_is_closed(0, next)) {
+            us_internal_dispatch_ready_poll(&next->p, 0, 0, LIBUS_SOCKET_READABLE);
         }
-        struct us_poll_t* p = &next->p;
-        next = next->next_to_read;
-        us_internal_dispatch_ready_poll(p, 0, 0, LIBUS_SOCKET_READABLE);
     }
     return loop->data.pending_read_head != NULL;
 }

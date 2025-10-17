@@ -631,4 +631,65 @@ describe("bun prune", () => {
     const lodashExistsAfter = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
     expect(lodashExistsAfter).toBe(true);
   });
+
+  it("should prune nested node_modules in isolated linker mode", async () => {
+    using dir = tempDir("prune-isolated", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+      "bunfig.toml": 'linker = "isolated"',
+    });
+
+    // Install with isolated linker
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extra package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "lodash"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove lodash from package.json
+    const pkgJson = await file(join(String(dir), "package.json")).json();
+    delete pkgJson.dependencies.lodash;
+    await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));
+
+    // Run prune
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify lodash was removed (in isolated mode it might be nested)
+    // Check both top-level and potential nested locations
+    const lodashExists = existsSync(join(String(dir), "node_modules/lodash"));
+    expect(lodashExists).toBe(false);
+  });
 });

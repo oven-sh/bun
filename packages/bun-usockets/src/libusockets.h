@@ -21,49 +21,49 @@
 #ifndef LIBUSOCKETS_H
 #define LIBUSOCKETS_H
 
-#ifndef _WIN32
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-#endif
-#include <mimalloc.h>
-
-
-#ifndef us_calloc
-#define us_calloc mi_calloc
-#endif
-
-#ifndef us_malloc
-#define us_malloc mi_malloc
-#endif
-
-#ifndef us_realloc
-#define us_realloc mi_realloc
-#endif
-
-#ifndef us_free
-#define us_free mi_free
-#endif
-#ifndef us_usable_size
-#define us_usable_size mi_usable_size
-#endif
+// #ifndef _WIN32
+// #ifndef _GNU_SOURCE
+// #define _GNU_SOURCE
+// #endif
+// #endif
+// #include <mimalloc.h>
 
 
 // #ifndef us_calloc
-// #define us_calloc calloc
+// #define us_calloc mi_calloc
 // #endif
 
 // #ifndef us_malloc
-// #define us_malloc malloc
+// #define us_malloc mi_malloc
 // #endif
 
 // #ifndef us_realloc
-// #define us_realloc realloc
+// #define us_realloc mi_realloc
 // #endif
 
 // #ifndef us_free
-// #define us_free free
+// #define us_free mi_free
 // #endif
+// #ifndef us_usable_size
+// #define us_usable_size mi_usable_size
+// #endif
+
+
+#ifndef us_calloc
+#define us_calloc calloc
+#endif
+
+#ifndef us_malloc
+#define us_malloc malloc
+#endif
+
+#ifndef us_realloc
+#define us_realloc realloc
+#endif
+
+#ifndef us_free
+#define us_free free
+#endif
 // #ifndef us_usable_size
 // #ifdef __APPLE__
 // #include <malloc/malloc.h>

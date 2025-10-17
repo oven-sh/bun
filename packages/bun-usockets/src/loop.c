@@ -525,6 +525,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
                 
                     if (length > 0) {
+                        #ifndef WIN32 
+
+                        // We need to register this socket to read later otherwise the event loop will never trigger again
+                        // TODO: we should register this after continue; but realloc may happen so we need to do it here
+                        us_add_socket_to_pending_read_list(loop, s);
+                        #else
+                        #endif
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
@@ -546,9 +553,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                             
                         }
-                        
-                        // We need to register this socket to read later otherwise the event loop will never trigger again
-                        us_add_socket_to_pending_read_list(loop, s);
                         
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif

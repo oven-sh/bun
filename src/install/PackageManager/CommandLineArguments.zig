@@ -755,7 +755,8 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\<b>Usage<r>: <b><green>bun prune<r> <cyan>[flags]<r>
                 \\
-                \\  Remove extraneous packages not in package.json and optionally devDependencies.
+                \\  Remove packages not present in the lockfile (e.g., removed from package.json).
+                \\  In production mode (--production), also removes devDependencies.
                 \\
                 \\<b>Flags:<r>
             ;

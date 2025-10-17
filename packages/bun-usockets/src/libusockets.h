@@ -21,7 +21,11 @@
 #ifndef LIBUSOCKETS_H
 #define LIBUSOCKETS_H
 
-
+#ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
 #include <mimalloc.h>
 
 

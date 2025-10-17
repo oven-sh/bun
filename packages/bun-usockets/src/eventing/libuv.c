@@ -219,7 +219,8 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
                                  unsigned int ext_size) {
 
-  struct us_poll_t *new_p = realloc(p, sizeof(struct us_poll_t) + ext_size);
+  struct us_poll_t *new_p = calloc(1, sizeof(struct us_poll_t) + ext_size);
+  memcpy(new_p, p, sizeof(struct us_poll_t));
   new_p->uv_p->data = new_p;
 
   return new_p;

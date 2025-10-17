@@ -63,6 +63,7 @@ pub const BunObject = struct {
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
+    pub const telemetry = toJSLazyPropertyCallback(Bun.getTelemetryObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
@@ -139,6 +140,7 @@ pub const BunObject = struct {
         @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
         @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
         @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
+        @export(&BunObject.telemetry, .{ .name = lazyPropertyCallbackName("telemetry") });
         @export(&BunObject.S3Client, .{ .name = lazyPropertyCallbackName("S3Client") });
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
@@ -1273,6 +1275,10 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return YAMLObject.create(globalThis);
 }
 
+pub fn getTelemetryObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return TelemetryObject.create(globalThis);
+}
+
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
@@ -1393,6 +1399,32 @@ const CSRFObject = struct {
             globalThis,
             ZigString.static("verify"),
             jsc.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
+        );
+
+        return object;
+    }
+};
+
+const TelemetryObject = struct {
+    pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        const object = JSValue.createEmptyObject(globalThis, 3);
+
+        object.put(
+            globalThis,
+            ZigString.static("configure"),
+            jsc.createCallback(globalThis, ZigString.static("configure"), 1, bun.telemetry.configure),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("isEnabled"),
+            jsc.createCallback(globalThis, ZigString.static("isEnabled"), 0, bun.telemetry.isEnabled),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("disable"),
+            jsc.createCallback(globalThis, ZigString.static("disable"), 0, bun.telemetry.disable),
         );
 
         return object;

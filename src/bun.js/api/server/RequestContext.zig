@@ -45,6 +45,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         upgrade_context: ?*uws.SocketContext = null,
 
+        /// Telemetry request ID for tracking this request
+        telemetry_request_id: telemetry.RequestId = 0,
+
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
         response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
@@ -714,6 +717,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 cookies.deref();
+            }
+
+            // Notify telemetry that the request has ended
+            if (this.telemetry_request_id != 0) {
+                if (telemetry.Telemetry.getInstance()) |t| {
+                    t.notifyRequestEnd(this.telemetry_request_id);
+                }
             }
 
             if (this.request_weakref.get()) |request| {
@@ -2108,6 +2118,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             status: u16,
         ) void {
             jsc.markBinding(@src());
+
+            // Notify telemetry about the error
+            if (this.telemetry_request_id != 0) {
+                if (telemetry.Telemetry.getInstance()) |t| {
+                    t.notifyRequestError(this.telemetry_request_id, value);
+                }
+            }
+
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
@@ -2216,6 +2234,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const resp = this.resp.?;
 
             var response: *jsc.WebCore.Response = this.response_ptr.?;
+
+            // Notify telemetry about response headers
+            if (this.telemetry_request_id != 0) {
+                if (telemetry.Telemetry.getInstance()) |t| {
+                    // Pass status code directly instead of full Response object
+                    // to avoid lifecycle issues
+                    const status_code = response.statusCode();
+                    t.notifyResponseStatus(this.telemetry_request_id, status_code);
+                }
+            }
+
             var status = response.statusCode();
             var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
 
@@ -2670,6 +2699,7 @@ const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
 const writeStatus = bun.api.server.writeStatus;
+const telemetry = bun.telemetry;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

@@ -1431,6 +1431,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onRequestComplete(this: *ThisServer) void {
             this.vm.eventLoop().processGCTimer();
 
+            // Note: We can't safely call onRequestEnd here because we don't have
+            // access to the request object anymore. The onRequestEnd hook would need
+            // to be called earlier in the request lifecycle when we still have
+            // a valid reference to the request.
+
             this.pending_requests -= 1;
             this.deinitIfWeCan();
         }
@@ -1868,6 +1873,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             var node_http_response: ?*NodeHTTPResponse = null;
             var is_async = false;
+
+            // TODO: Add telemetry support for Node.js compatibility layer
+            // The Node.js path doesn't create a Request object, so we'd need a different approach
+
             defer {
                 if (!is_async) {
                     if (node_http_response) |node_response| {
@@ -2080,6 +2089,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             bun.assert(this.config.onRequest != .zero);
 
             const js_value = this.jsValueAssertAlive();
+
+            // Notify telemetry if enabled (after js_value is ready but before handler)
+            if (telemetry.Telemetry.getInstance()) |t| {
+                if (t.isEnabled()) {
+                    const request_id = t.notifyRequestStart(prepared.js_request);
+                    prepared.ctx.telemetry_request_id = request_id;
+                }
+            }
+
             const response_value = this.config.onRequest.call(
                 this.globalThis,
                 js_value,
@@ -2284,6 +2302,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                 }
             }
+
+            // Ensure the Request URL is populated before creating the JS object
+            // request_object.ensureURL() catch {};
 
             return .{
                 .js_request = switch (create_js_request) {
@@ -3433,6 +3454,7 @@ const Transpiler = bun.Transpiler;
 const analytics = bun.analytics;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
+const telemetry = bun.telemetry;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;

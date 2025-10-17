@@ -729,6 +729,7 @@ pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
+pub const telemetry = @import("./bun.js/telemetry.zig");
 pub const zlib = @import("./zlib.zig");
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 

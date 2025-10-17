@@ -794,6 +794,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
+    telemetry                                      BunObject_lazyPropCb_wrap_telemetry                                 DontDelete|PropertyCallback
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
@@ -892,6 +893,14 @@ static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+}
+
+// LazyProperty wrapper for telemetry
+extern "C" JSC::EncodedJSValue BunObject_lazyPropCb_telemetry(JSC::JSGlobalObject*, JSC::JSObject*);
+static JSValue BunObject_lazyPropCb_wrap_telemetry(VM& vm, JSObject* bunObject)
+{
+    (void)vm;
+    return JSValue::decode(BunObject_lazyPropCb_telemetry(bunObject->globalObject(), bunObject));
 }
 
 #include "BunObject.lut.h"

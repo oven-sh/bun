@@ -3246,9 +3246,11 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                         // Create JSScriptFetchParameters with the type string
                         // JSC's module loader will use this to differentiate cache entries
                         auto* fetchParams = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
-                        // Attach the type string as a property so ModuleLoader.js can access it easily
-                        fetchParams->putDirect(vm, vm.propertyNames->builtinNames().typePublicName(), JSC::jsString(vm, typeString));
-                        parameters = fetchParams;
+                        // Wrap in a plain object so we can attach the type property
+                        auto* wrapper = JSC::constructEmptyObject(globalObject);
+                        wrapper->putDirect(vm, JSC::Identifier::fromString(vm, "bunInternal"_s), fetchParams);
+                        wrapper->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), JSC::jsString(vm, typeString));
+                        parameters = wrapper;
                     }
                 }
             }

@@ -1977,18 +1977,17 @@ pub fn getStream(
     if (js.streamGetCached(thisValue)) |cached| {
         return cached;
     }
-    var recommended_chunk_size: SizeType = 0;
-    var arguments_ = callframe.arguments_old(2);
-    var arguments = arguments_.ptr[0..arguments_.len];
-    if (arguments.len > 0) {
-        if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
-            return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
-        }
 
-        if (arguments[0].isNumber()) {
-            recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
+    var recommended_chunk_size: SizeType = 0;
+    var recommended_chunk_size_value = callframe.argument(0);
+
+    if (!recommended_chunk_size_value.isUndefinedOrNull()) {
+        if (recommended_chunk_size_value.isNumber()) {
+            recommended_chunk_size = @intCast(@max(0, @as(i52, @truncate(recommended_chunk_size_value.toInt64()))));
         }
+        return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
     }
+
     const stream = try jsc.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,

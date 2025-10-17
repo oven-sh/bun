@@ -506,10 +506,14 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         // Parse package.json fresh for production mode checks (avoid stale pointers)
         // Hold onto the contents until we're done with prune cleanup
-        const pkg_json_contents_for_prune = if (is_production)
-            std.fs.cwd().readFileAlloc(manager.allocator, manager.original_package_json_path, 1024 * 1024 * 16) catch break :prune_cleanup
-        else
-            null;
+        const pkg_json_contents_for_prune = if (is_production) blk: {
+            const contents = bun.sys.File.readFrom(
+                bun.FD.cwd(),
+                manager.original_package_json_path,
+                manager.allocator,
+            ).unwrap() catch break :prune_cleanup;
+            break :blk contents;
+        } else null;
         defer if (pkg_json_contents_for_prune) |contents| manager.allocator.free(contents);
 
         const pkg_json_for_prune = if (pkg_json_contents_for_prune) |contents| blk: {
@@ -518,36 +522,101 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             break :blk parsed;
         } else null;
 
-        // Helper to check if package is in dependencies or optionalDependencies
-        const isInProductionDeps = struct {
-            fn check(pkg_json: JSON.Expr, pkg_name: []const u8) bool {
-                // Check dependencies
-                if (pkg_json.asProperty("dependencies")) |deps_prop| {
-                    if (deps_prop.expr.data == .e_object) {
-                        for (deps_prop.expr.data.e_object.properties.slice()) |prop| {
-                            if (prop.key) |key| {
-                                if (key.data == .e_string and key.data.e_string.eql(string, pkg_name)) {
-                                    return true;
-                                }
+        // Build reachability set for production mode by traversing lockfile dependency graph
+        var production_reachable_hashes: ?std.AutoHashMap(PackageNameHash, void) = null;
+        defer if (production_reachable_hashes) |*map| map.deinit();
+
+        if (is_production and pkg_json_for_prune != null) {
+            production_reachable_hashes = std.AutoHashMap(PackageNameHash, void).init(manager.allocator);
+            var reachable = &production_reachable_hashes.?;
+
+            // Get root package ID
+            const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+            const packages = manager.lockfile.packages.slice();
+            const dependencies_lists = packages.items(.dependencies);
+            const resolutions_lists = packages.items(.resolutions);
+
+            // Helper to collect direct production dependencies from package.json
+            var root_production_deps = std.ArrayList(PackageNameHash).init(manager.allocator);
+            defer root_production_deps.deinit();
+
+            // Collect dependencies
+            if (pkg_json_for_prune.?.asProperty("dependencies")) |deps_prop| {
+                if (deps_prop.expr.data == .e_object) {
+                    for (deps_prop.expr.data.e_object.properties.slice()) |prop| {
+                        if (prop.key) |key| {
+                            if (key.data == .e_string) {
+                                const dep_name = key.data.e_string.string(manager.allocator) catch continue;
+                                const dep_hash = String.Builder.stringHash(dep_name);
+                                try root_production_deps.append(dep_hash);
                             }
                         }
                     }
                 }
-                // Check optionalDependencies
-                if (pkg_json.asProperty("optionalDependencies")) |opt_deps_prop| {
-                    if (opt_deps_prop.expr.data == .e_object) {
-                        for (opt_deps_prop.expr.data.e_object.properties.slice()) |prop| {
-                            if (prop.key) |key| {
-                                if (key.data == .e_string and key.data.e_string.eql(string, pkg_name)) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                return false;
             }
-        }.check;
+
+            // Collect optionalDependencies
+            if (pkg_json_for_prune.?.asProperty("optionalDependencies")) |opt_deps_prop| {
+                if (opt_deps_prop.expr.data == .e_object) {
+                    for (opt_deps_prop.expr.data.e_object.properties.slice()) |prop| {
+                        if (prop.key) |key| {
+                            if (key.data == .e_string) {
+                                const dep_name = key.data.e_string.string(manager.allocator) catch continue;
+                                const dep_hash = String.Builder.stringHash(dep_name);
+                                try root_production_deps.append(dep_hash);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // BFS traversal to find all reachable packages from production dependencies
+            var queue = std.ArrayList(PackageID).init(manager.allocator);
+            defer queue.deinit();
+            var visited = std.AutoHashMap(PackageID, void).init(manager.allocator);
+            defer visited.deinit();
+
+            // Start with root package's production dependencies
+            const root_dep_list = dependencies_lists[root_pkg_id];
+            const root_res_list = resolutions_lists[root_pkg_id];
+            const root_deps = root_dep_list.get(manager.lockfile.buffers.dependencies.items);
+            const root_package_ids = root_res_list.get(manager.lockfile.buffers.resolutions.items);
+
+            for (root_deps, root_package_ids) |dep, pkg_id| {
+                // Only include non-dev dependencies (dependencies and optionalDependencies)
+                const is_production_dep = blk: {
+                    for (root_production_deps.items) |prod_hash| {
+                        if (dep.name_hash == prod_hash) break :blk true;
+                    }
+                    break :blk false;
+                };
+
+                if (is_production_dep and pkg_id != invalid_package_id) {
+                    try queue.append(pkg_id);
+                    try visited.put(pkg_id, {});
+                    try reachable.put(name_hashes[pkg_id], {});
+                }
+            }
+
+            // BFS to traverse all transitive dependencies
+            while (queue.items.len > 0) {
+                const current_pkg_id = queue.orderedRemove(0);
+
+                const dep_list = dependencies_lists[current_pkg_id];
+                const res_list = resolutions_lists[current_pkg_id];
+                const deps = dep_list.get(manager.lockfile.buffers.dependencies.items);
+                const pkg_ids = res_list.get(manager.lockfile.buffers.resolutions.items);
+
+                for (deps, pkg_ids) |_, pkg_id| {
+                    if (pkg_id == invalid_package_id) continue;
+                    if (visited.contains(pkg_id)) continue;
+
+                    try queue.append(pkg_id);
+                    try visited.put(pkg_id, {});
+                    try reachable.put(name_hashes[pkg_id], {});
+                }
+            }
+        }
 
         // Iterate through node_modules and check each package
         var iter = node_modules_dir.iterate();
@@ -599,18 +668,21 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     var should_remove = pkg_index == null;
 
                     // In production mode, also remove devDependencies
-                    if (!should_remove and is_production and pkg_json_for_prune != null) {
-                        // Package is in lockfile, but check if it's a devDependency
-                        if (pkg_index != null and !isInProductionDeps(pkg_json_for_prune.?, scoped_name)) {
+                    if (!should_remove and is_production and production_reachable_hashes != null) {
+                        // Package is in lockfile, but check if it's not reachable from production deps
+                        if (pkg_index != null and !production_reachable_hashes.?.contains(pkg_hash)) {
                             should_remove = true;
                         }
                     }
 
                     // Remove if marked for removal
-                    if (should_remove and !is_dry_run) {
-                        var path_buf: bun.PathBuffer = undefined;
-                        const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{scoped_name}) catch continue;
-                        cwd.deleteTree(path) catch {};
+                    if (should_remove) {
+                        manager.summary.remove += 1;
+                        if (!is_dry_run) {
+                            var path_buf: bun.PathBuffer = undefined;
+                            const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{scoped_name}) catch continue;
+                            cwd.deleteTree(path) catch {};
+                        }
                     }
                 }
                 continue;
@@ -647,18 +719,21 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             var should_remove = pkg_index == null;
 
             // In production mode, also remove devDependencies
-            if (!should_remove and is_production and pkg_json_for_prune != null) {
-                // Package is in lockfile, but check if it's a devDependency
-                if (pkg_index != null and !isInProductionDeps(pkg_json_for_prune.?, entry.name)) {
+            if (!should_remove and is_production and production_reachable_hashes != null) {
+                // Package is in lockfile, but check if it's not reachable from production deps
+                if (pkg_index != null and !production_reachable_hashes.?.contains(pkg_hash)) {
                     should_remove = true;
                 }
             }
 
             // Remove if marked for removal
-            if (should_remove and !is_dry_run) {
-                var path_buf: bun.PathBuffer = undefined;
-                const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{entry.name}) catch continue;
-                cwd.deleteTree(path) catch {};
+            if (should_remove) {
+                manager.summary.remove += 1;
+                if (!is_dry_run) {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const path = std.fmt.bufPrint(&path_buf, "node_modules/{s}", .{entry.name}) catch continue;
+                    cwd.deleteTree(path) catch {};
+                }
             }
         }
     }
@@ -941,3 +1016,5 @@ const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
+const PackageID = bun.install.PackageID;
+const invalid_package_id = bun.install.invalid_package_id;

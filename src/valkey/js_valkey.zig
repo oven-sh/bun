@@ -315,6 +315,7 @@ pub const JSValkeyClient = struct {
         else
             valkey.Options{};
 
+        // TODO(markovejnovic): This feels like it is leaked?
         var connection_strings: []u8 = &.{};
         errdefer {
             this_allocator.free(connection_strings);
@@ -1152,6 +1153,8 @@ pub const JSValkeyClient = struct {
 
             pub fn run(self: *@This()) void {
                 defer bun.default_allocator.destroy(self);
+                // TODO(markovejnovic): This true seems like a bug -- shouldn't
+                // we only do this in the SSL case?
                 self.ctx.deinit(true);
             }
         };

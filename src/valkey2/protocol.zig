@@ -1,4 +1,9 @@
-// TODO(markovejnovic): Remove JS from this file. Why oh why is this not decoupled?
+//! Represents the RESP protocol used by Valkey and Redis.
+//!
+//! Note that this implementation has been blindly ported from the legacy
+//! Valkey implementation and may not be optimal, idiomatic or correct.
+//!
+//! TODO(markovejnovic): This code should not need to rely on JS objects.
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,
@@ -23,7 +28,6 @@ pub const RedisError = error{
     InvalidVerbatimString,
     JSError,
     OutOfMemory,
-    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
@@ -57,8 +61,8 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
         error.JSError => return globalObject.takeException(error.JSError),
-        error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
-        error.JSTerminated => return globalObject.takeException(error.JSTerminated),
+        error.OutOfMemory => globalObject.throwOutOfMemory() catch
+            return globalObject.takeException(error.JSError),
     };
 
     if (message) |msg| {

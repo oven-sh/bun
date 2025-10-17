@@ -21,6 +21,14 @@ pub fn containsChar(self: string, char: u8) callconv(bun.callconv_inline) bool {
     return indexOfChar(self, char) != null;
 }
 
+pub fn intToStr(
+    integer: anytype,
+) [std.fmt.count("{d}", .{std.math.maxInt(i32)})]u8 {
+    var buf: [std.fmt.count("{d}", .{std.math.maxInt(i32)})]u8 = undefined;
+    std.fmt.format(buf[0..], "{d}", .{integer}) catch unreachable;
+    return buf;
+}
+
 pub fn containsCharT(comptime T: type, self: []const T, char: u8) callconv(bun.callconv_inline) bool {
     return switch (T) {
         u8 => containsChar(self, char),

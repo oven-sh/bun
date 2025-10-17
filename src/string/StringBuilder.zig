@@ -23,6 +23,12 @@ pub fn count(this: *StringBuilder, slice: []const u8) void {
     this.cap += slice.len;
 }
 
+pub fn countMany(this: *StringBuilder, slices: anytype) void {
+    inline for (slices) |slice| {
+        this.count(slice);
+    }
+}
+
 pub fn allocate(this: *StringBuilder, allocator: Allocator) Allocator.Error!void {
     const slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
@@ -100,6 +106,32 @@ pub fn append(this: *StringBuilder, slice: []const u8) []const u8 {
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
     return result;
+}
+
+/// Append many slices at once, returning an array of slices.
+pub fn appendMany(
+    this: *StringBuilder,
+    slices: anytype,
+) [slices.len][]const u8 {
+    var result: [slices.len][]const u8 = undefined;
+    inline for (slices, 0..) |slice, idx| {
+        result[idx] = this.append(slice);
+    }
+    return result;
+}
+
+/// Measure many slices, allocate and then append them all at once.
+///
+/// This is more efficient than appending them one by one due to the fact that
+/// it allocates once.
+pub fn measureAllocateAppend(
+    this: *StringBuilder,
+    allocator: std.mem.Allocator,
+    slices: anytype,
+) ![slices.len][]const u8 {
+    this.countMany(slices);
+    try this.allocate(allocator);
+    return this.appendMany(slices);
 }
 
 pub fn addConcat(this: *StringBuilder, slices: []const []const u8) bun.StringPointer {

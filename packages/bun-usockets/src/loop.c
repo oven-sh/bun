@@ -541,7 +541,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif
                         // We need to register this socket to read later otherwise the event loop will never trigger again
-                        us_add_socket_to_pending_read_list(loop, s);
+                        if(s) us_add_socket_to_pending_read_list(loop, s);
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
                         break;

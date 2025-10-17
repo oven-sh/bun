@@ -212,3 +212,78 @@ describe("isFakeTimers", () => {
     expect(vi.isFakeTimers()).toBe(false);
   });
 });
+describe("Date.now() mocking", () => {
+  test("Date.now() before and after vi.useFakeTimers() should be roughly equal", () => {
+    const beforeFake = Date.now();
+    vi.useFakeTimers();
+    const afterFake = Date.now();
+
+    // The fake time should start at approximately the real time
+    // Allow a tolerance of 100ms for the time it takes to call useFakeTimers()
+    const diff = Math.abs(afterFake - beforeFake);
+    expect(diff).toBeLessThan(100);
+  });
+
+  test("Date.now() should be mocked when fake timers are active", () => {
+    vi.useFakeTimers();
+    const start = Date.now();
+
+    // Advance time by 1000ms
+    vi.advanceTimersByTime(1000);
+
+    // Date.now() should reflect the advanced time
+    expect(Date.now()).toBe(start + 1000);
+
+    // Advance more time
+    vi.advanceTimersByTime(500);
+    expect(Date.now()).toBe(start + 1500);
+  });
+
+  test("Date.now() returns to real time when fake timers are disabled", () => {
+    vi.useFakeTimers();
+    const initialFakeTime = Date.now();
+    vi.advanceTimersByTime(1000);
+    const advancedFakeTime = Date.now();
+    expect(advancedFakeTime).toBe(initialFakeTime + 1000);
+
+    vi.useRealTimers();
+
+    // After disabling fake timers, Date.now() should return real time
+    // The real time should be close to when we started (within a few ms)
+    // It should NOT be the advanced fake time
+    const realNow = Date.now();
+    // Allow 1ms tolerance for rounding
+    expect(Math.abs(realNow - initialFakeTime)).toBeLessThan(10);
+    expect(realNow).toBeLessThan(advancedFakeTime); // Real time hasn't advanced as much as fake time
+  });
+
+  test("Date.now() advances with advanceTimersToNextTimer", () => {
+    vi.useFakeTimers();
+    const start = Date.now();
+
+    setTimeout(() => {}, 100);
+    setTimeout(() => {}, 200);
+
+    vi.advanceTimersToNextTimer();
+    expect(Date.now()).toBe(start + 100);
+
+    vi.advanceTimersToNextTimer();
+    expect(Date.now()).toBe(start + 200);
+  });
+
+  test("Date.now() is consistent with timer callbacks", () => {
+    vi.useFakeTimers();
+    const start = Date.now();
+    let capturedTime = 0;
+
+    setTimeout(() => {
+      capturedTime = Date.now();
+    }, 500);
+
+    vi.advanceTimersByTime(500);
+
+    // The time captured in the callback should match
+    expect(capturedTime).toBe(start + 500);
+    expect(Date.now()).toBe(start + 500);
+  });
+});

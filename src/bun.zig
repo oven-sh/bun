@@ -3184,6 +3184,10 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 pub const dns = @import("./dns.zig");
 
 pub fn getRoughTickCount() timespec {
+    if (bun.jsc.Jest.bun_test.FakeTimers.current_time.get()) |fake_time| {
+        return fake_time;
+    }
+
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
@@ -3254,6 +3258,9 @@ pub fn getRoughTickCount() timespec {
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
 pub fn getRoughTickCountMs() u64 {
     if (Environment.isWindows) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.get()) |fake_time| {
+            return fake_time.ns() / std.time.ns_per_ms;
+        }
         const GetTickCount64 = struct {
             pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
         }.GetTickCount64;

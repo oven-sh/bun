@@ -1,63 +1,137 @@
 #active: bool = false,
 timers: TimerHeap = .{ .context = {} },
-#current_time: bun.timespec = .epoch,
 
-fn assertValid(this: *FakeTimers) void {
+pub var current_time: struct {
+    const PackedTime = packed struct(u128) {
+        sec: i64,
+        nsec: i64,
+        const min: PackedTime = .{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
+    };
+    #time: std.atomic.Value(PackedTime) = .init(.min),
+    pub fn get(this: *@This()) ?bun.timespec {
+        const value = this.#time.load(.seq_cst);
+        if (value == PackedTime.min) return null;
+        return .{ .sec = value.sec, .nsec = value.nsec };
+    }
+    pub fn set(this: *@This(), time: ?*const bun.timespec, _: *jsc.JSGlobalObject) void {
+        if (time) |t| {
+            this.#time.store(.{ .sec = t.sec, .nsec = t.nsec }, .seq_cst);
+        } else {
+            this.#time.store(.min, .seq_cst);
+        }
+        // TODO: also set the override time for Date.now()
+    }
+} = .{};
+
+fn assertValid(this: *FakeTimers, mode: enum { locked, unlocked }) void {
     if (!bun.Environment.ci_assert) return;
     const owner: *bun.api.Timer.All = @fieldParentPtr("fake_timers", this);
-    bun.assert(owner.lock.tryLock() == false);
+    switch (mode) {
+        .locked => bun.assert(owner.lock.tryLock() == false),
+        .unlocked => {}, // can't assert unlocked because another thread could be holding the lock
+    }
 }
 
 pub fn isActive(this: *FakeTimers) bool {
-    this.assertValid();
-    defer this.assertValid();
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
 
     return this.#active;
 }
-fn activate(this: *FakeTimers, time: bun.timespec) void {
-    this.assertValid();
-    defer this.assertValid();
+fn activate(this: *FakeTimers, time: bun.timespec, globalObject: *jsc.JSGlobalObject) void {
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
 
     this.#active = true;
-    this.#current_time = time;
+    current_time.set(&time, globalObject);
 }
-fn deactivate(this: *FakeTimers) void {
-    this.assertValid();
-    defer this.assertValid();
+fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
 
     this.clear();
-    this.#current_time = .epoch;
+    current_time.set(null, globalObject);
     this.#active = false;
 }
 fn clear(this: *FakeTimers) void {
-    this.assertValid();
-    defer this.assertValid();
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
 
     while (this.timers.deleteMin()) |timer| {
         timer.state = .CANCELLED;
         timer.in_heap = .none;
     }
 }
+fn advanceTimeWithoutFiringTimers(this: *FakeTimers, ms: i64) void {
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
+
+    this.#current_time = this.#current_time.addMs(ms);
+}
+fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bun.JSError!bool {
+    this.assertValid(.unlocked);
+    defer this.assertValid(.unlocked);
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+
+    const next = blk: {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        break :blk this.timers.deleteMin() orelse return false;
+    };
+
+    if (bun.Environment.ci_assert) {
+        const prev = current_time.get();
+        bun.assert(prev != null);
+        bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
+    }
+    const now = next.next;
+    current_time.set(&now, globalObject);
+    const arm = next.fire(&now, vm);
+    switch (arm) {
+        .disarm => {},
+        .rearm => {},
+    }
+
+    return true;
+}
+
+// ===
+// JS Functions
+// ===
 
 fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalObject.bunVM();
     const timers = &vm.timer;
-    timers.lock.lock();
-    defer timers.lock.unlock();
-    const fake_timers = &timers.fake_timers;
+    const this = &timers.fake_timers;
 
-    fake_timers.activate(bun.timespec.now());
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        this.activate(bun.timespec.now(), globalObject);
+    }
 
     return callframe.this();
 }
 fn useRealTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalObject.bunVM();
     const timers = &vm.timer;
-    timers.lock.lock();
-    defer timers.lock.unlock();
-    const fake_timers = &timers.fake_timers;
+    const this = &timers.fake_timers;
 
-    fake_timers.deactivate();
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        this.deactivate(globalObject);
+    }
+
+    return callframe.this();
+}
+fn advanceTimersToNextTimer(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+
+    _ = try this.executeNext(globalObject);
 
     return callframe.this();
 }
@@ -65,6 +139,7 @@ fn useRealTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObject, *jsc.CallFrame) bun.JSError!jsc.JSValue) } = &.{
     .{ "useFakeTimers", 0, useFakeTimers },
     .{ "useRealTimers", 0, useRealTimers },
+    .{ "advanceTimersToNextTimer", 0, advanceTimersToNextTimer },
 };
 pub const timerFnsCount = fake_timers_fns.len;
 pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: jsc.JSValue) void {
@@ -76,6 +151,7 @@ pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: js
     }
 }
 
+const std = @import("std");
 const bun = @import("bun");
 const TimerHeap = bun.api.Timer.TimerHeap;
 const jsc = bun.jsc;

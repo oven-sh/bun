@@ -1,6 +1,11 @@
+- [ ] the result of 'arm' ('.disarm'/'.rearm') seems to be ignored? both disarm and rearm? we should change it to return void if it's actually ignored
 - [ ] see how fake timers works with setSystemTime
 - [ ] handle the config argument for useFakeTimers
   - vitest has the toFake parameter for enabling nextTick and queueMicrotask
   - jets has a timerLimit parameter
 - [ ] make sure there is no memory leak if you create a setTimeout/setInterval and clear or stop the fake timers before it fires repeatedly.
 - [ ] audit the allowFakeTimers list (do we want subprocess timeouts to count? and others)
+  - we will also need some timespec.now() calls to exclude mocked time, ie `timespec.nowUnmocked()`
+  - since test timeouts must be unmocked, we need BunTest timeouts to use unmocked time
+  - [ ] audit all timespec.now() calls to replace some with timespec.nowUnmocked()
+- [ ] add a test that fake timers do not break test duration calculations

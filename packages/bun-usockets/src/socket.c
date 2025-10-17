@@ -25,8 +25,6 @@
 #ifndef WIN32
 #include <fcntl.h>
 #endif
-#include <stdio.h>
-
 /* Shared with SSL */
 
 int us_socket_local_port(int ssl, struct us_socket_t *s) {

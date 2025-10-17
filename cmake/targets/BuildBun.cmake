@@ -819,7 +819,7 @@ set_target_properties(${bun} PROPERTIES
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 17
+  C_STANDARD 23
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
@@ -1462,7 +1462,7 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
 
-    if(APPLE OR LINUX)
+    if((APPLE OR LINUX) AND NOT ENABLE_ASAN)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
 

@@ -3182,8 +3182,8 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
-        return faccessat(dir_fd, path);
+        const path = std.posix.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        return faccessat(dir_fd, &path);
     }
 
     if (comptime Environment.isLinux) {

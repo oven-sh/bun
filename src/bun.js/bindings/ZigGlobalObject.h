@@ -185,8 +185,6 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
-
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
@@ -752,10 +750,7 @@ public:
 
 } // namespace Zig
 
-// TODO: move this
 namespace Bun {
-
-String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

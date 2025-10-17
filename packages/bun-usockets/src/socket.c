@@ -25,6 +25,7 @@
 #ifndef WIN32
 #include <fcntl.h>
 #endif
+#include <stdio.h>
 
 /* Shared with SSL */
 

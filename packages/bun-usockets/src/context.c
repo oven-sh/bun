@@ -48,6 +48,7 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
         struct us_loop_t* loop = context->loop;
         us_internal_socket_context_unlink_listen_socket(ssl, context, ls);
         us_poll_stop((struct us_poll_t *) s, loop);
+        us_remove_socket_from_pending_read_list(loop, s);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         /* Link this socket to the close-list and let it be deleted after this iteration */

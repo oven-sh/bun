@@ -444,9 +444,11 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
         auto& value = entry.value().value;
         auto ident = Identifier::fromString(vm, key);
         if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
+            JSValue jsValue = obj->get(lexicalGlobalObject, ident);
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (jsValue.isString()) {
                 JSValue stringResult = jsString(vm, value);
+                RETURN_IF_EXCEPTION(throwScope, {});
                 ensureStillAliveHere(stringResult);
 
                 GCDeferralContext deferralContext(lexicalGlobalObject->vm());
@@ -459,17 +461,21 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
 
                 array->initializeIndex(initializationScope, 0, jsValue);
                 array->initializeIndex(initializationScope, 1, stringResult);
-                obj->putDirect(vm, ident, array, 0);
+                obj->putDirectMayBeIndex(lexicalGlobalObject, ident, array);
             } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                array->push(lexicalGlobalObject, jsString(vm, value));
+                JSValue stringValue = jsString(vm, value);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                array->push(lexicalGlobalObject, stringValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             } else {
                 RELEASE_ASSERT_NOT_REACHED();
             }
         } else {
             seenKeys.add(key);
-            obj->putDirect(vm, ident, jsString(vm, value), 0);
+            JSValue stringValue = jsString(vm, value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            obj->putDirectMayBeIndex(lexicalGlobalObject, ident, stringValue);
         }
     }
 

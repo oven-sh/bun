@@ -1,4 +1,8 @@
 #active: bool = false,
+/// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
+/// - peek/takeFirst (provided by TimerHeap)
+/// - peekLast (cannot be implemented efficiently with TimerHeap)
+/// - count (cannot be implemented efficiently with TimerHeap)
 timers: TimerHeap = .{ .context = {} },
 
 pub var current_time: struct {

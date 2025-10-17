@@ -533,7 +533,35 @@ declare module "bun" {
 
     type Handler<Req extends Request, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile;
+    /**
+     * Configuration for serving static files from a directory
+     *
+     * @example
+     * ```ts
+     * {
+     *   dir: "./public"
+     * }
+     * ```
+     */
+    interface DirectoryRouteOptions {
+      /**
+       * The directory path to serve files from
+       *
+       * This can be either a relative or absolute path. If relative, it will be resolved relative to the current working directory.
+       *
+       * @example
+       * ```ts
+       * // Relative path
+       * { dir: "./public" }
+       *
+       * // Absolute path
+       * { dir: "/var/www/static" }
+       * ```
+       */
+      dir: string;
+    }
+
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
@@ -1265,6 +1293,41 @@ declare module "bun" {
    *   }
    * });
    * ```
+   *
+   * @example
+   * **Serving Static Files from a Directory**
+   *
+   * ```ts
+   * Bun.serve({
+   *   routes: {
+   *     // Serve all files from the public directory
+   *     "/*": {
+   *       dir: "./public"
+   *     },
+   *
+   *     // Serve assets from a specific subdirectory
+   *     "/assets/*": {
+   *       dir: "./static/assets"
+   *     },
+   *
+   *     // Mix with dynamic routes
+   *     "/api/*": (req) => new Response("API route"),
+   *   },
+   *
+   *   // Fallback for non-existent files
+   *   fetch(req) {
+   *     return new Response("404 Not Found", { status: 404 });
+   *   }
+   * });
+   * ```
+   *
+   * Directory routes automatically:
+   * - Serve files with appropriate Content-Type headers
+   * - Support HEAD and GET requests
+   * - Handle nested directory structures
+   * - Support conditional requests (If-Modified-Since, ETag)
+   * - Support range requests for partial content
+   * - Fall back to the `fetch` handler for non-existent files
    */
   function serve<WebSocketData = undefined, R extends string = string>(
     options: Serve.Options<WebSocketData, R>,

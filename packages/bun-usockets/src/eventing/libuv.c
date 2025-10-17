@@ -40,15 +40,15 @@ static void check_cb(uv_check_t *p) {
 }
 
 /* Not used for polls, since polls need two frees */
-static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
+static void close_cb_free(uv_handle_t *h) { free(h->data); }
 
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
   /* It is only in case we called us_poll_stop then quickly us_poll_free that we
    * enter this. Most of the time, actual freeing is done by us_poll_free. */
   if (h->data) {
-    us_free(h->data);
-    us_free(h);
+    free(h->data);
+    free(h);
   }
 }
 
@@ -80,8 +80,8 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   if (uv_is_closing((uv_handle_t *)p->uv_p)) {
     p->uv_p->data = p;
   } else {
-    us_free(p->uv_p);
-    us_free(p);
+    free(p->uv_p);
+    free(p);
   }
 }
 
@@ -144,18 +144,18 @@ struct us_loop_t *us_create_loop(void *hint,
                                  void (*post_cb)(struct us_loop_t *loop),
                                  unsigned int ext_size) {
   struct us_loop_t *loop =
-      (struct us_loop_t *)us_calloc(1, sizeof(struct us_loop_t) + ext_size);
+      (struct us_loop_t *)calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
 
-  loop->uv_pre = us_malloc(sizeof(uv_prepare_t));
+  loop->uv_pre = malloc(sizeof(uv_prepare_t));
   uv_prepare_init(loop->uv_loop, loop->uv_pre);
   uv_prepare_start(loop->uv_pre, prepare_cb);
   uv_unref((uv_handle_t *)loop->uv_pre);
   loop->uv_pre->data = loop;
 
-  loop->uv_check = us_malloc(sizeof(uv_check_t));
+  loop->uv_check = malloc(sizeof(uv_check_t));
   uv_check_init(loop->uv_loop, loop->uv_check);
   uv_unref((uv_handle_t *)loop->uv_check);
   uv_check_start(loop->uv_check, check_cb);
@@ -195,7 +195,7 @@ void us_loop_free(struct us_loop_t *loop) {
   }
 
   // now we can free our part
-  us_free(loop);
+  free(loop);
 }
 
 void us_loop_run(struct us_loop_t *loop) {
@@ -208,8 +208,8 @@ void us_loop_run(struct us_loop_t *loop) {
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
                                  unsigned int ext_size) {
   struct us_poll_t *p =
-      (struct us_poll_t *)us_malloc(sizeof(struct us_poll_t) + ext_size);
-  p->uv_p = us_malloc(sizeof(uv_poll_t));
+      (struct us_poll_t *)malloc(sizeof(struct us_poll_t) + ext_size);
+  p->uv_p = malloc(sizeof(uv_poll_t));
   p->uv_p->data = p;
   return p;
 }
@@ -219,14 +219,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
                                  unsigned int ext_size) {
 
-  size_t old_size = us_usable_size(p);
-  size_t new_size = ext_size + sizeof(struct us_poll_t);
-  if(old_size >= new_size) {
-    return p;
-}
-  struct us_poll_t *new_p = us_calloc(1, new_size);
-  memcpy(new_p, p, old_size);
-
+  struct us_poll_t *new_p = realloc(p, sizeof(struct us_poll_t) + ext_size);
   new_p->uv_p->data = new_p;
 
   return new_p;

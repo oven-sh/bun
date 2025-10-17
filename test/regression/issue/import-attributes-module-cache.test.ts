@@ -112,3 +112,38 @@ test("import order doesn't affect cache (JSON normal vs explicit)", async () => 
   expect(bundled1).toContain("var data_default = {\n  test: true\n};");
   expect(bundled2).toContain("var data_default = {\n  test: true\n};");
 });
+
+test("runtime dynamic imports with different type attributes are cached separately", async () => {
+  using dir = tempDir("import-attr-runtime", {
+    "data.json": `{"key": "value"}`,
+    "test.js": `
+      const jsonData = await import("./data.json");
+      const textData = await import("./data.json", { with: { type: "text" } });
+
+      console.log("JSON type:", typeof jsonData.default);
+      console.log("Text type:", typeof textData.default);
+      console.log("Same?", jsonData.default === textData.default);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+
+  // JSON import should return an object
+  expect(stdout).toContain("JSON type: object");
+
+  // Text import should return a string (raw content)
+  expect(stdout).toContain("Text type: string");
+
+  // They should be different
+  expect(stdout).toContain("Same? false");
+});

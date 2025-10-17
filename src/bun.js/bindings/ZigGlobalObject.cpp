@@ -3231,6 +3231,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
     // This gets passed through the "parameters" argument to moduleLoaderFetch.
     // Therefore, we modify it in place.
+    // Extract the type attribute and append it to the resolved identifier to differentiate
+    // the same file imported with different loaders in JSC's module cache.
+    String typeAttributeForCacheKey;
     if (parameters && parameters.isObject()) {
         auto* object = parameters.toObject(globalObject);
         auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
@@ -3243,11 +3246,20 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                 if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
+                        typeAttributeForCacheKey = typeString;
                         parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
                     }
                 }
             }
         }
+    }
+
+    // Append the type attribute to the resolved identifier using the query string mechanism
+    // to make JSC's module cache differentiate imports with different loaders.
+    // e.g., "/path/file.json" becomes "/path/file.json?type=text"
+    if (!typeAttributeForCacheKey.isEmpty()) {
+        auto identifierString = resolvedIdentifier.string();
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(identifierString, "?type="_s, typeAttributeForCacheKey));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
@@ -3279,11 +3291,20 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto moduleKey = moduleKeyJS->value(globalObject);
+    auto moduleKeyOriginal = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey->endsWith(".node"_s)) {
+    // Strip the query string that was added for cache differentiation
+    // e.g., "/path/file.json?type=text" -> "/path/file.json"
+    String moduleKey = moduleKeyOriginal;
+    if (auto queryIndex = moduleKey.find('?')) {
+        if (queryIndex != notFound) {
+            moduleKey = moduleKey.substring(0, queryIndex);
+        }
+    }
+
+    if (moduleKey.endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 

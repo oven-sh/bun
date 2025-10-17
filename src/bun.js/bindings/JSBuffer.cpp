@@ -2786,7 +2786,7 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
+    auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructorInitializedOnMainThread(lexicalGlobalObject);
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.append(arrayValue);
     JSValue target = globalObject->JSBufferConstructor();

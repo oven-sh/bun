@@ -170,7 +170,12 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
-const prune_params: []const ParamType = &(shared_params ++ [_]ParamType{
+const prune_only_params = [_]ParamType{
+    clap.parseParam("-p, --production                      Also remove devDependencies") catch unreachable,
+    clap.parseParam("-P, --prod") catch unreachable,
+};
+
+const prune_params: []const ParamType = &(prune_only_params ++ shared_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                              ") catch unreachable,
 });
 

@@ -43,6 +43,10 @@ extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop)
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
+void dummy_sweep_timer_cb(struct us_timer_t *timer) {
+    // do nothing
+}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -54,7 +58,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count--;
     if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) dummy_sweep_timer_cb, 0, 0);
     }
 }
 
@@ -103,8 +107,8 @@ void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket
 }
 
 void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
+    
     if(!socket || !socket->flags.is_pending_read) return;
-
     struct us_socket_t* next = loop->data.pending_read_head;
     if(!next) return;
     
@@ -131,8 +135,12 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
 bool us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop) {
     struct us_socket_t* next = loop->data.pending_read_head;
     while(next != NULL) {
-        struct us_poll_t* p = &next->p;
+        if(us_socket_is_closed(0, next)) {
+            next = next->next_to_read;
+            continue;
+        }
         next = next->next_to_read;
+        struct us_poll_t* p = &next->p;
         us_internal_dispatch_ready_poll(p, 0, 0, LIBUS_SOCKET_READABLE);
     }
     return loop->data.pending_read_head != NULL;
@@ -283,6 +291,7 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
 
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
+    
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
@@ -324,7 +333,8 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;
 }
 
-/* These may have somewhat different meaning depending on the underlying event library */
+/* These may have som
+ewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
     us_internal_handle_dns_results(loop);

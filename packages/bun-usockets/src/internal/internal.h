@@ -116,6 +116,8 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 bool us_internal_drain_socket_from_pending_read_list(struct us_loop_t* loop);
+void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket);
+void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);

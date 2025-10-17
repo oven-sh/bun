@@ -813,11 +813,20 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         us_socket_context_unref(ssl, old_context);
     }
 
+    
+
     struct us_connecting_socket_t *c = s->connect_state;
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
+        bool is_pending_read = s->flags.is_pending_read;
+        if(is_pending_read) {
+            us_remove_socket_from_pending_read_list(loop, s);
+        }
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
+        if(is_pending_read) {
+            us_add_socket_to_pending_read_list(loop, new_s);
+        }
         if (c) {
             c->connecting_head = new_s;
             c->context = context;

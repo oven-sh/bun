@@ -215,7 +215,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             struct linger l = { 1, 0 };
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
-
+        us_remove_socket_from_pending_read_list(s->context->loop, s);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
 

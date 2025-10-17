@@ -15,13 +15,7 @@ describe('when family is ipv4', () => {
       lookup: brokenCustomLookup,
       family: 4
     };
-
-    const socket = net.connect(options, common.mustNotCall());
-    socket.on('error', (err) => {
-      t.assert.strictEqual(err.code, 'ERR_INVALID_IP_ADDRESS');
-
-      done();
-    });
+    expect(() => net.connect(options, common.mustNotCall())).toThrow('hostname must be a string');
   });
 });
 
@@ -33,12 +27,6 @@ describe('when family is ipv6', () => {
       lookup: brokenCustomLookup,
       family: 6
     };
-
-    const socket = net.connect(options, common.mustNotCall());
-    socket.on('error', (err) => {
-      t.assert.strictEqual(err.code, 'ERR_INVALID_IP_ADDRESS');
-
-      done();
-    });
+    expect(() => net.connect(options, common.mustNotCall())).toThrow('hostname must be a string');
   });
 });

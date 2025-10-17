@@ -275,9 +275,7 @@ pub const SocketConfig = struct {
         errdefer result.deinit();
 
         if (result.fd != null) {} else if (generated.unix_.get()) |unix| {
-            if (unix.length() == 0) {
-                return global.throwInvalidArguments("\"unix\" cannot be empty", .{});
-            }
+            bun.assertf(unix.length() > 0, "truthy bindgen string shouldn't be empty", .{});
             result.hostname_or_unix = unix.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             if (strings.hasPrefixComptime(slice, "file://") or
@@ -289,9 +287,7 @@ pub const SocketConfig = struct {
                 result.hostname_or_unix = .init(bun.default_allocator, without_prefix);
             }
         } else if (generated.hostname.get()) |hostname| {
-            if (hostname.length() == 0) {
-                return global.throwInvalidArguments("\"hostname\" cannot be empty", .{});
-            }
+            bun.assertf(hostname.length() > 0, "truthy bindgen string shouldn't be empty", .{});
             result.hostname_or_unix = hostname.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             result.port = generated.port orelse bun.URL.parse(slice).getPort() orelse {

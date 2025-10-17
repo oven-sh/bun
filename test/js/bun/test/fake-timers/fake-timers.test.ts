@@ -91,8 +91,8 @@ describe("advanceTimersToNextTimer", () => {
     vi.useRealTimers();
   });
   test("alternating intervals", async () => {
-    const order = new Order();
     vi.useFakeTimers();
+    const order = new Order();
     setInterval(() => {
       order.add("setInterval 1");
     }, 9);
@@ -108,6 +108,24 @@ describe("advanceTimersToNextTimer", () => {
     expect(order.takeOrderMessages()).toEqual(["setInterval 1"]);
     vi.advanceTimersToNextTimer();
     expect(order.takeOrderMessages()).toEqual(["setInterval 2"]);
+    vi.useRealTimers();
+  });
+});
+describe("advanceTimersByTime", () => {
+  test("setInterval", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    const interval = setInterval(() => {
+      order.add("setInterval");
+    }, 6);
+    vi.advanceTimersByTime(10);
+    expect(order.takeOrderMessages()).toEqual(["setInterval"]);
+    vi.advanceTimersByTime(10);
+    expect(order.takeOrderMessages()).toEqual(["setInterval", "setInterval"]);
+    clearInterval(interval);
+    vi.advanceTimersByTime(10);
+    expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
 });

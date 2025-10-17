@@ -13,7 +13,7 @@ pub var current_time: struct {
         if (value == PackedTime.min) return null;
         return .{ .sec = value.sec, .nsec = value.nsec };
     }
-    pub fn set(this: *@This(), time: ?*const bun.timespec, _: *jsc.JSGlobalObject) void {
+    pub fn set(this: *@This(), _: *jsc.JSGlobalObject, time: ?*const bun.timespec) void {
         if (time) |t| {
             this.#time.store(.{ .sec = t.sec, .nsec = t.nsec }, .seq_cst);
         } else {
@@ -43,14 +43,14 @@ fn activate(this: *FakeTimers, time: bun.timespec, globalObject: *jsc.JSGlobalOb
     defer this.assertValid(.locked);
 
     this.#active = true;
-    current_time.set(&time, globalObject);
+    current_time.set(globalObject, &time);
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.clear();
-    current_time.set(null, globalObject);
+    current_time.set(globalObject, null);
     this.#active = false;
 }
 fn clear(this: *FakeTimers) void {
@@ -68,7 +68,7 @@ fn advanceTimeWithoutFiringTimers(this: *FakeTimers, ms: i64) void {
 
     this.#current_time = this.#current_time.addMs(ms);
 }
-fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bun.JSError!bool {
+fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bool {
     this.assertValid(.unlocked);
     defer this.assertValid(.unlocked);
     const vm = globalObject.bunVM();
@@ -80,25 +80,63 @@ fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bun.JSError
         break :blk this.timers.deleteMin() orelse return false;
     };
 
+    this.fire(globalObject, next);
+    return true;
+}
+fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Timer.EventLoopTimer) void {
+    this.assertValid(.unlocked);
+    defer this.assertValid(.unlocked);
+    const vm = globalObject.bunVM();
+
     if (bun.Environment.ci_assert) {
         const prev = current_time.get();
         bun.assert(prev != null);
         bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
     }
     const now = next.next;
-    current_time.set(&now, globalObject);
+    current_time.set(globalObject, &now);
     const arm = next.fire(&now, vm);
     switch (arm) {
         .disarm => {},
         .rearm => {},
     }
+}
+fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
+    this.assertValid(.unlocked);
+    defer this.assertValid(.unlocked);
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
 
-    return true;
+    while (true) {
+        const next = blk: {
+            timers.lock.lock();
+            defer timers.lock.unlock();
+
+            const peek = this.timers.peek() orelse break;
+            if (peek.next.greater(&until)) break;
+            bun.assert(this.timers.deleteMin() == peek);
+            break :blk peek;
+        };
+        this.fire(globalObject, next);
+    }
 }
 
 // ===
 // JS Functions
 // ===
+
+fn errorUnlessFakeTimers(globalObject: *jsc.JSGlobalObject) bun.JSError!void {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        if (this.isActive()) return;
+    }
+    return globalObject.throw("Fake timers are not active. Call useFakeTimers() first.", .{});
+}
 
 fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalObject.bunVM();
@@ -130,8 +168,27 @@ fn advanceTimersToNextTimer(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     const vm = globalObject.bunVM();
     const timers = &vm.timer;
     const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
 
-    _ = try this.executeNext(globalObject);
+    _ = this.executeNext(globalObject);
+
+    return callframe.this();
+}
+fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    const arg = callframe.argumentsAsArray(1)[0];
+    if (!arg.isNumber()) {
+        return globalObject.throwInvalidArguments("advanceTimersToNextTimer() expects a number of milliseconds", .{});
+    }
+    const timeoutAdd = try globalObject.validateIntegerRange(arg, u32, 0, .{ .min = 0, .field_name = "ms" });
+    const target = bun.timespec.now().addMs(timeoutAdd);
+
+    this.executeUntil(globalObject, target);
+    current_time.set(globalObject, &target);
 
     return callframe.this();
 }
@@ -140,6 +197,7 @@ const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObj
     .{ "useFakeTimers", 0, useFakeTimers },
     .{ "useRealTimers", 0, useRealTimers },
     .{ "advanceTimersToNextTimer", 0, advanceTimersToNextTimer },
+    .{ "advanceTimersByTime", 1, advanceTimersByTime },
 };
 pub const timerFnsCount = fake_timers_fns.len;
 pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: jsc.JSValue) void {

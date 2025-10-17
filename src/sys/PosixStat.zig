@@ -1,16 +1,16 @@
 /// POSIX-like stat structure with birthtime support for node:fs
 /// This extends the standard POSIX stat with birthtime (creation time)
 pub const PosixStat = extern struct {
-    dev: u64,
-    ino: u64,
-    mode: u32,
-    nlink: u64,
-    uid: u32,
-    gid: u32,
-    rdev: u64,
-    size: i64,
-    blksize: i64,
-    blocks: i64,
+    dev: @FieldType(bun.Stat, "dev"),
+    ino: @FieldType(bun.Stat, "ino"),
+    mode: @FieldType(bun.Stat, "mode"),
+    nlink: @FieldType(bun.Stat, "nlink"),
+    uid: @FieldType(bun.Stat, "uid"),
+    gid: @FieldType(bun.Stat, "gid"),
+    rdev: @FieldType(bun.Stat, "rdev"),
+    size: @FieldType(bun.Stat, "size"),
+    blksize: @FieldType(bun.Stat, "blksize"),
+    blocks: @FieldType(bun.Stat, "blocks"),
 
     /// Access time
     atim: bun.timespec,

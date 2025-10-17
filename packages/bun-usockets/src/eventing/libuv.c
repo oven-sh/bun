@@ -40,7 +40,7 @@ static void check_cb(uv_check_t *p) {
 }
 
 /* Not used for polls, since polls need two frees */
-static void close_cb_free(uv_handle_t *h) { free(h->data); }
+static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {

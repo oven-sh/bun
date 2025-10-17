@@ -144,7 +144,7 @@ export function enumeration(name: string, values: (string | string[])[]): EnumTy
             ${joinIndented(
               12,
               Array.from(valueMap.entries())
-                .sort(([v1, i1], [v2, i2]) => v1 < v2 ? -1 : 1)
+                .sort(([v1, i1], [v2, i2]) => (v1 < v2 ? -1 : 1))
                 .map(([value, i]) => {
                   return `${pairType} {
                     ${toASCIILiteral(value)},

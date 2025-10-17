@@ -34,7 +34,6 @@ const callback_fields = .{
 
 pub fn markActive(this: *Handlers) void {
     Listener.log("markActive", .{});
-
     this.active_connections += 1;
 }
 
@@ -90,7 +89,7 @@ pub fn markInactive(this: *Handlers) void {
                 listen_socket.strong_self.deinit();
             }
         } else {
-            this.unprotect();
+            this.deinit();
             bun.default_allocator.destroy(this);
         }
     }
@@ -158,10 +157,18 @@ pub fn fromGenerated(
             .{},
         );
     }
+    result.withAsyncContextIfNeeded(globalObject);
+    result.protect();
     return result;
 }
 
-pub fn unprotect(this: *Handlers) void {
+pub fn deinit(this: *Handlers) void {
+    this.unprotect();
+    this.promise.deinit();
+    this.* = undefined;
+}
+
+fn unprotect(this: *Handlers) void {
     if (this.vm.isShuttingDown()) {
         return;
     }
@@ -181,7 +188,7 @@ pub fn unprotect(this: *Handlers) void {
     this.onHandshake.unprotect();
 }
 
-pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObject) void {
+fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObject) void {
     inline for (callback_fields) |field| {
         const value = @field(this, field);
         if (value != .zero) {
@@ -190,7 +197,7 @@ pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObje
     }
 }
 
-pub fn protect(this: *Handlers) void {
+fn protect(this: *Handlers) void {
     if (comptime Environment.ci_assert) {
         this.protection_count += 1;
     }
@@ -203,6 +210,20 @@ pub fn protect(this: *Handlers) void {
     this.onEnd.protect();
     this.onError.protect();
     this.onHandshake.protect();
+}
+
+pub fn clone(this: *const Handlers) Handlers {
+    var result: Handlers = .{
+        .vm = this.vm,
+        .globalObject = this.globalObject,
+        .binary_type = this.binary_type,
+        .is_server = this.is_server,
+    };
+    inline for (callback_fields) |field| {
+        @field(result, field) = @field(this, field);
+    }
+    result.protect();
+    return result;
 }
 
 /// `handlers` is always `protect`ed in this struct.
@@ -220,12 +241,12 @@ pub const SocketConfig = struct {
 
     /// Deinitializes everything and `unprotect`s `handlers`.
     pub fn deinit(this: *SocketConfig) void {
-        this.handlers.unprotect();
+        this.handlers.deinit();
         this.deinitExcludingHandlers();
         this.handlers = undefined;
     }
 
-    /// Deinitializes everything but does not `unprotect` `handlers`.
+    /// Deinitializes everything except `handlers`.
     pub fn deinitExcludingHandlers(this: *SocketConfig) void {
         this.hostname_or_unix.deinit();
         bun.memory.deinit(&this.ssl);
@@ -270,8 +291,6 @@ pub const SocketConfig = struct {
             .handlers = try .fromGenerated(global, &generated.handlers, is_server),
             .default_data = if (generated.data.isUndefined()) .zero else generated.data,
         };
-        result.handlers.withAsyncContextIfNeeded(global);
-        result.handlers.protect();
         errdefer result.deinit();
 
         if (result.fd != null) {} else if (generated.unix_.get()) |unix| {

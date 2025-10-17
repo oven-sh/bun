@@ -91,11 +91,9 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
         return globalObject.throw("Expected \"socket\" object", .{});
     };
 
-    var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
-    this.handlers.unprotect();
-    handlers.withAsyncContextIfNeeded(globalObject);
-    handlers.protect();
-    this.handlers = handlers; // TODO: this is a memory leak
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+    this.handlers.deinit();
+    this.handlers = handlers;
 
     return .js_undefined;
 }
@@ -112,9 +110,9 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     defer socket_config.deinitExcludingHandlers();
 
     const handlers = &socket_config.handlers;
-    // Only unprotect handlers if there's an error; otherwise we put them in a `Listener` and still
-    // want them protected.
-    errdefer handlers.unprotect();
+    // Only deinit handlers if there's an error; otherwise we put them in a `Listener` and
+    // need them to stay alive.
+    errdefer handlers.deinit();
 
     const hostname_or_unix = &socket_config.hostname_or_unix;
     const port = socket_config.port;
@@ -477,7 +475,7 @@ pub fn deinit(this: *Listener) void {
     this.strong_data.deinit();
     this.poll_ref.unref(this.handlers.vm);
     bun.assert(this.listener == .none);
-    this.handlers.unprotect();
+    this.handlers.deinit();
 
     if (this.handlers.active_connections > 0) {
         if (this.socket_context) |ctx| {
@@ -554,9 +552,9 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     defer socket_config.deinitExcludingHandlers();
 
     const handlers = &socket_config.handlers;
-    // Only unprotect handlers if there's an error; otherwise we put them in a `TCPSocket` or
-    // `TLSSocket` and still want them protected.
-    errdefer handlers.unprotect();
+    // Only deinit handlers if there's an error; otherwise we put them in a `TCPSocket` or
+    // `TLSSocket` and need them to stay alive.
+    errdefer handlers.deinit();
 
     const hostname_or_unix = &socket_config.hostname_or_unix;
     const port = socket_config.port;
@@ -625,7 +623,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             if (ssl_enabled) {
                 var tls = if (prev_maybe_tls) |prev| blk: {
                     if (prev.handlers) |prev_handlers| {
-                        prev_handlers.unprotect();
+                        prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
                     }
                     bun.assert(prev.this_value != .zero);
@@ -671,7 +669,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 var tcp = if (prev_maybe_tcp) |prev| blk: {
                     bun.assert(prev.this_value != .zero);
                     if (prev.handlers) |prev_handlers| {
-                        prev_handlers.unprotect();
+                        prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
                     }
                     prev.handlers = handlers_ptr;
@@ -761,7 +759,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             const socket = if (maybe_previous) |prev| blk: {
                 bun.assert(prev.this_value != .zero);
                 if (prev.handlers) |prev_handlers| {
-                    prev_handlers.unprotect();
+                    prev_handlers.deinit();
                     handlers.vm.allocator.destroy(prev_handlers);
                 }
                 prev.handlers = handlers_ptr;

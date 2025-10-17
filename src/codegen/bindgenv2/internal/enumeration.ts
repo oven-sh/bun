@@ -17,7 +17,7 @@ abstract class EnumType extends NamedType {}
  */
 export function enumeration(name: string, values: (string | string[])[]): EnumType {
   const uniqueValues = values.map((v, i) => {
-    if (typeof v !== "object") return v;
+    if (!Array.isArray(v)) return v;
     if (v.length === 0) throw RangeError(`enum value cannot be empty (index ${i})`);
     return v[0];
   });
@@ -29,7 +29,7 @@ export function enumeration(name: string, values: (string | string[])[]): EnumTy
   }
 
   const indexedValues = values
-    .map(v => (typeof v === "object" ? v : [v]))
+    .map(v => (Array.isArray(v) ? v : [v]))
     .flatMap((arr, i) => arr.map((v): [string, number] => [v, i]));
   const valueMap = new Map<string, number>();
   for (const [value, index] of indexedValues) {

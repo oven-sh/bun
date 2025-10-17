@@ -198,7 +198,7 @@ DEFINE_VISIT_CHILDREN(PendingVirtualModuleResult);
 
 PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleLock)
 {
-    auto* virtualModule = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
+    auto* virtualModule = create(globalObject->vm(), static_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
     virtualModule->finishCreation(globalObject->vm(), specifier, referrer);
     virtualModule->wasModuleMock = wasModuleLock;
     return virtualModule;
@@ -1153,7 +1153,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 
-    JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+    JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
     if (!scope.exception() && !res.success) [[unlikely]] {
         throwException(globalObject, scope, result);
     }

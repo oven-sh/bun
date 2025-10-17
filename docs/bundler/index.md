@@ -1600,7 +1600,7 @@ interface BuildConfig {
   publicPath?: string;
   define?: Record<string, string>;
   loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "inline"
   /**
    * package.json `exports` conditions used when resolving imports
    *

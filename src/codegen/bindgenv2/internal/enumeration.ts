@@ -24,9 +24,6 @@ export function enumeration(name: string, values: (string | string[])[]): EnumTy
   if (uniqueValues.length === 0) {
     throw RangeError("enum cannot be empty: " + name);
   }
-  if (uniqueValues.length > 1n << 32n) {
-    throw RangeError("too many enum values: " + name);
-  }
 
   const indexedValues = values
     .map(v => (Array.isArray(v) ? v : [v]))

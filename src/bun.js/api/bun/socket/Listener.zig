@@ -475,6 +475,7 @@ pub fn deinit(this: *Listener) void {
     this.strong_data.deinit();
     this.poll_ref.unref(this.handlers.vm);
     bun.assert(this.listener == .none);
+    const vm = this.handlers.vm;
     this.handlers.deinit();
 
     if (this.handlers.active_connections > 0) {
@@ -493,7 +494,7 @@ pub fn deinit(this: *Listener) void {
         this.protos = null;
         bun.default_allocator.free(protos);
     }
-    bun.default_allocator.destroy(this);
+    handlers.vm.allocator.destroy(this);
 }
 
 pub fn getConnectionsCount(this: *Listener, _: *jsc.JSGlobalObject) JSValue {

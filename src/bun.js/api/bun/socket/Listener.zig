@@ -643,7 +643,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .socket = TLSSocket.Socket.detached,
                     .connection = connection,
                     .protos = if (ssl) |s| s.takeProtos() else null,
-                    .server_name = if (ssl) |s| s.takeProtos() else null,
+                    .server_name = if (ssl) |s| s.takeServerName() else null,
                     .socket_context = null,
                 });
 
@@ -778,7 +778,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 .socket = SocketType.Socket.detached,
                 .connection = connection,
                 .protos = if (ssl) |s| s.takeProtos() else null,
-                .server_name = if (ssl) |s| s.takeProtos() else null,
+                .server_name = if (ssl) |s| s.takeServerName() else null,
                 .socket_context = socket_context, // owns the socket context
             });
             socket.ref();

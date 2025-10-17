@@ -825,14 +825,6 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
         #ifndef LIBUS_USE_LIBUV
-        // ptr changed, so we need to free the old socket
-        // if(s != new_s) {
-        //     /* Any socket with prev = context is marked as closed */
-        //     s->prev = (struct us_socket_t *) s->context;
-        //     /* Link this socket to the close-list and let it be deleted after this iteration */
-        //     s->next = s->context->loop->data.closed_head;
-        //     s->context->loop->data.closed_head = s;
-        // }
         // we always add the new ptr to the pending read list so we can read again in the next tick if needed
         us_add_socket_to_pending_read_list(loop, new_s);
         #endif

@@ -1,0 +1,43 @@
+{
+  "name": "bun-otel",
+  "version": "0.1.0",
+  "type": "module",
+  "module": "index.ts",
+  "types": "index.ts",
+  "description": "OpenTelemetry tracing bridge for Bun's native telemetry system - automatic distributed tracing for Bun.serve()",
+  "exports": {
+    ".": {
+      "import": "./index.ts",
+      "require": "./index.ts",
+      "types": "./index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "tsconfig.json",
+    "package.json",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun",
+    "directory": "packages/bun-otel"
+  },
+  "keywords": [
+    "bun",
+    "opentelemetry",
+    "telemetry",
+    "tracing",
+    "observability"
+  ],
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^1.25.1",
+    "@opentelemetry/sdk-trace-node": "^1.25.1",
+    "bun-types": "canary"
+  }
+}

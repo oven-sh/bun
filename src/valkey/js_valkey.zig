@@ -700,7 +700,7 @@ pub const JSValkeyClient = struct {
         this.timer.state = .CANCELLED;
     }
 
-    pub fn onConnectionTimeout(this: *JSValkeyClient) Timer.EventLoopTimer.Arm {
+    pub fn onConnectionTimeout(this: *JSValkeyClient) void {
         debug("onConnectionTimeout", .{});
 
         // Mark timer as fired
@@ -710,12 +710,12 @@ pub const JSValkeyClient = struct {
         this.ref();
         defer this.deref();
         if (this.client.flags.failed) {
-            return .disarm;
+            return;
         }
 
         if (this.client.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();
-            return .disarm;
+            return;
         }
 
         var buf: [128]u8 = undefined;
@@ -729,11 +729,9 @@ pub const JSValkeyClient = struct {
                 this.clientFail(msg, protocol.RedisError.ConnectionTimeout) catch {}; // TODO: properly propagate exception upwards
             },
         }
-
-        return .disarm;
     }
 
-    pub fn onReconnectTimer(this: *JSValkeyClient) Timer.EventLoopTimer.Arm {
+    pub fn onReconnectTimer(this: *JSValkeyClient) void {
         debug("Reconnect timer fired, attempting to reconnect", .{});
 
         // Mark timer as fired and store important values before doing any derefs
@@ -745,8 +743,6 @@ pub const JSValkeyClient = struct {
 
         // Execute reconnection logic
         this.reconnect();
-
-        return .disarm;
     }
 
     pub fn reconnect(this: *JSValkeyClient) void {

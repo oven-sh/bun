@@ -185,7 +185,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
         false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
     } orelse {
-        var err = globalObject.createErrorInstance(
+        const err = globalObject.createErrorInstance(
             "Failed to listen on {s}:{d}",
             .{ hostname_or_unix.slice(), port orelse 0 },
         );

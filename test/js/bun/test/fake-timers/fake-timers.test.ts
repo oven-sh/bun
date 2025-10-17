@@ -162,3 +162,53 @@ describe("runAllTimers", () => {
     expect(order.takeOrderMessages()).toEqual(["9", "10", "14", "20"]);
   });
 });
+describe("getTimerCount", () => {
+  test("returns correct count of pending timers", () => {
+    vi.useFakeTimers();
+    expect(vi.getTimerCount()).toBe(0);
+    setTimeout(() => {}, 10);
+    expect(vi.getTimerCount()).toBe(1);
+    setTimeout(() => {}, 20);
+    expect(vi.getTimerCount()).toBe(2);
+    const interval = setInterval(() => {}, 30);
+    expect(vi.getTimerCount()).toBe(3);
+    vi.advanceTimersToNextTimer();
+    expect(vi.getTimerCount()).toBe(2);
+    clearInterval(interval);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.runAllTimers();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  test("throws error if fake timers not active", () => {
+    expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
+  });
+});
+describe("clearAllTimers", () => {
+  test("clears all pending timers", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setTimeout(() => order.add("1"), 10);
+    setTimeout(() => order.add("2"), 20);
+    setInterval(() => order.add("3"), 30);
+    expect(vi.getTimerCount()).toBe(3);
+    expect(vi.clearAllTimers()).toBe(vi);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(100);
+    expect(order.takeOrderMessages()).toEqual([]);
+  });
+  test("throws error if fake timers not active", () => {
+    expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
+  });
+});
+describe("isFakeTimers", () => {
+  test("returns true when fake timers are active", () => {
+    expect(vi.isFakeTimers()).toBe(false);
+    vi.useFakeTimers();
+    expect(vi.isFakeTimers()).toBe(true);
+    vi.useRealTimers();
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+  test("returns false by default", () => {
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+});

@@ -41,6 +41,24 @@ pub fn Intrusive(
             return self.root;
         }
 
+        /// Count the number of elements in the heap. This is an O(N) operation.
+        pub fn count(self: *const Self) usize {
+            return countInternal(self.root);
+        }
+
+        fn countInternal(node: ?*T) usize {
+            const current = node orelse return 0;
+            var result: usize = 1;
+
+            // Count children
+            result += countInternal(current.heap.child);
+
+            // Count siblings
+            result += countInternal(current.heap.next);
+
+            return result;
+        }
+
         /// Look at the next maximum value but do not remove it. This is an O(N) operation.
         pub fn findMax(self: *const Self) ?*T {
             const root = self.root orelse return null;

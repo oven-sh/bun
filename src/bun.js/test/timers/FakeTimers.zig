@@ -236,6 +236,47 @@ fn runAllTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bu
 
     return callframe.this();
 }
+fn getTimerCount(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    const count = blk: {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        break :blk this.timers.count();
+    };
+
+    return jsc.JSValue.jsNumber(count);
+}
+fn clearAllTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        this.clear();
+    }
+
+    return callframe.this();
+}
+fn isFakeTimers(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+
+    const is_active = blk: {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        break :blk this.isActive();
+    };
+
+    return jsc.JSValue.jsBoolean(is_active);
+}
 
 const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObject, *jsc.CallFrame) bun.JSError!jsc.JSValue) } = &.{
     .{ "useFakeTimers", 0, useFakeTimers },
@@ -244,6 +285,9 @@ const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObj
     .{ "advanceTimersByTime", 1, advanceTimersByTime },
     .{ "runOnlyPendingTimers", 0, runOnlyPendingTimers },
     .{ "runAllTimers", 0, runAllTimers },
+    .{ "getTimerCount", 0, getTimerCount },
+    .{ "clearAllTimers", 0, clearAllTimers },
+    .{ "isFakeTimers", 0, isFakeTimers },
 };
 pub const timerFnsCount = fake_timers_fns.len;
 pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: jsc.JSValue) void {

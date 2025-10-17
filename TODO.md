@@ -6,8 +6,8 @@
   - [x] advanceTimersToNextTimer
   - [ ] advanceTimersToNextTimerAsync\*
   - [ ] advanceTimersToNextFrame
-  - [ ] getTimerCount
-  - [ ] clearAllTimers
+  - [x] getTimerCount
+  - [x] clearAllTimers
   - [ ] getMockedSystemTime
   - [ ] getRealSystemTime
   - [ ] runAllTicks
@@ -18,7 +18,7 @@
   - [ ] runOnlyPendingTimersAsync
   - [ ] setSystemTime
   - [x] useFakeTimers
-  - [ ] isFakeTimers
+  - [x] isFakeTimers
   - [x] useRealTimers
 - [ ] the result of 'arm' ('.disarm'/'.rearm') seems to be ignored? both disarm and rearm? we should change it to return void if it's actually ignored
   - [ ] we can make this change seperately in main

@@ -76,7 +76,7 @@ struct WebCore::Converter<Bun::IDLLooseNullable<IDL>>
     using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
 
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<bool> tryConvert(
+    static std::optional<ReturnType> tryConvert(
         JSC::JSGlobalObject& globalObject,
         JSC::JSValue value,
         Ctx& ctx)

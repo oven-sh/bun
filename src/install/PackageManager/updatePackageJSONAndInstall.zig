@@ -546,9 +546,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     for (deps_prop.expr.data.e_object.properties.slice()) |prop| {
                         if (prop.key) |key| {
                             if (key.data == .e_string) {
-                                const dep_name = key.data.e_string.string(manager.allocator) catch continue;
-                                defer manager.allocator.free(dep_name);
-                                const dep_hash = String.Builder.stringHash(dep_name);
+                                const dep_hash = String.Builder.stringHash(key.data.e_string.data);
                                 try root_production_deps.append(dep_hash);
                             }
                         }
@@ -562,9 +560,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     for (opt_deps_prop.expr.data.e_object.properties.slice()) |prop| {
                         if (prop.key) |key| {
                             if (key.data == .e_string) {
-                                const dep_name = key.data.e_string.string(manager.allocator) catch continue;
-                                defer manager.allocator.free(dep_name);
-                                const dep_hash = String.Builder.stringHash(dep_name);
+                                const dep_hash = String.Builder.stringHash(key.data.e_string.data);
                                 try root_production_deps.append(dep_hash);
                             }
                         }

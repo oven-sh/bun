@@ -95,15 +95,15 @@ void us_wakeup_loop(struct us_loop_t *loop) {
 }
 
 void us_add_socket_to_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
-    if(!us_socket_is_closed(0, socket) && !socket->flags.is_pending_read) {
+    if(socket && !us_socket_is_closed(0, socket) && !socket->flags.is_pending_read) {
+        socket->flags.is_pending_read = true;
         socket->next_to_read = loop->data.pending_read_head;
         loop->data.pending_read_head = socket;
-        socket->flags.is_pending_read = true;
     }
 }
 
 void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_socket_t* socket) {
-    if(!socket->flags.is_pending_read) return;
+    if(!socket || !socket->flags.is_pending_read) return;
 
     struct us_socket_t* next = loop->data.pending_read_head;
     if(!next) return;
@@ -111,6 +111,7 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
     if(next == socket) {
         loop->data.pending_read_head = socket->next_to_read;
         socket->flags.is_pending_read = false;
+        socket->next_to_read = NULL;
         return;
     }
     struct us_socket_t* prev = next;
@@ -119,7 +120,8 @@ void us_remove_socket_from_pending_read_list(struct us_loop_t* loop, struct us_s
         if(next == socket) {
             prev->next_to_read = socket->next_to_read;
             socket->flags.is_pending_read = false;
-            break;
+            socket->next_to_read = NULL;
+            return;
         }
         prev = next;
         next = next->next_to_read;
@@ -284,9 +286,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
-        if(s->flags.is_pending_read) {
-            us_remove_socket_from_pending_read_list(loop, s);
-        }
+        us_remove_socket_from_pending_read_list(loop, s);
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
@@ -541,7 +541,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif
                         // We need to register this socket to read later otherwise the event loop will never trigger again
-                        if(s) us_add_socket_to_pending_read_list(loop, s);
+                        us_add_socket_to_pending_read_list(loop, s);
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
                         break;
@@ -586,7 +586,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 s = us_socket_close(0, s, error, NULL);
                 return;
             }
-            if(eagain && s && s->flags.is_pending_read) {
+            if(eagain) {
                 // At this point we can wait the event loop instead of draining
                 us_remove_socket_from_pending_read_list(loop, s);
             }

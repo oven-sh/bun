@@ -90,7 +90,7 @@ pub fn markInactive(this: *Handlers) void {
             }
         } else {
             this.deinit();
-            bun.default_allocator.destroy(this);
+            this.vm.allocator.destroy(this);
         }
     }
 }

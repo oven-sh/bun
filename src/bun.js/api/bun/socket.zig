@@ -1431,7 +1431,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const options = socket_config.asUSockets();
             const ext_size = @sizeOf(WrappedSocket);
 
-            const handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
+            const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
             handlers_ptr.* = handlers;
             var tls = bun.new(TLSSocket, .{
                 .ref_count = .init(),
@@ -1509,8 +1509,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.socket_context = new_context; // owns the new tls context that have a ref from the old one
             tls.ref();
 
-            const raw_handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
-            raw_handlers_ptr.* = this.getHandlers().clone();
+            const this_handlers = this.getHandlers();
+            const raw_handlers_ptr = bun.handleOom(this_handlers.vm.allocator.create(Handlers));
+            raw_handlers_ptr.* = this_handlers.clone();
 
             const raw = bun.new(TLSSocket, .{
                 .ref_count = .init(),
@@ -1537,7 +1538,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.markActive();
 
             // we're unrefing the original instance and refing the TLS instance
-            tls.poll_ref.ref(this.getHandlers().vm);
+            tls.poll_ref.ref(this_handlers.vm);
 
             // mark both instances on socket data
             if (new_socket.ext(WrappedSocket)) |ctx| {

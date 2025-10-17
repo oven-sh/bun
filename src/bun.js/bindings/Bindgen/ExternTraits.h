@@ -69,8 +69,8 @@ struct ExternVariant {
     static_assert(sizeof...(Args) - 1 <= std::numeric_limits<std::uint8_t>::max());
 
     explicit ExternVariant(std::variant<Args...>&& variant)
-        : tag(static_cast<std::uint8_t>(variant.index()))
-        , data(std::move(variant))
+        : data(std::move(variant))
+        , tag(static_cast<std::uint8_t>(variant.index()))
     {
     }
 };

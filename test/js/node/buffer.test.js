@@ -3108,4 +3108,22 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
       });
     }
   }
+
+  for (const method of ["readBigInt64BE", "readBigInt64LE", "readBigUInt64BE", "readBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method]()).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
 });

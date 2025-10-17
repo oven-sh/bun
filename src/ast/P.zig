@@ -5000,10 +5000,10 @@ pub fn NewParser_(
                                 // Remove declare fields from class body, decorators are already emitted above
                                 continue;
                             }
-                            
+
                             // Use initializer if present, otherwise use undefined
                             const initializer = if (prop.initializer) |initializer_value| initializer_value else p.newExpr(E.Undefined{}, prop.key.?.loc);
-                            
+
                             var target: Expr = undefined;
                             if (prop.flags.contains(.is_static)) {
                                 p.recordUsage(class.class_name.?.ref.?);

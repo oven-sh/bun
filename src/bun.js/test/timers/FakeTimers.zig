@@ -252,7 +252,8 @@ pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: js
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const TimerHeap = bun.api.Timer.TimerHeap;
 const jsc = bun.jsc;
+const TimerHeap = bun.api.Timer.TimerHeap;
 const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;

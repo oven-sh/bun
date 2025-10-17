@@ -1,4 +1,4 @@
-import { test, expect, vi, afterEach, describe } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
 

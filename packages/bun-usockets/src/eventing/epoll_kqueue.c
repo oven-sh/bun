@@ -269,9 +269,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->data.jsc_vm) 
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
+    struct timespec zero = {0};
     if(us_internal_drain_socket_from_pending_read_list(loop)) {
         // we have more data available to read next tick so we should not wait the timeout
-        timeout = NULL;
+        timeout = &zero;
     }
 
     /* Fetch ready polls */

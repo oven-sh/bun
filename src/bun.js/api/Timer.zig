@@ -12,7 +12,7 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
     *EventLoopTimer,
 );
 
-const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
+pub const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
@@ -33,6 +33,8 @@ pub const All = struct {
 
     // Event loop delay monitoring (not exposed to JS)
     event_loop_delay: EventLoopDelayMonitor = .{},
+
+    fake_timers: FakeTimers = .{},
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -61,19 +63,43 @@ pub const All = struct {
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.insert(timer);
-        timer.state = .ACTIVE;
+        this.insertLockHeld(timer);
+    }
 
-        if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+    fn insertLockHeld(this: *All, timer: *EventLoopTimer) void {
+        if (Environment.ci_assert) bun.assert(this.lock.tryLock() == false);
+        if (this.fake_timers.isActive() and timer.tag.allowFakeTimers()) {
+            this.fake_timers.timers.insert(timer);
+            timer.state = .ACTIVE;
+            timer.in_heap = .fake;
+        } else {
+            this.timers.insert(timer);
+            timer.state = .ACTIVE;
+            timer.in_heap = .regular;
+
+            if (Environment.isWindows) {
+                this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+            }
         }
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.remove(timer);
-
+        this.removeLockHeld(timer);
+    }
+    fn removeLockHeld(this: *All, timer: *EventLoopTimer) void {
+        if (Environment.ci_assert) bun.assert(this.lock.tryLock() == false);
+        switch (timer.in_heap) {
+            .none => if (Environment.ci_assert) bun.assert(false), // can't remove a timer that was not inserted
+            .regular => this.timers.remove(timer),
+            .fake => {
+                this.fake_timers.timers.remove(timer);
+                timer.in_heap = .none;
+                timer.state = .CANCELLED;
+            },
+        }
+        timer.in_heap = .none;
         timer.state = .CANCELLED;
     }
 
@@ -82,11 +108,10 @@ pub const All = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (timer.state == .ACTIVE) {
-            this.timers.remove(timer);
+            this.removeLockHeld(timer);
         }
 
-        timer.state = .ACTIVE;
-        if (comptime Environment.isDebug) {
+        if (Environment.ci_assert) {
             if (&timer.next == time) {
                 @panic("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");
             }
@@ -98,10 +123,7 @@ pub const All = struct {
             flags.epoch = this.epoch;
         }
 
-        this.timers.insert(timer);
-        if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
-        }
+        this.insertLockHeld(timer);
     }
 
     fn ensureUVTimer(this: *All, vm: *VirtualMachine) void {
@@ -637,3 +659,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;

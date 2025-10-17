@@ -1,0 +1,6 @@
+- [ ] see how fake timers works with setSystemTime
+- [ ] handle the config argument for useFakeTimers
+  - vitest has the toFake parameter for enabling nextTick and queueMicrotask
+  - jets has a timerLimit parameter
+- [ ] make sure there is no memory leak if you create a setTimeout/setInterval and clear or stop the fake timers before it fires repeatedly.
+- [ ] audit the allowFakeTimers list (do we want subprocess timeouts to count? and others)

@@ -28,8 +28,6 @@
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
@@ -1417,12 +1415,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 
 using namespace Bun;
 using namespace JSC;
-
-// This is a stub. Exists so that the same code can be run in Jest
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    return JSValue::encode(callframe->thisValue());
-}
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

@@ -473,10 +473,9 @@ pub fn deinit(this: *Listener) void {
     log("deinit", .{});
     this.strong_self.deinit();
     this.strong_data.deinit();
-    this.poll_ref.unref(this.handlers.vm);
-    bun.assert(this.listener == .none);
     const vm = this.handlers.vm;
-    this.handlers.deinit();
+    this.poll_ref.unref(vm);
+    bun.assert(this.listener == .none);
 
     if (this.handlers.active_connections > 0) {
         if (this.socket_context) |ctx| {
@@ -494,6 +493,7 @@ pub fn deinit(this: *Listener) void {
         this.protos = null;
         bun.default_allocator.free(protos);
     }
+    this.handlers.deinit();
     vm.allocator.destroy(this);
 }
 

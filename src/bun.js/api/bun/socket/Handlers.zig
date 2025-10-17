@@ -89,8 +89,9 @@ pub fn markInactive(this: *Handlers) void {
                 listen_socket.strong_self.deinit();
             }
         } else {
+            const vm = this.vm;
             this.deinit();
-            this.vm.allocator.destroy(this);
+            vm.allocator.destroy(this);
         }
     }
 }

@@ -105,6 +105,9 @@ pub const Telemetry = struct {
     on_request_error: JSValue = .zero,
     on_response_headers: JSValue = .zero,
 
+    /// Node.js compatibility binding object (set via configure)
+    _node_binding: JSValue = .zero,
+
     /// Whether telemetry is enabled
     enabled: bool = false,
 
@@ -144,6 +147,9 @@ pub const Telemetry = struct {
         if (self.on_response_headers != .zero) {
             self.on_response_headers.unprotect();
         }
+        if (self._node_binding != .zero) {
+            self._node_binding.unprotect();
+        }
 
         if (instance == self) {
             instance = null;
@@ -181,6 +187,10 @@ pub const Telemetry = struct {
         if (self.on_response_headers != .zero) {
             self.on_response_headers.unprotect();
             self.on_response_headers = .zero;
+        }
+        if (self._node_binding != .zero) {
+            self._node_binding.unprotect();
+            self._node_binding = .zero;
         }
 
         self.enabled = false;
@@ -264,6 +274,20 @@ pub const Telemetry = struct {
             const protected = callback.withAsyncContextIfNeeded(self.global);
             protected.protect();
             self.on_response_headers = protected;
+        }
+
+        // Parse _node_binding object (for Node.js http.Server compatibility)
+        if (try options.getTruthyComptime(self.global, "_node_binding")) |binding| {
+            if (!binding.isObject()) {
+                return self.global.throwInvalidArguments("_node_binding must be an object", .{});
+            }
+
+            if (self._node_binding != .zero) {
+                self._node_binding.unprotect();
+            }
+
+            binding.protect();
+            self._node_binding = binding;
         }
 
         // Enable telemetry if any callbacks are set
@@ -451,6 +475,17 @@ pub fn isEnabled(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
 pub fn disable(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     if (Telemetry.getInstance()) |telemetry| {
         telemetry.reset();
+    }
+    return .js_undefined;
+}
+
+/// JavaScript API: Bun.telemetry._node_binding()
+/// Returns the _node_binding object set via configure(), or undefined if not set
+pub fn getNodeBinding(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    if (Telemetry.getInstance()) |telemetry| {
+        if (telemetry._node_binding != .zero) {
+            return telemetry._node_binding;
+        }
     }
     return .js_undefined;
 }

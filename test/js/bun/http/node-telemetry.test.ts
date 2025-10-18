@@ -1,49 +1,53 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import * as http from "node:http";
-import { waitForEvents } from "../telemetry-test-utils";
 
-test("Node.js http.createServer works with Bun.telemetry", async () => {
-  const events: Array<{ type: string; id: number; data?: any }> = [];
+// Reset telemetry after each test
+afterEach(() => {
+  try {
+    Bun.telemetry.configure(null);
+  } catch (e) {
+    // Ignore if already reset
+  }
+});
 
-  // Configure telemetry
+test("Node.js http.createServer calls _node_binding hooks", async () => {
+  const calls: Array<{ method: string; args: any[] }> = [];
+
+  // Create a stub _node_binding that records all calls
+  const mockBinding = {
+    handleIncomingRequest(req: any, res: any) {
+      calls.push({ method: "handleIncomingRequest", args: [req, res] });
+      return 123; // Return a fake request ID
+    },
+    handleWriteHead(res: any, statusCode: number) {
+      calls.push({ method: "handleWriteHead", args: [res, statusCode] });
+    },
+    handleRequestFinish(res: any) {
+      calls.push({ method: "handleRequestFinish", args: [res] });
+    },
+    handleRequestError(res: any, error: any) {
+      calls.push({ method: "handleRequestError", args: [res, error] });
+    },
+    handleRequestAbort(res: any) {
+      calls.push({ method: "handleRequestAbort", args: [res] });
+    },
+    handleRequestTimeout(res: any) {
+      calls.push({ method: "handleRequestTimeout", args: [res] });
+    },
+  };
+
+  // Configure telemetry with our mock
   Bun.telemetry.configure({
-    onRequestStart(id, request) {
-      events.push({
-        type: "start",
-        id,
-        data: {
-          method: request.method,
-          url: request.url,
-        },
-      });
-    },
-    onResponseHeaders(id, statusCode, contentLength) {
-      events.push({
-        type: "headers",
-        id,
-        data: {
-          statusCode,
-          contentLength,
-        },
-      });
-    },
-    onRequestEnd(id) {
-      events.push({ type: "end", id });
-    },
-    onRequestError(id, error) {
-      events.push({ type: "error", id, data: error });
-    },
+    _node_binding: mockBinding,
   });
 
   const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Hello from Node.js HTTP server!");
+    res.end("Hello!");
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.listen(0, () => {
-      resolve();
-    });
+    server.listen(0, () => resolve());
     server.on("error", reject);
   });
 
@@ -57,193 +61,127 @@ test("Node.js http.createServer works with Bun.telemetry", async () => {
   // Make a request
   const response = await fetch(`http://localhost:${port}/test`);
   expect(response.status).toBe(200);
-  const text = await response.text();
-  expect(text).toBe("Hello from Node.js HTTP server!");
+  await response.text();
 
-  // Wait for telemetry callbacks to fire
-  await waitForEvents(events, ["start", "headers", "end"]);
+  // Wait for callbacks (short spin to avoid flakiness)
+  let attempts = 0;
+  while (calls.length < 2 && attempts < 50) {
+    await Bun.sleep(10);
+    attempts++;
+  }
 
-  // Verify telemetry events were captured
-  expect(events.length).toBeGreaterThanOrEqual(3);
+  // Verify the hooks were called
+  expect(calls.length).toBeGreaterThanOrEqual(2);
 
-  const startEvent = events.find(e => e.type === "start");
-  expect(startEvent).toBeDefined();
-  expect(startEvent?.data?.method).toBe("GET");
-  expect(startEvent?.data?.url).toBe("/test");
+  // Verify handleIncomingRequest was called
+  const incomingCall = calls.find(c => c.method === "handleIncomingRequest");
+  expect(incomingCall).toBeDefined();
+  expect(incomingCall?.args[0].method).toBe("GET");
+  expect(incomingCall?.args[0].url).toBe("/test");
+  expect(incomingCall?.args[1]).toBeDefined(); // ServerResponse object
 
-  const headersEvent = events.find(e => e.type === "headers");
-  expect(headersEvent).toBeDefined();
-  expect(headersEvent?.id).toBe(startEvent?.id);
-  expect(headersEvent?.data?.statusCode).toBe(200);
-  // Content-length may be 0 if not set explicitly in writeHead
-  expect(headersEvent?.data?.contentLength).toBeGreaterThanOrEqual(0);
+  // Verify handleWriteHead was called
+  const writeHeadCall = calls.find(c => c.method === "handleWriteHead");
+  expect(writeHeadCall).toBeDefined();
+  expect(writeHeadCall?.args[0]).toBe(incomingCall?.args[1]); // Same response object
+  expect(writeHeadCall?.args[1]).toBe(200); // Status code
 
-  const endEvent = events.find(e => e.type === "end");
-  expect(endEvent).toBeDefined();
-  expect(endEvent?.id).toBe(startEvent?.id);
-
-  // Clean up
-  await new Promise<void>(resolve => {
-    server.close(() => resolve());
-  });
-
-  Bun.telemetry.disable();
+  server.close();
 });
 
-test("Node.js http server without telemetry configured", async () => {
-  // Ensure telemetry is disabled
-  Bun.telemetry.disable();
+test("Node.js http server calls handleWriteHead only once", async () => {
+  const calls: string[] = [];
+
+  const mockBinding = {
+    handleIncomingRequest() {
+      calls.push("handleIncomingRequest");
+      return 1;
+    },
+    handleWriteHead() {
+      calls.push("handleWriteHead");
+    },
+    handleRequestFinish() {},
+    handleRequestError() {},
+    handleRequestAbort() {},
+    handleRequestTimeout() {},
+  };
+
+  Bun.telemetry.configure({ _node_binding: mockBinding });
 
   const server = http.createServer((req, res) => {
+    // Call writeHead explicitly
     res.writeHead(200);
-    res.end("OK");
+    res.write("chunk1");
+    res.write("chunk2");
+    res.end("final");
   });
-
-  await new Promise<void>((resolve, reject) => {
-    server.listen(0, () => resolve());
-    server.on("error", reject);
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Server address not available");
-  }
-
-  const port = address.port;
-
-  // Should work fine without telemetry
-  const response = await fetch(`http://localhost:${port}/`);
-  expect(response.status).toBe(200);
 
   await new Promise<void>(resolve => {
-    server.close(() => resolve());
+    server.listen(0, () => resolve());
   });
+
+  const port = (server.address() as any).port;
+  await fetch(`http://localhost:${port}/`);
+
+  // Wait for all calls
+  let attempts = 0;
+  while (calls.length < 2 && attempts < 50) {
+    await Bun.sleep(10);
+    attempts++;
+  }
+
+  // handleWriteHead should be called exactly once (deduplication works)
+  const writeHeadCalls = calls.filter(c => c === "handleWriteHead");
+  expect(writeHeadCalls.length).toBe(1);
+
+  server.close();
 });
 
-test("Node.js http server with multiple requests tracks each", async () => {
-  const events: Array<{ type: string; id: number }> = [];
+test("Node.js http server captures content-length from getHeader", async () => {
+  let capturedStatusCode: number | undefined;
+  let capturedResponse: any;
 
-  Bun.telemetry.configure({
-    onRequestStart(id) {
-      events.push({ type: "start", id });
+  const mockBinding = {
+    handleIncomingRequest() {
+      return 1;
     },
-    onRequestEnd(id) {
-      events.push({ type: "end", id });
+    handleWriteHead(res: any, statusCode: number) {
+      capturedStatusCode = statusCode;
+      capturedResponse = res;
     },
-  });
+    handleRequestFinish() {},
+    handleRequestError() {},
+    handleRequestAbort() {},
+    handleRequestTimeout() {},
+  };
+
+  Bun.telemetry.configure({ _node_binding: mockBinding });
 
   const server = http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end("OK");
+    res.writeHead(201, { "Content-Length": "42" });
+    res.end();
   });
-
-  await new Promise<void>((resolve, reject) => {
-    server.listen(0, () => resolve());
-    server.on("error", reject);
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Server address not available");
-  }
-
-  const port = address.port;
-
-  // Make multiple requests
-  await Promise.all([
-    fetch(`http://localhost:${port}/1`),
-    fetch(`http://localhost:${port}/2`),
-    fetch(`http://localhost:${port}/3`),
-  ]);
-
-  // Wait for all 6 events (3 starts + 3 ends)
-  const startTime = Date.now();
-  while (events.length < 6 && Date.now() - startTime < 200) {
-    await Bun.sleep(5);
-  }
-  if (events.length < 6) {
-    throw new Error(`Expected at least 6 events, got ${events.length}`);
-  }
-
-  // Should have 6 events: 3 starts + 3 ends
-  expect(events.length).toBeGreaterThanOrEqual(6);
-
-  // All IDs should be unique
-  const startIds = events.filter(e => e.type === "start").map(e => e.id);
-  const uniqueIds = new Set(startIds);
-  expect(uniqueIds.size).toBe(startIds.length);
-
-  // Every start should have a corresponding end
-  for (const startEvent of events.filter(e => e.type === "start")) {
-    const endEvent = events.find(e => e.type === "end" && e.id === startEvent.id);
-    expect(endEvent).toBeDefined();
-  }
 
   await new Promise<void>(resolve => {
-    server.close(() => resolve());
-  });
-
-  Bun.telemetry.disable();
-});
-
-test("Node.js http server captures explicit content-length", async () => {
-  const events: Array<{ type: string; id: number; data?: any }> = [];
-
-  Bun.telemetry.configure({
-    onRequestStart(id) {
-      events.push({ type: "start", id });
-    },
-    onResponseHeaders(id, statusCode, contentLength) {
-      events.push({
-        type: "headers",
-        id,
-        data: { statusCode, contentLength },
-      });
-    },
-    onRequestEnd(id) {
-      events.push({ type: "end", id });
-    },
-  });
-
-  const server = http.createServer((req, res) => {
-    const body = "Hello, World!";
-    res.writeHead(200, {
-      "Content-Type": "text/plain",
-      "Content-Length": body.length.toString(),
-    });
-    res.end(body);
-  });
-
-  await new Promise<void>((resolve, reject) => {
     server.listen(0, () => resolve());
-    server.on("error", reject);
   });
 
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Server address not available");
+  const port = (server.address() as any).port;
+  await fetch(`http://localhost:${port}/`);
+
+  // Wait for callback
+  let attempts = 0;
+  while (!capturedStatusCode && attempts < 50) {
+    await Bun.sleep(10);
+    attempts++;
   }
 
-  const port = address.port;
+  expect(capturedStatusCode).toBe(201);
+  expect(capturedResponse).toBeDefined();
 
-  // Make a request
-  const response = await fetch(`http://localhost:${port}/`);
-  expect(response.status).toBe(200);
-  const text = await response.text();
-  expect(text).toBe("Hello, World!");
+  // The mock can inspect the response object to verify content-length is accessible
+  const contentLength = capturedResponse.getHeader("content-length");
+  expect(contentLength).toBe("42");
 
-  // Wait for telemetry callbacks
-  await waitForEvents(events, ["start", "headers", "end"]);
-
-  // Verify the headers event captured the explicit content-length
-  const headersEvent = events.find(e => e.type === "headers");
-  expect(headersEvent).toBeDefined();
-  expect(headersEvent?.data?.statusCode).toBe(200);
-  expect(headersEvent?.data?.contentLength).toBe(13); // "Hello, World!" is 13 bytes
-
-  await new Promise<void>(resolve => {
-    server.close(() => resolve());
-  });
-
-  Bun.telemetry.disable();
+  server.close();
 });

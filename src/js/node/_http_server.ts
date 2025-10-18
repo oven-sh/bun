@@ -58,7 +58,6 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
-const kTelemetryId = Symbol("kTelemetryId");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
@@ -553,30 +552,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
-        // Telemetry integration for OpenTelemetry support
-        // This calls onRequestStart and returns a request ID
-        const nodeTelemetry = Bun.telemetry?._node_binding;
-        const telemetryId =
-          typeof nodeTelemetry?.onIncomingMessage === "function"
-            ? nodeTelemetry.onIncomingMessage(http_req)
-            : undefined;
-
-        // Register response finish/error listeners for telemetry
-        if (typeof telemetryId === "number" || typeof telemetryId === "bigint") {
-          // Store telemetry ID on response for use in writeHead
-          http_res[kTelemetryId] = telemetryId;
-
-          http_res.once("finish", () => {
-            try {
-              nodeTelemetry?.onResponseFinish?.(telemetryId);
-            } catch {}
-          });
-          http_res.once("error", err => {
-            try {
-              nodeTelemetry?.onRequestError?.(telemetryId, err);
-            } catch {}
-          });
-        }
+        // Telemetry: notify about incoming request
+        Bun.telemetry?._node_binding?.()?.handleIncomingRequest?.(http_req, http_res);
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
@@ -768,26 +745,18 @@ Server.prototype.setTimeout = function (msecs, callback) {
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
   const res = socket._httpMessage;
-  const telemetryId = res?.[kTelemetryId];
+
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
-      if (telemetryId !== undefined) {
-        try {
-          Bun.telemetry?._node_binding?.onRequestError?.(telemetryId, new Error("aborted"));
-        } catch {}
-      }
+      Bun.telemetry?._node_binding?.()?.handleRequestAbort?.(res);
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-      if (telemetryId !== undefined) {
-        try {
-          Bun.telemetry?._node_binding?.onRequestError?.(telemetryId, new Error("timeout"));
-        } catch {}
-      }
+      Bun.telemetry?._node_binding?.()?.handleRequestTimeout?.(res);
       break;
     }
   }
@@ -1228,17 +1197,8 @@ function _writeHead(statusCode, reason, obj, response) {
 
   updateHasBody(response, statusCode);
 
-  // Notify telemetry about response headers (status code and content-length)
-  const telemetryId = response[kTelemetryId];
-  if (telemetryId !== undefined) {
-    const contentLengthHeader = response.getHeader("content-length");
-    const contentLength = typeof contentLengthHeader === "string" ? parseInt(contentLengthHeader, 10) : 0;
-
-    // Get all headers as a plain object to pass to telemetry
-    const headers = response.getHeaders();
-
-    Bun.telemetry?._node_binding?.onResponseHeaders(telemetryId, statusCode, contentLength, headers);
-  }
+  // Telemetry: notify about response headers
+  Bun.telemetry?._node_binding?.()?.handleWriteHead?.(response, statusCode);
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

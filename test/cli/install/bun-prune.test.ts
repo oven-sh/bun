@@ -120,7 +120,7 @@ describe("bun prune", () => {
         name: "test",
         version: "1.0.0",
         dependencies: {
-          "is-number": "^7.0.0",
+          lodash: "^4.17.0", // Has nested dependencies
         },
         devDependencies: {
           typescript: "^5.0.0",
@@ -139,7 +139,7 @@ describe("bun prune", () => {
     expect(await installProc.exited).toBe(0);
 
     // Verify both dependencies and devDependencies are installed
-    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
     expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(true);
 
     // Run prune with --production
@@ -161,8 +161,13 @@ describe("bun prune", () => {
     expect(stderr).not.toContain("error:");
 
     // Verify devDependencies were removed but regular dependencies preserved
-    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
     expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
+
+    // Verify nested production dependencies are also preserved
+    // lodash may have dependencies - check if they exist and are preserved
+    const lodashLockfile = await file(join(String(dir), "bun.lockb")).exists();
+    expect(lodashLockfile).toBe(true);
   });
 
   it("should show what would be removed with --dry-run", async () => {

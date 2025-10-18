@@ -70,6 +70,8 @@
           pkgs.zlib
           pkgs.libxml2
           pkgs.libiconv
+          pkgs.icu
+          pkgs.sqlite
 
           # Development tools
           pkgs.git
@@ -120,9 +122,7 @@
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          pkgs.apple-sdk_13
         ];
 
       in
@@ -144,10 +144,22 @@
             export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
+
+            # Set up pkg-config paths for dependencies
+            export PKG_CONFIG_PATH="${pkgs.sqlite.dev}/lib/pkgconfig:${pkgs.icu}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.zlib}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+            # Set up include and library paths
+            export CPATH="${pkgs.sqlite.dev}/include:${pkgs.icu}/include:${pkgs.openssl.dev}/include:${pkgs.zlib.dev}/include''${CPATH:+:$CPATH}"
+            export LIBRARY_PATH="${pkgs.sqlite.out}/lib:${pkgs.icu}/lib:${pkgs.openssl.out}/lib:${pkgs.zlib}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            # Configure macOS SDK 13.3 for CMake
+            export CMAKE_OSX_DEPLOYMENT_TARGET="13.0"
+            export CMAKE_OSX_SYSROOT="${pkgs.apple-sdk_13}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX13.3.sdk"
+            export SDKROOT="$CMAKE_OSX_SYSROOT"
           '' + ''
 
             # Print welcome message
@@ -169,6 +181,10 @@
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";
           ENABLE_CCACHE = "1";
+
+          # Add compiler and linker flags for dependencies
+          NIX_CFLAGS_COMPILE = "-I${pkgs.sqlite.dev}/include -I${pkgs.icu}/include";
+          NIX_LDFLAGS = "-L${pkgs.sqlite.out}/lib -L${pkgs.icu}/lib";
         };
       }
     );

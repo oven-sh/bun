@@ -461,6 +461,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
                 array->initializeIndex(initializationScope, 0, jsValue);
                 array->initializeIndex(initializationScope, 1, stringResult);
                 obj->putDirectMayBeIndex(lexicalGlobalObject, ident, array);
+                scope.assertNoException(); // not a proxy.
             } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
                 JSValue stringValue = jsString(vm, value);

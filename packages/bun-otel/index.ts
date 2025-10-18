@@ -9,6 +9,9 @@ type RequestLike = Request | IncomingMessage;
 function isFetchRequest(req: RequestLike): req is Request {
   return req instanceof Request;
 }
+function getHeaderGetter(req: RequestLike): TextMapGetter<RequestLike> {
+  return req ? (isFetchRequest(req) ? fetchHeaderGetter : nodeHeaderGetter) : nilHeaderGetter;
+}
 
 // Header getter for context propagation
 const headerGetter: TextMapGetter<RequestLike> = {
@@ -119,8 +122,9 @@ export class BunSDK {
     const spans = this.spans;
 
     Bun.telemetry.configure({
-      onRequestStart(id: number, request: Request) {
+      onRequestStart(id: number, request: RequestLike) {
         // Extract trace context from headers
+        const headerGetter = getHeaderGetter(request);
         const extractedContext = propagation.extract(context.active(), request, headerGetter);
 
         const urlInfo = getUrlInfo(request);
@@ -196,3 +200,32 @@ export class BunSDK {
     this.spans.clear();
   }
 }
+
+const nilHeaderGetter: TextMapGetter<unknown> = {
+  keys(_carrier: unknown): string[] {
+    return [];
+  },
+  get(_carrier: unknown, _key: string): string | undefined {
+    return undefined;
+  },
+};
+const fetchHeaderGetter: TextMapGetter<Request> = {
+  keys(carrier: Request): string[] {
+    return Array.from(carrier.headers.keys());
+  },
+  get(carrier: Request, key: string): string | undefined {
+    return carrier.headers.get(key) || undefined;
+  },
+};
+const nodeHeaderGetter: TextMapGetter<IncomingMessage> = {
+  keys(carrier: IncomingMessage): string[] {
+    return Object.keys(carrier.headers || {});
+  },
+  get(carrier: IncomingMessage, key: string): string | undefined {
+    const value = carrier.headers?.[key.toLowerCase()];
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+    return value;
+  },
+};

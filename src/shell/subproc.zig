@@ -574,7 +574,7 @@ pub const ShellSubprocess = struct {
     pub fn deinit(this: *@This()) void {
         this.finalizeSync();
         log("Deinit", .{});
-        bun.default_allocator.destroy(this);
+        this.event_loop.allocator().destroy(this);
     }
 
     pub const SpawnArgs = struct {

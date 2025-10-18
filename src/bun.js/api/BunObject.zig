@@ -764,11 +764,9 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return .js_undefined;
 }
 
-pub fn gc(vm: *jsc.VirtualMachine, sync: bool) usize {
-    return vm.garbageCollect(sync);
-}
+pub const gc = Bun__gc;
 export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.C) usize {
-    return @call(.always_inline, gc, .{ vm, sync });
+    return vm.garbageCollect(sync);
 }
 
 pub fn shrink(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {

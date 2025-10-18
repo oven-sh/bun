@@ -82,6 +82,7 @@ pub const AWSSignatureCache = struct {
         this.date = numeric_day;
         bun.handleOom(this.cache.put(bun.handleOom(bun.default_allocator.dupe(u8, key)), value));
     }
+
     pub fn deinit(this: *@This()) void {
         this.date = 0;
         this.clean();

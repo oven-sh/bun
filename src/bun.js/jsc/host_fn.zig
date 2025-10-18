@@ -696,7 +696,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -838,7 +838,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }

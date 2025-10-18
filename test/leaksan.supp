@@ -194,3 +194,8 @@ leak:bun.js.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.run
 leak:bun.js.BuildMessage.BuildMessage.getNotes
 leak:sql.postgres.PostgresSQLQuery.doRun
 leak:bun.js.node.node_fs.Arguments.Realpath.fromJS
+leak:install.
+leak:interchange.json.parsePackageJSONUTF8
+leak:bundler.
+leak:http.cloneMetadata
+leak:bun.js.rare_data.AWSSignatureCache.set

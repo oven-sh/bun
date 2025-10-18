@@ -743,7 +743,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
-pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
+pub fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     return this.node_fs orelse brk: {
         this.node_fs = bun.default_allocator.create(Node.fs.NodeFS) catch unreachable;
         this.node_fs.?.* = Node.fs.NodeFS{
@@ -754,7 +754,7 @@ pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     };
 }
 
-pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
+pub fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
         this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};

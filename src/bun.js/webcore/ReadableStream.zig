@@ -778,6 +778,7 @@ pub fn NewSource(
                 jsc.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 var list = this.drain();
+                defer list.deinit(bun.default_allocator);
                 if (list.len > 0) {
                     return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
                 }

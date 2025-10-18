@@ -487,6 +487,7 @@ pub const Bytes = struct {
             .allocator = allocator,
         };
     }
+
     pub fn initEmptyWithName(name: bun.PathString, allocator: std.mem.Allocator) Bytes {
         return .{
             .ptr = null,

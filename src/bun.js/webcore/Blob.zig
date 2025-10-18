@@ -398,6 +398,7 @@ fn readSlice(
     allocator: std.mem.Allocator,
 ) ![]u8 {
     var slice = try allocator.alloc(u8, len);
+    errdefer allocator.free(slice);
     slice = slice[0..try reader.read(slice)];
     if (slice.len != len) return error.TooSmall;
     return slice;
@@ -1737,9 +1738,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
         if (blob.store) |store_| {
             switch (store_.data) {
                 .bytes => |*bytes| {
-                    bytes.stored_name = bun.PathString.init(
-                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
-                    );
+                    bytes.stored_name = bun.PathString.init(bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice());
                 },
                 .s3, .file => {
                     blob.name = name_value_str.dupeRef();
@@ -3405,6 +3404,7 @@ pub fn deinit(this: *Blob) void {
     this.detach();
     this.name.deref();
     this.name = .dead;
+    if (this.content_type_allocated) bun.default_allocator.free(this.content_type);
 
     if (this.isHeapAllocated()) {
         bun.destroy(this);

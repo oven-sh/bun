@@ -191,7 +191,6 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
     }
 
     auto impl = str.releaseImpl();
-
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 

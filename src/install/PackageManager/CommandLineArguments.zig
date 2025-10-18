@@ -22,7 +22,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
     clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
     clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
-    clap.parseParam("-P, --prod") catch unreachable,
+    clap.parseParam("-P, --prod                            Alias for --production") catch unreachable,
     clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,

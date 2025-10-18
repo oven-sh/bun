@@ -272,6 +272,10 @@ public:
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
+    // Check if util.inspect is initialized without triggering initialization (for circular dependency prevention)
+    JSC::JSFunction* utilInspectFunctionIfInitialized() const {
+        return m_utilInspectFunction.isInitialized() ? m_utilInspectFunction.getInitializedOnMainThread(this) : nullptr;
+    }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 

@@ -49,11 +49,16 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Check if util.inspect is initialized to avoid circular dependency during LazyProperty initialization
+    // If it's not ready, return the original value so default formatting will be used
+    JSFunction* inspectFn = globalObject->utilInspectFunctionIfInitialized();
+    if (!inspectFn) {
+        return encodedThisValue;
+    }
+
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
-    RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));

@@ -430,6 +430,27 @@ pub fn AstMaybe(
                         }
                     }
 
+                    if (p.options.bundle and p.options.output_format == .cjs and strings.eqlComptime(name, "url")) {
+                        const url = bun.String.fromBytes(p.source.path.text);
+                        defer url.deref();
+
+                        const url_prop: js_ast.G.Property = .{
+                            .key = p.newExpr(E.String.init("url"), .Empty),
+                            .value = p.newExpr(
+                                E.String.init(std.fmt.allocPrint(p.allocator, "{}", .{jsc.URL.fileURLFromString(url)}) catch unreachable),
+                                .Empty,
+                            ),
+                        };
+
+                        const props = js_ast.G.Property.List.initOne(p.allocator, url_prop) catch unreachable;
+
+                        const obj = p.newExpr(E.Object{ .properties = props }, .Empty);
+
+                        const dot = p.newExpr(E.Dot{ .target = obj, .name = "url", .name_loc = .Empty }, .Empty);
+
+                        return dot;
+                    }
+
                     // Make all property accesses on `import.meta.url` side effect free.
                     return p.newExpr(
                         E.Dot{

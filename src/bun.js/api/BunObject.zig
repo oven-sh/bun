@@ -1306,13 +1306,7 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
     const as_js = valkey.toJS(globalThis);
 
     valkey.this_value = jsc.JSRef.initWeak(as_js);
-    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
-        if (err != error.JSError) {
-            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
-            return .zero;
-        }
-        return .zero;
-    };
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey);
 
     return as_js;
 }

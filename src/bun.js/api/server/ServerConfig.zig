@@ -246,16 +246,15 @@ pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(
 
 pub fn deinit(this: *ServerConfig) void {
     this.address.deinit(bun.default_allocator);
+    bun.default_allocator.free(this.base_uri);
+    this.base_uri = "";
+    this.base_url = .{};
 
     for (this.negative_routes.items) |route| {
         bun.default_allocator.free(route);
     }
     this.negative_routes.clearAndFree();
 
-    if (this.base_url.href.len > 0) {
-        bun.default_allocator.free(this.base_url.href);
-        this.base_url = URL{};
-    }
     if (this.ssl_config) |*ssl_config| {
         ssl_config.deinit();
         this.ssl_config = null;

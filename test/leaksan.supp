@@ -199,3 +199,8 @@ leak:interchange.json.parsePackageJSONUTF8
 leak:bundler.
 leak:http.cloneMetadata
 leak:bun.js.rare_data.AWSSignatureCache.set
+leak:shell.
+leak:bun.js.webcore.blob.Store.init
+leak:bun.js.webcore.ByteBlobLoader.drain
+leak:bun.js.node.path.dirnamePosixJS_T__anon
+leak:bun.js.test.bun_test.BunTest.ref

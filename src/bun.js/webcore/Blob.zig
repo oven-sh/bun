@@ -3268,10 +3268,7 @@ pub fn createWithBytesAndAllocator(
 ) Blob {
     return Blob{
         .size = @as(SizeType, @truncate(bytes.len)),
-        .store = if (bytes.len > 0)
-            Blob.Store.init(bytes, allocator)
-        else
-            null,
+        .store = if (bytes.len > 0) Blob.Store.init(bytes, allocator) else null,
         .content_type = if (was_string) MimeType.text.value else "",
         .globalThis = globalThis,
     };
@@ -3405,6 +3402,7 @@ pub fn deinit(this: *Blob) void {
     this.name.deref();
     this.name = .dead;
     if (this.content_type_allocated) bun.default_allocator.free(this.content_type);
+    if (this.store) |store| store.deref();
 
     if (this.isHeapAllocated()) {
         bun.destroy(this);

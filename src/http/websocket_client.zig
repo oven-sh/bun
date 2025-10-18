@@ -1174,13 +1174,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 }
             }
 
-            if (!Socket.adoptPtr(
-                tcp,
-                ctx,
-                WebSocket,
-                "tcp",
-                ws,
-            )) {
+            if (!Socket.adoptPtr(tcp, ctx, WebSocket, "tcp", ws)) {
                 ws.deref();
                 return null;
             }

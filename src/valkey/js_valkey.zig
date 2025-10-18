@@ -7,7 +7,7 @@ pub const SubscriptionCtx = struct {
 
     const ParentJS = JSValkeyClient.js;
 
-    pub fn init(valkey_parent: *JSValkeyClient) bun.JSError!Self {
+    pub fn init(valkey_parent: *JSValkeyClient) Self {
         const callback_map = jsc.JSMap.create(valkey_parent.globalObject);
         const parent_this = valkey_parent.this_value.tryGet() orelse unreachable;
 
@@ -388,7 +388,7 @@ pub const JSValkeyClient = struct {
         new_client.this_value = jsc.JSRef.initWeak(js_this);
 
         // Need to associate the subscription context, after the JS ref has been populated.
-        new_client._subscription_ctx = try SubscriptionCtx.init(new_client);
+        new_client._subscription_ctx = SubscriptionCtx.init(new_client);
 
         return new_client;
     }

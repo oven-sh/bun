@@ -511,14 +511,24 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 bun.FD.cwd(),
                 manager.original_package_json_path,
                 manager.allocator,
-            ).unwrap() catch break :prune_cleanup;
+            ).unwrap() catch |err| {
+                if (log_level != .silent) {
+                    Output.warn("Failed to read package.json for production mode prune: {s}. Skipping devDependency removal.", .{@errorName(err)});
+                }
+                break :prune_cleanup;
+            };
             break :blk contents;
         } else null;
         defer if (pkg_json_contents_for_prune) |contents| manager.allocator.free(contents);
 
         const pkg_json_for_prune = if (pkg_json_contents_for_prune) |contents| blk: {
             const source = logger.Source.initPathString(manager.original_package_json_path, contents);
-            const parsed = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch break :prune_cleanup;
+            const parsed = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch {
+                if (log_level != .silent) {
+                    Output.warn("Failed to parse package.json for production mode prune. Skipping devDependency removal.", .{});
+                }
+                break :prune_cleanup;
+            };
             break :blk parsed;
         } else null;
 

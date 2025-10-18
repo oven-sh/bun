@@ -494,7 +494,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
-        log("Running test: \"{}\"", .{ std.zig.fmtEscapes(entry.base.name orelse "(unnamed)") });
+        log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {

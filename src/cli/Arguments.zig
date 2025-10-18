@@ -196,6 +196,8 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+    clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
+    clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
     clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
     clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
@@ -404,6 +406,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (timeout_ms.len > 0) {
                 ctx.test_options.default_timeout_ms = std.fmt.parseInt(u32, timeout_ms, 10) catch {
                     Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
+                    Output.flush();
                     Global.exit(1);
                 };
             }
@@ -468,11 +471,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number: {s}", .{@errorName(e)});
+                    Output.flush();
                     Global.exit(1);
                 };
 
                 if (ctx.test_options.bail == 0) {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number greater than 0", .{});
+                    Output.flush();
                     Global.exit(1);
                 }
             } else {
@@ -504,6 +509,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
+        ctx.test_options.only = args.flag("--only");
+        ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
 

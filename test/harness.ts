@@ -15,8 +15,6 @@ import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 import * as numeric from "_util/numeric.ts";
 
-type Awaitable<T> = T | Promise<T>;
-
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
@@ -62,6 +60,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
+  AGENT: "false",
 };
 
 const ciEnv = { ...bunEnv };
@@ -184,7 +183,7 @@ export type DirectoryTree = {
     | string
     | Buffer
     | DirectoryTree
-    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -794,9 +793,18 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    // junctions on windows will have an absolute path
-    const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
-    return { pass, message };
+    if (isAbsolute(actual)) {
+      // junctions on windows will have an absolute path
+      return {
+        pass: actual.includes(expectedLinkPath.split("..").at(-1)!),
+        message,
+      };
+    }
+
+    return {
+      pass: actual === expectedLinkPath,
+      message,
+    };
   }
 
   const pass = actual === expectedLinkPath;
@@ -1805,7 +1813,62 @@ export async function gunzipJsonRequest(req: Request) {
   const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
   return body;
 }
-
+/**
+ * HTML content from example.com, used as a test fixture to replace
+ * external calls to example.com with local server responses.
+ */
+export const exampleHtml = Buffer.from(
+  "PCFkb2N0eXBlIGh0bWw+CjxodG1sPgogIDxoZWFkPgogICAgPHRpdGxlPkV4YW1wbGUgRG9tYWluPC90aXRsZT4KCiAgICA8bWV0YSBjaGFyc2V0PSJ1dGYtOCIgLz4KICAgIDxtZXRhIGh0dHAtZXF1aXY9IkNvbnRlbnQtdHlwZSIgY29udGVudD0idGV4dC9odG1sOyBjaGFyc2V0PXV0Zi04IiAvPgogICAgPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xIiAvPgogICAgPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KICAgICAgYm9keSB7CiAgICAgICAgYmFja2dyb3VuZC1jb2xvcjogI2YwZjBmMjsKICAgICAgICBtYXJnaW46IDA7CiAgICAgICAgcGFkZGluZzogMDsKICAgICAgICBmb250LWZhbWlseToKICAgICAgICAgIC1hcHBsZS1zeXN0ZW0sIHN5c3RlbS11aSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCAiT3BlbiBTYW5zIiwgIkhlbHZldGljYSBOZXVlIiwgSGVsdmV0aWNhLCBBcmlhbCwKICAgICAgICAgIHNhbnMtc2VyaWY7CiAgICAgIH0KICAgICAgZGl2IHsKICAgICAgICB3aWR0aDogNjAwcHg7CiAgICAgICAgbWFyZ2luOiA1ZW0gYXV0bzsKICAgICAgICBwYWRkaW5nOiAyZW07CiAgICAgICAgYmFja2dyb3VuZC1jb2xvcjogI2ZkZmRmZjsKICAgICAgICBib3JkZXItcmFkaXVzOiAwLjVlbTsKICAgICAgICBib3gtc2hhZG93OiAycHggM3B4IDdweCAycHggcmdiYSgwLCAwLCAwLCAwLjAyKTsKICAgICAgfQogICAgICBhOmxpbmssCiAgICAgIGE6dmlzaXRlZCB7CiAgICAgICAgY29sb3I6ICMzODQ4OGY7CiAgICAgICAgdGV4dC1kZWNvcmF0aW9uOiBub25lOwogICAgICB9CiAgICAgIEBtZWRpYSAobWF4LXdpZHRoOiA3MDBweCkgewogICAgICAgIGRpdiB7CiAgICAgICAgICBtYXJnaW46IDAgYXV0bzsKICAgICAgICAgIHdpZHRoOiBhdXRvOwogICAgICAgIH0KICAgICAgfQogICAgPC9zdHlsZT4KICA8L2hlYWQ+CgogIDxib2R5PgogICAgPGRpdj4KICAgICAgPGgxPkV4YW1wbGUgRG9tYWluPC9oMT4KICAgICAgPHA+CiAgICAgICAgVGhpcyBkb21haW4gaXMgZm9yIHVzZSBpbiBpbGx1c3RyYXRpdmUgZXhhbXBsZXMgaW4gZG9jdW1lbnRzLiBZb3UgbWF5IHVzZSB0aGlzIGRvbWFpbiBpbiBsaXRlcmF0dXJlIHdpdGhvdXQKICAgICAgICBwcmlvciBjb29yZGluYXRpb24gb3IgYXNraW5nIGZvciBwZXJtaXNzaW9uLgogICAgICA8L3A+CiAgICAgIDxwPjxhIGhyZWY9Imh0dHBzOi8vd3d3LmlhbmEub3JnL2RvbWFpbnMvZXhhbXBsZSI+TW9yZSBpbmZvcm1hdGlvbi4uLjwvYT48L3A+CiAgICA8L2Rpdj4KICA8L2JvZHk+CjwvaHRtbD4K",
+  "base64",
+).toString();
+/**
+ * Creates a local HTTP or HTTPS server serving example.com HTML content.
+ * Useful for testing without external network calls.
+ *
+ * @param protocol - Protocol to use: "https" (default) or "http"
+ * @returns Object with server URL, optional CA cert, server instance, and cleanup methods
+ *
+ * @example
+ * ```ts
+ * const site = exampleSite("http");
+ * const response = await fetch(site.url);
+ * site.stop();
+ * ```
+ *
+ * @example Using disposal pattern
+ * ```ts
+ * using site = exampleSite();
+ * await fetch(site.url, { tls: { ca: site.ca } });
+ * // server automatically stopped when scope exits
+ * ```
+ */
+export function exampleSite(protocol: "https" | "http" = "https") {
+  const server = Bun.serve({
+    port: 0,
+    tls: protocol === "https" ? tls : undefined,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      return new Response(exampleHtml, {
+        headers: {
+          "Content-Type": "text/html",
+        },
+      });
+    },
+  });
+  return {
+    url: server.url,
+    ca: protocol === "https" ? tls.cert : undefined,
+    server,
+    stop() {
+      server.stop();
+    },
+    [Symbol.dispose]() {
+      try {
+        server.stop();
+      } catch {}
+    },
+  };
+}
 export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   if (optionalDir) {
     snapshot = snapshot

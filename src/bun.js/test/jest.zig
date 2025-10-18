@@ -396,9 +396,17 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 const var_path = label[var_start..var_end];
                 const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
                 if (!value.isEmptyOrUndefinedOrNull()) {
-                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                    defer formatter.deinit();
-                    bun.handleOom(list.writer().print("{}", .{value.toFmt(&formatter)}));
+                    // For primitive strings, use toString() to avoid adding quotes
+                    // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
+                    if (value.isString()) {
+                        const owned_slice = try value.toSliceOrNull(globalThis);
+                        defer owned_slice.deinit();
+                        bun.handleOom(list.appendSlice(owned_slice.slice()));
+                    } else {
+                        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                        defer formatter.deinit();
+                        bun.handleOom(list.writer().print("{}", .{value.toFmt(&formatter)}));
+                    }
                     idx = var_end;
                     continue;
                 }
@@ -476,7 +484,6 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 }
 
 pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
-    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
     if (bun.detectCI()) |_| {
         return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
     }

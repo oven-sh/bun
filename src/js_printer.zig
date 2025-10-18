@@ -926,19 +926,6 @@ fn NewPrinter(
             }
         }
 
-        fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            comptime bun.assert(is_bun_platform);
-
-            switch (p.options.module_type) {
-                .cjs => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
-                },
-                else => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
-                },
-            }
-        }
-
         fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
             printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
@@ -1630,22 +1617,6 @@ fn NewPrinter(
                             p.print("globalThis.Bun");
                             return;
                         }
-                    },
-                    .bun_test => {
-                        if (record.kind == .dynamic) {
-                            if (module_type == .cjs) {
-                                p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
-                            } else {
-                                p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
-                            }
-                        } else if (record.kind == .require) {
-                            if (module_type == .cjs) {
-                                p.print("globalThis.Bun.jest(__filename)");
-                            } else {
-                                p.print("globalThis.Bun.jest(import.meta.path)");
-                            }
-                        }
-                        return;
                     },
                     else => {},
                 }
@@ -4224,10 +4195,6 @@ fn NewPrinter(
 
                     if (comptime is_bun_platform) {
                         switch (record.tag) {
-                            .bun_test => {
-                                p.printBunJestImportStatement(s.*);
-                                return;
-                            },
                             .bun => {
                                 p.printGlobalBunImportStatement(s.*);
                                 return;

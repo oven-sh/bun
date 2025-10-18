@@ -721,7 +721,7 @@ pub const LinkerContext = struct {
                 try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -741,7 +741,7 @@ pub const LinkerContext = struct {
                 var path = sources[index].path;
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -1963,7 +1963,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun, .{})) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,

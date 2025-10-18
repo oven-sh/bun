@@ -42,10 +42,12 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_is_connect_request(ssl_flag, res.downcast());
         }
 
-        pub fn flushHeaders(res: *Response) void {
-            c.uws_res_flush_headers(ssl_flag, res.downcast());
+        pub fn flushHeaders(res: *Response, flushImmediately: bool) void {
+            c.uws_res_flush_headers(ssl_flag, res.downcast(), flushImmediately);
         }
-
+        pub fn isCorked(res: *Response) bool {
+            return c.uws_res_is_corked(ssl_flag, res.downcast());
+        }
         pub fn state(res: *const Response) State {
             return c.uws_res_state(ssl_flag, @as(*const c.uws_res, @ptrCast(@alignCast(res))));
         }
@@ -58,11 +60,11 @@ pub fn NewResponse(ssl_flag: i32) type {
             c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
         }
 
-        pub fn uncork(_: *Response) void {
-            // c.uws_res_uncork(
-            //     ssl_flag,
-            //     res.downcast(),
-            // );
+        pub fn uncork(res: *Response) void {
+            c.uws_res_uncork(
+                ssl_flag,
+                res.downcast(),
+            );
         }
         pub fn pause(res: *Response) void {
             c.uws_res_pause(ssl_flag, res.downcast());
@@ -377,9 +379,19 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.getRemoteSocketInfo(),
         };
     }
-    pub fn flushHeaders(this: AnyResponse) void {
+    pub fn flushHeaders(this: AnyResponse, flushImmediately: bool) void {
         switch (this) {
-            inline else => |resp| resp.flushHeaders(),
+            inline else => |resp| resp.flushHeaders(flushImmediately),
+        }
+    }
+    pub fn isCorked(this: AnyResponse) bool {
+        return switch (this) {
+            inline else => |resp| resp.isCorked(),
+        };
+    }
+    pub fn uncork(this: AnyResponse) void {
+        switch (this) {
+            inline else => |resp| resp.uncork(),
         }
     }
     pub fn getWriteOffset(this: AnyResponse) u64 {
@@ -658,7 +670,8 @@ const c = struct {
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
-    pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res, flushImmediately: bool) void;
+    pub extern fn uws_res_is_corked(ssl: i32, res: *c.uws_res) bool;
     pub extern fn uws_res_get_socket_data(ssl: i32, res: *c.uws_res) ?*uws.SocketData;
     pub extern fn uws_res_pause(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_resume(ssl: i32, res: *c.uws_res) void;

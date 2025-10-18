@@ -1837,30 +1837,9 @@ pub const JSZstd = struct {
         const input = buffer.slice();
         const allocator = bun.default_allocator;
 
-        // Try to get the decompressed size
-        const decompressed_size = bun.zstd.getDecompressedSize(input);
-
-        if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
-            // If size is unknown, we'll need to decompress in chunks
-            return globalThis.ERR(.ZSTD, "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large. If you run into this error with a valid input, please file an issue at https://github.com/oven-sh/bun/issues", .{}).throw();
-        }
-
-        // Allocate output buffer based on decompressed size
-        var output = try allocator.alloc(u8, decompressed_size);
-
-        // Perform decompression
-        const actual_size = switch (bun.zstd.decompress(output, input)) {
-            .success => |actual_size| actual_size,
-            .err => |err| {
-                allocator.free(output);
-                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
-            },
+        const output = bun.zstd.decompressAlloc(allocator, input) catch |err| {
+            return globalThis.ERR(.ZSTD, "Decompression failed: {s}", .{@errorName(err)}).throw();
         };
-
-        bun.debugAssert(actual_size <= output.len);
-
-        // mimalloc doesn't care about the self-reported size of the slice.
-        output.len = actual_size;
 
         return jsc.JSValue.createBuffer(globalThis, output);
     }
@@ -1918,38 +1897,14 @@ pub const JSZstd = struct {
                 };
             } else {
                 // Decompression path
-                // Try to get the decompressed size
-                const decompressed_size = bun.zstd.getDecompressedSize(input);
-
-                if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
-                    job.error_message = "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large";
-                    return;
-                }
-
-                // Allocate output buffer based on decompressed size
-                job.output = allocator.alloc(u8, decompressed_size) catch {
-                    job.error_message = "Out of memory";
+                job.output = bun.zstd.decompressAlloc(allocator, input) catch {
+                    job.error_message = "Decompression failed";
                     return;
                 };
-
-                // Perform decompression
-                switch (bun.zstd.decompress(job.output, input)) {
-                    .success => |actual_size| {
-                        if (actual_size < job.output.len) {
-                            job.output.len = actual_size;
-                        }
-                    },
-                    .err => |err| {
-                        allocator.free(job.output);
-                        job.output = &[_]u8{};
-                        job.error_message = err;
-                        return;
-                    },
-                }
             }
         }
 
-        pub fn runFromJS(this: *ZstdJob) void {
+        pub fn runFromJS(this: *ZstdJob) bun.JSTerminated!void {
             defer this.deinit();
 
             if (this.vm.isShuttingDown()) {
@@ -1960,14 +1915,14 @@ pub const JSZstd = struct {
             const promise = this.promise.swap();
 
             if (this.error_message) |err_msg| {
-                promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
+                try promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
                 return;
             }
 
             const output_slice = this.output;
             const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice);
             this.output = &[_]u8{};
-            promise.resolve(globalThis, buffer_value);
+            try promise.resolve(globalThis, buffer_value);
         }
 
         pub fn deinit(this: *ZstdJob) void {

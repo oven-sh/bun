@@ -555,15 +555,26 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         // Telemetry integration for OpenTelemetry support
         // This calls onRequestStart and returns a request ID
-        const telemetryId = Bun.telemetry?._node_binding?.onIncomingMessage(http_req);
+        const nodeTelemetry = Bun.telemetry?._node_binding;
+        const telemetryId =
+          typeof nodeTelemetry?.onIncomingMessage === "function"
+            ? nodeTelemetry.onIncomingMessage(http_req)
+            : undefined;
 
-        // Register response finish listener for telemetry
-        if (telemetryId !== undefined) {
+        // Register response finish/error listeners for telemetry
+        if (typeof telemetryId === "number" || typeof telemetryId === "bigint") {
           // Store telemetry ID on response for use in writeHead
           http_res[kTelemetryId] = telemetryId;
 
-          http_res.on("finish", () => {
-            Bun.telemetry?._node_binding?.onResponseFinish(telemetryId);
+          http_res.once("finish", () => {
+            try {
+              nodeTelemetry?.onResponseFinish?.(telemetryId);
+            } catch {}
+          });
+          http_res.once("error", err => {
+            try {
+              nodeTelemetry?.onRequestError?.(telemetryId, err);
+            } catch {}
           });
         }
 
@@ -756,15 +767,27 @@ Server.prototype.setTimeout = function (msecs, callback) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
+  const res = socket._httpMessage;
+  const telemetryId = res?.[kTelemetryId];
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
+      if (telemetryId !== undefined) {
+        try {
+          Bun.telemetry?._node_binding?.onRequestError?.(telemetryId, new Error("aborted"));
+        } catch {}
+      }
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
+      if (telemetryId !== undefined) {
+        try {
+          Bun.telemetry?._node_binding?.onRequestError?.(telemetryId, new Error("timeout"));
+        } catch {}
+      }
       break;
     }
   }

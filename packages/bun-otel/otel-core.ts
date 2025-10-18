@@ -1,7 +1,7 @@
 import type { Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import type { RequestLike } from "./otel-types";
-import { requestLikeHeaderGetter, getUrlInfo } from "./otel-types";
+import { getUrlInfo, requestLikeHeaderGetter } from "./otel-types";
 
 export interface InstallBunNativeTracingOptions {
   /**
@@ -43,12 +43,13 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
       const extractedContext = propagation.extract(context.active(), request, headerGetter);
 
       const urlInfo = getUrlInfo(request);
+      const method = request.method ?? "UNKNOWN";
       const span = tracer.startSpan(
-        `${request.method} ${urlInfo.pathname}`,
+        `${method} ${urlInfo.pathname}`,
         {
           kind: SpanKind.SERVER,
           attributes: {
-            "http.method": request.method,
+            "http.method": method,
             "http.url": urlInfo.fullUrl,
             "http.target": urlInfo.pathname,
             "http.scheme": urlInfo.scheme,

@@ -113,15 +113,19 @@ const fetchRequestHeaderGetter: TextMapGetter<Request> = {
 export const nodeHeaderGetter: TextMapGetter<NodeHeadersLike> = {
   keys: (carrier: NodeHeadersLike): string[] => Object.keys(carrier),
   get: (carrier: NodeHeadersLike, key: string): string | undefined => {
-    const value = carrier[key.toLowerCase()];
-    return Array.isArray(value) ? value[0] : String(value);
+    const value = (carrier as any)[key.toLowerCase()];
+    if (value == null) return undefined;
+    if (Array.isArray(value)) return value.length > 0 ? value[0] : undefined;
+    return String(value);
   },
 };
 const nodeRequestHeaderGetter: TextMapGetter<IncomingMessage> = {
   keys: (carrier: IncomingMessage): string[] => nodeHeaderGetter.keys(carrier.headers),
   get: (carrier: IncomingMessage, key: string): string | undefined => {
     const value = carrier.headers[key.toLowerCase()];
-    return Array.isArray(value) ? value[0] : String(value);
+    if (value == null) return undefined;
+    if (Array.isArray(value)) return value.length > 0 ? value[0] : undefined;
+    return String(value);
   },
 };
 

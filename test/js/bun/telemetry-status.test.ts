@@ -1,6 +1,12 @@
+/**
+ * Response status code tracking tests
+ *
+ * Verifies status codes are captured correctly in onResponseHeaders.
+ * Does NOT test OpenTelemetry span status mapping - see packages/bun-otel/ for that.
+ */
 import { expect, test } from "bun:test";
 
-test("telemetry captures response status", async () => {
+test("onResponseHeaders captures custom status codes (201 Created)", async () => {
   const events: Array<{ type: string; id: number; data?: any }> = [];
 
   Bun.telemetry.configure({

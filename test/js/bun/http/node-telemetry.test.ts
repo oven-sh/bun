@@ -1,3 +1,11 @@
+/**
+ * Core telemetry insertion point tests for Node.js http.createServer
+ *
+ * These tests verify that _node_binding hooks in src/js/node/_http_server.ts are called.
+ * They do NOT test OpenTelemetry integration - see packages/bun-otel/ for that.
+ *
+ * Note: Node.js uses _node_binding hooks; Bun.serve uses high-level callbacks.
+ */
 import { afterEach, expect, test } from "bun:test";
 import * as http from "node:http";
 
@@ -10,7 +18,7 @@ afterEach(() => {
   }
 });
 
-test("Node.js http.createServer calls _node_binding hooks", async () => {
+test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with correct arguments", async () => {
   const calls: Array<{ method: string; args: any[] }> = [];
 
   // Create a stub _node_binding that records all calls
@@ -21,18 +29,6 @@ test("Node.js http.createServer calls _node_binding hooks", async () => {
     },
     handleWriteHead(res: any, statusCode: number) {
       calls.push({ method: "handleWriteHead", args: [res, statusCode] });
-    },
-    handleRequestFinish(res: any) {
-      calls.push({ method: "handleRequestFinish", args: [res] });
-    },
-    handleRequestError(res: any, error: any) {
-      calls.push({ method: "handleRequestError", args: [res, error] });
-    },
-    handleRequestAbort(res: any) {
-      calls.push({ method: "handleRequestAbort", args: [res] });
-    },
-    handleRequestTimeout(res: any) {
-      calls.push({ method: "handleRequestTimeout", args: [res] });
     },
   };
 
@@ -89,7 +85,7 @@ test("Node.js http.createServer calls _node_binding hooks", async () => {
   server.close();
 });
 
-test("Node.js http server calls handleWriteHead only once", async () => {
+test("handleWriteHead deduplication - called only once even with multiple writes", async () => {
   const calls: string[] = [];
 
   const mockBinding = {
@@ -100,10 +96,6 @@ test("Node.js http server calls handleWriteHead only once", async () => {
     handleWriteHead() {
       calls.push("handleWriteHead");
     },
-    handleRequestFinish() {},
-    handleRequestError() {},
-    handleRequestAbort() {},
-    handleRequestTimeout() {},
   };
 
   Bun.telemetry.configure({ _node_binding: mockBinding });
@@ -137,7 +129,7 @@ test("Node.js http server calls handleWriteHead only once", async () => {
   server.close();
 });
 
-test("Node.js http server captures content-length from getHeader", async () => {
+test("handleWriteHead receives ServerResponse with accessible headers via getHeader()", async () => {
   let capturedStatusCode: number | undefined;
   let capturedResponse: any;
 
@@ -149,10 +141,6 @@ test("Node.js http server captures content-length from getHeader", async () => {
       capturedStatusCode = statusCode;
       capturedResponse = res;
     },
-    handleRequestFinish() {},
-    handleRequestError() {},
-    handleRequestAbort() {},
-    handleRequestTimeout() {},
   };
 
   Bun.telemetry.configure({ _node_binding: mockBinding });

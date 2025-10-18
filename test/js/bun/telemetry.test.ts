@@ -1,3 +1,9 @@
+/**
+ * Bun.telemetry API functionality tests
+ *
+ * Tests API methods with servers and request tracking.
+ * Does NOT test OpenTelemetry integration - see packages/bun-otel/ for that.
+ */
 import { expect, test } from "bun:test";
 import { waitForEvents } from "./telemetry-test-utils";
 

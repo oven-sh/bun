@@ -36,11 +36,17 @@ declare module "bun" {
     type RequestId = number;
 
     /**
+     * Node.js HTTP types (aliased to avoid inline import() usage in interfaces)
+     */
+    type NodeIncomingMessage = import("http").IncomingMessage;
+    type NodeServerResponse = import("http").ServerResponse;
+
+    /**
      * Request-like type for different server implementations.
      * Can be either a Bun Request object (from Bun.serve) or a Node.js IncomingMessage
      * (from http.createServer), allowing the same telemetry to work with both APIs.
      */
-    type RequestLike = Request | import("http").IncomingMessage;
+    type RequestLike = Request | NodeIncomingMessage;
 
     /**
      * Minimal headers interface that can be implemented by both native objects and Headers.
@@ -53,6 +59,33 @@ declare module "bun" {
     type HeadersLike =
       | { get(name: string): string | null; keys(): string[] } // Bun-style (Headers-like)
       | Record<string, string | string[] | undefined>; // Node-style (plain object)
+
+    /**
+     * Internal Node.js binding object for telemetry (Node.js http compatibility hooks).
+     *
+     * These callbacks are invoked by Bun's Node.js HTTP server shim (`node:_http_server`) to
+     * report lifecycle events for requests created via `http.createServer()`.
+     * They are optional and only used when provided via `Bun.telemetry.configure({ _node_binding: { ... } })`.
+     *
+     * All methods MUST be synchronous and MUST NOT throw. Any thrown errors are caught and ignored.
+     * @internal
+     */
+    interface _NodeBinding {
+      /**
+       * Called when an incoming Node.js HTTP request is received.
+       * Should return a unique request id (u64) or `undefined` if tracking should be skipped.
+       *
+       * The returned id will be used for subsequent lifecycle callbacks emitted via the higher-level
+       * telemetry API (onRequestStart/onRequestEnd/etc). Implementations may choose to generate their
+       * own ids or call `Bun.telemetry.generateRequestId()`.
+       */
+      handleIncomingRequest?(req: NodeIncomingMessage, res: NodeServerResponse): number | undefined;
+      /**
+       * Called exactly once when `res.writeHead()` is invoked (deduplicated even if user calls multiple times).
+       * Provides access to status code and response headers via `res.getHeader()`.
+       */
+      handleWriteHead?(res: NodeServerResponse, statusCode: number): void;
+    }
 
     /**
      * Configuration options for telemetry callbacks.
@@ -92,6 +125,12 @@ declare module "bun" {
        *                  Supports both Headers instances and plain objects
        */
       onResponseHeaders?: (id: RequestId, statusCode: number, contentLength: number, headers?: HeadersLike) => void;
+      /**
+       * Internal Node.js binding object for telemetry.
+       * Used by the Node.js compatibility layer to notify about request events.
+       * @internal
+       */
+      _node_binding?: _NodeBinding;
     }
 
     /**
@@ -164,5 +203,11 @@ declare module "bun" {
      * ```
      */
     export function generateRequestId(): RequestId;
+
+    /**
+     * Getter for Bun.telemetry._node_binding()
+     * Returns the _node_binding object set via configure(), or undefined if not set
+     */
+    export function _node_binding(): _NodeBinding | undefined;
   }
 }

@@ -751,12 +751,12 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
       if (!socket.destroyed) {
         socket.destroy();
       }
-      Bun.telemetry?._node_binding?.()?.handleRequestAbort?.(res);
+  // Removed handleRequestAbort telemetry hook for minimal insertion footprint
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-      Bun.telemetry?._node_binding?.()?.handleRequestTimeout?.(res);
+  // Removed handleRequestTimeout telemetry hook for minimal insertion footprint
       break;
     }
   }

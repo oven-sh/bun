@@ -1,3 +1,9 @@
+/**
+ * Basic Bun.telemetry API tests
+ *
+ * Verifies the API contract exists and basic lifecycle works.
+ * Does NOT test OpenTelemetry integration - see packages/bun-otel/ for that.
+ */
 import { describe, expect, test } from "bun:test";
 
 describe("Bun.telemetry basic tests", () => {

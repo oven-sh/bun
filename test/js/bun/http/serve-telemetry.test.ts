@@ -1,6 +1,14 @@
+/**
+ * Core telemetry callback tests for Bun.serve
+ *
+ * These tests verify that high-level callbacks (onRequestStart, onResponseHeaders, onRequestEnd)
+ * are invoked correctly. They do NOT test OpenTelemetry integration - see packages/bun-otel/ for that.
+ *
+ * Note: Bun.serve uses high-level callbacks; Node.js uses _node_binding hooks.
+ */
 import { expect, test } from "bun:test";
 
-test("Bun.serve telemetry captures 200 status for non-empty body", async () => {
+test("onResponseHeaders receives statusCode and contentLength for non-empty response body", async () => {
   const events: Array<{ type: string; id: number; data?: any }> = [];
 
   Bun.telemetry.configure({
@@ -40,7 +48,7 @@ test("Bun.serve telemetry captures 200 status for non-empty body", async () => {
   Bun.telemetry.disable();
 });
 
-test("Bun.serve telemetry captures explicit 204 status", async () => {
+test("onResponseHeaders receives explicit 204 status code for no-content responses", async () => {
   const events: Array<{ type: string; id: number; data?: any }> = [];
 
   Bun.telemetry.configure({

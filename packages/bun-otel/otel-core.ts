@@ -164,15 +164,30 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
       // Extract context from incoming headers
       const extractedContext = propagation.extract(context.active(), req.headers);
 
-      // Start a new span
+      // Extract headers
+      const method = req.method || "GET";
+      const url = req.url || "/";
+      const userAgent = req.headers["user-agent"];
+      const host = req.headers["host"];
+      const contentLengthHeader = req.headers["content-length"];
+      const contentLength = typeof contentLengthHeader === "string" ? parseInt(contentLengthHeader, 10) : 0;
+
+      // Determine scheme (http vs https) from the socket
+      const scheme = (req.socket as any)?.encrypted ? "https" : "http";
+
+      // Start a new span (match Bun.serve format: "GET /path" not "HTTP GET /path")
       const span = tracer.startSpan(
-        `HTTP ${req.method} ${req.url}`,
+        `${method} ${url}`,
         {
           kind: SpanKind.SERVER,
           attributes: {
-            "http.method": req.method || "GET",
-            "http.url": req.url || "/",
-            "http.target": req.url || "/",
+            "http.method": method,
+            "http.url": url,
+            "http.target": url,
+            "http.scheme": scheme,
+            "http.host": host,
+            "http.user_agent": userAgent,
+            "http.request_content_length": contentLength > 0 ? contentLength : undefined,
           },
         },
         extractedContext,
@@ -184,6 +199,12 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
       // Store span in BOTH the map and on the response object
       spans.set(requestId, span);
       (res as any)[kSpan] = span;
+
+      // Attach one-time listeners using existing high-level telemetry handlers for DRYness.
+      res.once("finish", () => onRequestEnd(requestId));
+      res.once("error", (err: unknown) => onRequestError(requestId, err));
+      res.once("close", () => onRequestError(requestId, new Error("Request aborted")));
+      res.once("timeout", () => onRequestError(requestId, new Error("Request timeout")));
 
       return requestId;
     } catch (error) {
@@ -221,60 +242,6 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
     }
   }
 
-  function handleRequestAbort(response: ServerResponse): void {
-    try {
-      const span: Span | undefined = (response as any)[kSpan];
-      if (!span) return;
-
-      recordError(span, new Error("Request aborted"));
-      span.end();
-
-      delete (response as any)[kSpan];
-    } catch (error) {
-      // Silently fail
-    }
-  }
-
-  function handleRequestTimeout(response: ServerResponse): void {
-    try {
-      const span: Span | undefined = (response as any)[kSpan];
-      if (!span) return;
-
-      recordError(span, new Error("Request timeout"));
-      span.end();
-
-      delete (response as any)[kSpan];
-    } catch (error) {
-      // Silently fail
-    }
-  }
-
-  function handleRequestFinish(response: ServerResponse): void {
-    try {
-      const span: Span | undefined = (response as any)[kSpan];
-      if (!span) return;
-
-      span.end();
-      delete (response as any)[kSpan];
-    } catch (error) {
-      // Silently fail
-    }
-  }
-
-  function handleRequestError(response: ServerResponse, error: unknown): void {
-    try {
-      const span: Span | undefined = (response as any)[kSpan];
-      if (!span) return;
-
-      recordError(span, error);
-      span.end();
-
-      delete (response as any)[kSpan];
-    } catch (err) {
-      // Silently fail
-    }
-  }
-
   // ============================================================================
   // Configure Bun.telemetry with both Bun.serve and Node.js callbacks
   // ============================================================================
@@ -290,10 +257,6 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
     _node_binding: {
       handleIncomingRequest,
       handleWriteHead,
-      handleRequestAbort,
-      handleRequestTimeout,
-      handleRequestFinish,
-      handleRequestError,
     },
   });
 

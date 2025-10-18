@@ -1434,13 +1434,19 @@ const TelemetryObject = struct {
         );
 
         // Node.js compatibility layer bindings (internal use only)
-        const node_binding = JSValue.createEmptyObject(globalThis, 3);
+        const node_binding = JSValue.createEmptyObject(globalThis, 4);
         const node_telemetry_binding = @import("../node_telemetry_binding.zig");
 
         node_binding.put(
             globalThis,
             ZigString.static("onIncomingMessage"),
             jsc.createCallback(globalThis, ZigString.static("onIncomingMessage"), 1, node_telemetry_binding.onIncomingMessage),
+        );
+
+        node_binding.put(
+            globalThis,
+            ZigString.static("onResponseHeaders"),
+            jsc.createCallback(globalThis, ZigString.static("onResponseHeaders"), 3, node_telemetry_binding.onResponseHeaders),
         );
 
         node_binding.put(

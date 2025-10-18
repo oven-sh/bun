@@ -1,7 +1,7 @@
 // Example: Basic usage with Bun.serve and OpenTelemetry
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
-import { createTelemetryBridge } from "bun-otel";
+import { BunSDK } from "bun-otel";
 
 // Initialize OpenTelemetry
 const sdk = new NodeSDK({
@@ -11,9 +11,10 @@ const sdk = new NodeSDK({
 sdk.start();
 
 // Bridge Bun telemetry to OpenTelemetry
-createTelemetryBridge({
+const bunSdk = new BunSDK({
   tracerProvider: sdk.getTracerProvider(),
 });
+bunSdk.start();
 
 // Now all Bun.serve requests are automatically traced!
 Bun.serve({

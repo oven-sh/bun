@@ -1,8 +1,8 @@
 // Example: Using bun-otel with Hono framework
 import { trace } from "@opentelemetry/api";
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
-import { createTelemetryBridge } from "bun-otel";
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
+import { BunSDK } from "bun-otel";
 import { Hono } from "hono";
 
 // Setup OpenTelemetry
@@ -11,7 +11,9 @@ const sdk = new NodeSDK({
 });
 
 sdk.start();
-createTelemetryBridge({ tracerProvider: sdk.getTracerProvider() });
+
+const bunSdk = new BunSDK({ tracerProvider: sdk.getTracerProvider() });
+bunSdk.start();
 
 // Create Hono app
 const app = new Hono();

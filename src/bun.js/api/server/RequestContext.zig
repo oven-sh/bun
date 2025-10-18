@@ -2229,6 +2229,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
         }
 
+        /// Notify telemetry and write HTTP status code
+        inline fn writeStatusWithTelemetry(this: *RequestContext, status: u16, size: u64) void {
+            // Notify telemetry with final normalized status
+            if (this.telemetry_request_id != 0) {
+                if (telemetry.Telemetry.getInstance()) |t| {
+                    t.notifyResponseStatus(this.telemetry_request_id, status, size);
+                }
+            }
+            this.doWriteStatus(status);
+        }
+
         pub fn renderMetadata(this: *RequestContext) void {
             if (this.resp == null) return;
             const resp = this.resp.?;
@@ -2243,13 +2254,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             else
                 this.blob.size();
 
-            // Notify telemetry about response headers (status code and content length)
-            if (this.telemetry_request_id != 0) {
-                if (telemetry.Telemetry.getInstance()) |t| {
-                    t.notifyResponseStatus(this.telemetry_request_id, status, size);
-                }
-            }
-
+            // Normalize status code before notifying telemetry
+            // 1. Empty body: 200 → 204 No Content
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
@@ -2268,17 +2274,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
                 needs_content_range = needs_content_range and has_content_range;
+                // 2. Partial content: → 206 Partial Content
                 if (needs_content_range) {
                     status = 206;
                 }
 
-                this.doWriteStatus(status);
+                writeStatusWithTelemetry(this, status, size);
                 this.doWriteHeaders(headers_);
             } else if (needs_content_range) {
+                // 2. Partial content: → 206 Partial Content
                 status = 206;
-                this.doWriteStatus(status);
+                writeStatusWithTelemetry(this, status, size);
             } else {
-                this.doWriteStatus(status);
+                writeStatusWithTelemetry(this, status, size);
             }
 
             if (this.cookies) |cookies| {

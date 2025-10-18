@@ -1,5 +1,82 @@
-import type { Span, TracerProvider } from "@opentelemetry/api";
-import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
+import type { Span, TextMapGetter, TracerProvider } from "@opentelemetry/api";
+import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import type { IncomingMessage } from "http";
+
+// Request-like type for different server implementations
+type RequestLike = Request | IncomingMessage;
+
+// Type guard for fetch API Request
+function isFetchRequest(req: RequestLike): req is Request {
+  return req instanceof Request;
+}
+
+// Header getter for context propagation
+const headerGetter: TextMapGetter<RequestLike> = {
+  keys(carrier: RequestLike): string[] {
+    if (isFetchRequest(carrier)) {
+      return Array.from(carrier.headers.keys());
+    }
+    // IncomingMessage
+    return Object.keys(carrier.headers || {});
+  },
+  get(carrier: RequestLike, key: string): string | undefined {
+    if (isFetchRequest(carrier)) {
+      return carrier.headers.get(key) || undefined;
+    }
+    // IncomingMessage
+    const value = carrier.headers?.[key.toLowerCase()];
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+    return value;
+  },
+};
+
+interface UrlInfo {
+  fullUrl: string;
+  pathname: string;
+  host: string;
+  scheme: string;
+  userAgent: string | undefined;
+  contentLength: number | undefined;
+}
+
+function getUrlInfo(req: RequestLike): UrlInfo {
+  if (isFetchRequest(req)) {
+    const url = new URL(req.url);
+    const contentLengthHeader = req.headers.get("content-length");
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : undefined;
+
+    return {
+      fullUrl: req.url,
+      pathname: url.pathname,
+      host: url.host,
+      scheme: url.protocol.replace(":", ""),
+      userAgent: req.headers.get("user-agent") || undefined,
+      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+    };
+  }
+
+  // IncomingMessage (Node.js http.createServer)
+  const host = (Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host) || "localhost";
+  const protocol = (req.socket as any)?.encrypted ? "https" : "http";
+  const pathname = req.url || "/";
+  const fullUrl = `${protocol}://${host}${pathname}`;
+
+  const userAgent = req.headers["user-agent"];
+  const contentLengthHeader = req.headers["content-length"];
+  const contentLengthStr = Array.isArray(contentLengthHeader) ? contentLengthHeader[0] : contentLengthHeader;
+  const contentLength = contentLengthStr ? Number(contentLengthStr) : undefined;
+
+  return {
+    fullUrl,
+    pathname,
+    host,
+    scheme: protocol,
+    userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent,
+    contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+  };
+}
 
 export interface BunSDKConfiguration {
   /**
@@ -44,23 +121,21 @@ export class BunSDK {
     Bun.telemetry.configure({
       onRequestStart(id: number, request: Request) {
         // Extract trace context from headers
-        const traceparent = request.headers.get("traceparent");
-        const carrier = traceparent ? { traceparent } : {};
-        const extractedContext = propagation.extract(context.active(), carrier);
+        const extractedContext = propagation.extract(context.active(), request, headerGetter);
 
-        const url = new URL(request.url);
+        const urlInfo = getUrlInfo(request);
         const span = tracer.startSpan(
-          `${request.method} ${url.pathname}`,
+          `${request.method} ${urlInfo.pathname}`,
           {
             kind: SpanKind.SERVER,
             attributes: {
               "http.method": request.method,
-              "http.url": request.url,
-              "http.target": url.pathname,
-              "http.scheme": url.protocol.replace(":", ""),
-              "http.host": url.host,
-              "http.user_agent": request.headers.get("user-agent") || undefined,
-              "http.request_content_length": request.headers.get("content-length") || undefined,
+              "http.url": urlInfo.fullUrl,
+              "http.target": urlInfo.pathname,
+              "http.scheme": urlInfo.scheme,
+              "http.host": urlInfo.host,
+              "http.user_agent": urlInfo.userAgent,
+              "http.request_content_length": urlInfo.contentLength,
             },
           },
           extractedContext,
@@ -68,8 +143,10 @@ export class BunSDK {
 
         spans.set(id, span);
 
-        // Make span active for downstream operations
-        return context.with(trace.setSpan(extractedContext, span), () => {});
+        // Phase 2: Context propagation via AsyncLocalStorage will be added in a future update.
+        // The current implementation correctly extracts and uses trace context when starting spans,
+        // but does not propagate the active span to downstream operations via context.with().
+        // return context.with(trace.setSpan(extractedContext, span), () => {});
       },
 
       onRequestEnd(id: number) {
@@ -81,14 +158,16 @@ export class BunSDK {
         spans.delete(id);
       },
 
-      onRequestError(id: number, error: Error) {
+      onRequestError(id: number, error: unknown) {
         const span = spans.get(id);
         if (!span) return;
 
-        span.recordException(error);
+        // Normalize non-Error values to Error instances
+        const err = error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+        span.recordException(err);
         span.setStatus({
           code: SpanStatusCode.ERROR,
-          message: error.message,
+          message: err.message,
         });
         span.end();
         spans.delete(id);
@@ -116,106 +195,4 @@ export class BunSDK {
     Bun.telemetry.disable();
     this.spans.clear();
   }
-}
-
-// Legacy API exports for backwards compatibility
-export interface TelemetryBridgeOptions {
-  /**
-   * TracerProvider to use for creating spans
-   */
-  tracerProvider: TracerProvider;
-
-  /**
-   * Name to use for the tracer
-   * @default '@bun/otel'
-   */
-  tracerName?: string;
-}
-
-export interface TelemetryBridge {
-  /**
-   * Disable telemetry and clean up
-   */
-  disable(): void;
-}
-
-/**
- * Create a bridge between Bun's native telemetry and OpenTelemetry
- * @deprecated Use BunSDK instead
- */
-export function createTelemetryBridge(options: TelemetryBridgeOptions): TelemetryBridge {
-  const { tracerProvider, tracerName = "@bun/otel" } = options;
-  const tracer = tracerProvider.getTracer(tracerName);
-  const spans = new Map<number, Span>();
-
-  Bun.telemetry.configure({
-    onRequestStart(id: number, request: Request) {
-      // Extract trace context from headers
-      const traceparent = request.headers.get("traceparent");
-      const carrier = traceparent ? { traceparent } : {};
-      const extractedContext = propagation.extract(context.active(), carrier);
-
-      const url = new URL(request.url);
-      const span = tracer.startSpan(
-        `${request.method} ${url.pathname}`,
-        {
-          kind: SpanKind.SERVER,
-          attributes: {
-            "http.method": request.method,
-            "http.url": request.url,
-            "http.target": url.pathname,
-            "http.scheme": url.protocol.replace(":", ""),
-            "http.host": url.host,
-            "http.user_agent": request.headers.get("user-agent") || undefined,
-            "http.request_content_length": request.headers.get("content-length") || undefined,
-          },
-        },
-        extractedContext,
-      );
-
-      spans.set(id, span);
-
-      // Make span active for downstream operations
-      return context.with(trace.setSpan(extractedContext, span), () => {});
-    },
-
-    onRequestEnd(id: number) {
-      const span = spans.get(id);
-      if (!span) return;
-
-      span.setStatus({ code: SpanStatusCode.OK });
-      span.end();
-      spans.delete(id);
-    },
-
-    onRequestError(id: number, error: Error) {
-      const span = spans.get(id);
-      if (!span) return;
-
-      span.recordException(error);
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: error.message,
-      });
-      span.end();
-      spans.delete(id);
-    },
-
-    onResponseHeaders(id: number, statusCode: number, contentLength: number) {
-      const span = spans.get(id);
-      if (!span) return;
-
-      span.setAttribute("http.status_code", statusCode);
-      if (contentLength > 0) {
-        span.setAttribute("http.response_content_length", contentLength);
-      }
-    },
-  });
-
-  return {
-    disable() {
-      Bun.telemetry.disable();
-      spans.clear();
-    },
-  };
 }

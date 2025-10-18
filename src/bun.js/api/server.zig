@@ -2093,6 +2093,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // Notify telemetry if enabled (after js_value is ready but before handler)
             if (telemetry.Telemetry.getInstance()) |t| {
                 if (t.isEnabled()) {
+                    // Ensure URL is populated before passing to telemetry callback
+                    prepared.request_object.ensureURL() catch {};
                     const request_id = t.notifyRequestStart(prepared.js_request);
                     prepared.ctx.telemetry_request_id = request_id;
                 }

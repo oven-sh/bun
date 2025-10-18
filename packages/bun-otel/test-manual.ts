@@ -1,7 +1,7 @@
 // Manual test for bun-otel with Bun's telemetry API
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { createTelemetryBridge } from "./index";
+import { BunSDK } from "./index";
 
 console.log("Testing bun-otel package...\n");
 
@@ -10,11 +10,12 @@ const exporter = new InMemorySpanExporter();
 const provider = new NodeTracerProvider();
 provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
 
-// Create the telemetry bridge
-console.log("✓ Creating telemetry bridge");
-const bridge = createTelemetryBridge({
+// Create the Bun SDK
+console.log("✓ Creating Bun SDK");
+const bunSdk = new BunSDK({
   tracerProvider: provider,
 });
+bunSdk.start();
 
 // Create a simple server
 const server = Bun.serve({
@@ -53,6 +54,6 @@ if (spans.length > 0) {
 
 // Cleanup
 server.stop();
-bridge.disable();
+bunSdk.shutdown();
 
 console.log("\n✓ Test complete!");

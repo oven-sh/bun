@@ -58,6 +58,7 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kTelemetryId = Symbol("kTelemetryId");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
@@ -558,6 +559,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         // Register response finish listener for telemetry
         if (telemetryId !== undefined) {
+          // Store telemetry ID on response for use in writeHead
+          http_res[kTelemetryId] = telemetryId;
+
           http_res.on("finish", () => {
             Bun.telemetry?._node_binding?.onResponseFinish(telemetryId);
           });
@@ -1200,6 +1204,14 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 
   updateHasBody(response, statusCode);
+
+  // Notify telemetry about response headers (status code and content-length)
+  const telemetryId = response[kTelemetryId];
+  if (telemetryId !== undefined) {
+    const contentLengthHeader = response.getHeader("content-length");
+    const contentLength = typeof contentLengthHeader === "string" ? parseInt(contentLengthHeader, 10) : 0;
+    Bun.telemetry?._node_binding?.onResponseHeaders(telemetryId, statusCode, contentLength);
+  }
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

@@ -445,6 +445,11 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
                 lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                 2);
 
+            if (!array) [[unlikely]] {
+                throwScope.throwException(lexicalGlobalObject, createOutOfMemoryError(lexicalGlobalObject));
+                return;
+            }
+
             array->initializeIndex(initializationScope, 0, jsValue);
             array->initializeIndex(initializationScope, 1, stringValue);
 

@@ -2092,7 +2092,14 @@ function formatTestToMarkdown(result, concise, retries) {
         const preview = escapeCodeBlock(stdout);
         markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
       } else {
-        const preview = escapeHtml(stripAnsi(stdout));
+        let inner = stripAnsi(stdout);
+        // https://buildkite.com/docs/agent/v3/cli-annotate
+        // > The annotation body can be supplied as a command line argument, or by piping content into the command. The maximum size of each annotation body is 1MiB.
+        if (inner.length > 1024 * 32) {
+          inner = inner.slice(inner.length - 1024 * 32); // trim to the last 32kb of the message
+          inner = inner.slice(inner.indexOf("\n")); // don't cutoff in the middle of a line
+        }
+        const preview = escapeHtml(inner);
         markdown += `<pre><code>${preview}</code></pre>\n`;
       }
       markdown += "\n\n</details>\n\n";

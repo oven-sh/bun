@@ -204,3 +204,4 @@ leak:bun.js.webcore.blob.Store.init
 leak:bun.js.webcore.ByteBlobLoader.drain
 leak:bun.js.node.path.dirnamePosixJS_T__anon
 leak:bun.js.test.bun_test.BunTest.ref
+leak:JSC::Wasm::StreamingParser::addBytes

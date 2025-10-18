@@ -2679,14 +2679,6 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
-
-  // https://buildkite.com/docs/agent/v3/cli-annotate
-  // > The annotation body can be supplied as a command line argument, or by piping content into the command. The maximum size of each annotation body is 1MiB.
-  if (content.length > 1024 * 32) {
-    content = content.slice(content.length - 1024 * 32); // trim to the last 32kb of the message
-    content = content.slice(content.indexOf("\n")); // don't cutoff in the middle of a line
-  }
-
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
     ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],

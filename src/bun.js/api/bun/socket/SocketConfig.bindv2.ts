@@ -55,7 +55,7 @@ export const SocketConfig = b.dictionary(
       internalName: "allow_half_open",
     },
     hostname: {
-      type: b.String.nullable.loose,
+      type: b.String.loose.nullable.loose,
       altNames: ["host"],
     },
     port: b.u16.loose.nullable,

@@ -444,7 +444,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
         auto& value = entry.value().value;
         auto ident = Identifier::fromString(vm, key);
         if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(lexicalGlobalObject, ident);
+            JSValue jsValue = obj->getDirect(vm, ident);
             if (jsValue.isString()) {
                 JSValue stringResult = jsString(vm, value);
                 RETURN_IF_EXCEPTION(throwScope, {});

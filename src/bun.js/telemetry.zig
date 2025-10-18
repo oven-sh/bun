@@ -26,6 +26,9 @@ pub const Telemetry = struct {
     /// Whether telemetry is enabled
     enabled: bool = false,
 
+    /// Whether telemetry has been configured
+    configured: bool = false,
+
     /// Reference to the global object
     global: *JSGlobalObject,
 
@@ -77,10 +80,47 @@ pub const Telemetry = struct {
         return self.next_request_id.fetchAdd(1, .monotonic);
     }
 
+    /// Clear all telemetry callbacks and reset state
+    /// This is a private helper used by both configure(null) and disable()
+    fn reset(self: *Self) void {
+        // Unprotect all callbacks
+        if (self.on_request_start != .zero) {
+            self.on_request_start.unprotect();
+            self.on_request_start = .zero;
+        }
+        if (self.on_request_end != .zero) {
+            self.on_request_end.unprotect();
+            self.on_request_end = .zero;
+        }
+        if (self.on_request_error != .zero) {
+            self.on_request_error.unprotect();
+            self.on_request_error = .zero;
+        }
+        if (self.on_response_headers != .zero) {
+            self.on_response_headers.unprotect();
+            self.on_response_headers = .zero;
+        }
+
+        self.enabled = false;
+        self.configured = false;
+        logger("Telemetry reset", .{});
+    }
+
     /// Configure telemetry with JavaScript callbacks
     pub fn configure(self: *Self, options: JSValue) !void {
+        // Handle reset: configure(null) clears all callbacks and allows reconfiguration
+        if (options.isNull() or options.isUndefined()) {
+            self.reset();
+            return;
+        }
+
         if (!options.isObject()) {
-            return self.global.throwInvalidArguments("Telemetry options must be an object", .{});
+            return self.global.throwInvalidArguments("Telemetry options must be an object or null", .{});
+        }
+
+        // Guard against double configuration
+        if (self.configured) {
+            return self.global.throwInvalidArguments("Telemetry already configured. Call Bun.telemetry.configure(null) to reset first.", .{});
         }
 
         // Parse onRequestStart callback
@@ -149,6 +189,9 @@ pub const Telemetry = struct {
             self.on_request_end != .zero or
             self.on_request_error != .zero or
             self.on_response_headers != .zero;
+
+        // Mark as configured
+        self.configured = true;
 
         if (self.enabled) {
             logger("Telemetry enabled", .{});
@@ -273,25 +316,7 @@ pub fn isEnabled(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
 /// JavaScript API: Bun.telemetry.disable()
 pub fn disable(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     if (Telemetry.getInstance()) |telemetry| {
-        telemetry.enabled = false;
-
-        // Clear callbacks
-        if (telemetry.on_request_start != .zero) {
-            telemetry.on_request_start.unprotect();
-            telemetry.on_request_start = .zero;
-        }
-        if (telemetry.on_request_end != .zero) {
-            telemetry.on_request_end.unprotect();
-            telemetry.on_request_end = .zero;
-        }
-        if (telemetry.on_request_error != .zero) {
-            telemetry.on_request_error.unprotect();
-            telemetry.on_request_error = .zero;
-        }
-        if (telemetry.on_response_headers != .zero) {
-            telemetry.on_response_headers.unprotect();
-            telemetry.on_response_headers = .zero;
-        }
+        telemetry.reset();
     }
     return .js_undefined;
 }
@@ -305,8 +330,26 @@ pub fn jsGenerateRequestId(global: *JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
     return jsRequestId(id);
 }
 
-// Utility: convert a RequestId-ish integer to a JavaScript number value
-// Inline so the compiler can optimize away the wrapper. Accepts any integer type.
-inline fn jsRequestId(id: anytype) JSValue {
+// Utility: convert a RequestId to a JavaScript number value
+// Inline so the compiler can optimize away the wrapper.
+// Note: RequestId is u64, JS numbers are safe to 2^53-1 (Number.MAX_SAFE_INTEGER).
+// At 1M requests/sec, would take ~285 years to overflow. Counter resets per-process.
+// This is observability data, not a critical distributed ID. Behavior beyond 2^53-1
+// is same as `id & 0x1FFFFFFFFFFFFF` (precision loss), which is acceptable for this use case.
+pub inline fn jsRequestId(id: RequestId) JSValue {
     return JSValue.jsNumber(@as(f64, @floatFromInt(id)));
+}
+
+// Utility: parse a RequestId from a JavaScript value with validation
+// Ensures the value is a finite, positive, safe integer (1 to 2^53-1).
+pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSError!RequestId {
+    const id_num = try value.toNumber(globalObject);
+    if (!std.math.isFinite(id_num)) {
+        return globalObject.throwTypeError("Request ID must be a finite number", .{});
+    }
+    const id_u64: u64 = @intFromFloat(@floor(id_num));
+    if (@as(f64, @floatFromInt(id_u64)) != id_num or id_u64 == 0 or id_u64 > 9007199254740991) {
+        return globalObject.throwTypeError("Request ID must be a positive safe integer", .{});
+    }
+    return @intCast(id_u64);
 }

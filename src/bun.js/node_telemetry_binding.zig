@@ -6,10 +6,10 @@ const JSGlobalObject = JSC.JSGlobalObject;
 
 /// Called when a Node.js IncomingMessage is created
 /// Generates a request ID and calls onRequestStart callback
-pub fn onIncomingMessage(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn onIncomingMessage(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        return global.throwNotEnoughArguments("onIncomingMessage", 1, arguments.len);
+        return globalObject.throwNotEnoughArguments("onIncomingMessage", 1, arguments.len);
     }
 
     const incoming_message = arguments.ptr[0];
@@ -24,25 +24,17 @@ pub fn onIncomingMessage(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun
     const id = telemetry.notifyRequestStart(incoming_message);
 
     // Return the request ID so TypeScript can track it
-    return jsRequestId(id);
-}
-
-// Utility: convert a RequestId to a JavaScript number value
-// Matches the helper in telemetry.zig for consistency
-inline fn jsRequestId(id: bun.telemetry.RequestId) JSValue {
-    return JSValue.jsNumber(@as(f64, @floatFromInt(id)));
+    return bun.telemetry.jsRequestId(id);
 }
 
 /// Called when a Node.js ServerResponse finishes
-pub fn onResponseFinish(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn onResponseFinish(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        return global.throwNotEnoughArguments("onResponseFinish", 1, arguments.len);
+        return globalObject.throwNotEnoughArguments("onResponseFinish", 1, arguments.len);
     }
 
-    const id_value = arguments.ptr[0];
-    const id_num = try id_value.toNumber(global);
-    const id: bun.telemetry.RequestId = @intFromFloat(id_num);
+    const id = try bun.telemetry.requestIdFromJS(globalObject, arguments.ptr[0]);
 
     // Get telemetry instance and check if enabled
     const telemetry = bun.telemetry.Telemetry.getInstance() orelse return .js_undefined;
@@ -56,16 +48,14 @@ pub fn onResponseFinish(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.
 }
 
 /// Called when a Node.js request encounters an error
-pub fn onRequestError(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn onRequestError(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2);
     if (arguments.len < 2) {
-        return global.throwNotEnoughArguments("onRequestError", 2, arguments.len);
+        return globalObject.throwNotEnoughArguments("onRequestError", 2, arguments.len);
     }
 
-    const id_value = arguments.ptr[0];
+    const id = try bun.telemetry.requestIdFromJS(globalObject, arguments.ptr[0]);
     const error_value = arguments.ptr[1];
-    const id_num = try id_value.toNumber(global);
-    const id: bun.telemetry.RequestId = @intFromFloat(id_num);
 
     // Get telemetry instance and check if enabled
     const telemetry = bun.telemetry.Telemetry.getInstance() orelse return .js_undefined;
@@ -74,6 +64,33 @@ pub fn onRequestError(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     telemetry.notifyRequestError(id, error_value);
+
+    return .js_undefined;
+}
+
+/// Called when a Node.js ServerResponse sends headers
+/// Parameters: id (request ID), statusCode, contentLength
+pub fn onResponseHeaders(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return globalObject.throwNotEnoughArguments("onResponseHeaders", 3, arguments.len);
+    }
+
+    const id = try bun.telemetry.requestIdFromJS(globalObject, arguments.ptr[0]);
+
+    const status_num = try arguments.ptr[1].toNumber(globalObject);
+    const status: u16 = @intFromFloat(status_num);
+
+    const content_length_num = try arguments.ptr[2].toNumber(globalObject);
+    const content_length: u64 = @intFromFloat(content_length_num);
+
+    // Get telemetry instance and check if enabled
+    const telemetry = bun.telemetry.Telemetry.getInstance() orelse return .js_undefined;
+    if (!telemetry.isEnabled()) {
+        return .js_undefined;
+    }
+
+    telemetry.notifyResponseStatus(id, status, content_length);
 
     return .js_undefined;
 }

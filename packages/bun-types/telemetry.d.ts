@@ -18,8 +18,8 @@ declare module "bun" {
    *   onRequestError(id, error) {
    *     console.error(`Request ${id} failed:`, error);
    *   },
-   *   onResponseHeaders(id, response) {
-   *     console.log(`Request ${id} response status: ${response.status}`);
+   *   onResponseHeaders(id, statusCode, contentLength) {
+   *     console.log(`Request ${id} response status: ${statusCode}`);
    *   }
    * });
    * ```
@@ -65,24 +65,28 @@ declare module "bun" {
        * Called when response headers are about to be sent.
        * This is useful for capturing response metadata for tracing.
        *
-       * Note: Currently only provides the status code to avoid lifecycle issues.
-       * Full response object support may be added in a future version.
-       *
        * @param id - The request identifier
        * @param statusCode - The HTTP response status code
+       * @param contentLength - The response content length in bytes (0 if not set)
        */
-      onResponseHeaders?: (id: RequestId, statusCode: number) => void;
+      onResponseHeaders?: (id: RequestId, statusCode: number, contentLength: number) => void;
     }
 
     /**
      * Configure telemetry callbacks for request tracking.
      *
-     * @param config - The telemetry configuration with lifecycle callbacks
+     * Telemetry can only be configured once. Attempting to call configure() again
+     * will throw an error. To reconfigure, you must first reset by calling
+     * `Bun.telemetry.configure(null)`.
+     *
+     * @param config - The telemetry configuration with lifecycle callbacks, or null to reset
+     * @throws {TypeError} If telemetry is already configured and config is not null
      *
      * @example
      * ```ts
      * const requestMap = new Map();
      *
+     * // Initial configuration
      * Bun.telemetry.configure({
      *   onRequestStart(id, request) {
      *     requestMap.set(id, {
@@ -100,9 +104,13 @@ declare module "bun" {
      *     }
      *   }
      * });
+     *
+     * // Reset and reconfigure
+     * Bun.telemetry.configure(null); // Clears all callbacks
+     * Bun.telemetry.configure({ ... }); // Now OK
      * ```
      */
-    export function configure(config: TelemetryConfig): void;
+    export function configure(config: TelemetryConfig | null): void;
 
     /**
      * Check if telemetry is currently enabled.
@@ -114,6 +122,7 @@ declare module "bun" {
     /**
      * Disable telemetry and clear all callbacks.
      * This stops all telemetry tracking and frees associated resources.
+     * After calling disable(), you can reconfigure telemetry by calling configure() again.
      */
     export function disable(): void;
 

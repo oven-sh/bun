@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { waitForEvents } from "./telemetry-test-utils";
 
 test("Bun.telemetry API exists", () => {
   expect(Bun.telemetry).toBeDefined();
@@ -66,8 +67,8 @@ test("telemetry tracks requests with lightweight IDs", async () => {
 
   await fetch(`http://localhost:${server.port}/test-path`);
 
-  // Give it a moment for the hooks to complete
-  await Bun.sleep(10);
+  // Wait for telemetry callbacks to fire
+  await waitForEvents(events, ["start", "end"]);
 
   // We should have a start event with an ID and request
   const startEvent = events.find(e => e.type === "start");
@@ -121,8 +122,14 @@ test("telemetry allows tracking request metadata without keeping request object"
   await fetch(`http://localhost:${server.port}/api/users`, { method: "GET" });
   await fetch(`http://localhost:${server.port}/api/posts`, { method: "POST" });
 
-  // Give it a moment for the hooks to complete
-  await Bun.sleep(10);
+  // Wait for telemetry callbacks to complete and clean up metadata
+  const startTime = Date.now();
+  while (requestMetadata.size > 0 && Date.now() - startTime < 200) {
+    await Bun.sleep(5);
+  }
+  if (requestMetadata.size > 0) {
+    throw new Error(`Expected metadata to be cleaned up, but ${requestMetadata.size} entries remain`);
+  }
 
   // All metadata should be cleaned up after requests complete
   expect(requestMetadata.size).toBe(0);
@@ -206,8 +213,14 @@ test.todo("telemetry onRequestError is called on errors", async () => {
     // Expected
   }
 
-  // Give it a moment for the hooks to complete
-  await Bun.sleep(10);
+  // Wait for error callback to fire
+  const startTime = Date.now();
+  while (errors.length === 0 && Date.now() - startTime < 200) {
+    await Bun.sleep(5);
+  }
+  if (errors.length === 0) {
+    throw new Error("Expected onRequestError callback to fire");
+  }
 
   expect(errors.length).toBeGreaterThan(0);
 

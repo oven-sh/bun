@@ -1,7 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { spawnSync } from "bun";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { waitForEvents } from "./telemetry-test-utils";
 
 describe("Bun.telemetry with servers", () => {
+  // Ensure clean state before each test
+  beforeEach(() => {
+    Bun.telemetry.disable();
+  });
+
   test("telemetry API exists", () => {
     expect(Bun.telemetry).toBeDefined();
     expect(typeof Bun.telemetry.configure).toBe("function");
@@ -48,7 +55,14 @@ describe("Bun.telemetry with servers", () => {
   });
 
   test("telemetry tracks Bun.serve requests with Request objects", async () => {
-    const events: Array<{ type: string; id?: number; request?: any; error?: any; response?: any }> = [];
+    const events: Array<{
+      type: string;
+      id?: number;
+      request?: any;
+      error?: any;
+      statusCode?: number;
+      contentLength?: number;
+    }> = [];
 
     Bun.telemetry.configure({
       onRequestStart(id, request) {
@@ -60,8 +74,8 @@ describe("Bun.telemetry with servers", () => {
       onRequestError(id, error) {
         events.push({ type: "error", id, error });
       },
-      onResponseHeaders(id, response) {
-        events.push({ type: "headers", id, response });
+      onResponseHeaders(id, statusCode, contentLength) {
+        events.push({ type: "headers", id, statusCode, contentLength });
       },
     });
 
@@ -74,8 +88,8 @@ describe("Bun.telemetry with servers", () => {
 
     await fetch(`http://localhost:${server.port}/test-path`);
 
-    // Give it a moment for the hooks to complete
-    await Bun.sleep(10);
+    // Wait for telemetry callbacks to fire
+    await waitForEvents(events, ["start", "headers", "end"]);
 
     // We should have a start event with an ID and Request object
     const startEvent = events.find(e => e.type === "start");
@@ -92,7 +106,8 @@ describe("Bun.telemetry with servers", () => {
     const headersEvent = events.find(e => e.type === "headers");
     expect(headersEvent).toBeDefined();
     expect(headersEvent?.id).toBe(startEvent?.id);
-    expect(headersEvent?.response).toBeDefined();
+    expect(headersEvent?.statusCode).toBe(200);
+    expect(typeof headersEvent?.contentLength).toBe("number");
 
     // We should have an end event with just the ID
     const endEvent = events.find(e => e.type === "end");
@@ -104,41 +119,97 @@ describe("Bun.telemetry with servers", () => {
     Bun.telemetry.disable();
   });
 
-  test("telemetry tracks request errors", async () => {
-    const events: Array<{ type: string; id?: number; error?: any }> = [];
+  test("telemetry tracks request errors", () => {
+    // Use subprocess to test error handling (errors propagate to test runner otherwise)
+    const code = `
+      const events = [];
 
-    Bun.telemetry.configure({
-      onRequestStart(id) {
-        events.push({ type: "start", id });
-      },
-      onRequestError(id, error) {
-        events.push({ type: "error", id, error });
-      },
-      onRequestEnd(id) {
-        events.push({ type: "end", id });
-      },
+      Bun.telemetry.configure({
+        onRequestStart(id) {
+          events.push({ type: "start", id });
+        },
+        onRequestError(id, error) {
+          events.push({ type: "error", id, message: error.message });
+        },
+        onRequestEnd(id) {
+          events.push({ type: "end", id });
+        },
+      });
+
+      using server = Bun.serve({
+        development: false,
+        port: 0,
+        fetch() {
+          throw new Error("Test error");
+        },
+        onError(error) {
+          return new Response("Internal Server Error", { status: 500 });
+        },
+      });
+
+      const response = await fetch(server.url);
+      if (response.status !== 500) {
+        console.error("FAIL: Expected status 500, got " + response.status);
+        server.stop(true);
+        process.exit(1);
+      }
+
+      await Bun.sleep(50);
+
+      const startEvent = events.find(e => e.type === "start");
+      const errorEvent = events.find(e => e.type === "error");
+      const endEvent = events.find(e => e.type === "end");
+
+      if (!startEvent) {
+        console.error("FAIL: No start event");
+        server.stop(true);
+        process.exit(1);
+      }
+      if (!errorEvent) {
+        console.error("FAIL: No error event");
+        server.stop(true);
+        process.exit(1);
+      }
+      if (errorEvent.message !== "Test error") {
+        console.error("FAIL: Wrong error message: " + errorEvent.message);
+        server.stop(true);
+        process.exit(1);
+      }
+      if (!endEvent) {
+        console.error("FAIL: No end event");
+        server.stop(true);
+        process.exit(1);
+      }
+      if (errorEvent.id !== startEvent.id || endEvent.id !== startEvent.id) {
+        console.error("FAIL: Event ID mismatch");
+        server.stop(true);
+        process.exit(1);
+      }
+
+      console.log("PASS");
+      server.stop(true);
+      process.exit(0);
+    `;
+
+    const dir = tempDirWithFiles("telemetry-errors", {
+      "test.js": code,
     });
 
-    using server = Bun.serve({
-      port: 0,
-      fetch() {
-        throw new Error("Test error");
-      },
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "test.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
-    // This should trigger an error
-    const response = await fetch(`http://localhost:${server.port}/`);
-    expect(response.status).toBe(500);
-
-    await Bun.sleep(10);
-
-    // We should have an error event
-    const errorEvent = events.find(e => e.type === "error");
-    expect(errorEvent).toBeDefined();
-    expect(errorEvent?.error).toBeDefined();
-
-    // Clean up
-    Bun.telemetry.disable();
+    const output = stdout.toString() + stderr.toString();
+    if (exitCode !== 0) {
+      console.log("Subprocess failed with exit code", exitCode);
+      console.log("Output:", output);
+    }
+    expect(output).toContain("PASS");
+    expect(exitCode).toBe(0);
   });
 
   test("telemetry allows tracking request metadata without keeping request object", async () => {
@@ -176,8 +247,14 @@ describe("Bun.telemetry with servers", () => {
     await fetch(`http://localhost:${server.port}/api/users`, { method: "GET" });
     await fetch(`http://localhost:${server.port}/api/posts`, { method: "POST", body: "{}" });
 
-    // Give it a moment for the hooks to complete
-    await Bun.sleep(10);
+    // Wait for telemetry callbacks to complete and clean up metadata
+    const startTime = Date.now();
+    while (requestMetadata.size > 0 && Date.now() - startTime < 200) {
+      await Bun.sleep(5);
+    }
+    if (requestMetadata.size > 0) {
+      throw new Error(`Expected metadata to be cleaned up, but ${requestMetadata.size} entries remain`);
+    }
 
     // All metadata should be cleaned up after requests complete
     expect(requestMetadata.size).toBe(0);
@@ -235,92 +312,14 @@ describe("Bun.telemetry with servers", () => {
     expect(response.status).toBe(200);
   });
 
-  test("telemetry with Node.js compatibility layer", async () => {
-    // This test verifies telemetry works with the Node.js http.createServer API
-    using dir = tempDir("telemetry-node");
+  // Note: Node.js http.createServer telemetry is thoroughly tested in node-telemetry.test.ts
 
-    const serverFile = `
-      const http = require("http");
-
-      const events = [];
-
-      Bun.telemetry.configure({
-        onRequestStart(id, request) {
-          // Node.js path should get a stub object with url, method, and headers
-          events.push({
-            type: "start",
-            id,
-            hasUrl: !!request.url,
-            hasMethod: !!request.method,
-            hasHeaders: !!request.headers
-          });
-        },
-        onRequestEnd(id) {
-          events.push({ type: "end", id });
-        }
-      });
-
-      const server = http.createServer((req, res) => {
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("Node.js server");
-      });
-
-      server.listen(0, () => {
-        const { port } = server.address();
-        console.log("PORT:" + port);
-      });
-
-      // Export events for testing
-      global.telemetryEvents = events;
-    `;
-
-    await Bun.write(`${dir}/server.js`, serverFile);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), `${dir}/server.js`],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-    });
-
-    // Wait for server to start and get port
-    let port = 0;
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const text = decoder.decode(value);
-      const match = text.match(/PORT:(\d+)/);
-      if (match) {
-        port = parseInt(match[1]);
-        break;
-      }
-    }
-
-    expect(port).toBeGreaterThan(0);
-
-    // Make a request to the Node.js server
-    const response = await fetch(`http://localhost:${port}/test`);
-    const text = await response.text();
-    expect(text).toBe("Node.js server");
-
-    // Clean up
-    proc.kill();
-  });
-
-  test("telemetry captures response headers", async () => {
-    const responseHeaders: Array<{ id: number; status: number; headers: any }> = [];
+  test("telemetry captures response status and content length", async () => {
+    const responseData: Array<{ id: number; statusCode: number; contentLength: number }> = [];
 
     Bun.telemetry.configure({
-      onResponseHeaders(id, response) {
-        responseHeaders.push({
-          id,
-          status: response.status,
-          headers: response.headers,
-        });
+      onResponseHeaders(id, statusCode, contentLength) {
+        responseData.push({ id, statusCode, contentLength });
       },
     });
 
@@ -338,11 +337,20 @@ describe("Bun.telemetry with servers", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await Bun.sleep(10);
 
-    expect(responseHeaders.length).toBe(1);
-    expect(responseHeaders[0].status).toBe(201);
-    expect(responseHeaders[0].headers).toBeDefined();
+    // Wait for response headers callback
+    const startTime = Date.now();
+    while (responseData.length < 1 && Date.now() - startTime < 200) {
+      await Bun.sleep(5);
+    }
+    if (responseData.length < 1) {
+      throw new Error("Expected onResponseHeaders callback to fire");
+    }
+
+    expect(responseData.length).toBe(1);
+    expect(responseData[0].statusCode).toBe(201);
+    expect(responseData[0].contentLength).toBe(9); // "test body" is 9 bytes
+    expect(typeof responseData[0].id).toBe("number");
 
     // Clean up
     Bun.telemetry.disable();

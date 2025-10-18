@@ -37,8 +37,13 @@ describe("bun prune", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
+    // Assert presence of usage/synopsis line
     expect(stdout).toContain("Usage");
     expect(stdout).toContain("bun prune");
+    expect(stdout).toContain("[flags]");
+    // Assert presence of summary/description
+    expect(stdout).toContain("Remove packages");
+    // Assert presence of key flags
     expect(stdout).toContain("--production");
     expect(stdout).toContain("--dry-run");
   });

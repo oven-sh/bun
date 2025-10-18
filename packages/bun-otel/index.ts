@@ -1,5 +1,6 @@
-import type { Span, TextMapGetter, TracerProvider } from "@opentelemetry/api";
+import type { Span, TextMapGetter } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { NodeSDK, type NodeSDKConfiguration } from "@opentelemetry/sdk-node";
 import type { IncomingMessage } from "http";
 
 // Request-like type for different server implementations
@@ -81,12 +82,7 @@ function getUrlInfo(req: RequestLike): UrlInfo {
   };
 }
 
-export interface BunSDKConfiguration {
-  /**
-   * TracerProvider to use for creating spans
-   */
-  tracerProvider: TracerProvider;
-
+export interface BunSDKConfiguration extends NodeSDKConfiguration {
   /**
    * Name to use for the tracer
    * @default '@bun/otel'
@@ -97,17 +93,16 @@ export interface BunSDKConfiguration {
 /**
  * OpenTelemetry SDK for Bun
  *
- * Automatically instruments Bun's native HTTP server via Bun.telemetry hooks.
- * Use this with any OpenTelemetry TracerProvider.
+ * Extends NodeSDK and automatically instruments Bun's native HTTP server via Bun.telemetry hooks.
+ * Drop-in replacement for NodeSDK with automatic Bun.serve() and http.createServer() tracing.
  */
-export class BunSDK {
-  private tracerProvider: TracerProvider;
+export class BunSDK extends NodeSDK {
   private tracerName: string;
   private spans = new Map<number, Span>();
-  private started = false;
+  private bunStarted = false;
 
-  constructor(config: BunSDKConfiguration) {
-    this.tracerProvider = config.tracerProvider;
+  constructor(config: BunSDKConfiguration = {}) {
+    super(config);
     this.tracerName = config.tracerName ?? "@bun/otel";
   }
 
@@ -115,10 +110,14 @@ export class BunSDK {
    * Start instrumentation and configure Bun telemetry
    */
   start(): void {
-    if (this.started) return;
-    this.started = true;
+    // Start the NodeSDK first (sets up tracers, exporters, etc.)
+    super.start();
 
-    const tracer = this.tracerProvider.getTracer(this.tracerName);
+    if (this.bunStarted) return;
+    this.bunStarted = true;
+
+    const tracerProvider = this.getTracerProvider();
+    const tracer = tracerProvider.getTracer(this.tracerName);
     const spans = this.spans;
 
     Bun.telemetry.configure({
@@ -192,12 +191,15 @@ export class BunSDK {
   /**
    * Stop instrumentation and disable Bun telemetry
    */
-  shutdown(): void {
-    if (!this.started) return;
-    this.started = false;
+  async shutdown(): Promise<void> {
+    if (this.bunStarted) {
+      Bun.telemetry.disable();
+      this.spans.clear();
+      this.bunStarted = false;
+    }
 
-    Bun.telemetry.disable();
-    this.spans.clear();
+    // Shutdown the NodeSDK (flushes spans, shuts down exporters)
+    await super.shutdown();
   }
 }
 

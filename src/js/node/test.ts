@@ -8,6 +8,8 @@ const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
 const kDefaultFilePath = "";
+const kMultipleCallbackInvocations = "multipleCallbackInvocations";
+const kCallbackAndPromisePresent = "callbackAndPromisePresent";
 
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
@@ -277,7 +279,7 @@ function createDeferredCallback() {
     // don't let them know more than once.
     if (calledCount > 1) {
       if (calledCount === 2) {
-        throw new Error("callback invoked multiple times");
+        throw $ERR_TEST_FAILURE("callback invoked multiple times", kMultipleCallbackInvocations);
       }
       return;
     }
@@ -363,7 +365,7 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 
       if (result instanceof Promise) {
         // Test returned a promise AND accepted a callback - this is an error
-        endTest(new Error("passed a callback but also returned a Promise"));
+        endTest($ERR_TEST_FAILURE("passed a callback but also returned a Promise", kCallbackAndPromisePresent));
         return;
       }
 
@@ -451,7 +453,7 @@ function createHook(arg0: unknown, arg1: unknown) {
 
       if (result instanceof Promise) {
         // Hook returned a promise AND accepted a callback - this is an error
-        done(new Error("passed a callback but also returned a Promise"));
+        done($ERR_TEST_FAILURE("passed a callback but also returned a Promise", kCallbackAndPromisePresent));
         return;
       }
 

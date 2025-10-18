@@ -473,8 +473,6 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
             }
         } else {
             seenKeys.add(key);
-
-            RETURN_IF_EXCEPTION(throwScope, {});
             obj->putDirectMayBeIndex(lexicalGlobalObject, ident, stringValue);
             throwScope.assertNoException(); // not a proxy.
         }

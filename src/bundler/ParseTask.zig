@@ -101,7 +101,7 @@ pub const Result = struct {
     };
 };
 
-const debug = Output.scoped(.ParseTask, true);
+const debug = Output.scoped(.ParseTask, .hidden);
 
 pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
     return .{
@@ -343,10 +343,21 @@ fn getAST(
             defer trace.end();
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
                 temp_log.msgs.clearAndFree();
             }
             const root = try TOML.parse(source, &temp_log, allocator, false);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .yaml => {
+            const trace = bun.perf.trace("Bundler.ParseYAML");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {
@@ -364,7 +375,7 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "To use the \"sqlite\" loader, set target to \"bun\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
@@ -408,12 +419,12 @@ fn getAST(
                 }, Logger.Loc{ .start = 0 }),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
-                .properties = G.Property.List.init(object_properties),
+                .properties = G.Property.List.fromOwnedSlice(object_properties),
                 .is_single_line = true,
             }, Logger.Loc{ .start = 0 });
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             const root = Expr.init(E.Dot, E.Dot{
@@ -431,7 +442,7 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
@@ -449,7 +460,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             unique_key_for_additional_file.* = .{
@@ -514,7 +525,7 @@ fn getAST(
             const source_code = source.contents;
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.appendToMaybeRecycled(log, source) catch bun.outOfMemory();
+                bun.handleOom(temp_log.appendToMaybeRecycled(log, source));
             }
 
             const css_module_suffix = ".module.css";
@@ -821,10 +832,10 @@ const OnBeforeParsePlugin = struct {
                 @max(this.line, -1),
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
-                if (source_line_text.len > 0) allocator.dupe(u8, source_line_text) catch bun.outOfMemory() else null,
+                if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
                 null,
             );
-            var msg = Logger.Msg{ .data = .{ .location = location, .text = allocator.dupe(u8, this.message()) catch bun.outOfMemory() } };
+            var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {
                 .err => msg.kind = .err,
                 .warn => msg.kind = .warn,
@@ -837,7 +848,7 @@ const OnBeforeParsePlugin = struct {
             } else if (msg.kind == .warn) {
                 log.warnings += 1;
             }
-            log.addMsg(msg) catch bun.outOfMemory();
+            bun.handleOom(log.addMsg(msg));
         }
 
         pub fn logFn(
@@ -948,7 +959,7 @@ const OnBeforeParsePlugin = struct {
         return 0;
     }
 
-    pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
+    pub fn run(this: *OnBeforeParsePlugin, plugin: *jsc.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
         var args = OnBeforeParseArguments{
             .context = this,
             .path_ptr = this.file_path.text.ptr,
@@ -996,10 +1007,10 @@ const OnBeforeParsePlugin = struct {
                 var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
                     u8,
                     "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
-                ) catch bun.outOfMemory() } };
+                ) catch |err| bun.handleOom(err) } };
                 msg.kind = .err;
                 args.context.log.errors += 1;
-                args.context.log.addMsg(msg) catch bun.outOfMemory();
+                bun.handleOom(args.context.log.addMsg(msg));
                 return error.InvalidNativePlugin;
             }
 
@@ -1064,7 +1075,7 @@ fn runWithSourceCode(
 
     var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
-    var resolver: *Resolver = &transpiler.resolver;
+    const resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
     const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
@@ -1119,19 +1130,17 @@ fn runWithSourceCode(
     else
         .none;
 
-    if (
-    // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-    // this is not done when there is one server graph because it is easier for plugins to deal with.
-    (use_directive == .client and
+    if (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
-        this.ctx.framework.?.server_components.?.separate_ssr_graph) or
+        this.ctx.framework != null and
+        this.ctx.framework.?.server_components.?.separate_ssr_graph or
         // set the target to the client when bundling client-side files
         ((transpiler.options.server_components or transpiler.options.dev_server != null) and
             task.known_target == .browser))
     {
-        transpiler = this.ctx.client_transpiler.?;
-        resolver = &transpiler.resolver;
-        bun.assert(transpiler.options.target == .browser);
+        // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
+        // this is not done when there is one server graph because it is easier for plugins to deal with.
+        transpiler = this.transpilerForTarget(.browser);
     }
 
     const source = &Logger.Source{
@@ -1152,7 +1161,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.macro_context = &this.data.macro_context;
+    opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !source.index.isRuntime();
@@ -1164,6 +1173,8 @@ fn runWithSourceCode(
     opts.output_format = output_format;
     opts.features.minify_syntax = transpiler.options.minify_syntax;
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+    opts.features.minify_keep_names = transpiler.options.keep_names;
+    opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
@@ -1293,7 +1304,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
                 } };
             }
 
-            if (this.ctx.graph.pool.usesIOPool()) {
+            if (ThreadPool.usesIOPool()) {
                 this.ctx.graph.pool.scheduleInsideThreadPool(this);
                 return;
             }
@@ -1333,7 +1344,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
         }
     };
 
-    const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+    const result = bun.handleOom(bun.default_allocator.create(Result));
 
     result.* = .{
         .ctx = this.ctx,
@@ -1348,7 +1359,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
 
     switch (worker.ctx.loop().*) {
         .js => |jsc_event_loop| {
-            jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, onComplete));
+            jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(result, onComplete));
         },
         .mini => |*mini| {
             mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1366,56 +1377,63 @@ pub fn onComplete(result: *Result) void {
     BundleV2.onParseTaskComplete(result, result.ctx);
 }
 
-const Transpiler = bun.Transpiler;
+pub const Ref = bun.ast.Ref;
+
+pub const Index = bun.ast.Index;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const string = []const u8;
+
+const Fs = @import("../fs.zig");
+const HTMLScanner = @import("../HTMLScanner.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const linker = @import("../linker.zig");
+const runtime = @import("../runtime.zig");
+const std = @import("std");
+const URL = @import("../url.zig").URL;
+const CacheEntry = @import("../cache.zig").Fs.Entry;
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const _resolver = @import("../resolver/resolver.zig");
+const Resolver = _resolver.Resolver;
+
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ThreadPoolLib = bun.ThreadPool;
+const Transpiler = bun.Transpiler;
+const bake = bun.bake;
+const base64 = bun.base64;
+const default_allocator = bun.default_allocator;
+const js_parser = bun.js_parser;
+const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+const TOML = bun.interchange.toml.TOML;
+const YAML = bun.interchange.yaml.YAML;
+
+const js_ast = bun.ast;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const Symbol = js_ast.Symbol;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
-
 const ContentHasher = bundler.ContentHasher;
 const UseDirective = bundler.UseDirective;
 const targetFromHashbang = bundler.targetFromHashbang;
 
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
-const Fs = @import("../fs.zig");
-const _resolver = @import("../resolver/resolver.zig");
-const ImportRecord = bun.ImportRecord;
-const runtime = @import("../runtime.zig");
-
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const CacheEntry = @import("../cache.zig").Fs.Entry;
-const URL = @import("../url.zig").URL;
-const Resolver = _resolver.Resolver;
-const TOML = @import("../toml/toml_parser.zig").TOML;
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const EventLoop = bun.JSC.AnyEventLoop;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const G = js_ast.G;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bake = bun.bake;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
+const jsc = bun.jsc;
+const EventLoop = bun.jsc.AnyEventLoop;

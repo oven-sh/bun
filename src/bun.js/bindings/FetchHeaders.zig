@@ -1,12 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-const Api = @import("../../api/schema.zig").Api;
-const StringPointer = Api.StringPointer;
-
 pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__append(arg0: *FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__cast_(JSValue0: JSValue, arg1: *VM) ?*FetchHeaders;
@@ -17,6 +8,7 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__createEmpty() *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromUWS(arg1: *anyopaque) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createValueNotJS(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) ?*FetchHeaders;
     extern fn WebCore__FetchHeaders__createValue(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSValue;
     extern fn WebCore__FetchHeaders__deref(arg0: *FetchHeaders) void;
     extern fn WebCore__FetchHeaders__fastGet_(arg0: *FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
@@ -32,8 +24,8 @@ pub const FetchHeaders = opaque {
 
     pub fn createValue(
         global: *JSGlobalObject,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
@@ -46,7 +38,7 @@ pub const FetchHeaders = opaque {
         );
     }
 
-    extern "c" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
+    extern "c" fn WebCore__FetchHeaders__createFromJS(*jsc.JSGlobalObject, JSValue) ?*FetchHeaders;
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -68,10 +60,26 @@ pub const FetchHeaders = opaque {
         try this.put(name_, value, global);
     }
 
+    pub fn create(
+        global: *JSGlobalObject,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
+        buf: *const ZigString,
+        count_: u32,
+    ) ?*FetchHeaders {
+        return WebCore__FetchHeaders__createValueNotJS(
+            global,
+            names,
+            values,
+            buf,
+            count_,
+        );
+    }
+
     pub fn from(
         global: *JSGlobalObject,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
@@ -370,7 +378,7 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn cast(value: JSValue) ?*FetchHeaders {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, jsc.VirtualMachine.get().global.vm());
     }
 
     pub fn toJS(this: *FetchHeaders, globalThis: *JSGlobalObject) JSValue {
@@ -414,8 +422,8 @@ pub const FetchHeaders = opaque {
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: [*]Api.StringPointer,
-        values: [*]Api.StringPointer,
+        names: [*]api.StringPointer,
+        values: [*]api.StringPointer,
         buf: [*]u8,
     ) void {
         return WebCore__FetchHeaders__copyTo(
@@ -426,3 +434,14 @@ pub const FetchHeaders = opaque {
         );
     }
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;
+
+const api = bun.schema.api;
+const StringPointer = api.StringPointer;

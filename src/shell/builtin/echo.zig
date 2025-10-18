@@ -1,3 +1,5 @@
+const Echo = @This();
+
 /// Should be allocated with the arena from Builtin
 output: std.ArrayList(u8),
 
@@ -20,17 +22,17 @@ pub fn start(this: *Echo) Yield {
     for (args, 0..) |arg, i| {
         const thearg = std.mem.span(arg);
         if (i < args_len - 1) {
-            this.output.appendSlice(thearg) catch bun.outOfMemory();
-            this.output.append(' ') catch bun.outOfMemory();
+            bun.handleOom(this.output.appendSlice(thearg));
+            bun.handleOom(this.output.append(' '));
         } else {
             if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
                 has_leading_newline = true;
             }
-            this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
+            bun.handleOom(this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')));
         }
     }
 
-    if (!has_leading_newline and !no_newline) this.output.append('\n') catch bun.outOfMemory();
+    if (!has_leading_newline and !no_newline) bun.handleOom(this.output.append('\n'));
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .waiting;
@@ -41,7 +43,7 @@ pub fn start(this: *Echo) Yield {
     return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting or this.state == .waiting_write_err);
     }
@@ -66,15 +68,17 @@ pub inline fn bltn(this: *Echo) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-const log = bun.Output.scoped(.echo, true);
-const bun = @import("bun");
-const ExitCode = bun.shell.ExitCode;
-const Yield = bun.shell.Yield;
+const log = bun.Output.scoped(.echo, .hidden);
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Echo = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;

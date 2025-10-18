@@ -69,8 +69,11 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
 
 ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
+    if (identifier == 0) {
+        return nullptr;
+    }
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(identifier);
+    return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
 template<bool SSL, bool isServer>
@@ -366,29 +369,18 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
-{
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
-{
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    postTaskOnTimeout(task, timeout);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
 // Zig bindings

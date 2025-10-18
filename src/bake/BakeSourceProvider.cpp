@@ -1,5 +1,6 @@
 // clang-format off
 #include "BakeSourceProvider.h"
+#include "DevServerSourceProvider.h"
 #include "BakeGlobalObject.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Completion.h"
@@ -22,7 +23,7 @@ extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider
     return Bun::toStringView(provider->source());
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
+extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -70,6 +71,34 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Program
   ));
+
+  JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, {});
+
+  RELEASE_ASSERT(result);
+  return JSC::JSValue::encode(result);
+}
+
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
+  JSC::VM&vm = global->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  String string = "bake://server.patch.js"_s;
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
+  
+  // Use DevServerSourceProvider with the source map JSON
+  auto provider = DevServerSourceProvider::create(
+    global,
+    source.toWTFString(),
+    sourceMapJSONPtr,
+    sourceMapJSONLength,
+    origin,
+    WTFMove(string),
+    WTF::TextPosition(),
+    JSC::SourceProviderSourceType::Program
+  );
+  
+  JSC::SourceCode sourceCode = JSC::SourceCode(provider);
 
   JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
   RETURN_IF_EXCEPTION(scope, {});

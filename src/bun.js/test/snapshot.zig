@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const logger = bun.logger;
-const jest = @import("./jest.zig");
-const Jest = jest.Jest;
-const TestRunner = jest.TestRunner;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const Expect = @import("./expect.zig").Expect;
-
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
@@ -67,7 +53,10 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
+        var buntest_strong = expect.bunTest() orelse return error.SnapshotFailed;
+        defer buntest_strong.deinit();
+        const bunTest = buntest_strong.get();
+        switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -95,6 +84,13 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
+        // Prevent snapshot creation in CI environments unless --update-snapshots is used
+        if (bun.detectCI()) |_| {
+            if (!this.update_snapshots) {
+                return error.SnapshotCreationNotAllowedInCI;
+            }
+        }
+
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(
@@ -215,7 +211,7 @@ pub const Snapshots = struct {
         try gpres.value_ptr.append(value);
     }
 
-    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, false);
+    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, .visible);
     pub fn writeInlineSnapshots(this: *Snapshots) !bool {
         var arena_backing = bun.ArenaAllocator.init(this.allocator);
         defer arena_backing.deinit();
@@ -266,9 +262,17 @@ pub const Snapshots = struct {
             var last_byte: usize = 0;
             var last_line: c_ulong = 1;
             var last_col: c_ulong = 1;
+            var last_value: []const u8 = "";
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
-                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    if (!bun.strings.eql(ils.value, last_value)) {
+                        const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}", .{DiffFormatter{
+                            .received_string = ils.value,
+                            .expected_string = last_value,
+                            .globalThis = vm.global,
+                        }});
+                    }
                     continue;
                 }
 
@@ -283,6 +287,7 @@ pub const Snapshots = struct {
                 last_byte += byte_offset_add;
                 last_line = ils.line;
                 last_col = ils.col;
+                last_value = ils.value;
 
                 var next_start = last_byte;
                 inline_snapshot_dbg("-> Found byte {}", .{next_start});
@@ -469,7 +474,7 @@ pub const Snapshots = struct {
         return success;
     }
 
-    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {
+    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !bun.sys.Maybe(void) {
         if (this._current_file == null or this._current_file.?.id != file_id) {
             try this.writeSnapshotFile();
 
@@ -492,9 +497,7 @@ pub const Snapshots = struct {
                     .err => |err| {
                         switch (err.getErrno()) {
                             .EXIST => this.snapshot_dir_path = dir_path,
-                            else => return JSC.Maybe(void){
-                                .err = err,
-                            },
+                            else => return .initErr(err),
                         }
                     },
                 }
@@ -511,9 +514,7 @@ pub const Snapshots = struct {
             if (this.update_snapshots) flags |= bun.O.TRUNC;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
-                .err => |err| return JSC.Maybe(void){
-                    .err = err,
-                },
+                .err => |err| return .initErr(err),
             };
 
             var file: File = .{
@@ -543,6 +544,24 @@ pub const Snapshots = struct {
             this._current_file = file;
         }
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Expect = @import("./expect.zig").Expect;
+
+const jest = @import("./jest.zig");
+const Jest = jest.Jest;
+const TestRunner = jest.TestRunner;
+
+const bun = @import("bun");
+const js_ast = bun.ast;
+const js_parser = bun.js_parser;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

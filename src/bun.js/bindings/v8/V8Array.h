@@ -30,7 +30,8 @@ public:
         std::function<MaybeLocal<v8::Value>()> next_value_callback);
 
     // Cast a Value to Array (with optional type checking)
-    inline static Array* Cast(Value* value) {
+    inline static Array* Cast(Value* value)
+    {
 #ifdef V8_ENABLE_CHECKS
         CheckCast(value);
 #endif
@@ -43,12 +44,12 @@ public:
         kContinue,
     };
     using IterationCallback = CallbackResult (*)(uint32_t index,
-                                                 Local<Value> element,
-                                                 void* data);
+        Local<Value> element,
+        void* data);
 
     // Iterates over array elements efficiently
     BUN_EXPORT Maybe<void> Iterate(Local<Context> context, IterationCallback callback,
-                      void* callback_data);
+        void* callback_data);
 
 private:
     Array();

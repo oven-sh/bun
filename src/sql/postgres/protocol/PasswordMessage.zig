@@ -1,3 +1,5 @@
+const PasswordMessage = @This();
+
 password: Data = .{ .empty = {} },
 
 pub fn deinit(this: *PasswordMessage) void {
@@ -20,11 +22,8 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
-const PasswordMessage = @This();
 const std = @import("std");
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const Int32 = @import("../types/int_types.zig").Int32;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;

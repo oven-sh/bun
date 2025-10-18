@@ -1,25 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
-const JSON = bun.JSON;
-const js_ast = bun.JSAst;
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
-const logger = bun.logger;
-const JSPrinter = bun.js_printer;
-const exists = bun.sys.exists;
-const existsZ = bun.sys.existsZ;
-
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -1068,11 +1046,9 @@ const Template = enum {
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = bun.strings.lastIndexOf(agent_rule, "---\n") orelse 0;
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
 
             InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
-            Output.prettyln(" + <r><d>CLAUDE.md<r>", .{});
-            Output.flush();
         }
     }
 
@@ -1127,7 +1103,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-app/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-app/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
@@ -1146,7 +1122,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-tailwind/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-tailwind/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
@@ -1168,7 +1144,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-shadcn/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-shadcn/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
@@ -1177,7 +1153,7 @@ const Template = enum {
             .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
             .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
             .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/components/ui/textarea.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/textarea.tsx") },
             .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
             .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },
@@ -1260,3 +1236,27 @@ const Template = enum {
         Output.flush();
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const CLI = @import("../cli.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const initializeStore = @import("./create_command.zig").initializeStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;

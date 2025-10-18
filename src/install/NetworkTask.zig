@@ -11,6 +11,7 @@ callback: union(Task.Tag) {
     package_manifest: struct {
         loaded_manifest: ?Npm.PackageManifest = null,
         name: strings.StringOrTinyString,
+        is_extended_manifest: bool = false,
     },
     extract: ExtractTarball,
     git_clone: void,
@@ -43,8 +44,10 @@ pub const Authorization = enum {
 // https://github.com/oven-sh/bun/issues/341
 // https://www.jfrog.com/jira/browse/RTFACT-18398
 const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+const accept_header_value_extended = "application/json, */*";
 
 const default_headers_buf: string = "Accept" ++ accept_header_value;
+const extended_headers_buf: string = "Accept" ++ accept_header_value_extended;
 
 fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
     if (scope.token.len > 0) {
@@ -70,6 +73,10 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
     header_builder.count("npm-auth-type", "legacy");
 }
 
+const ForManifestError = OOM || error{
+    InvalidURL,
+};
+
 pub fn forManifest(
     this: *NetworkTask,
     name: string,
@@ -77,7 +84,8 @@ pub fn forManifest(
     scope: *const Npm.Registry.Scope,
     loaded_manifest: ?*const Npm.PackageManifest,
     is_optional: bool,
-) !void {
+    needs_extended: bool,
+) ForManifestError!void {
     this.url_buf = blk: {
 
         // Not all registries support scoped package names when fetching the manifest.
@@ -92,7 +100,7 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.JSC.URL.join(
+        const tmp = bun.jsc.URL.join(
             bun.String.borrowUTF8(scope.url.href),
             bun.String.borrowUTF8(encoded_name),
         );
@@ -106,7 +114,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -114,7 +122,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }
@@ -127,7 +135,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -135,7 +143,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }
@@ -147,8 +155,10 @@ pub fn forManifest(
     var last_modified: string = "";
     var etag: string = "";
     if (loaded_manifest) |manifest| {
-        last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-        etag = manifest.pkg.etag.slice(manifest.string_buf);
+        if ((needs_extended and manifest.pkg.has_extended_manifest) or !needs_extended) {
+            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+            etag = manifest.pkg.etag.slice(manifest.string_buf);
+        }
     }
 
     var header_builder = HeaderBuilder{};
@@ -164,7 +174,8 @@ pub fn forManifest(
     }
 
     if (header_builder.header_count > 0) {
-        header_builder.count("Accept", accept_header_value);
+        const accept_header = if (needs_extended) accept_header_value_extended else accept_header_value;
+        header_builder.count("Accept", accept_header);
         if (last_modified.len > 0 and etag.len > 0) {
             header_builder.content.count(last_modified);
         }
@@ -178,21 +189,22 @@ pub fn forManifest(
             header_builder.append("If-Modified-Since", last_modified);
         }
 
-        header_builder.append("Accept", accept_header_value);
+        header_builder.append("Accept", accept_header);
 
         if (last_modified.len > 0 and etag.len > 0) {
             last_modified = header_builder.content.append(last_modified);
         }
     } else {
+        const header_buf = if (needs_extended) &extended_headers_buf else &default_headers_buf;
         try header_builder.entries.append(
             allocator,
             .{
                 .name = .{ .offset = 0, .length = @as(u32, @truncate("Accept".len)) },
-                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(default_headers_buf.len - "Accept".len)) },
+                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(header_buf.len - "Accept".len)) },
             },
         );
         header_builder.header_count = 1;
-        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @constCast(@ptrCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
     }
 
     this.response_buffer = try MutableString.init(allocator, 0);
@@ -212,6 +224,7 @@ pub fn forManifest(
         .package_manifest = .{
             .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, FileSystem.FilenameStore.instance),
             .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
+            .is_extended_manifest = needs_extended,
         },
     };
 
@@ -301,9 +314,17 @@ pub fn forTarball(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
+
+const install = @import("./install.zig");
+const ExtractTarball = install.ExtractTarball;
+const NetworkTask = install.NetworkTask;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;
+const PatchTask = install.PatchTask;
+const Task = install.Task;
 
 const bun = @import("bun");
 const GlobalStringBuilder = bun.StringBuilder;
@@ -313,7 +334,6 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;
@@ -322,11 +342,3 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
-
-const install = @import("install.zig");
-const ExtractTarball = install.ExtractTarball;
-const NetworkTask = install.NetworkTask;
-const Npm = install.Npm;
-const PackageManager = install.PackageManager;
-const PatchTask = install.PatchTask;
-const Task = install.Task;

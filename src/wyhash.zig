@@ -3,9 +3,6 @@
 //
 const assert = if (@hasDecl(@import("root"), "bun")) @import("root").bun.assert else @import("std").debug.assert;
 
-const std = @import("std");
-const mem = std.mem;
-
 const primes = [_]u64{
     0xa0761d6478bd642f,
     0xe7037ed1a0b428db,
@@ -178,3 +175,6 @@ pub const Wyhash11 = struct {
         return WyhashStateless.hash(seed, input);
     }
 };
+
+const std = @import("std");
+const mem = std.mem;

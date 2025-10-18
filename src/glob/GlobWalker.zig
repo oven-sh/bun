@@ -20,30 +20,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-const std = @import("std");
-const bun = @import("bun");
 
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const mem = std.mem;
 const isWindows = @import("builtin").os.tag == .windows;
 
-const Arena = std.heap.ArenaAllocator;
-const ArrayList = std.ArrayListUnmanaged;
-const BunString = bun.String;
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const Codepoint = CodepointIterator.Cursor.CodePointType;
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const match = @import("./match.zig").match;
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const ResolvePath = @import("../resolver/resolve_path.zig");
-const Syscall = bun.sys;
-const ZigString = bun.JSC.ZigString;
-
 // const Codepoint = u32;
-const Cursor = CodepointIterator.Cursor;
 
-const log = bun.Output.scoped(.Glob, false);
+const log = bun.Output.scoped(.Glob, .visible);
 
 const CursorState = struct {
     cursor: CodepointIterator.Cursor = .{},
@@ -281,9 +263,7 @@ pub const DirEntryAccessor = struct {
         // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
         // The glob implementation specifically checks for this error when dealing with symlinks
         // return .{ .err = Syscall.Error.fromCode(bun.sys.E.NOTDIR, Syscall.Tag.open) };
-        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
-            return err;
-        };
+        const res = try FS.instance.fs.readDirectory(path, null, 0, false);
         switch (res.*) {
             .entries => |entry| {
                 return .{ .result = .{ .value = entry } };
@@ -464,12 +444,12 @@ pub fn GlobWalker_(
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
                                         this.iter_state = .{ .matched = path };
-                                        return Maybe(void).success;
+                                        return .success;
                                     }
                                     // Doesn't exist
                                     if (e.getErrno() == bun.sys.E.NOENT) {
                                         this.iter_state = .get_next;
-                                        return Maybe(void).success;
+                                        return .success;
                                     }
                                     const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
                                     return .{ .err = e.withPath(errpath) };
@@ -478,7 +458,7 @@ pub fn GlobWalker_(
                             };
                             _ = Accessor.close(fd);
                             this.iter_state = .{ .matched = path };
-                            return Maybe(void).success;
+                            return .success;
                         }
 
                         // In the above branch, if `starting_compoennt_dix >= pattern_components.len` then
@@ -522,7 +502,7 @@ pub fn GlobWalker_(
                     else => {},
                 }
 
-                return Maybe(void).success;
+                return .success;
             }
 
             pub fn deinit(this: *Iterator) void {
@@ -605,6 +585,16 @@ pub fn GlobWalker_(
                 var had_dot_dot = false;
                 const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
 
+                // If we've exhausted all pattern components (e.g., pattern was only dots like "../."),
+                // we're done with this work item
+                if (component_idx >= this.walker.patternComponents.items.len) {
+                    if (work_item.fd) |fd| {
+                        this.closeDisallowingCwd(fd);
+                    }
+                    this.iter_state = .get_next;
+                    return .success;
+                }
+
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
@@ -658,7 +648,7 @@ pub fn GlobWalker_(
                             var e: bun.sys.Error = e_;
                             if (e.getErrno() == .NOENT) {
                                 this.iter_state = .get_next;
-                                return Maybe(void).success;
+                                return .success;
                             }
                             return .{ .err = e.withPath(this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern)) };
                         },
@@ -674,7 +664,7 @@ pub fn GlobWalker_(
                     } else {
                         this.iter_state = .get_next;
                     }
-                    return Maybe(void).success;
+                    return .success;
                 }
 
                 this.iter_state.directory.dir_path = dir_path;
@@ -692,7 +682,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
-                return Maybe(void).success;
+                return .success;
             }
 
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
@@ -723,6 +713,13 @@ pub fn GlobWalker_(
 
                                     var has_dot_dot = false;
                                     const component_idx = this.walker.skipSpecialComponents(work_item.idx, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
+
+                                    // If we've exhausted all pattern components, continue to next item
+                                    if (component_idx >= this.walker.patternComponents.items.len) {
+                                        this.iter_state = .get_next;
+                                        continue;
+                                    }
+
                                     var pattern = this.walker.patternComponents.items[component_idx];
                                     const next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
@@ -1075,7 +1072,7 @@ pub fn GlobWalker_(
                 this.debugPatternComopnents();
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         /// NOTE This also calls deinit on the arena, if you don't want to do that then
@@ -1096,7 +1093,7 @@ pub fn GlobWalker_(
         }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {
-            if (this.patternComponents.items.len == 0) return Maybe(void).success;
+            if (this.patternComponents.items.len == 0) return .success;
 
             var iter = GlobWalker.Iterator{ .walker = this };
             defer iter.deinit();
@@ -1114,7 +1111,7 @@ pub fn GlobWalker_(
                 // so we don't need to do anything here
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
@@ -1191,28 +1188,32 @@ pub fn GlobWalker_(
         ) u32 {
             var component_idx = work_item_idx;
 
-            // Skip `.` and `..` while also appending them to `dir_path`
-            component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
-                .Dot => this.collapseDots(
-                    component_idx,
-                    dir_path,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                ),
-                .DotBack => this.collapseDots(
-                    component_idx,
-                    dir_path,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                ),
-                else => component_idx,
-            };
+            if (component_idx < this.patternComponents.items.len) {
+                // Skip `.` and `..` while also appending them to `dir_path`
+                component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+                    .Dot => this.collapseDots(
+                        component_idx,
+                        dir_path,
+                        scratch_path_buf,
+                        encountered_dot_dot,
+                    ),
+                    .DotBack => this.collapseDots(
+                        component_idx,
+                        dir_path,
+                        scratch_path_buf,
+                        encountered_dot_dot,
+                    ),
+                    else => component_idx,
+                };
+            }
 
-            // Skip to the last `**` if there is a chain of them
-            component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
-                .Double => this.collapseSuccessiveDoubleWildcards(component_idx),
-                else => component_idx,
-            };
+            if (component_idx < this.patternComponents.items.len) {
+                // Skip to the last `**` if there is a chain of them
+                component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+                    .Double => this.collapseSuccessiveDoubleWildcards(component_idx),
+                    else => component_idx,
+                };
+            }
 
             return component_idx;
         }
@@ -1321,8 +1322,7 @@ pub fn GlobWalker_(
         }
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
-            return match(
-                this.arena.allocator(),
+            return bun.glob.match(
                 pattern_component.patternSlice(this.pattern),
                 filepath,
             ).matches();
@@ -1672,8 +1672,6 @@ inline fn skipGlobstars(glob: []const u32, glob_index: *u32) void {
     glob_index.* -= 2;
 }
 
-const MatchAscii = struct {};
-
 pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
     const needle = glob[1..];
     const needle_len: u32 = @intCast(needle.len);
@@ -1685,4 +1683,24 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-pub const matchImpl = match;
+const DirIterator = @import("../bun.js/node/dir_iterator.zig");
+const ResolvePath = @import("../resolver/resolve_path.zig");
+
+const bun = @import("bun");
+const BunString = bun.String;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const isAllAscii = bun.strings.isAllASCII;
+
+const jsc = bun.jsc;
+const ZigString = bun.jsc.ZigString;
+
+const Cursor = CodepointIterator.Cursor;
+const Codepoint = CodepointIterator.Cursor.CodePointType;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const mem = std.mem;
+const Arena = std.heap.ArenaAllocator;

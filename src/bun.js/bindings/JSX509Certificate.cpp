@@ -36,7 +36,7 @@ using namespace JSC;
 
 Ref<WTF::ExternalStringImpl> toExternalStringImpl(ncrypto::BIOPointer& bio, std::span<const char> span)
 {
-    return WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(span.data()), span.size() }, bio.release(), [](void* context, void* ptr, unsigned len) {
+    return WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(span.data()), span.size() }, bio.release(), [](void* context, void* ptr, unsigned len) {
         ncrypto::BIOPointer deleter = ncrypto::BIOPointer(static_cast<BIO*>(context));
     });
 }
@@ -49,7 +49,7 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
     if (simdutf::validate_ascii(span.data(), span.size())) {
         return toExternalStringImpl(bio, span);
     }
-    return WTF::String::fromUTF8({ reinterpret_cast<const LChar*>(bptr->data), bptr->length });
+    return WTF::String::fromUTF8({ reinterpret_cast<const Latin1Character*>(bptr->data), bptr->length });
 }
 
 static JSC_DECLARE_HOST_FUNCTION(x509CertificateConstructorCall);
@@ -184,7 +184,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(init.owner->computeFingerprint(init.owner->view(), init.owner->globalObject()));
     });
     m_subject.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         auto value = init.owner->computeSubject(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (!value.isString()) {
             init.set(jsEmptyString(init.owner->vm()));
             return;
@@ -193,7 +198,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(value.toString(init.owner->globalObject()));
     });
     m_issuer.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         JSValue value = init.owner->computeIssuer(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (value.isString()) {
             init.set(value.toString(init.owner->globalObject()));
         } else {

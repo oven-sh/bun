@@ -1345,7 +1345,7 @@ std::optional<WTF::String> X509View::getFingerprint(
 
     if (X509_digest(get(), method, md, &md_size)) {
         if (md_size == 0) return std::nullopt;
-        std::span<LChar> fingerprint;
+        std::span<Latin1Character> fingerprint;
         WTF::String fingerprintStr = WTF::String::createUninitialized((md_size * 3) - 1, fingerprint);
 
         {
@@ -1911,6 +1911,25 @@ const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
 
     if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
         return EVP_md5();
+    }
+
+    if (WTF::startsWithIgnoringASCIICase(name, "rsa-sha"_s)) {
+        auto bits = name.substring(7);
+        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
+            return EVP_sha1();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
+            return EVP_sha224();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
+            return EVP_sha256();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
+            return EVP_sha384();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
+            return EVP_sha512();
+        }
     }
 
     if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {

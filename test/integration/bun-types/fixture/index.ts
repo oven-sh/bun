@@ -1,3 +1,6 @@
+import fact from "./file.json";
+console.log(fact);
+
 import * as test from "bun:test";
 test.describe;
 test.it;
@@ -181,7 +184,7 @@ for await (const chunk of Bun.stdin.stream()) {
   // this converts it to text (assumes ASCII encoding)
   const chunkText = Buffer.from(chunk).toString();
   console.log(`Chunk: ${chunkText}`);
-  expectType(chunk).is<Uint8Array>();
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
   expectType(chunkText).is<string>();
 }
 
@@ -266,10 +269,6 @@ fetch.preconnect(new URL(""));
 Bun.serve({
   port: 3000,
   fetch: () => new Response("ok"),
-
-  // don't do this, use the `tls: {}` options instead
-  key: Bun.file(""), // dont do it!
-  cert: Bun.file(""), // dont do it!
 
   tls: {
     key: Bun.file(""), // do this!
@@ -401,7 +400,7 @@ Bun.serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -435,7 +434,7 @@ serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -454,4 +453,22 @@ Bun.serve({
     key,
     cert,
   },
+});
+
+const signal = AbortSignal.timeout(1000);
+expectType(signal).is<AbortSignal>();
+expectType(signal.aborted).is<boolean>();
+
+expectType(RegExp.escape("foo.bar")).is<string>();
+
+const controller = new AbortController();
+expectType(controller.signal).is<AbortSignal>();
+expectType(controller.abort()).is<void>();
+expectType(controller.abort("reason")).is<void>();
+expectType(controller.signal.aborted).is<boolean>();
+controller.signal.addEventListener("abort", event => {
+  expectType(event).is<Event>();
+});
+controller.signal.removeEventListener("abort", event => {
+  expectType(event).is<Event>();
 });

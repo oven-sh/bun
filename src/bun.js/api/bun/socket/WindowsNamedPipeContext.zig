@@ -4,9 +4,9 @@ named_pipe: uws.WindowsNamedPipe,
 socket: SocketType,
 
 // task used to deinit the context in the next tick, vm is used to enqueue the task
-vm: *JSC.VirtualMachine,
-globalThis: *JSC.JSGlobalObject,
-task: JSC.AnyTask,
+vm: *jsc.VirtualMachine,
+globalThis: *jsc.JSGlobalObject,
+task: jsc.AnyTask,
 task_event: EventState = .none,
 is_open: bool = false,
 
@@ -22,7 +22,7 @@ pub const SocketType = union(enum) {
 };
 
 pub const new = bun.TrivialNew(WindowsNamedPipeContext);
-const log = Output.scoped(.WindowsNamedPipeContext, false);
+const log = Output.scoped(.WindowsNamedPipeContext, .visible);
 
 fn onOpen(this: *WindowsNamedPipeContext) void {
     this.is_open = true;
@@ -163,10 +163,10 @@ fn runEvent(this: *WindowsNamedPipeContext) void {
 fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
     bun.assert(this.task_event != .deinit);
     this.task_event = .deinit;
-    this.vm.enqueueTask(JSC.Task.init(&this.task));
+    this.vm.enqueueTask(jsc.Task.init(&this.task));
 }
 
-pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
+pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
     const vm = globalThis.bunVM();
     const this = WindowsNamedPipeContext.new(.{
         .vm = vm,
@@ -177,7 +177,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
     });
 
     // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-    this.named_pipe = uws.WindowsNamedPipe.from(bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
+    this.named_pipe = uws.WindowsNamedPipe.from(bun.handleOom(bun.default_allocator.create(uv.Pipe)), .{
         .ctx = this,
         .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
         .onData = @ptrCast(&WindowsNamedPipeContext.onData),
@@ -188,7 +188,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
         .onTimeout = @ptrCast(&WindowsNamedPipeContext.onTimeout),
         .onClose = @ptrCast(&WindowsNamedPipeContext.onClose),
     }, vm);
-    this.task = JSC.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
+    this.task = jsc.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
 
     switch (socket) {
         .tls => |tls| {
@@ -203,7 +203,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
     return this;
 }
 
-pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -224,7 +224,7 @@ pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config:
     return &this.named_pipe;
 }
 
-pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -276,10 +276,11 @@ pub fn deinit(this: *WindowsNamedPipeContext) void {
     bun.destroy(this);
 }
 
+const bun = @import("bun");
+const Output = bun.Output;
+const jsc = bun.jsc;
 const uws = bun.uws;
 const uv = bun.windows.libuv;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
-const TLSSocket = JSC.API.TLSSocket;
-const TCPSocket = JSC.API.TCPSocket;
+
+const TCPSocket = jsc.API.TCPSocket;
+const TLSSocket = jsc.API.TLSSocket;

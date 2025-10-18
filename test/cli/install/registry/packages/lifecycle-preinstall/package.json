@@ -1,0 +1,44 @@
+{
+	"name": "lifecycle-preinstall",
+	"versions": {
+		"1.0.0": {
+			"name": "lifecycle-preinstall",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "bun preinstall.js"
+			},
+			"_id": "lifecycle-preinstall@1.0.0",
+			"_integrity": "sha512-62WGgQIgbtfaxP+eiW2XThZ4m7XOElX/3Wx7afjM5A60XYbPmRXw9TasVm0DXM+wYjf5HLwc0lsvlvJzetyD/A==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-62WGgQIgbtfaxP+eiW2XThZ4m7XOElX/3Wx7afjM5A60XYbPmRXw9TasVm0DXM+wYjf5HLwc0lsvlvJzetyD/A==",
+			"shasum": "bc494b4c920f8a4b09912f0ab6bb22a32d682857",
+			"dist": {
+				"integrity": "sha512-62WGgQIgbtfaxP+eiW2XThZ4m7XOElX/3Wx7afjM5A60XYbPmRXw9TasVm0DXM+wYjf5HLwc0lsvlvJzetyD/A==",
+				"shasum": "bc494b4c920f8a4b09912f0ab6bb22a32d682857",
+				"tarball": "http://http://localhost:4873/lifecycle-preinstall/-/lifecycle-preinstall-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-07-28T07:46:41.246Z",
+		"created": "2025-07-28T07:46:41.246Z",
+		"1.0.0": "2025-07-28T07:46:41.246Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"lifecycle-preinstall-1.0.0.tgz": {
+			"shasum": "bc494b4c920f8a4b09912f0ab6bb22a32d682857",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "lifecycle-preinstall",
+	"readme": ""
+}

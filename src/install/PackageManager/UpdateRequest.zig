@@ -46,7 +46,7 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
         this.version.literal.slice(this.version_buf);
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack = std.heap.stackFallback(1024, arena.allocator());
@@ -94,7 +94,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!J
         return globalThis.throw("Failed to parse dependencies", .{});
     }
 
-    var object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    var object = jsc.JSValue.createEmptyObject(globalThis, 2);
     var name_str = bun.String.init(update_requests[0].name);
     object.put(globalThis, "name", name_str.transferToJS(globalThis));
     object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
@@ -125,7 +125,7 @@ fn parseWithError(
     // add
     // remove
     outer: for (positionals) |positional| {
-        var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
+        var input: []u8 = bun.handleOom(bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")));
         {
             var temp: [2048]u8 = undefined;
             const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
@@ -174,7 +174,7 @@ fn parseWithError(
             } else {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
                     positional,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
             }
 
             return error.UnrecognizedDependencyFormat;
@@ -206,7 +206,7 @@ fn parseWithError(
             } else {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
                     positional,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
             }
 
             return error.UnrecognizedDependencyFormat;
@@ -229,24 +229,29 @@ fn parseWithError(
         for (update_requests.items) |*prev| {
             if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
         }
-        update_requests.append(allocator, request) catch bun.outOfMemory();
+        bun.handleOom(update_requests.append(allocator, request));
     }
 
     return update_requests.items;
 }
 
-// @sortImports
+pub const CommandLineArguments = PackageManager.CommandLineArguments;
+pub const Options = PackageManager.Options;
+pub const PackageInstaller = PackageManager.PackageInstaller;
+pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
+pub const Subcommand = PackageManager.Subcommand;
+
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Global = bun.Global;
-const JSAst = bun.JSAst;
-const JSC = bun.JSC;
+const JSAst = bun.ast;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Semver = bun.Semver;
@@ -260,9 +265,4 @@ const PackageNameHash = bun.install.PackageNameHash;
 const invalid_package_id = bun.install.invalid_package_id;
 
 const PackageManager = bun.install.PackageManager;
-pub const CommandLineArguments = PackageManager.CommandLineArguments;
-pub const Options = PackageManager.Options;
-pub const PackageInstaller = PackageManager.PackageInstaller;
-pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
-pub const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;

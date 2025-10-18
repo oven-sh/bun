@@ -45,15 +45,7 @@
 //! thread-2: condition.signal()
 //! ```
 
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
 const Condition = @This();
-const Mutex = bun.Mutex;
-
-const os = std.os;
-const assert = bun.assert;
-const Futex = bun.Futex;
 
 impl: Impl = .{},
 
@@ -274,3 +266,13 @@ const FutexImpl = struct {
         }
     }
 };
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const Futex = bun.Futex;
+const Mutex = bun.Mutex;
+const assert = bun.assert;
+
+const std = @import("std");
+const os = std.os;

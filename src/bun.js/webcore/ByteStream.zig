@@ -29,7 +29,7 @@ pub const Source = webcore.ReadableStream.NewSource(
     toBufferedValue,
 );
 
-const log = Output.scoped(.ByteStream, false);
+const log = Output.scoped(.ByteStream, .visible);
 
 pub const tag = webcore.ReadableStream.Tag.Bytes;
 
@@ -43,7 +43,8 @@ pub fn onStart(this: *@This()) streams.Start {
     }
 
     if (this.has_received_last_chunk) {
-        return .{ .owned_and_done = bun.ByteList.fromList(this.buffer.moveToUnmanaged()) };
+        var buffer = this.buffer.moveToUnmanaged();
+        return .{ .owned_and_done = bun.ByteList.moveFromList(&buffer) };
     }
 
     if (this.highWaterMark == 0) {
@@ -79,7 +80,7 @@ pub fn onData(
     this: *@This(),
     stream: streams.Result,
     allocator: std.mem.Allocator,
-) void {
+) bun.JSTerminated!void {
     jsc.markBinding(@src());
     if (this.done) {
         if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
@@ -114,8 +115,7 @@ pub fn onData(
 
             log("ByteStream.onData err  action.reject()", .{});
 
-            action.reject(this.parent().globalThis, stream.err);
-            return;
+            return action.reject(this.parent().globalThis, stream.err);
         }
 
         if (this.has_received_last_chunk) {
@@ -127,7 +127,7 @@ pub fn onData(
                 log("ByteStream.onData done and action.fulfill()", .{});
 
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
+                try action.fulfill(this.parent().globalThis, &blob);
                 return;
             }
             if (this.buffer.capacity == 0 and stream == .owned_and_done) {
@@ -135,7 +135,7 @@ pub fn onData(
 
                 this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
+                try action.fulfill(this.parent().globalThis, &blob);
                 return;
             }
             defer {
@@ -145,13 +145,12 @@ pub fn onData(
             }
             log("ByteStream.onData appendSlice and action.fulfill()", .{});
 
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
             var blob = this.toAnyBlob().?;
-            action.fulfill(this.parent().globalThis, &blob);
-
+            try action.fulfill(this.parent().globalThis, &blob);
             return;
         } else {
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
 
             if (stream == .owned_and_done or stream == .owned) {
                 allocator.free(stream.slice());
@@ -224,16 +223,17 @@ pub fn append(
     base_address: []const u8,
     allocator: std.mem.Allocator,
 ) !void {
+    var stream_ = stream;
     const chunk = stream.slice()[offset..];
 
     if (this.buffer.capacity == 0) {
-        switch (stream) {
-            .owned => |owned| {
-                this.buffer = owned.listManaged(allocator);
+        switch (stream_) {
+            .owned => |*owned| {
+                this.buffer = owned.moveToListManaged(allocator);
                 this.offset += offset;
             },
-            .owned_and_done => |owned| {
-                this.buffer = owned.listManaged(allocator);
+            .owned_and_done => |*owned| {
+                this.buffer = owned.moveToListManaged(allocator);
                 this.offset += offset;
             },
             .temporary_and_done, .temporary => {
@@ -353,7 +353,7 @@ pub fn onCancel(this: *@This()) void {
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        action.reject(global, .{ .AbortReason = .UserAbort });
+        action.reject(global, .{ .AbortReason = .UserAbort }) catch {}; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }
@@ -389,16 +389,8 @@ pub fn deinit(this: *@This()) void {
 
 pub fn drain(this: *@This()) bun.ByteList {
     if (this.buffer.items.len > 0) {
-        const out = bun.ByteList.fromList(this.buffer);
-        this.buffer = .{
-            .allocator = bun.default_allocator,
-            .items = &.{},
-            .capacity = 0,
-        };
-
-        return out;
+        return bun.ByteList.moveFromList(&this.buffer);
     }
-
     return .{};
 }
 
@@ -453,12 +445,16 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Output = bun.Output;
-const webcore = bun.webcore;
-const streams = webcore.streams;
+
 const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const Pipe = webcore.Pipe;
+
+const streams = webcore.streams;
 const BufferAction = streams.BufferAction;
-const JSValue = jsc.JSValue;

@@ -1,20 +1,3 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
-const String = Semver.String;
-const std = @import("std");
-const strings = bun.strings;
-const Environment = @import("../env.zig");
-const stringZ = bun.stringZ;
-const bun = @import("bun");
-const path = bun.path;
-const string = bun.string;
-const Install = @import("./install.zig");
-const Dependency = @import("./dependency.zig");
-const OOM = bun.OOM;
-const JSON = bun.JSON;
-const Lockfile = Install.Lockfile;
-
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -138,44 +121,6 @@ pub const Bin = extern struct {
         }
 
         unreachable;
-    }
-
-    pub fn cloneAppend(this: *const Bin, this_buf: string, this_extern_strings: []const ExternalString, lockfile: *Lockfile) OOM!Bin {
-        var string_buf = lockfile.stringBuf();
-        defer string_buf.apply(lockfile);
-
-        const cloned: Bin = .{
-            .tag = this.tag,
-
-            .value = switch (this.tag) {
-                .none => Value.init(.{ .none = {} }),
-                .file => Value.init(.{
-                    .file = try string_buf.append(this.value.file.slice(this_buf)),
-                }),
-                .named_file => Value.init(.{ .named_file = .{
-                    try string_buf.append(this.value.named_file[0].slice(this_buf)),
-                    try string_buf.append(this.value.named_file[1].slice(this_buf)),
-                } }),
-                .dir => Value.init(.{
-                    .dir = try string_buf.append(this.value.dir.slice(this_buf)),
-                }),
-                .map => map: {
-                    const off = lockfile.buffers.extern_strings.items.len;
-                    for (this.value.map.get(this_extern_strings)) |extern_string| {
-                        try lockfile.buffers.extern_strings.append(
-                            lockfile.allocator,
-                            try string_buf.appendExternal(extern_string.slice(this_buf)),
-                        );
-                    }
-                    const new = lockfile.buffers.extern_strings.items[off..];
-                    break :map Value.init(.{
-                        .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, new),
-                    });
-                },
-            },
-        };
-
-        return cloned;
     }
 
     /// Used for packages read from text lockfile.
@@ -615,11 +560,11 @@ pub const Bin = extern struct {
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-                const entry = seen.getOrPut(abs_dest) catch bun.outOfMemory();
+                const entry = bun.handleOom(seen.getOrPut(abs_dest));
                 if (entry.found_existing) {
                     return;
                 }
-                entry.key_ptr.* = seen.allocator.dupe(u8, abs_dest) catch bun.outOfMemory();
+                entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
@@ -628,7 +573,7 @@ pub const Bin = extern struct {
                 return;
             }
 
-            bun.Analytics.Features.binlinks += 1;
+            bun.analytics.Features.binlinks += 1;
 
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
@@ -651,24 +596,95 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
-                // any error here is ignored
-                const bin = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
-                defer bin.close();
+                tryNormalizeShebang(abs_target);
+            }
+        }
 
-                var shebang_buf: [1024]u8 = undefined;
-                const read = bin.read(&shebang_buf).unwrap() catch return;
-                const chunk = shebang_buf[0..read];
-                // 123 4 5
-                // #!a\r\n
-                if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+        fn tryNormalizeShebang(abs_target: [:0]const u8) void {
+            var shebang_buf: [2048]u8 = undefined;
 
-                if (strings.indexOfChar(chunk, '\n')) |newline| {
-                    if (newline > 0 and chunk[newline - 1] == '\r') {
-                        const pos = newline - 1;
-                        bin.handle.stdFile().seekTo(pos) catch return;
-                        bin.writeAll("\n").unwrap() catch return;
-                    }
+            // any error here is ignored
+            const chunk = brk: {
+                const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
+                defer bin_for_reading.close();
+
+                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
+                break :brk shebang_buf[0..read];
+            };
+
+            // 123 4 5
+            // #!a\r\n
+            if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+
+            const newline = strings.indexOfChar(chunk, '\n') orelse return;
+            const chunk_without_newline = chunk[0..newline];
+            if (!(chunk_without_newline.len > 0 and chunk_without_newline[chunk_without_newline.len - 1] == '\r')) {
+                // Nothing to do!
+                return;
+            }
+            log("Normalizing shebang for {s}", .{abs_target});
+
+            // We have to do an atomic replace here, use a randomly generated
+            // filename in the same folder, read the entire original file
+            // contents using bun.sys.File.readFrom, then write the temporary file, then
+            // overwite the old one with the new one via bun.sys.renameat. And
+            // always unlink the old one. If it fails for any reason then exit
+            // early.
+            var tmpname_buf: [1024]u8 = undefined;
+            const tmpname = bun.fs.FileSystem.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return;
+
+            const dir_path = std.fs.path.dirname(abs_target) orelse return;
+
+            const content: []const u8, const content_to_free: []const u8 = brk: {
+                if (chunk.len >= shebang_buf.len) {
+                    // Partial read. Need to read the rest of the file.
+                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                        .result => |contents| contents,
+                        .err => return,
+                    };
+                    break :brk .{ original_contents, original_contents };
                 }
+
+                break :brk .{ chunk, "" };
+            };
+            defer bun.default_allocator.free(content_to_free);
+
+            // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
+            const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
+            const original_mode = @as(bun.Mode, @intCast(original_stat.mode));
+
+            // Create temporary file path
+            var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
+            var needs_unlink = true;
+            defer {
+                if (needs_unlink) _ = bun.sys.unlinkat(.cwd(), tmppath);
+            }
+
+            // Write to temporary file with corrected content
+            {
+                const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, original_mode).unwrap() catch return;
+                defer tmpfile.close();
+
+                // Write the corrected shebang (without \r)
+                tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
+                tmpfile.writeAll("\n").unwrap() catch return;
+
+                // Write the rest of the file (after the newline)
+                if (content.len > newline + 1) {
+                    tmpfile.writeAll(content[newline + 1 ..]).unwrap() catch return;
+                }
+
+                // Reapply original permissions (umask was applied during openat, so we need to restore)
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o777)), 0).unwrap() catch return;
+            }
+
+            // Atomic replace: rename temp file to original
+            switch (bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target)) {
+                .result => {
+                    needs_unlink = false;
+                },
+                .err => {},
             }
         }
 
@@ -774,7 +790,7 @@ pub const Bin = extern struct {
 
             bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
-            switch (bun.sys.symlink(rel_target, abs_dest)) {
+            switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {
                     if (err.getErrno() != .EXIST and err.getErrno() != .NOENT) {
                         this.err = err.toZigErr();
@@ -793,7 +809,7 @@ pub const Bin = extern struct {
                         bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
                         node_modules_path_save.restore();
 
-                        switch (bun.sys.symlink(rel_target, abs_dest)) {
+                        switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
                                 this.err = real_error.toZigErr();
@@ -801,7 +817,7 @@ pub const Bin = extern struct {
                             },
                             .result => return,
                         }
-                        bun.sys.symlink(rel_target, abs_dest).unwrap() catch |real_err| {
+                        bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |real_err| {
                             this.err = real_err;
                         };
                         return;
@@ -815,7 +831,7 @@ pub const Bin = extern struct {
 
             // delete and try again
             std.fs.deleteTreeAbsolute(abs_dest) catch {};
-            bun.sys.symlink(rel_target, abs_dest).unwrap() catch |err| {
+            bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
                 this.err = err;
             };
         }
@@ -1057,3 +1073,24 @@ pub const Bin = extern struct {
         }
     };
 };
+
+const log = bun.Output.scoped(.BinLinker, .hidden);
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("./dependency.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+
+const Install = @import("./install.zig");
+const ExternalStringList = @import("./install.zig").ExternalStringList;
+
+const bun = @import("bun");
+const JSON = bun.json;
+const OOM = bun.OOM;
+const path = bun.path;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const String = Semver.String;

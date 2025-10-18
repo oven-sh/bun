@@ -1,6 +1,8 @@
+const PostgresSQLConnection = @This();
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 socket: Socket,
 status: Status = Status.connecting,
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 
 write_buffer: bun.OffsetByteList = .{},
 read_buffer: bun.OffsetByteList = .{},
@@ -12,8 +14,8 @@ pipelined_requests: u32 = 0,
 nonpipelinable_requests: u32 = 0,
 
 poll_ref: bun.Async.KeepAlive = .{},
-globalObject: *JSC.JSGlobalObject,
-
+globalObject: *jsc.JSGlobalObject,
+vm: *jsc.VirtualMachine,
 statements: PreparedStatementsMap,
 prepared_statement_id: u64 = 0,
 pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -32,7 +34,7 @@ options_buf: []const u8 = "",
 authentication_state: AuthenticationState = .{ .pending = {} },
 
 tls_ctx: ?*uws.SocketContext = null,
-tls_config: JSC.API.ServerConfig.SSLConfig = .{},
+tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
 
@@ -64,6 +66,9 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
 },
 auto_flusher: AutoFlusher = .{},
 
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
 pub fn onAutoFlush(this: *@This()) bool {
     if (this.flags.has_backpressure) {
         debug("onAutoFlush: has backpressure", .{});
@@ -93,7 +98,7 @@ fn registerAutoFlusher(this: *PostgresSQLConnection) void {
         data_to_send > 0 and // we need data to send
         this.status == .connected //and we need to be connected
     ) {
-        AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalObject.bunVM());
+        AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.vm);
         this.auto_flusher.registered = true;
     }
 }
@@ -101,7 +106,7 @@ fn registerAutoFlusher(this: *PostgresSQLConnection) void {
 fn unregisterAutoFlusher(this: *PostgresSQLConnection) void {
     debug("unregisterAutoFlusher registered: {}", .{this.auto_flusher.registered});
     if (this.auto_flusher.registered) {
-        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, this.globalObject.bunVM());
+        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, this.vm);
         this.auto_flusher.registered = false;
     }
 }
@@ -115,7 +120,7 @@ fn getTimeoutInterval(this: *const PostgresSQLConnection) u32 {
 }
 pub fn disableConnectionTimeout(this: *PostgresSQLConnection) void {
     if (this.timer.state == .ACTIVE) {
-        this.globalObject.bunVM().timer.remove(&this.timer);
+        this.vm.timer.remove(&this.timer);
     }
     this.timer.state = .CANCELLED;
 }
@@ -124,28 +129,28 @@ pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
     if (this.flags.is_processing_data) return;
     const interval = this.getTimeoutInterval();
     if (this.timer.state == .ACTIVE) {
-        this.globalObject.bunVM().timer.remove(&this.timer);
+        this.vm.timer.remove(&this.timer);
     }
     if (interval == 0) {
         return;
     }
 
     this.timer.next = bun.timespec.msFromNow(@intCast(interval));
-    this.globalObject.bunVM().timer.insert(&this.timer);
+    this.vm.timer.insert(&this.timer);
 }
 
-pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+pub fn getQueries(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     if (js.queriesGetCached(thisValue)) |value| {
         return value;
     }
 
-    const array = try JSC.JSValue.createEmptyArray(globalObject, 0);
+    const array = try jsc.JSValue.createEmptyArray(globalObject, 0);
     js.queriesSetCached(thisValue, globalObject, array);
 
     return array;
 }
 
-pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
     if (js.onconnectGetCached(thisValue)) |value| {
         return value;
     }
@@ -153,11 +158,11 @@ pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.J
     return .js_undefined;
 }
 
-pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
     js.onconnectSetCached(thisValue, globalObject, value);
 }
 
-pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
     if (js.oncloseGetCached(thisValue)) |value| {
         return value;
     }
@@ -165,7 +170,7 @@ pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSG
     return .js_undefined;
 }
 
-pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
     js.oncloseSetCached(thisValue, globalObject, value);
 }
 
@@ -190,7 +195,7 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
     this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
-    this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
+    this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
 pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
@@ -208,13 +213,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoop
 
     switch (this.status) {
         .connected => {
-            this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -224,7 +229,7 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoo
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return .disarm;
-    this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
     return .disarm;
 }
 
@@ -252,6 +257,7 @@ pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
 
     this.status = status;
     this.resetConnectionTimeout();
+    if (this.vm.isShuttingDown()) return;
 
     switch (status) {
         .connected => {
@@ -259,7 +265,7 @@ pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
             const js_value = this.js_value;
             js_value.ensureStillAlive();
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-            this.poll_ref.unref(this.globalObject.bunVM());
+            this.poll_ref.unref(this.vm);
         },
         else => {},
     }
@@ -313,21 +319,31 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     defer this.refAndClose(value);
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
-    const loop = this.globalObject.bunVM().eventLoop();
+    const loop = this.vm.eventLoop();
     loop.enter();
+    var js_error = value.toError() orelse value;
+    if (js_error == .zero) {
+        js_error = postgresErrorToJS(this.globalObject, "Connection closed", error.ConnectionClosed);
+    }
+    js_error.ensureStillAlive();
     defer loop.exit();
     _ = on_close.call(
         this.globalObject,
-        this.js_value,
+        .js_undefined,
         &[_]JSValue{
-            value,
+            js_error,
             this.getQueriesArray(),
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
-pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
+pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
+    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
+    defer bun.default_allocator.free(message);
+
+    const err = createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| this.globalObject.takeError(e);
+
+    this.failWithJSValue(err);
 }
 
 pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
@@ -341,13 +357,21 @@ pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresE
 pub fn onClose(this: *PostgresSQLConnection) void {
     this.unregisterAutoFlusher();
 
-    var vm = this.globalObject.bunVM();
-    const loop = vm.eventLoop();
-    loop.enter();
-    defer loop.exit();
-    this.poll_ref.unref(this.globalObject.bunVM());
+    if (this.vm.isShuttingDown()) {
+        defer this.updateHasPendingActivity();
+        this.stopTimers();
+        if (this.status == .failed) return;
 
-    this.fail("Connection closed", error.ConnectionClosed);
+        this.status = .failed;
+        this.cleanUpRequests(null);
+    } else {
+        const loop = this.vm.eventLoop();
+        loop.enter();
+        defer loop.exit();
+        this.poll_ref.unref(this.vm);
+
+        this.fail("Connection closed", error.ConnectionClosed);
+    }
 }
 
 fn sendStartupMessage(this: *PostgresSQLConnection) void {
@@ -390,7 +414,7 @@ fn startTLS(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
     this.socket = socket;
 
-    this.poll_ref.ref(this.globalObject.bunVM());
+    this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
@@ -424,9 +448,8 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                         }
                     }
                 },
-                else => {
-                    return;
-                },
+                // require is the same as prefer
+                .require, .prefer, .disable => {},
             }
         }
     } else {
@@ -458,13 +481,15 @@ pub fn onDrain(this: *PostgresSQLConnection) void {
 
 fn drainInternal(this: *PostgresSQLConnection) void {
     debug("drainInternal", .{});
-    const event_loop = this.globalObject.bunVM().eventLoop();
+    if (this.vm.isShuttingDown()) return this.close();
+
+    const event_loop = this.vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
 
     this.flushData();
 
-    if (!this.flags.has_backpressure) {
+    if (!this.flags.has_backpressure and this.flags.is_ready_for_query) {
         // no backpressure yet so pipeline more if possible and flush again
         this.advance();
         this.flushData();
@@ -474,7 +499,7 @@ fn drainInternal(this: *PostgresSQLConnection) void {
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     this.ref();
     this.flags.is_processing_data = true;
-    const vm = this.globalObject.bunVM();
+    const vm = this.vm;
 
     this.disableConnectionTimeout();
     defer {
@@ -551,19 +576,19 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     this.read_buffer.head = 0;
 }
 
-pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLConnection {
+pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*PostgresSQLConnection {
     _ = callframe;
     return globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
 }
 
 comptime {
-    const jscall = JSC.toJSHostFn(call);
+    const jscall = jsc.toJSHostFn(call);
     @export(&jscall, .{ .name = "PostgresSQLConnection__createInstance" });
 }
 
-pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments_old(15).slice();
+    const arguments = callframe.arguments();
     const hostname_str = try arguments[0].toBunString(globalObject);
     defer hostname_str.deref();
     const port = try arguments[1].coerce(i32, globalObject);
@@ -585,13 +610,13 @@ pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const tls_object = arguments[6];
 
-    var tls_config: JSC.API.ServerConfig.SSLConfig = .{};
+    var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
     var tls_ctx: ?*uws.SocketContext = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
         else if (tls_object.isObject())
-            (JSC.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls_object) catch return .zero) orelse .{}
+            (jsc.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls_object) catch return .zero) orelse .{}
         else {
             return globalObject.throwInvalidArguments("tls must be a boolean or an object", .{});
         };
@@ -679,7 +704,7 @@ pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     ptr.* = PostgresSQLConnection{
         .globalObject = globalObject,
-
+        .vm = vm,
         .database = database,
         .user = username,
         .password = password,
@@ -700,16 +725,6 @@ pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
     };
-
-    ptr.updateHasPendingActivity();
-    ptr.poll_ref.ref(vm);
-    const js_value = ptr.toJS(globalObject);
-    js_value.ensureStillAlive();
-    ptr.js_value = js_value;
-
-    js.onconnectSetCached(js_value, globalObject, on_connect);
-    js.oncloseSetCached(js_value, globalObject, on_close);
-    bun.analytics.Features.postgres_connections += 1;
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
@@ -745,9 +760,18 @@ pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
                 },
             };
         }
-        ptr.resetConnectionTimeout();
     }
 
+    // only call toJS if connectUnixAnon does not fail immediately
+    ptr.updateHasPendingActivity();
+    ptr.resetConnectionTimeout();
+    ptr.poll_ref.ref(vm);
+    const js_value = ptr.toJS(globalObject);
+    js_value.ensureStillAlive();
+    ptr.js_value = js_value;
+    js.onconnectSetCached(js_value, globalObject, on_connect);
+    js.oncloseSetCached(js_value, globalObject, on_close);
+    bun.analytics.Features.postgres_connections += 1;
     return js_value;
 }
 
@@ -762,10 +786,20 @@ fn SocketHandler(comptime ssl: bool) type {
             return Socket{ .SocketTCP = s };
         }
         pub fn onOpen(this: *PostgresSQLConnection, socket: SocketType) void {
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onOpen(_socket(socket));
         }
 
         fn onHandshake_(this: *PostgresSQLConnection, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onHandshake(success, ssl_error);
         }
 
@@ -783,76 +817,85 @@ fn SocketHandler(comptime ssl: bool) type {
 
         pub fn onConnectError(this: *PostgresSQLConnection, socket: SocketType, _: i32) void {
             _ = socket;
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onClose();
         }
 
         pub fn onTimeout(this: *PostgresSQLConnection, socket: SocketType) void {
             _ = socket;
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onTimeout();
         }
 
         pub fn onData(this: *PostgresSQLConnection, socket: SocketType, data: []const u8) void {
             _ = socket;
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onData(data);
         }
 
         pub fn onWritable(this: *PostgresSQLConnection, socket: SocketType) void {
             _ = socket;
+            if (this.vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                this.close();
+                return;
+            }
             this.onDrain();
         }
     };
 }
 
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count += 1;
-}
-
-pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    this.poll_ref.ref(this.globalObject.bunVM());
+pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
     return .js_undefined;
 }
 
-pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    this.poll_ref.unref(this.globalObject.bunVM());
+pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    this.poll_ref.unref(this.vm);
     this.updateHasPendingActivity();
     return .js_undefined;
 }
-pub fn doFlush(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn doFlush(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.registerAutoFlusher();
     return .js_undefined;
 }
 
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count;
-    this.ref_count -= 1;
-
-    if (ref_count == 1) {
-        this.disconnect();
-        this.deinit();
-    }
-}
-
-pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    _ = globalObject;
+fn close(this: *@This()) void {
     this.disconnect();
     this.unregisterAutoFlusher();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
+}
 
+pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    _ = globalObject;
+    this.close();
     return .js_undefined;
 }
 
 pub fn stopTimers(this: *PostgresSQLConnection) void {
     if (this.timer.state == .ACTIVE) {
-        this.globalObject.bunVM().timer.remove(&this.timer);
+        this.vm.timer.remove(&this.timer);
     }
     if (this.max_lifetime_timer.state == .ACTIVE) {
-        this.globalObject.bunVM().timer.remove(&this.max_lifetime_timer);
+        this.vm.timer.remove(&this.max_lifetime_timer);
     }
 }
 
 pub fn deinit(this: *@This()) void {
+    this.disconnect();
     this.stopTimers();
     var iter = this.statements.valueIterator();
     while (iter.next()) |stmt_ptr| {
@@ -870,17 +913,7 @@ pub fn deinit(this: *@This()) void {
     bun.default_allocator.destroy(this);
 }
 
-fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
-    // refAndClose is always called when we wanna to disconnect or when we are closed
-
-    if (!this.socket.isClosed()) {
-        // event loop need to be alive to close the socket
-        this.poll_ref.ref(this.globalObject.bunVM());
-        // will unref on socket close
-        this.socket.close();
-    }
-
-    // cleanup requests
+fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
     while (this.current()) |request| {
         switch (request.status) {
             // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -888,10 +921,12 @@ fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
                 const stmt = request.statement orelse continue;
                 stmt.error_response = .{ .postgres_error = AnyPostgresError.ConnectionClosed };
                 stmt.status = .failed;
-                if (js_reason) |reason| {
-                    request.onJSError(reason, this.globalObject);
-                } else {
-                    request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                if (!this.vm.isShuttingDown()) {
+                    if (js_reason) |reason| {
+                        request.onJSError(reason, this.globalObject);
+                    } else {
+                        request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                    }
                 }
             },
             // in the middle of running
@@ -899,10 +934,13 @@ fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
             .running,
             .partial_response,
             => {
-                if (js_reason) |reason| {
-                    request.onJSError(reason, this.globalObject);
-                } else {
-                    request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                this.finishRequest(request);
+                if (!this.vm.isShuttingDown()) {
+                    if (js_reason) |reason| {
+                        request.onJSError(reason, this.globalObject);
+                    } else {
+                        request.onError(.{ .postgres_error = AnyPostgresError.ConnectionClosed }, this.globalObject);
+                    }
                 }
             },
             // just ignore success and fail cases
@@ -911,6 +949,19 @@ fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
         request.deref();
         this.requests.discard(1);
     }
+}
+fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
+    // refAndClose is always called when we wanna to disconnect or when we are closed
+
+    if (!this.socket.isClosed()) {
+        // event loop need to be alive to close the socket
+        this.poll_ref.ref(this.vm);
+        // will unref on socket close
+        this.socket.close();
+    }
+
+    // cleanup requests
+    this.cleanUpRequests(js_reason);
 }
 
 pub fn disconnect(this: *@This()) void {
@@ -926,6 +977,7 @@ fn current(this: *PostgresSQLConnection) ?*PostgresSQLQuery {
     if (this.requests.readableLength() == 0) {
         return null;
     }
+
     return this.requests.peekItem(0);
 }
 
@@ -1020,10 +1072,49 @@ pub fn bufferedReader(this: *PostgresSQLConnection) protocol.NewReader(Reader) {
     };
 }
 
+fn finishRequest(this: *@This(), item: *PostgresSQLQuery) void {
+    switch (item.status) {
+        .running, .binding, .partial_response => {
+            if (item.flags.simple) {
+                this.nonpipelinable_requests -= 1;
+            } else if (item.flags.pipelined) {
+                this.pipelined_requests -= 1;
+            }
+        },
+        .success, .fail, .pending => {},
+    }
+}
+
+pub fn canPrepareQuery(noalias this: *const @This()) bool {
+    return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
+}
+
 fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
+    defer {
+        while (this.requests.readableLength() > 0) {
+            const result = this.requests.peekItem(0);
+            // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
+            // so we do the cleanup her
+            switch (result.status) {
+                .success => {
+                    result.deref();
+                    this.requests.discard(1);
+                    continue;
+                },
+                .fail => {
+                    result.deref();
+                    this.requests.discard(1);
+                    continue;
+                },
+                else => break, // trully current item
+            }
+        }
+    }
     while (this.requests.readableLength() > offset and !this.flags.has_backpressure) {
+        if (this.vm.isShuttingDown()) return this.close();
+
         var req: *PostgresSQLQuery = this.requests.peekItem(offset);
         switch (req.status) {
             .pending => {
@@ -1037,7 +1128,11 @@ fn advance(this: *PostgresSQLConnection) void {
                     defer query_str.deinit();
                     debug("execute simple query: {s}", .{query_str.slice()});
                     PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                        if (this.globalObject.tryTakeException()) |err_| {
+                            req.onJSError(err_, this.globalObject);
+                        } else {
+                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                        }
                         if (offset == 0) {
                             req.deref();
                             this.requests.discard(1);
@@ -1053,159 +1148,188 @@ fn advance(this: *PostgresSQLConnection) void {
                     req.status = .running;
                     return;
                 } else {
-                    const stmt = req.statement orelse {
-                        debug("stmt is not set yet waiting it to RUN before actually doing anything", .{});
-                        // statement is not set yet waiting it to RUN before actually doing anything
-                        offset += 1;
-                        continue;
-                    };
-
-                    switch (stmt.status) {
-                        .failed => {
-                            debug("stmt failed", .{});
-                            bun.assert(stmt.error_response != null);
-                            if (req.flags.simple) {
-                                this.nonpipelinable_requests -= 1;
-                            } else if (req.flags.pipelined) {
-                                this.pipelined_requests -= 1;
-                            } else if (this.flags.waiting_to_prepare) {
-                                this.flags.waiting_to_prepare = false;
-                            }
-                            req.onError(stmt.error_response.?, this.globalObject);
-                            if (offset == 0) {
-                                req.deref();
-                                this.requests.discard(1);
-                            } else {
-                                // deinit later
-                                req.status = .fail;
-                            }
-                            continue;
-                        },
-                        .prepared => {
-                            const thisValue = req.thisValue.get();
-                            bun.assert(thisValue != .zero);
-                            const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
-                            const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
-                            req.flags.binary = stmt.fields.len > 0;
-                            debug("binding and executing stmt", .{});
-                            PostgresRequest.bindAndExecute(this.globalObject, stmt, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                    if (req.statement) |statement| {
+                        switch (statement.status) {
+                            .failed => {
+                                debug("stmt failed", .{});
+                                bun.assert(statement.error_response != null);
+                                req.onError(statement.error_response.?, this.globalObject);
                                 if (offset == 0) {
                                     req.deref();
                                     this.requests.discard(1);
                                 } else {
                                     // deinit later
                                     req.status = .fail;
+                                    offset += 1;
                                 }
-                                debug("bind and execute failed: {s}", .{@errorName(err)});
 
                                 continue;
-                            };
-
-                            this.flags.is_ready_for_query = false;
-                            req.status = .binding;
-                            if (this.flags.use_unnamed_prepared_statements or !this.canPipeline()) {
-                                debug("cannot pipeline more stmt", .{});
-                                return;
-                            }
-                            debug("pipelining more stmt", .{});
-                            // we can pipeline it
-                            this.pipelined_requests += 1;
-                            req.flags.pipelined = true;
-                            offset += 1;
-                            continue;
-                        },
-                        .pending => {
-                            if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
-                                debug("need to wait to finish the pipeline before starting a new query preparation", .{});
-                                // need to wait to finish the pipeline before starting a new query preparation
-                                return;
-                            }
-                            // statement is pending, lets write/parse it
-                            var query_str = req.query.toUTF8(bun.default_allocator);
-                            defer query_str.deinit();
-                            const has_params = stmt.signature.fields.len > 0;
-                            // If it does not have params, we can write and execute immediately in one go
-                            if (!has_params) {
-                                const thisValue = req.thisValue.get();
-                                bun.assert(thisValue != .zero);
-                                // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                                const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
-                                debug("prepareAndQueryWithSignature", .{});
-                                PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &stmt.signature) catch |err| {
-                                    stmt.status = .failed;
-                                    stmt.error_response = .{ .postgres_error = err };
-                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                            },
+                            .prepared => {
+                                const thisValue = req.thisValue.tryGet() orelse {
+                                    bun.assertf(false, "query value was freed earlier than expected", .{});
                                     if (offset == 0) {
                                         req.deref();
                                         this.requests.discard(1);
                                     } else {
                                         // deinit later
                                         req.status = .fail;
+                                        offset += 1;
                                     }
-                                    debug("prepareAndQueryWithSignature failed: {s}", .{@errorName(err)});
-
                                     continue;
                                 };
-                                this.flags.waiting_to_prepare = true;
+                                const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
+                                const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
+                                req.flags.binary = statement.fields.len > 0;
+                                debug("binding and executing stmt", .{});
+                                PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                    if (this.globalObject.tryTakeException()) |err_| {
+                                        req.onJSError(err_, this.globalObject);
+                                    } else {
+                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    }
+                                    if (offset == 0) {
+                                        req.deref();
+                                        this.requests.discard(1);
+                                    } else {
+                                        // deinit later
+                                        req.status = .fail;
+                                        offset += 1;
+                                    }
+                                    debug("bind and execute failed: {s}", .{@errorName(err)});
+                                    continue;
+                                };
+
                                 this.flags.is_ready_for_query = false;
                                 req.status = .binding;
-                                stmt.status = .parsing;
+                                req.flags.pipelined = true;
+                                this.pipelined_requests += 1;
 
+                                if (this.flags.use_unnamed_prepared_statements or !this.canPipeline()) {
+                                    debug("cannot pipeline more stmt", .{});
+                                    return;
+                                }
+
+                                offset += 1;
+                                continue;
+                            },
+                            .pending => {
+                                if (!this.canPrepareQuery()) {
+                                    debug("need to wait to finish the pipeline before starting a new query preparation", .{});
+                                    // need to wait to finish the pipeline before starting a new query preparation
+                                    return;
+                                }
+                                // statement is pending, lets write/parse it
+                                var query_str = req.query.toUTF8(bun.default_allocator);
+                                defer query_str.deinit();
+                                const has_params = statement.signature.fields.len > 0;
+                                // If it does not have params, we can write and execute immediately in one go
+                                if (!has_params) {
+                                    const thisValue = req.thisValue.tryGet() orelse {
+                                        bun.assertf(false, "query value was freed earlier than expected", .{});
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                            offset += 1;
+                                        }
+                                        continue;
+                                    };
+                                    // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
+                                    const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
+                                    debug("prepareAndQueryWithSignature", .{});
+                                    PostgresRequest.prepareAndQueryWithSignature(this.globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, this.writer(), &statement.signature) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            statement.status = .failed;
+                                            statement.error_response = .{ .postgres_error = err };
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                        }
+                                        debug("prepareAndQueryWithSignature failed: {s}", .{@errorName(err)});
+
+                                        continue;
+                                    };
+                                    this.flags.is_ready_for_query = false;
+                                    this.flags.waiting_to_prepare = true;
+                                    req.status = .binding;
+                                    statement.status = .parsing;
+                                    this.flushDataAndResetTimeout();
+                                    return;
+                                }
+
+                                const connection_writer = this.writer();
+                                debug("writing query", .{});
+                                // write query and wait for it to be prepared
+                                PostgresRequest.writeQuery(query_str.slice(), statement.signature.prepared_statement_name, statement.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
+                                    if (this.globalObject.tryTakeException()) |err_| {
+                                        req.onJSError(err_, this.globalObject);
+                                    } else {
+                                        statement.error_response = .{ .postgres_error = err };
+                                        statement.status = .failed;
+                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    }
+                                    bun.assert(offset == 0);
+                                    req.deref();
+                                    this.requests.discard(1);
+                                    debug("write query failed: {s}", .{@errorName(err)});
+                                    continue;
+                                };
+                                connection_writer.write(&protocol.Sync) catch |err| {
+                                    if (this.globalObject.tryTakeException()) |err_| {
+                                        req.onJSError(err_, this.globalObject);
+                                    } else {
+                                        statement.error_response = .{ .postgres_error = err };
+                                        statement.status = .failed;
+                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    }
+                                    bun.assert(offset == 0);
+                                    req.deref();
+                                    this.requests.discard(1);
+                                    debug("write query (sync) failed: {s}", .{@errorName(err)});
+                                    continue;
+                                };
+                                this.flags.is_ready_for_query = false;
+                                this.flags.waiting_to_prepare = true;
+                                statement.status = .parsing;
+                                this.flushDataAndResetTimeout();
                                 return;
-                            }
-
-                            const connection_writer = this.writer();
-                            debug("writing query", .{});
-                            // write query and wait for it to be prepared
-                            PostgresRequest.writeQuery(query_str.slice(), stmt.signature.prepared_statement_name, stmt.signature.fields, PostgresSQLConnection.Writer, connection_writer) catch |err| {
-                                stmt.error_response = .{ .postgres_error = err };
-                                stmt.status = .failed;
-
-                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                bun.assert(offset == 0);
-                                req.deref();
-                                this.requests.discard(1);
-                                debug("write query failed: {s}", .{@errorName(err)});
+                            },
+                            .parsing => {
+                                // we are still parsing, lets wait for it to be prepared or failed
+                                offset += 1;
                                 continue;
-                            };
-                            connection_writer.write(&protocol.Sync) catch |err| {
-                                stmt.error_response = .{ .postgres_error = err };
-                                stmt.status = .failed;
-
-                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                bun.assert(offset == 0);
-                                req.deref();
-                                this.requests.discard(1);
-                                debug("write query (sync) failed: {s}", .{@errorName(err)});
-                                continue;
-                            };
-                            this.flags.is_ready_for_query = false;
-                            stmt.status = .parsing;
-                            this.flags.waiting_to_prepare = true;
-                            return;
-                        },
-                        .parsing => {
-                            // we are still parsing, lets wait for it to be prepared or failed
-                            return;
-                        },
+                            },
+                        }
+                    } else {
+                        offset += 1;
+                        continue;
                     }
                 }
             },
 
             .running, .binding, .partial_response => {
-                // if we are binding it will switch to running immediately
-                // if we are running, we need to wait for it to be success or fail
-                return;
+                if (this.flags.waiting_to_prepare or this.nonpipelinable_requests > 0) {
+                    return;
+                }
+                const total_requests_running = this.pipelined_requests;
+                if (offset < total_requests_running) {
+                    offset += total_requests_running;
+                } else {
+                    offset += 1;
+                }
+                continue;
             },
             .success => {
-                if (req.flags.simple) {
-                    this.nonpipelinable_requests -= 1;
-                } else if (req.flags.pipelined) {
-                    this.pipelined_requests -= 1;
-                } else if (this.flags.waiting_to_prepare) {
-                    this.flags.waiting_to_prepare = false;
-                }
                 if (offset > 0) {
                     // deinit later
                     req.status = .fail;
@@ -1231,7 +1355,10 @@ fn advance(this: *PostgresSQLConnection) void {
 }
 
 pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .zero;
+    if (this.js_value.isEmptyOrUndefinedOrNull()) {
+        return .js_undefined;
+    }
+    return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 
 pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {
@@ -1240,6 +1367,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
     switch (comptime MessageType) {
         .DataRow => {
             const request = this.current() orelse return error.ExpectedRequest;
+
             var statement = request.statement orelse return error.ExpectedStatement;
             var structure: JSValue = .js_undefined;
             var cached_structure: ?PostgresCachedStructure = null;
@@ -1262,8 +1390,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 .globalObject = this.globalObject,
             };
 
-            var stack_buf: [70]DataCell = undefined;
-            var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSObject.maxInlineCapacity())];
+            var stack_buf: [70]DataCell.SQLDataCell = undefined;
+            var cells: []DataCell.SQLDataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
             var free_cells = false;
             defer {
                 for (cells[0..putter.count]) |*cell| {
@@ -1272,12 +1400,12 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 if (free_cells) bun.default_allocator.free(cells);
             }
 
-            if (statement.fields.len >= JSC.JSObject.maxInlineCapacity()) {
-                cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
+            if (statement.fields.len >= jsc.JSObject.maxInlineCapacity()) {
+                cells = try bun.default_allocator.alloc(DataCell.SQLDataCell, statement.fields.len);
                 free_cells = true;
             }
             // make sure all cells are reset if reader short breaks the fields will just be null with is better than undefined behavior
-            @memset(cells, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+            @memset(cells, DataCell.SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
             putter.list = cells;
 
             if (request.flags.result_mode == .raw) {
@@ -1295,11 +1423,20 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     DataCell.Putter.put,
                 );
             }
-            const thisValue = request.thisValue.get();
-            bun.assert(thisValue != .zero);
+            const thisValue = request.thisValue.tryGet() orelse return {
+                bun.assertf(false, "query value was freed earlier than expected", .{});
+                return error.ExpectedRequest;
+            };
             const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
             pending_value.ensureStillAlive();
-            const result = putter.toJS(this.globalObject, pending_value, structure, statement.fields_flags, request.flags.result_mode, cached_structure);
+            const result = try putter.toJS(
+                this.globalObject,
+                pending_value,
+                structure,
+                statement.fields_flags,
+                request.flags.result_mode,
+                cached_structure,
+            );
 
             if (pending_value == .zero) {
                 PostgresSQLQuery.js.pendingValueSetCached(thisValue, this.globalObject, result);
@@ -1323,12 +1460,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try ready_for_query.decodeInternal(Context, reader);
 
             this.setStatus(.connected);
+            this.flags.waiting_to_prepare = false;
             this.flags.is_ready_for_query = true;
             this.socket.setTimeout(300);
             defer this.updateRef();
 
             if (this.current()) |request| {
                 if (request.status == .partial_response) {
+                    this.finishRequest(request);
                     // if is a partial response, just signal that the query is now complete
                     request.onResult("", this.globalObject, this.js_value, true);
                 }
@@ -1348,12 +1487,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             debug("-> {s}", .{cmd.command_tag.slice()});
             defer this.updateRef();
 
-            if (request.flags.simple) {
-                // simple queries can have multiple commands
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-            } else {
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, true);
-            }
+            request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
         },
         .BindComplete => {
             try reader.eatMessage(protocol.BindComplete);
@@ -1596,7 +1730,6 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 defer {
                     err.deinit();
                 }
-
                 this.failWithJSValue(err.toJS(this.globalObject));
 
                 // it shouldn't enqueue any requests while connecting
@@ -1624,8 +1757,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     }
                 }
             }
-            this.updateRef();
 
+            this.finishRequest(request);
+            this.updateRef();
             request.onError(.{ .protocol = err }, this.globalObject);
         },
         .PortalSuspended => {
@@ -1638,11 +1772,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try reader.eatMessage(protocol.CloseComplete);
             var request = this.current() orelse return error.ExpectedRequest;
             defer this.updateRef();
-            if (request.flags.simple) {
-                request.onResult("CLOSECOMPLETE", this.globalObject, this.js_value, false);
-            } else {
-                request.onResult("CLOSECOMPLETE", this.globalObject, this.js_value, true);
-            }
+            request.onResult("CLOSECOMPLETE", this.globalObject, this.js_value, false);
         },
         .CopyInResponse => {
             debug("TODO CopyInResponse", .{});
@@ -1658,11 +1788,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try reader.eatMessage(protocol.EmptyQueryResponse);
             var request = this.current() orelse return error.ExpectedRequest;
             defer this.updateRef();
-            if (request.flags.simple) {
-                request.onResult("", this.globalObject, this.js_value, false);
-            } else {
-                request.onResult("", this.globalObject, this.js_value, true);
-            }
+            request.onResult("", this.globalObject, this.js_value, false);
         },
         .CopyOutResponse => {
             debug("TODO CopyOutResponse", .{});
@@ -1680,17 +1806,17 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 pub fn updateRef(this: *PostgresSQLConnection) void {
     this.updateHasPendingActivity();
     if (this.pending_activity_count.raw > 0) {
-        this.poll_ref.ref(this.globalObject.bunVM());
+        this.poll_ref.ref(this.vm);
     } else {
-        this.poll_ref.unref(this.globalObject.bunVM());
+        this.poll_ref.unref(this.vm);
     }
 }
 
-pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) JSValue {
+pub fn getConnected(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.status == Status.connected);
 }
 
-pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
     const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
     debug("consumeOnConnectCallback exists", .{});
@@ -1699,7 +1825,7 @@ pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject
     return on_connect;
 }
 
-pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnCloseCallback", .{});
     const on_close = js.oncloseGetCached(this.js_value) orelse return null;
     debug("consumeOnCloseCallback exists", .{});
@@ -1709,43 +1835,41 @@ pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: 
 
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, bun.IdentityContext(u64), 80);
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
-// @sortImports
+pub const js = jsc.Codegen.JSPostgresSQLConnection;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const DataCell = @import("./DataCell.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
-const PostgresSQLConnection = @This();
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const SocketMonitor = @import("./SocketMonitor.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
-const ConnectionFlags = @import("./ConnectionFlags.zig").ConnectionFlags;
-const Data = @import("./Data.zig").Data;
-const DataCell = @import("./DataCell.zig").DataCell;
+const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
+const Data = @import("../shared/Data.zig").Data;
 const SSLMode = @import("./SSLMode.zig").SSLMode;
 const Status = @import("./Status.zig").Status;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
+const createPostgresError = @import("./AnyPostgresError.zig").createPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;
 const assert = bun.assert;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const AutoFlusher = JSC.WebCore.AutoFlusher;
-
-pub const js = JSC.Codegen.JSPostgresSQLConnection;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
-pub const toJS = js.toJS;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;

@@ -1,4 +1,4 @@
-Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
+Bun's fast native bundler can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
 {% codetabs group="a" %}
 
@@ -313,6 +313,14 @@ $ bun build --entrypoints ./index.ts --outdir ./out --target browser
 
 Depending on the target, Bun will apply different module resolution rules and optimizations.
 
+### Module resolution
+
+Bun supports the `NODE_PATH` environment variable for additional module resolution paths:
+
+```bash
+NODE_PATH=./src bun build ./entry.js --outdir ./dist
+```
+
 <!-- - Module resolution. For example, when bundling for the browser, Bun will prioritize the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`. -->
 
 {% table %}
@@ -391,6 +399,55 @@ $ bun build ./index.tsx --outdir ./out --format cjs
 #### `format: "iife"` - IIFE
 
 TODO: document IIFE once we support globalNames.
+
+### `jsx`
+
+Configure JSX transform behavior. Allows fine-grained control over how JSX is compiled.
+
+**Classic runtime example** (uses `factory` and `fragment`):
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./app.tsx'],
+  outdir: './out',
+  jsx: {
+    factory: 'h',
+    fragment: 'Fragment',
+    runtime: 'classic',
+  },
+})
+```
+
+```bash#CLI
+# JSX configuration is handled via bunfig.toml or tsconfig.json
+$ bun build ./app.tsx --outdir ./out
+```
+
+{% /codetabs %}
+
+**Automatic runtime example** (uses `importSource`):
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./app.tsx'],
+  outdir: './out',
+  jsx: {
+    importSource: 'preact',
+    runtime: 'automatic',
+  },
+})
+```
+
+```bash#CLI
+# JSX configuration is handled via bunfig.toml or tsconfig.json
+$ bun build ./app.tsx --outdir ./out
+```
+
+{% /codetabs %}
 
 ### `splitting`
 
@@ -733,6 +790,10 @@ Whether to enable minification. Default `false`.
 When targeting `bun`, identifiers will be minified by default.
 {% /callout %}
 
+{% callout %}
+When `minify.syntax` is enabled, unused function and class expression names are removed unless `minify.keepNames` is set to `true` or `--keep-names` flag is used.
+{% /callout %}
+
 To enable all minification options:
 
 {% codetabs group="a" %}
@@ -763,12 +824,16 @@ await Bun.build({
     whitespace: true,
     identifiers: true,
     syntax: true,
+    keepNames: false, // default
   },
 })
 ```
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+
+# To preserve function and class names during minification:
+$ bun build ./index.tsx --outdir ./out --minify --keep-names
 ```
 
 {% /codetabs %}
@@ -1259,6 +1324,33 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
+### `throw`
+
+Controls error handling behavior when the build fails. When set to `true` (default), the returned promise rejects with an `AggregateError`. When set to `false`, the promise resolves with a `BuildOutput` object where `success` is `false`.
+
+```ts#JavaScript
+// Default behavior: throws on error
+try {
+  await Bun.build({
+    entrypoints: ['./index.tsx'],
+    throw: true, // default
+  });
+} catch (error) {
+  // Handle AggregateError
+  console.error("Build failed:", error);
+}
+
+// Alternative: handle errors via success property
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  throw: false,
+});
+
+if (!result.success) {
+  console.error("Build failed with errors:", result.logs);
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1484,6 +1576,15 @@ interface BuildConfig {
    * @default "esm"
    */
   format?: "esm" | "cjs" | "iife";
+  /**
+   * JSX configuration object for controlling JSX transform behavior
+   */
+  jsx?: {
+    factory?: string;
+    fragment?: string;
+    importSource?: string;
+    runtime?: "automatic" | "classic";
+  };
   naming?:
     | string
     | {
@@ -1499,7 +1600,7 @@ interface BuildConfig {
   publicPath?: string;
   define?: Record<string, string>;
   loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "inline"
   /**
    * package.json `exports` conditions used when resolving imports
    *
@@ -1526,6 +1627,7 @@ interface BuildConfig {
         whitespace?: boolean;
         syntax?: boolean;
         identifiers?: boolean;
+        keepNames?: boolean;
       };
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
@@ -1569,8 +1671,7 @@ interface BuildConfig {
    * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
    * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
    *
-   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-   * as most usage of `Bun.build` forgets to check for errors.
+   * This defaults to `true`.
    */
   throw?: boolean;
 }

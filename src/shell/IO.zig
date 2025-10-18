@@ -138,7 +138,19 @@ pub const OutKind = union(enum) {
         return switch (this) {
             .fd => |val| brk: {
                 shellio.* = val.writer.refSelf();
-                break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                break :brk if (val.captured) |cap| .{
+                    .capture = .{
+                        .buf = cap,
+                    },
+                } else if (val.writer.fd.get()) |fd| .{
+                    // We have a valid fd that hasn't been moved to libuv
+                    .fd = fd,
+                } else .{
+                    // On Windows, the fd might have been moved to libuv
+                    // In this case, the subprocess should inherit the stdio
+                    // since libuv is already managing it
+                    .inherit = {},
+                };
             },
             .pipe => .pipe,
             .ignore => .ignore,
@@ -152,11 +164,12 @@ pub fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio, shellio: *
     stdio[stderr_no] = this.stderr.to_subproc_stdio(&shellio.stderr);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
 
 const shell = bun.shell;
 const Interpreter = bun.shell.Interpreter;
+
 const OutputNeedsIOSafeGuard = bun.shell.interpret.OutputNeedsIOSafeGuard;
-const stdout_no = bun.shell.interpret.stdout_no;
 const stderr_no = bun.shell.interpret.stderr_no;
+const stdout_no = bun.shell.interpret.stdout_no;

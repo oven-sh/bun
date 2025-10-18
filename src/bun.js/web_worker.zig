@@ -1,13 +1,8 @@
 //! Shared implementation of Web and Node `Worker`
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Output = bun.Output;
-const log = Output.scoped(.Worker, true);
-const std = @import("std");
-const JSValue = jsc.JSValue;
-const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
 const WebWorker = @This();
+
+const log = Output.scoped(.Worker, .hidden);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -161,9 +156,23 @@ fn resolveEntryPointSpecifier(
     }
 
     var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-        const out = (logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point") catch bun.outOfMemory()).toBunString(parent.global) catch {
-            error_message.* = bun.String.static("unexpected exception");
-            return null;
+        const out = blk: {
+            const out = logger.toJS(
+                parent.global,
+                bun.default_allocator,
+                "Error resolving Worker entry point",
+            ) catch |err| break :blk err;
+            break :blk out.toBunString(parent.global);
+        } catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.JSError => {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            },
+            error.JSTerminated => {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            },
         };
         error_message.* = out;
         return null;
@@ -207,12 +216,12 @@ pub fn create(
 
     const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-    var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
+    var preloads = bun.handleOom(std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
     for (preload_modules) |module| {
         const utf8_slice = module.toUTF8(bun.default_allocator);
         defer utf8_slice.deinit();
         if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
-            preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
+            bun.handleOom(preloads.append(bun.handleOom(bun.default_allocator.dupe(u8, preload))));
         }
 
         if (!error_message.isEmpty()) {
@@ -224,7 +233,7 @@ pub fn create(
         }
     }
 
-    var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
+    var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
     worker.* = WebWorker{
         .cpp_worker = cpp_worker,
         .parent = parent,
@@ -232,11 +241,11 @@ pub fn create(
         .execution_context_id = this_context_id,
         .mini = mini,
         .eval_mode = eval_mode,
-        .unresolved_specifier = (spec_slice.toOwned(bun.default_allocator) catch bun.outOfMemory()).slice(),
+        .unresolved_specifier = bun.handleOom(spec_slice.toOwned(bun.default_allocator)).slice(),
         .store_fd = parent.transpiler.resolver.store_fd,
         .name = brk: {
             if (!name_str.isEmpty()) {
-                break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
+                break :brk bun.handleOom(std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}));
             }
             break :brk "";
         },
@@ -255,7 +264,7 @@ pub fn create(
 pub fn startWithErrorHandling(
     this: *WebWorker,
 ) void {
-    bun.Analytics.Features.workers_spawned += 1;
+    bun.analytics.Features.workers_spawned += 1;
     start(this) catch |err| {
         Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
     };
@@ -296,7 +305,7 @@ pub fn start(
         var diag: bun.clap.Diagnostic = .{};
         var iter: bun.clap.args.SliceIterator = .init(new_args.items);
 
-        var args = bun.clap.parseEx(bun.clap.Help, bun.CLI.Command.Tag.RunCommand.params(), &iter, .{
+        var args = bun.clap.parseEx(bun.clap.Help, bun.cli.Command.Tag.RunCommand.params(), &iter, .{
             .diagnostic = &diag,
             .allocator = bun.default_allocator,
 
@@ -315,7 +324,7 @@ pub fn start(
         // this should go through most flags and update the options.
     }
 
-    this.arena = try bun.MimallocArena.init();
+    this.arena = bun.MimallocArena.init();
     var vm = try jsc.VirtualMachine.initWorker(this, .{
         .allocator = this.arena.?.allocator(),
         .args = transform_options,
@@ -371,8 +380,17 @@ fn flushLogs(this: *WebWorker) void {
     jsc.markBinding(@src());
     var vm = this.vm orelse return;
     if (vm.log.msgs.items.len == 0) return;
-    const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch bun.outOfMemory();
-    const str = err.toBunString(vm.global) catch @panic("unexpected exception");
+    const err, const str = blk: {
+        const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch |e|
+            break :blk e;
+        const str = err.toBunString(vm.global) catch |e| break :blk e;
+        break :blk .{ err, str };
+    } catch |err| switch (err) {
+        // TODO: properly handle exception
+        error.JSError => @panic("unhandled exception"),
+        error.OutOfMemory => bun.outOfMemory(),
+        error.JSTerminated => @panic("unhandled exception"),
+    };
     defer str.deref();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
@@ -414,6 +432,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         switch (err) {
             error.JSError => {},
             error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
         error_instance = globalObject.tryTakeException().?;
     };
@@ -450,7 +469,7 @@ fn spin(this: *WebWorker) void {
         if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
             const err = resolve_error.toUTF8(bun.default_allocator);
             defer err.deinit();
-            vm.log.addError(null, .Empty, err.slice()) catch bun.outOfMemory();
+            bun.handleOom(vm.log.addError(null, .Empty, err.slice()));
         }
         this.flushLogs();
         this.exitAndDeinit();
@@ -573,7 +592,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
-    bun.Analytics.Features.workers_terminated += 1;
+    bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;
@@ -597,10 +616,10 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
-    bun.uws.onThreadExit();
     this.deinit();
 
     if (vm_to_deinit) |vm| {
+        vm.gc_controller.deinit();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
@@ -618,4 +637,13 @@ comptime {
     _ = WebWorker__updatePtr;
 }
 
+const std = @import("std");
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
 const assert = bun.assert;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

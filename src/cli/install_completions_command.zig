@@ -1,19 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-
-const fs = @import("../fs.zig");
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const ShellCompletions = @import("./shell_completions.zig");
-
 pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
 
@@ -544,3 +528,18 @@ pub const InstallCompletionsCommand = struct {
         Output.flush();
     }
 };
+
+const string = []const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const ShellCompletions = @import("./shell_completions.zig");
+const fs = @import("../fs.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const strings = bun.strings;

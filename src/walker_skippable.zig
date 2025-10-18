@@ -1,14 +1,4 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Walker = @This();
-const bun = @import("bun");
-const path = std.fs.path;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const OSPathSlice = bun.OSPathSlice;
-const OSPathSliceZ = bun.OSPathSliceZ;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
 stack: std.ArrayList(StackItem),
 name_buffer: NameBufferList,
@@ -81,12 +71,12 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
 
                     self.name_buffer.shrinkRetainingCapacity(dirname_len);
                     if (self.name_buffer.items.len != 0) {
-                        self.name_buffer.append(path.sep) catch bun.outOfMemory();
+                        bun.handleOom(self.name_buffer.append(path.sep));
                         dirname_len += 1;
                     }
-                    self.name_buffer.appendSlice(base.name.slice()) catch bun.outOfMemory();
+                    bun.handleOom(self.name_buffer.appendSlice(base.name.slice()));
                     const cur_len = self.name_buffer.items.len;
-                    self.name_buffer.append(0) catch bun.outOfMemory();
+                    bun.handleOom(self.name_buffer.append(0));
 
                     if (base.kind == .directory) {
                         const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
@@ -97,7 +87,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                             self.stack.append(StackItem{
                                 .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
                                 .dirname_len = cur_len,
-                            }) catch bun.outOfMemory();
+                            }) catch |err| bun.handleOom(err);
                             top = &self.stack.items[self.stack.items.len - 1];
                         }
                     }
@@ -119,7 +109,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
     return .initResult(null);
 }
 
-pub fn deinit(self: *Walker) void {
+pub fn deinit(self: *const Walker) void {
     if (self.stack.items.len > 0) {
         for (self.stack.items[1..]) |*item| {
             if (self.stack.items.len != 0) {
@@ -179,3 +169,15 @@ pub fn walk(
         .skip_dirnames = skip_dirnames_,
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const path = std.fs.path;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const OSPathSlice = bun.OSPathSlice;
+const OSPathSliceZ = bun.OSPathSliceZ;

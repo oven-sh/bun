@@ -6,6 +6,9 @@ if (!body) {
 
 const latest = (await Bun.file(join(import.meta.dir, "..", "LATEST")).text()).trim();
 
+// Check if this is a standalone executable
+const isStandalone = body.includes("standalone_executable");
+
 const lines = body.split("\n").reverse();
 
 for (let line of lines) {
@@ -38,6 +41,11 @@ for (let line of lines) {
 
       await Bun.write("is-outdated.txt", "true");
       await Bun.write("outdated.txt", version);
+
+      // Write flag for standalone executables
+      if (isStandalone) {
+        await Bun.write("is-standalone.txt", "true");
+      }
 
       const isVeryOutdated =
         major !== latestMajor || minor !== latestMinor || (latestPatch > patch && latestPatch - patch > 3);

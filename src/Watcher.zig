@@ -1,6 +1,8 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
+
 const Watcher = @This();
-const DebugLogScope = bun.Output.Scoped(.watcher, false);
+
+const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
 
 // This will always be [max_count]WatchEvent,
@@ -30,7 +32,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {
@@ -93,7 +95,16 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
 
     try Platform.init(&watcher.platform, fs.top_level_dir);
 
+    // Initialize trace file if BUN_WATCHER_TRACE env var is set
+    WatcherTrace.init();
+
     return watcher;
+}
+
+/// Write trace events to the trace file if enabled.
+/// This runs on the watcher thread, so no locking is needed.
+pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?[:0]u8) void {
+    WatcherTrace.writeEvents(this, events, changed_files);
 }
 
 pub fn start(this: *Watcher) !void {
@@ -126,7 +137,6 @@ pub fn getHash(filepath: string) HashType {
 
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
-const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
@@ -243,6 +253,9 @@ fn threadMain(this: *Watcher) !void {
     }
     this.watchlist.deinit(this.allocator);
 
+    // Close trace file if open
+    WatcherTrace.deinit();
+
     const allocator = this.allocator;
     allocator.destroy(this);
 }
@@ -288,7 +301,7 @@ pub fn flushEvictions(this: *Watcher) void {
     }
 }
 
-fn watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
+fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     while (this.running) {
         // individual platform implementation will call onFileUpdate
         switch (Platform.watchLoopCycle(this)) {
@@ -296,7 +309,49 @@ fn watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
             .result => |iter| iter,
         }
     }
-    return .{ .result = {} };
+    return .success;
+}
+
+/// Register a file descriptor with kqueue on macOS without validation.
+///
+/// Preconditions (caller must ensure):
+/// - `fd` is a valid, open file descriptor
+/// - `fd` is not already registered with this kqueue
+/// - `watchlist_id` matches the entry's index in the watchlist
+///
+/// Note: This function does not propagate kevent registration errors.
+/// If registration fails, the file will not be watched but no error is returned.
+pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
+    const KEvent = std.c.Kevent;
+
+    // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
+    var event = std.mem.zeroes(KEvent);
+
+    event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
+    // we want to know about the vnode
+    event.filter = std.c.EVFILT.VNODE;
+
+    event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
+
+    // id
+    event.ident = @intCast(fd.native());
+
+    // Store the index for fast filtering later
+    event.udata = @as(usize, @intCast(watchlist_id));
+    var events: [1]KEvent = .{event};
+
+    // This took a lot of work to figure out the right permutation
+    // Basically:
+    // - We register the event here.
+    // our while(true) loop above receives notification of changes to any of the events created here.
+    _ = std.posix.system.kevent(
+        this.platform.fd.unwrap().?.native(),
+        @as([]KEvent, events[0..1]).ptr,
+        1,
+        @as([]KEvent, events[0..1]).ptr,
+        0,
+        null,
+    );
 }
 
 fn appendFileAssumeCapacity(
@@ -308,20 +363,20 @@ fn appendFileAssumeCapacity(
     parent_hash: HashType,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
         if (rel == .unrelated) {
             Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
-            return .{ .result = {} };
+            return .success;
         }
     }
 
     const watchlist_id = this.watchlist.len;
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -337,36 +392,7 @@ fn appendFileAssumeCapacity(
     };
 
     if (comptime Environment.isMac) {
-        const KEvent = std.c.Kevent;
-
-        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-        var event = std.mem.zeroes(KEvent);
-
-        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
-        // we want to know about the vnode
-        event.filter = std.c.EVFILT.VNODE;
-
-        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
-
-        // id
-        event.ident = @intCast(fd.native());
-
-        // Store the hash for fast filtering later
-        event.udata = @as(usize, @intCast(watchlist_id));
-        var events: [1]KEvent = .{event};
-
-        // This took a lot of work to figure out the right permutation
-        // Basically:
-        // - We register the event here.
-        // our while(true) loop above receives notification of changes to any of the events created here.
-        _ = std.posix.system.kevent(
-            this.platform.fd.unwrap().?.native(),
-            @as([]KEvent, events[0..1]).ptr,
-            1,
-            @as([]KEvent, events[0..1]).ptr,
-            0,
-            null,
-        );
+        this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (comptime Environment.isLinux) {
         // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
         // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
@@ -381,7 +407,7 @@ fn appendFileAssumeCapacity(
     }
 
     this.watchlist.appendAssumeCapacity(item);
-    return .{ .result = {} };
+    return .success;
 }
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
@@ -389,7 +415,7 @@ fn appendDirectoryAssumeCapacity(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.sys.Maybe(WatchItemIndex) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
@@ -408,7 +434,7 @@ fn appendDirectoryAssumeCapacity(
     };
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -500,7 +526,7 @@ pub fn appendFileMaybeLock(
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     if (comptime lock) this.mutex.lock();
     defer if (comptime lock) this.mutex.unlock();
     bun.assert(file_path.len > 1);
@@ -528,7 +554,7 @@ pub fn appendFileMaybeLock(
             }
         }
     }
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))));
 
     if (autowatch_parent_dir) {
         parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, clone_file_path)) {
@@ -560,7 +586,7 @@ pub fn appendFileMaybeLock(
         });
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
@@ -576,7 +602,7 @@ pub fn appendFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, true);
 }
 
@@ -586,7 +612,7 @@ pub fn addDirectory(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.sys.Maybe(WatchItemIndex) {
     this.mutex.lock();
     defer this.mutex.unlock();
 
@@ -594,9 +620,81 @@ pub fn addDirectory(
         return .{ .result = @truncate(idx) };
     }
 
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1));
 
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
+}
+
+/// Lazily watch a file by path (slow path).
+///
+/// This function is used when a file needs to be watched but was not
+/// encountered during the normal import graph traversal. On macOS, it
+/// opens a file descriptor with O_EVTONLY to obtain an inode reference.
+///
+/// Thread-safe: uses internal locking to prevent race conditions.
+///
+/// Returns:
+/// - true if the file is successfully added to the watchlist or already watched
+/// - false if the file cannot be opened or added to the watchlist
+pub fn addFileByPathSlow(
+    this: *Watcher,
+    file_path: string,
+    loader: options.Loader,
+) bool {
+    if (file_path.len == 0) return false;
+    const hash = getHash(file_path);
+
+    // Check if already watched (with lock to avoid race with removal)
+    {
+        this.mutex.lock();
+        const already_watched = this.indexOf(hash) != null;
+        this.mutex.unlock();
+
+        if (already_watched) {
+            return true;
+        }
+    }
+
+    // Only open fd if we might need it
+    var fd: bun.FileDescriptor = bun.invalid_fd;
+    if (Environment.isMac) {
+        const path_z = std.posix.toPosixPath(file_path) catch return false;
+        switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
+            .result => |opened| fd = opened,
+            .err => return false,
+        }
+    }
+
+    const res = this.addFile(fd, file_path, hash, loader, bun.invalid_fd, null, true);
+    switch (res) {
+        .result => {
+            // On macOS, addFile may have found the file already watched (race)
+            // and returned success without using our fd. Close it if unused.
+            if ((comptime Environment.isMac) and fd.isValid()) {
+                this.mutex.lock();
+                const maybe_idx = this.indexOf(hash);
+                const stored_fd = if (maybe_idx) |idx|
+                    this.watchlist.items(.fd)[idx]
+                else
+                    bun.invalid_fd;
+                this.mutex.unlock();
+
+                // Only close if entry exists and stored fd differs from ours.
+                // Race scenarios:
+                // 1. Entry removed (maybe_idx == null): our fd was stored then closed by flushEvictions → don't close
+                // 2. Entry exists with different fd: another thread added entry, addFile didn't use our fd → close ours
+                // 3. Entry exists with same fd: our fd was stored → don't close
+                if (maybe_idx != null and stored_fd.native() != fd.native()) {
+                    fd.close();
+                }
+            }
+            return true;
+        },
+        .err => {
+            if (fd.isValid()) fd.close();
+            return false;
+        },
+    }
 }
 
 pub fn addFile(
@@ -608,7 +706,7 @@ pub fn addFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     // This must lock due to concurrent transpiler
     this.mutex.lock();
     defer this.mutex.unlock();
@@ -621,7 +719,7 @@ pub fn addFile(
                 fds[index] = fd;
             }
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     return this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, false);
@@ -673,13 +771,17 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const FeatureFlags = bun.FeatureFlags;
+const string = []const u8;
+
+const WatcherTrace = @import("./watcher/WatcherTrace.zig");
+const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
-const Mutex = bun.Mutex;
+const std = @import("std");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const strings = bun.strings;

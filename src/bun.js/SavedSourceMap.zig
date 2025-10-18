@@ -79,8 +79,6 @@ pub const SavedMappings = struct {
     }
 };
 
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -90,6 +88,7 @@ pub const Value = bun.TaggedPointerUnion(.{
     SavedMappings,
     SourceProviderMap,
     BakeSourceProvider,
+    DevServerSourceProvider,
 });
 
 pub const MissingSourceMapNoteInfo = struct {
@@ -107,12 +106,37 @@ pub const MissingSourceMapNoteInfo = struct {
 };
 
 pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
-    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(opaque_source_provider)));
+}
+
+pub fn putDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *DevServerSourceProvider, path: []const u8) void {
+    this.putValue(path, Value.init(opaque_source_provider)) catch |err| bun.handleOom(err);
+}
+
+pub fn removeDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+    this.lock();
+    defer this.unlock();
+
+    const entry = this.map.getEntry(bun.hash(path)) orelse return;
+    const old_value = Value.from(entry.value_ptr.*);
+    if (old_value.get(DevServerSourceProvider)) |prov| {
+        if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+            // there is nothing to unref or deinit
+            this.map.removeByPtr(entry.key_ptr);
+        }
+    } else if (old_value.get(ParsedSourceMap)) |map| {
+        if (map.underlying_provider.provider()) |prov| {
+            if (@intFromPtr(prov.ptr()) == @intFromPtr(opaque_source_provider)) {
+                this.map.removeByPtr(entry.key_ptr);
+                map.deref();
+            }
+        }
+    }
 }
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
-    this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(source_provider)));
 }
 
 pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -168,7 +192,7 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
+    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -237,7 +261,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
 
                     return parse;
                 }
@@ -264,7 +288,34 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
+
+                    return parse;
+                }
+            }
+
+            this.lock();
+            defer this.unlock();
+            // does not have a valid source map. let's not try again
+            _ = this.map.remove(hash);
+
+            // Store path for a user note.
+            const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+            @memcpy(storage, path);
+            MissingSourceMapNoteInfo.path = storage;
+            return .{};
+        },
+        @field(Value.Tag, @typeName(DevServerSourceProvider)) => {
+            // TODO: This is a copy-paste of above branch
+            const ptr: *DevServerSourceProvider = Value.from(mapping.value_ptr.*).as(DevServerSourceProvider);
+            this.unlock();
+
+            // Do not lock the mutex while we're parsing JSON!
+            if (ptr.getSourceMap(path, .none, hint)) |parse| {
+                if (parse.map) |map| {
+                    map.ref();
+                    // The mutex is not locked. We have to check the hash table again.
+                    this.putValue(path, Value.init(map)) catch |err| bun.handleOom(err);
 
                     return parse;
                 }
@@ -300,13 +351,13 @@ pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
 pub fn resolveMapping(
     this: *SavedSourceMap,
     path: []const u8,
-    line: i32,
-    column: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
     const parse = this.getWithContent(path, switch (source_handling) {
         .no_source_contents => .mappings_only,
-        .source_contents => .{ .all = .{ .line = line, .column = column } },
+        .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
     });
     const map = parse.map orelse return null;
 
@@ -321,16 +372,20 @@ pub fn resolveMapping(
     };
 }
 
-const bun = @import("bun");
-const SourceMap = bun.sourcemap;
-const SourceProviderMap = SourceMap.SourceProviderMap;
-const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const string = []const u8;
-const logger = bun.logger;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
-const js_printer = bun.js_printer;
-const Output = bun.Output;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+
+const SourceMap = bun.sourcemap;
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const SourceProviderMap = SourceMap.SourceProviderMap;

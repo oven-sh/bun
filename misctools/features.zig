@@ -2,16 +2,15 @@ const std = @import("std");
 
 const path_handler = @import("../src/resolver/resolve_path.zig");
 const bun = @import("bun");
-const string = bun.string;
+const string = []const u8;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
+const stringZ = [:0]const u8;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const Features = @import("../src/analytics/analytics_thread.zig").Features;
+const Features = bun.analytics.Features;
 
 // zig run --main-pkg-path ../ ./features.zig
 pub fn main() anyerror!void {

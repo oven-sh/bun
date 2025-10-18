@@ -195,6 +195,28 @@ describe("bunshell", () => {
     test("cmd subst", async () => {
       await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run();
     });
+
+    test.each([
+      { value: undefined, expectedQuiet: true, description: "quiet()" },
+      { value: true, expectedQuiet: true, description: "quiet(true)" },
+      { value: false, expectedQuiet: false, description: "quiet(false)" },
+    ])("$description suppresses output: $expectedQuiet", async ({ value, expectedQuiet }) => {
+      // Test with spawned process to check actual stdout
+      const quietArg = value === undefined ? "" : value.toString();
+      const { stdout, stderr } = Bun.spawnSync(
+        [BUN, "-e", `await Bun.$\`echo "test output"\`.quiet(${quietArg === undefined ? "" : quietArg})`],
+        {
+          env: { BUN_DEBUG_QUIET_LOGS: "1" },
+        },
+      );
+
+      if (expectedQuiet) {
+        expect(stdout.toString()).toBe("");
+      } else {
+        expect(stdout.toString()).toBe("test output\n");
+      }
+      expect(stderr.toString()).toBe("");
+    });
   });
 
   test("failing stmt edgecase", async () => {
@@ -671,6 +693,11 @@ booga"
         "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}",
         "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5",
       );
+
+      doTest(
+        `{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`,
+        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
+      );
     });
 
     test("command", async () => {
@@ -749,7 +776,7 @@ booga"
           .split("\n")
           .filter(s => s.length > 0)
           .sort(),
-      ).toEqual(temp_files.sort());
+      ).toEqual([...temp_files, "foo", "lmao.txt"].sort());
     });
 
     test("cd -", async () => {

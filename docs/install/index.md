@@ -81,6 +81,20 @@ $ bun install --verbose # debug logging
 $ bun install --silent  # no logging
 ```
 
+To use isolated installs instead of the default hoisted strategy:
+
+```bash
+$ bun install --linker isolated
+```
+
+Isolated installs create strict dependency isolation similar to pnpm, preventing phantom dependencies and ensuring more deterministic builds. For complete documentation, see [Isolated installs](https://bun.com/docs/install/isolated).
+
+To protect against supply chain attacks, set a minimum age (in seconds) for package versions:
+
+```bash
+$ bun install --minimum-release-age 259200 # 3 days
+```
+
 {% details summary="Configuring behavior" %}
 The default behavior of `bun install` can be configured in `bunfig.toml`:
 
@@ -110,6 +124,16 @@ dryRun = false
 
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
+
+# installation strategy: "hoisted" or "isolated"
+# default: "hoisted"
+linker = "hoisted"
+
+# minimum package age in seconds (protects against supply chain attacks)
+minimumReleaseAge = 259200 # 3 days
+
+# exclude packages from age requirement
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 
 {% /details %}

@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const js_lexer = bun.js_lexer;
-const fmt = std.fmt;
-const Environment = bun.Environment;
-const sha = bun.sha;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 
@@ -264,7 +254,7 @@ fn getSharedBuffer() []u8 {
 }
 threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
-pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
+pub fn formatUTF16Type(slice_: []const u16, writer: anytype) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -282,7 +272,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -290,7 +280,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     }
 }
 
-pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, writer: anytype, opts: PathFormatOptions) !void {
+pub fn formatUTF16TypeWithPathOptions(slice_: []const u16, writer: anytype, opts: PathFormatOptions) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -308,7 +298,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
 
@@ -366,9 +356,9 @@ pub const FormatUTF16 = struct {
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
-            try formatUTF16TypeWithPathOptions([]const u16, self.buf, writer, opts);
+            try formatUTF16TypeWithPathOptions(self.buf, writer, opts);
         } else {
-            try formatUTF16Type([]const u16, self.buf, writer);
+            try formatUTF16Type(self.buf, writer);
         }
     }
 };
@@ -475,7 +465,7 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
             try writer.writeAll(slice[0..i]);
             slice = slice[i..];
         }
-        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
+        const result = strings.copyLatin1IntoUTF8(chunk, slice[0..@min(chunk.len, slice.len)]);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -1046,9 +1036,9 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     }
 
                                     if (i < text.len and text[i] == '}') {
+                                        try writer.writeAll("}");
                                         i += 1;
                                     }
-                                    try writer.writeAll("}");
                                     text = text[i..];
                                     i = 0;
                                     if (text.len > 0 and text[0] == char) {
@@ -1692,10 +1682,8 @@ pub fn double(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) usize;
-
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1704,7 +1692,7 @@ pub const FormatDouble = struct {
             return "-0";
         }
 
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1754,7 +1742,7 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
+    pub fn fmtString(global: *bun.jsc.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
@@ -1848,7 +1836,6 @@ fn OutOfRangeFormatter(comptime T: type) type {
     } else if (T == bun.String) {
         return BunStringOutOfRangeFormatter;
     }
-
     return IntOutOfRangeFormatter;
 }
 
@@ -1889,3 +1876,15 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
         chars[in_bytes[7] & 31],
     });
 }
+
+const string = []const u8;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const js_lexer = bun.js_lexer;
+const sha = bun.sha;
+const strings = bun.strings;
+
+const std = @import("std");
+const fmt = std.fmt;

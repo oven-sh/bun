@@ -2,6 +2,9 @@
 //! - `cd` by itself or `cd ~` will always put the user in their home directory.
 //! - `cd ~username` will put the user in the home directory of the specified user
 //! - `cd -` will put the user in the previous directory
+
+const Cd = @This();
+
 state: union(enum) {
     idle,
     waiting_write_stderr,
@@ -88,7 +91,7 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Yield
     }
 }
 
-pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_write_stderr);
     }
@@ -113,16 +116,18 @@ pub fn deinit(this: *Cd) void {
 }
 
 // --
-const log = bun.Output.scoped(.Cd, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+const log = bun.Output.scoped(.Cd, .hidden);
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Cd = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const Syscall = bun.sys;
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const Yield = bun.shell.Yield;

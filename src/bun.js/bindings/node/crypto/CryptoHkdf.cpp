@@ -97,7 +97,7 @@ void HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     Bun__EventLoop__runCallback2(lexicalGlobalObject,
         JSValue::encode(callback),
         JSValue::encode(jsUndefined()),
-        JSValue::encode(jsUndefined()),
+        JSValue::encode(jsNull()),
         JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull())));
 }
 

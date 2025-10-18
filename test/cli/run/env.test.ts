@@ -443,21 +443,19 @@ describe("boundary tests", () => {
 
   test("buffer boundary", () => {
     const expected = "a".repeat(4094);
-    let content = expected + "a";
     const dir = tempDirWithFiles("dotenv", {
-      ".env": `KEY="${content}"`,
+      ".env": `KEY="${expected + "a"}"`,
       "index.ts": "console.log(process.env.KEY);",
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
 
-    content = expected + "\\n";
     const dir2 = tempDirWithFiles("dotenv", {
-      ".env": `KEY="${content}"`,
+      ".env": `KEY="${expected + "\\n"}"`,
       "index.ts": "console.log(process.env.KEY);",
     });
     const { stdout: stdout2 } = bunRun(`${dir2}/index.ts`);
     // should be truncated
-    expect(stdout).toBe(expected);
+    expect(stdout).toBe(expected + "a");
     expect(stdout2).toBe(expected);
   });
 });
@@ -820,4 +818,42 @@ test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`, { NODE_ENV: "test" });
   expect(stdout).toBe("test");
+});
+
+describe("env loader buffer handling", () => {
+  test("handles large quoted values with escape sequences", () => {
+    // This test ensures the env loader properly handles large values that exceed the initial buffer size
+    // The env loader doesn't process escape sequences, so \\\\ remains as \\\\
+    const dir = tempDirWithFiles("dotenv-buffer-overflow", {
+      ".env": `OVERFLOW_VAR="${"\\\\".repeat(2049)}"`, // 2049 * 2 = 4098 characters
+      "index.ts": "console.log(process.env.OVERFLOW_VAR?.length || 0);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("4098"); // Each \\\\ is 2 characters
+  });
+
+  test("handles multiple large values in same file", () => {
+    const dir = tempDirWithFiles("dotenv-multiple-large", {
+      ".env": `
+LARGE1="${"a".repeat(3000)}"
+LARGE2="${"b".repeat(3000)}"
+LARGE3="${"c".repeat(3000)}"
+`,
+      "index.ts":
+        "console.log([process.env.LARGE1?.length, process.env.LARGE2?.length, process.env.LARGE3?.length].join(','));",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("3000,3000,3000");
+  });
+
+  test("handles escape sequences at buffer boundaries", () => {
+    // Test that values with content near the old 4096-byte buffer boundary work correctly
+    const prefix = "x".repeat(4090);
+    const dir = tempDirWithFiles("dotenv-boundary-escape", {
+      ".env": `BOUNDARY="${prefix}suffix"`, // Total length would exceed 4096
+      "index.ts": "console.log(process.env.BOUNDARY?.length || 0);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("4096");
+  });
 });

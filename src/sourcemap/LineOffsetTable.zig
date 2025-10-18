@@ -1,3 +1,5 @@
+const LineOffsetTable = @This();
+
 /// The source map specification is very loose and does not specify what
 /// column numbers actually mean. The popular "source-map" library from Mozilla
 /// appears to interpret them as counts of UTF-16 code units, so we generate
@@ -169,7 +171,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
                 list.append(allocator, .{
                     .byte_offset_to_start_of_line = line_byte_offset,
                     .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-                    .columns_for_non_ascii = BabyList(i32).init(owned),
+                    .columns_for_non_ascii = BabyList(i32).fromOwnedSlice(owned),
                 }) catch unreachable;
 
                 column = 0;
@@ -211,7 +213,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
         list.append(allocator, .{
             .byte_offset_to_start_of_line = line_byte_offset,
             .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-            .columns_for_non_ascii = BabyList(i32).init(owned),
+            .columns_for_non_ascii = BabyList(i32).fromOwnedSlice(owned),
         }) catch unreachable;
     }
 
@@ -221,10 +223,10 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
     return list;
 }
 
-const LineOffsetTable = @This();
+const std = @import("std");
+
 const bun = @import("bun");
 const BabyList = bun.BabyList;
-const std = @import("std");
-const strings = bun.strings;
 const Logger = bun.logger;
 const assert = bun.assert;
+const strings = bun.strings;

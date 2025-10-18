@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT, gc, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -138,7 +138,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 
       const first = rss[0];
       const last = rss[rss.length - 1];
-      console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+      if (!isCI || !(last < first * 10)) {
+        console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+      }
       expect(last).toBeLessThan(first * 10);
     },
     20 * 1000,
@@ -181,4 +183,22 @@ test("do not leak", async () => {
       prev = next;
     }
   }, 1e3);
+});
+
+test("should not leak using readable stream", async () => {
+  const buffer = Buffer.alloc(1024 * 128, "b");
+  using server = Bun.serve({
+    port: 0,
+    fetch: req => {
+      return new Response(buffer);
+    },
+  });
+
+  const { stdout, stderr } = bunRun(join(import.meta.dir, "fetch-leak-test-fixture-6.js"), {
+    ...bunEnv,
+    SERVER_URL: server.url.href,
+    MAX_MEMORY_INCREASE: "5", // in MB
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toContain("done");
 });

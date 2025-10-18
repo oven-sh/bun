@@ -265,17 +265,17 @@ pub const Tag = enum(short) {
 
     fn toJSWithType(
         tag: Tag,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
         comptime Type: type,
         value: Type,
     ) AnyPostgresError!JSValue {
         switch (tag) {
             .numeric => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             .float4, .float8 => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             .json, .jsonb => {
@@ -299,7 +299,7 @@ pub const Tag = enum(short) {
             },
 
             .int4 => {
-                return numeric.toJS(globalObject, value);
+                return JSValue.jsNumber(value);
             },
 
             else => {
@@ -310,13 +310,13 @@ pub const Tag = enum(short) {
 
     pub fn toJS(
         tag: Tag,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
         value: anytype,
     ) AnyPostgresError!JSValue {
         return toJSWithType(tag, globalObject, @TypeOf(value), value);
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!Tag {
+    pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!Tag {
         if (value.isEmptyOrUndefinedOrNull()) {
             return Tag.numeric;
         }
@@ -342,8 +342,9 @@ pub const Tag = enum(short) {
                 return .int8;
             }
 
-            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
+            if (tag.isArrayLike()) {
+                // We will JSON.stringify anything else.
+                return .json;
             }
 
             // Ban these types:
@@ -393,13 +394,10 @@ pub const Tag = enum(short) {
 
 const @"bool" = @import("./bool.zig");
 
-// @sortImports
-
 const bun = @import("bun");
 const bytea = @import("./bytea.zig");
 const date = @import("./date.zig");
 const json = @import("./json.zig");
-const numeric = @import("./numeric.zig");
 const std = @import("std");
 const string = @import("./PostgresString.zig");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
@@ -407,5 +405,5 @@ const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

@@ -411,7 +411,7 @@ pub fn AstMaybe(
                     }
 
                     // Inline import.meta properties for Bake
-                    if (p.options.framework != null) {
+                    if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
                             // Inline import.meta.dir
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
@@ -428,27 +428,6 @@ pub fn AstMaybe(
                             const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
                             return p.newExpr(E.String.init(url), name_loc);
                         }
-                    }
-
-                    if (p.options.bundle and p.options.output_format == .cjs and strings.eqlComptime(name, "url")) {
-                        const url = bun.String.fromBytes(p.source.path.text);
-                        defer url.deref();
-
-                        const url_prop: js_ast.G.Property = .{
-                            .key = p.newExpr(E.String.init("url"), .Empty),
-                            .value = p.newExpr(
-                                E.String.init(std.fmt.allocPrint(p.allocator, "{}", .{jsc.URL.fileURLFromString(url)}) catch unreachable),
-                                .Empty,
-                            ),
-                        };
-
-                        const props = js_ast.G.Property.List.initOne(p.allocator, url_prop) catch unreachable;
-
-                        const obj = p.newExpr(E.Object{ .properties = props }, .Empty);
-
-                        const dot = p.newExpr(E.Dot{ .target = obj, .name = "url", .name_loc = .Empty }, .Empty);
-
-                        return dot;
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.

@@ -58,7 +58,7 @@ const shared_params = [_]ParamType{
 
 pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
-    clap.parseParam("-D, --development") catch unreachable,
+    clap.parseParam("-D, --development                  Alias for --dev") catch unreachable,
     clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
     clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
     clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
@@ -95,7 +95,7 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
-    clap.parseParam("-D, --development") catch unreachable,
+    clap.parseParam("-D, --development                  Alias for --dev") catch unreachable,
     clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
     clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
     clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,

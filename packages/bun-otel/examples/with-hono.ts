@@ -4,9 +4,10 @@ import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
 import { BunSDK } from "bun-otel";
 import { Hono } from "hono";
 
-// Setup OpenTelemetry - BunSDK extends NodeSDK!
+// Setup OpenTelemetry with service name
 const sdk = new BunSDK({
   traceExporter: new ConsoleSpanExporter(),
+  serviceName: "hono-api",
 });
 sdk.start();
 

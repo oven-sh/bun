@@ -4,9 +4,10 @@ import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
 import { BunSDK } from "bun-otel";
 import { Elysia } from "elysia";
 
-// Setup OpenTelemetry - BunSDK extends NodeSDK!
+// Setup OpenTelemetry with service name
 const sdk = new BunSDK({
   traceExporter: new ConsoleSpanExporter(),
+  serviceName: "elysia-api",
 });
 sdk.start();
 

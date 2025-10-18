@@ -1,6 +1,6 @@
 # bun-otel
 
-OpenTelemetry bridge for Bun's native telemetry system.
+OpenTelemetry SDK for Bun - built on stable 1.x packages with a NodeSDK-like API.
 
 ## Overview
 
@@ -12,27 +12,34 @@ OpenTelemetry's autoinstrumentation doesn't work with Bun because it relies on m
 
 This package bridges Bun's native telemetry hooks to the OpenTelemetry SDK, enabling automatic distributed tracing for both `Bun.serve()` and Node.js `http.createServer()` applications.
 
+### Architecture
+
+**BunSDK** is built directly on stable OpenTelemetry packages (1.x):
+- `@opentelemetry/sdk-trace-node` (1.30.1)
+- `@opentelemetry/sdk-trace-base` (1.30.1)
+- `@opentelemetry/resources` (1.30.1)
+- `@opentelemetry/core` (1.30.1)
+
+Unlike the experimental `@opentelemetry/sdk-node` (0.x), BunSDK provides a stable, production-ready API while maintaining familiar NodeSDK-like configuration.
+
 ## Installation
 
 ```bash
-bun add bun-otel @opentelemetry/api @opentelemetry/sdk-trace-node
+bun add bun-otel @opentelemetry/api
 ```
+
+All required OpenTelemetry SDK packages are included as dependencies.
 
 ## Quick Start
 
 ```typescript
 import { BunSDK } from 'bun-otel';
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { ConsoleSpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base';
 
-// Set up OpenTelemetry
-const provider = new NodeTracerProvider();
-provider.addSpanProcessor(new SimpleSpanProcessor(new ConsoleSpanExporter()));
-provider.register();
-
-// Start Bun instrumentation
+// Set up OpenTelemetry with BunSDK (NodeSDK-like API)
 const sdk = new BunSDK({
-  tracerProvider: provider,
+  traceExporter: new ConsoleSpanExporter(),
+  serviceName: 'my-service',
 });
 
 sdk.start();
@@ -47,6 +54,103 @@ Bun.serve({
 ```
 
 That's it! `BunSDK` automatically instruments both `Bun.serve()` and `http.createServer()` via `Bun.telemetry` hooks.
+
+### Comparison to NodeSDK
+
+If you're familiar with `@opentelemetry/sdk-node`, BunSDK provides an almost identical API:
+
+```typescript
+// NodeSDK (experimental 0.x)
+import { NodeSDK } from '@opentelemetry/sdk-node';
+
+const sdk = new NodeSDK({
+  traceExporter: new ConsoleSpanExporter(),
+  serviceName: 'my-service',
+});
+
+// BunSDK (stable 1.x packages)
+import { BunSDK } from 'bun-otel';
+
+const sdk = new BunSDK({
+  traceExporter: new ConsoleSpanExporter(),
+  serviceName: 'my-service',
+});
+```
+
+**Key differences:**
+- BunSDK is built on stable 1.x packages (not experimental 0.x)
+- BunSDK automatically instruments Bun's native HTTP server
+- BunSDK works with both `Bun.serve()` and `http.createServer()`
+
+## Configuration
+
+### Basic Configuration
+
+```typescript
+import { BunSDK } from 'bun-otel';
+import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base';
+
+const sdk = new BunSDK({
+  traceExporter: new ConsoleSpanExporter(),
+  serviceName: 'my-service',
+});
+
+sdk.start();
+```
+
+### Advanced Configuration
+
+BunSDK supports all the same configuration options as NodeSDK:
+
+```typescript
+import { BunSDK } from 'bun-otel';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { Resource } from '@opentelemetry/resources';
+
+const sdk = new BunSDK({
+  // Exporter (OTLP, Jaeger, Zipkin, etc.)
+  traceExporter: new OTLPTraceExporter({
+    url: 'http://localhost:4318/v1/traces',
+  }),
+
+  // Service identification
+  serviceName: 'my-production-service',
+
+  // Custom resource attributes
+  resource: new Resource({
+    'deployment.environment': 'production',
+    'service.version': '1.2.3',
+    'service.namespace': 'my-company',
+  }),
+
+  // Auto-detect host, process, and environment resources
+  autoDetectResources: true,
+
+  // Custom sampling, propagators, etc.
+  // sampler: new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(0.5) }),
+  // textMapPropagator: new W3CTraceContextPropagator(),
+});
+
+sdk.start();
+```
+
+### Configuration Options
+
+All BunSDK configuration options:
+
+- `traceExporter`: Span exporter (console, OTLP, Jaeger, etc.)
+- `spanProcessor`: Custom span processor (overrides traceExporter)
+- `spanProcessors`: Multiple span processors for multi-destination export
+- `serviceName`: Service name (convenience for resource attributes)
+- `resource`: Custom resource attributes
+- `resourceDetectors`: Custom resource detectors
+- `autoDetectResources`: Auto-detect host/process resources (default: true)
+- `sampler`: Custom sampling strategy
+- `spanLimits`: Limits for attributes, events, and links
+- `idGenerator`: Custom trace/span ID generator
+- `contextManager`: Custom context manager
+- `textMapPropagator`: Custom propagator (default: W3C TraceContext + Baggage)
+- `tracerName`: Tracer name for Bun.telemetry spans (default: '@bun/otel')
 
 ## Features
 

@@ -2,9 +2,10 @@
 import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
 import { BunSDK } from "bun-otel";
 
-// Initialize OpenTelemetry - BunSDK extends NodeSDK!
+// Initialize OpenTelemetry with service name
 const sdk = new BunSDK({
   traceExporter: new ConsoleSpanExporter(),
+  serviceName: "my-bun-service",
 });
 sdk.start();
 

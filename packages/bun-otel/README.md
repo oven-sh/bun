@@ -10,34 +10,34 @@ OpenTelemetry has three pillars: **Traces**, **Metrics**, and **Logs**. This pac
 
 OpenTelemetry's autoinstrumentation doesn't work with Bun because it relies on monkey-patching Node.js's `require()` system. Bun's HTTP server is implemented in native code (Zig), so there's nothing to patch.
 
-This package bridges Bun's native telemetry hooks to the OpenTelemetry SDK, enabling automatic distributed tracing for all `Bun.serve()` applications.
+This package bridges Bun's native telemetry hooks to the OpenTelemetry SDK, enabling automatic distributed tracing for both `Bun.serve()` and Node.js `http.createServer()` applications.
 
 ## Installation
 
 ```bash
-bun add bun-otel @opentelemetry/api @opentelemetry/sdk-node
+bun add bun-otel @opentelemetry/api @opentelemetry/sdk-trace-node
 ```
 
 ## Quick Start
 
 ```typescript
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
-import { createTelemetryBridge } from 'bun-otel';
+import { BunSDK } from 'bun-otel';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { ConsoleSpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
-// Initialize OpenTelemetry
-const sdk = new NodeSDK({
-  traceExporter: new ConsoleSpanExporter(),
+// Set up OpenTelemetry
+const provider = new NodeTracerProvider();
+provider.addSpanProcessor(new SimpleSpanProcessor(new ConsoleSpanExporter()));
+provider.register();
+
+// Start Bun instrumentation
+const sdk = new BunSDK({
+  tracerProvider: provider,
 });
 
 sdk.start();
 
-// Bridge to Bun's telemetry
-createTelemetryBridge({
-  tracerProvider: sdk.getTracerProvider()
-});
-
-// All requests are now automatically traced!
+// All HTTP requests are now automatically traced!
 Bun.serve({
   port: 3000,
   fetch(req) {
@@ -46,10 +46,13 @@ Bun.serve({
 });
 ```
 
+That's it! `BunSDK` automatically instruments both `Bun.serve()` and `http.createServer()` via `Bun.telemetry` hooks.
+
 ## Features
 
 ### Tracing (Current)
 - ✅ Automatic span creation for all HTTP requests
+- ✅ Works with both `Bun.serve()` and `http.createServer()`
 - ✅ W3C TraceContext propagation (traceparent headers)
 - ✅ HTTP semantic conventions (method, url, status, etc.)
 - ✅ Error recording with stack traces

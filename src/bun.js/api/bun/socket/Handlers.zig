@@ -297,7 +297,9 @@ pub const SocketConfig = struct {
         };
         errdefer result.deinit();
 
-        if (result.fd != null) {} else if (generated.unix_.get()) |unix| {
+        if (result.fd != null) {
+            // If a user passes a file descriptor then prefer it over hostname or unix
+        } else if (generated.unix_.get()) |unix| {
             bun.assertf(unix.length() > 0, "truthy bindgen string shouldn't be empty", .{});
             result.hostname_or_unix = unix.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();

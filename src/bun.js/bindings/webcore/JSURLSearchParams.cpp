@@ -443,15 +443,17 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
         auto& key = entry.value().key;
         auto& value = entry.value().value;
         auto ident = Identifier::fromString(vm, key);
+        JSValue stringValue = jsString(vm, value);
+
         if (seenKeys.contains(key)) {
             JSValue jsValue = obj->getDirect(vm, ident);
-            if (jsValue.isString()) {
-                JSValue stringResult = jsString(vm, value);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                ensureStillAliveHere(stringResult);
+            RETURN_IF_EXCEPTION(throwScope, {});
 
-                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+            if (jsValue.isString()) {
+                ensureStillAliveHere(stringValue);
+
+                GCDeferralContext deferralContext(vm);
+                JSC::ObjectInitializationScope initializationScope(vm);
 
                 JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
                     initializationScope, &deferralContext,
@@ -459,13 +461,11 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
                     2);
 
                 array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, stringResult);
+                array->initializeIndex(initializationScope, 1, stringValue);
                 obj->putDirectMayBeIndex(lexicalGlobalObject, ident, array);
                 throwScope.assertNoException(); // not a proxy.
             } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                JSValue stringValue = jsString(vm, value);
-                RETURN_IF_EXCEPTION(throwScope, {});
                 array->push(lexicalGlobalObject, stringValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             } else {
@@ -473,7 +473,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
             }
         } else {
             seenKeys.add(key);
-            JSValue stringValue = jsString(vm, value);
+
             RETURN_IF_EXCEPTION(throwScope, {});
             obj->putDirectMayBeIndex(lexicalGlobalObject, ident, stringValue);
             throwScope.assertNoException(); // not a proxy.

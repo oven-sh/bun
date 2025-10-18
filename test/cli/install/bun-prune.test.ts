@@ -224,8 +224,10 @@ describe("bun prune", () => {
     expect(exitCode).toBe(0);
     expect(stderr).not.toContain("error:");
 
-    // Verify output mentions what would be removed or indicates dry-run mode
-    expect(stdout.toLowerCase()).toMatch(/would|dry-run|dry run/);
+    // Verify dry-run output indicates what would be removed
+    expect(stdout.toLowerCase()).toMatch(/would.*remove|dry.*run/);
+    // Verify the specific package name appears in output
+    expect(stdout).toContain("lodash");
   });
 
   it("should be idempotent", async () => {

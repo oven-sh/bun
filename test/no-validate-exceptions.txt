@@ -146,3 +146,5 @@ vendor/elysia/test/validator/body.test.ts
 vendor/elysia/test/ws/message.test.ts
 
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
+test/js/bun/glob/import-meta-glob.test.ts
+test/bundler/bundler_loader.test.ts

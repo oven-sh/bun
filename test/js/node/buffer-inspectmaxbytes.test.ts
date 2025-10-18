@@ -1,5 +1,5 @@
-import { INSPECT_MAX_BYTES, BufferModule } from "node:buffer";
 import { expect, test } from "bun:test";
+import { BufferModule, INSPECT_MAX_BYTES } from "node:buffer";
 
 test("buffer.INSPECT_MAX_BYTES is a number and not a custom getter/setter", () => {
   const originalINSPECT_MAX_BYTES = INSPECT_MAX_BYTES;

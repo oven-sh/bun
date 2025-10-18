@@ -45,9 +45,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         upgrade_context: ?*uws.SocketContext = null,
 
-        /// Telemetry request ID for tracking this request
-        telemetry_request_id: telemetry.RequestId = 0,
-
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
         response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
@@ -717,13 +714,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 cookies.deref();
-            }
-
-            // Notify telemetry that the request has ended
-            if (this.telemetry_request_id != 0) {
-                if (telemetry.Telemetry.getInstance()) |t| {
-                    t.notifyRequestEnd(this.telemetry_request_id);
-                }
             }
 
             if (this.request_weakref.get()) |request| {
@@ -2118,14 +2108,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             status: u16,
         ) void {
             jsc.markBinding(@src());
-
-            // Notify telemetry about the error
-            if (this.telemetry_request_id != 0) {
-                if (telemetry.Telemetry.getInstance()) |t| {
-                    t.notifyRequestError(this.telemetry_request_id, value);
-                }
-            }
-
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
@@ -2229,23 +2211,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
         }
 
-        /// Notify telemetry and write HTTP status code
-        inline fn writeStatusWithTelemetry(this: *RequestContext, status: u16, size: u64) void {
-            // Notify telemetry with final normalized status
-            if (this.telemetry_request_id != 0) {
-                if (telemetry.Telemetry.getInstance()) |t| {
-                    t.notifyResponseStatus(this.telemetry_request_id, status, size);
-                }
-            }
-            this.doWriteStatus(status);
-        }
-
         pub fn renderMetadata(this: *RequestContext) void {
             if (this.resp == null) return;
             const resp = this.resp.?;
 
             var response: *jsc.WebCore.Response = this.response_ptr.?;
-
             var status = response.statusCode();
             var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
 
@@ -2254,8 +2224,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             else
                 this.blob.size();
 
-            // Normalize status code before notifying telemetry
-            // 1. Empty body: 200 → 204 No Content
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
@@ -2274,19 +2242,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
                 needs_content_range = needs_content_range and has_content_range;
-                // 2. Partial content: → 206 Partial Content
                 if (needs_content_range) {
                     status = 206;
                 }
 
-                writeStatusWithTelemetry(this, status, size);
+                this.doWriteStatus(status);
                 this.doWriteHeaders(headers_);
             } else if (needs_content_range) {
-                // 2. Partial content: → 206 Partial Content
                 status = 206;
-                writeStatusWithTelemetry(this, status, size);
+                this.doWriteStatus(status);
             } else {
-                writeStatusWithTelemetry(this, status, size);
+                this.doWriteStatus(status);
             }
 
             if (this.cookies) |cookies| {
@@ -2704,7 +2670,6 @@ const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
 const writeStatus = bun.api.server.writeStatus;
-const telemetry = bun.telemetry;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

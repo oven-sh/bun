@@ -493,7 +493,11 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
 
     sequence.started_at = bun.timespec.now();
 
+    // Log test name when BUN_DEBUG_jest=1 is set
     if (sequence.test_entry) |entry| {
+        const name = entry.base.name orelse "(unnamed)";
+        log("Running test: {s}", .{name});
+
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
                 if (debugger.test_reporter_agent.isEnabled()) {
@@ -508,6 +512,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 
     groupLog.begin(@src());
     defer groupLog.end();
+
     if (entry.timeout != 0) {
         groupLog.log("-> entry.timeout: {}", .{entry.timeout});
         entry.timespec = bun.timespec.msFromNow(entry.timeout);
@@ -631,3 +636,4 @@ const Execution = bun_test.Execution;
 const ExecutionEntry = bun_test.ExecutionEntry;
 const Order = bun_test.Order;
 const groupLog = bun_test.debug.group;
+const log = bun.Output.scoped(.jest, .visible);

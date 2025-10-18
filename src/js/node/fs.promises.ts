@@ -413,8 +413,12 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    readLines(_options = undefined) {
-      throw new Error("BUN TODO FileHandle.readLines");
+    readLines(options = undefined) {
+      const { Interface } = require("node:readline");
+      return new Interface({
+        input: this.createReadStream(options),
+        crlfDelay: Infinity,
+      });
     }
 
     async stat(options) {

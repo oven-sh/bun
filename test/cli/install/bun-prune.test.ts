@@ -80,6 +80,9 @@ describe("bun prune", () => {
     expect(await addProc.exited).toBe(0);
 
     // Now remove lodash from package.json but keep it in node_modules
+    // Note: This tests lockfile reconciliation - lodash remains in the lockfile
+    // after removal from package.json, but prune should remove it from node_modules
+    // because it's not in package.json
     const pkgJson = await file(join(String(dir), "package.json")).json();
     delete pkgJson.dependencies.lodash;
     await writeFile(join(String(dir), "package.json"), JSON.stringify(pkgJson, null, 2));

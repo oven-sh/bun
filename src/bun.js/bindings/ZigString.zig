@@ -617,10 +617,6 @@ pub const ZigString = extern struct {
         return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
-    pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
-        return try allocator.dupe(u8, this.slice());
-    }
-
     pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice.empty;

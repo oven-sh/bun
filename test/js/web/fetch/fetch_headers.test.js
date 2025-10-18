@@ -57,6 +57,13 @@ describe("Headers", async () => {
       headers2.append("Content-Type", "application/json");
       expect(headers2.toJSON()).toEqual({ "x-test": "yep", "content-type": "application/json" });
     });
+
+    it("should handle numeric string header names", () => {
+      const headers = new Headers();
+      headers.append("52782", "text/xml");
+      expect(headers.toJSON()).toEqual({ "52782": "text/xml" });
+      expect(headers.get("52782")).toBe("text/xml");
+    });
   });
 });
 

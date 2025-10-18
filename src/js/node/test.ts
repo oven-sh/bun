@@ -7,6 +7,7 @@ const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
+const kDefaultFilePath = "";
 
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
@@ -260,6 +261,37 @@ function afterEach(arg0: unknown, arg1: unknown) {
   afterEach(fn);
 }
 
+function createDeferredCallback() {
+  let calledCount = 0;
+  let resolve: (value?: unknown) => void;
+  let reject: (reason?: unknown) => void;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  const cb = (err?: unknown) => {
+    calledCount++;
+
+    // If the callback is called a second time, let the user know, but
+    // don't let them know more than once.
+    if (calledCount > 1) {
+      if (calledCount === 2) {
+        throw new Error("callback invoked multiple times");
+      }
+      return;
+    }
+
+    if (err) {
+      return reject(err);
+    }
+
+    resolve();
+  };
+
+  return { promise, cb };
+}
+
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   let name: string;
   let options: unknown;
@@ -315,17 +347,42 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
       }
     };
 
-    let result: unknown;
-    try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
+    // Check if the test function expects a done callback
+    // fn.length >= 2 means it expects (context, done)
+    if (fn.length >= 2) {
+      // This test is using legacy Node.js error-first callbacks.
+      const { promise, cb } = createDeferredCallback();
+
+      let result: unknown;
+      try {
+        result = fn(context, cb);
+      } catch (error) {
+        endTest(error);
+        return;
+      }
+
+      if (result instanceof Promise) {
+        // Test returned a promise AND accepted a callback - this is an error
+        endTest(new Error("passed a callback but also returned a Promise"));
+        return;
+      }
+
+      // Wait for the callback to be called
+      promise.then(() => endTest()).catch(error => endTest(error));
     } else {
-      endTest();
+      // This test is synchronous or using Promises.
+      let result: unknown;
+      try {
+        result = fn(context);
+      } catch (error) {
+        endTest(error);
+        return;
+      }
+      if (result instanceof Promise) {
+        (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
+      } else {
+        endTest();
+      }
     }
   };
 
@@ -378,25 +435,52 @@ function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
+    // Check if the hook function expects a done callback
+    // fn.length >= 1 means it expects (done)
+    if (fn.length >= 1) {
+      // This hook is using legacy Node.js error-first callbacks.
+      const { promise, cb } = createDeferredCallback();
+
+      let result: unknown;
+      try {
+        result = fn(cb);
+      } catch (error) {
+        done(error);
+        return;
+      }
+
+      if (result instanceof Promise) {
+        // Hook returned a promise AND accepted a callback - this is an error
+        done(new Error("passed a callback but also returned a Promise"));
+        return;
+      }
+
+      // Wait for the callback to be called
+      promise.then(() => done()).catch(error => done(error));
     } else {
-      done();
+      // This hook is synchronous or using Promises.
+      let result: unknown;
+      try {
+        result = fn();
+      } catch (error) {
+        done(error);
+        return;
+      }
+      if (result instanceof Promise) {
+        (result as Promise<unknown>).then(() => done()).catch(error => done(error));
+      } else {
+        done();
+      }
     }
   };
 
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
+type TestFn =
+  | ((ctx: TestContext) => unknown | Promise<unknown>)
+  | ((ctx: TestContext, done: (err?: unknown) => void) => void);
+type HookFn = (() => unknown | Promise<unknown>) | ((done: (err?: unknown) => void) => void);
 
 type TestOptions = {
   concurrency?: number | boolean | null;

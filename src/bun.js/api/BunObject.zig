@@ -1407,7 +1407,7 @@ const CSRFObject = struct {
 
 const TelemetryObject = struct {
     pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-        const object = JSValue.createEmptyObject(globalThis, 3);
+        const object = JSValue.createEmptyObject(globalThis, 5);
 
         object.put(
             globalThis,
@@ -1425,6 +1425,40 @@ const TelemetryObject = struct {
             globalThis,
             ZigString.static("disable"),
             jsc.createCallback(globalThis, ZigString.static("disable"), 0, bun.telemetry.disable),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("generateRequestId"),
+            jsc.createCallback(globalThis, ZigString.static("generateRequestId"), 0, bun.telemetry.jsGenerateRequestId),
+        );
+
+        // Node.js compatibility layer bindings (internal use only)
+        const node_binding = JSValue.createEmptyObject(globalThis, 3);
+        const node_telemetry_binding = @import("../node_telemetry_binding.zig");
+
+        node_binding.put(
+            globalThis,
+            ZigString.static("onIncomingMessage"),
+            jsc.createCallback(globalThis, ZigString.static("onIncomingMessage"), 1, node_telemetry_binding.onIncomingMessage),
+        );
+
+        node_binding.put(
+            globalThis,
+            ZigString.static("onResponseFinish"),
+            jsc.createCallback(globalThis, ZigString.static("onResponseFinish"), 1, node_telemetry_binding.onResponseFinish),
+        );
+
+        node_binding.put(
+            globalThis,
+            ZigString.static("onRequestError"),
+            jsc.createCallback(globalThis, ZigString.static("onRequestError"), 2, node_telemetry_binding.onRequestError),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("_node_binding"),
+            node_binding,
         );
 
         return object;

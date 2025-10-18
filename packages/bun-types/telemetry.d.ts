@@ -38,10 +38,13 @@ declare module "bun" {
       /**
        * Called when a request starts.
        *
+       * Accepts either a Bun Request object (from Bun.serve) or a Node.js IncomingMessage
+       * (from http.createServer), allowing the same telemetry to work with both APIs.
+       *
        * @param id - Unique identifier for this request
-       * @param request - The incoming Request object
+       * @param request - The incoming Request object or IncomingMessage
        */
-      onRequestStart?: (id: RequestId, request: Request) => void;
+      onRequestStart?: (id: RequestId, request: Request | import("http").IncomingMessage) => void;
 
       /**
        * Called when a request ends successfully.
@@ -113,5 +116,22 @@ declare module "bun" {
      * This stops all telemetry tracking and frees associated resources.
      */
     export function disable(): void;
+
+    /**
+     * Generate a unique request ID for telemetry tracking.
+     *
+     * This is primarily used internally by the Node.js compatibility layer to generate
+     * request IDs for http.createServer(). In most cases, you should use Bun.telemetry.configure()
+     * which automatically generates IDs for you.
+     *
+     * @returns A unique numeric request ID
+     *
+     * @example
+     * ```ts
+     * const id = Bun.telemetry.generateRequestId();
+     * console.log(`Generated request ID: ${id}`);
+     * ```
+     */
+    export function generateRequestId(): RequestId;
   }
 }

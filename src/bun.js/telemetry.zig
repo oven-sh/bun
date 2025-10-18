@@ -296,6 +296,15 @@ pub fn disable(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     return .js_undefined;
 }
 
+/// JavaScript API: Bun.telemetry.generateRequestId()
+/// Generates a unique request ID for use in telemetry tracking
+/// This is exposed to allow Node.js compatibility layer to generate IDs
+pub fn jsGenerateRequestId(global: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    const telemetry = try Telemetry.init(global);
+    const id = telemetry.generateRequestId();
+    return jsRequestId(id);
+}
+
 // Utility: convert a RequestId-ish integer to a JavaScript number value
 // Inline so the compiler can optimize away the wrapper. Accepts any integer type.
 inline fn jsRequestId(id: anytype) JSValue {

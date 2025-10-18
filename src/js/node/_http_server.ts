@@ -552,6 +552,17 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
+        // Telemetry integration for OpenTelemetry support
+        // This calls onRequestStart and returns a request ID
+        const telemetryId = Bun.telemetry?._node_binding?.onIncomingMessage(http_req);
+
+        // Register response finish listener for telemetry
+        if (telemetryId !== undefined) {
+          http_res.on("finish", () => {
+            Bun.telemetry?._node_binding?.onResponseFinish(telemetryId);
+          });
+        }
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it

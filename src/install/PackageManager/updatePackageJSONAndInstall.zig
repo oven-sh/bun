@@ -689,8 +689,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     if (should_remove) {
                         if (!is_dry_run) {
                             scope_dir.deleteTree(scoped_entry.name) catch continue;
+                            // Only increment if deletion succeeded
+                            manager.summary.remove += 1;
+                        } else {
+                            // In dry-run mode, count what would be removed
+                            manager.summary.remove += 1;
                         }
-                        manager.summary.remove += 1;
                     }
                 }
                 continue;
@@ -738,8 +742,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             if (should_remove) {
                 if (!is_dry_run) {
                     node_modules_dir.deleteTree(entry.name) catch continue;
+                    // Only increment if deletion succeeded
+                    manager.summary.remove += 1;
+                } else {
+                    // In dry-run mode, count what would be removed
+                    manager.summary.remove += 1;
                 }
-                manager.summary.remove += 1;
             }
         }
     }

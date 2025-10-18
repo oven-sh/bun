@@ -493,10 +493,8 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
 
     sequence.started_at = bun.timespec.now();
 
-    // Log test name when BUN_DEBUG_jest=1 is set
     if (sequence.test_entry) |entry| {
-        const name = entry.base.name orelse "(unnamed)";
-        log("Running test: {s}", .{name});
+        log("Running test: \"{}\"", .{ std.zig.fmtEscapes(entry.base.name orelse "(unnamed)") });
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
@@ -512,7 +510,6 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 
     groupLog.begin(@src());
     defer groupLog.end();
-
     if (entry.timeout != 0) {
         groupLog.log("-> entry.timeout: {}", .{entry.timeout});
         entry.timespec = bun.timespec.msFromNow(entry.timeout);

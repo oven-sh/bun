@@ -45,6 +45,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         upgrade_context: ?*uws.SocketContext = null,
 
+        /// Telemetry request ID for tracking this request (0 = no telemetry)
+        telemetry_request_id: bun.telemetry.RequestId = 0,
+
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
         response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
@@ -721,6 +724,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
                 this.request_weakref.deref();
+            }
+
+            if (this.telemetry_request_id != 0) {
+                if (Telemetry.getInstance()) |t| t.notifyRequestEnd(this.telemetry_request_id);
+                this.telemetry_request_id = 0;
             }
 
             // if signal is not aborted, abort the signal
@@ -2132,6 +2140,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
+            if (this.telemetry_request_id != 0) {
+                if (Telemetry.getInstance()) |t| t.notifyRequestError(this.telemetry_request_id, value);
+            }
+
             this.finishRunningErrorHandler(value, status);
         }
 
@@ -2235,6 +2247,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.allocator,
             );
             defer if (content_type_needs_free) content_type.deinit(this.allocator);
+
+            var telemetry_builder: ?*bun.telemetry.ResponseBuilder = null;
+            if (this.telemetry_request_id != 0) {
+                if (Telemetry.getInstance()) |t| telemetry_builder = t.responseBuilder(this.telemetry_request_id);
+            }
+            defer if (telemetry_builder) |builder| builder.fireAndForget();
+            if (telemetry_builder) |builder| builder.setContentLength(size);
+
             var has_content_disposition = false;
             var has_content_range = false;
             if (response.swapInitHeaders()) |headers_| {
@@ -2245,15 +2265,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (needs_content_range) {
                     status = 206;
                 }
-
                 this.doWriteStatus(status);
                 this.doWriteHeaders(headers_);
+                if (telemetry_builder) |builder| builder.setHeaders(headers_);
             } else if (needs_content_range) {
                 status = 206;
                 this.doWriteStatus(status);
             } else {
                 this.doWriteStatus(status);
             }
+            if (telemetry_builder) |builder| builder.setStatus(status);
 
             if (this.cookies) |cookies| {
                 this.cookies = null;
@@ -2686,3 +2707,5 @@ const Body = jsc.WebCore.Body;
 const FetchHeaders = jsc.WebCore.FetchHeaders;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+
+const Telemetry = bun.telemetry.Telemetry;

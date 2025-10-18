@@ -3,6 +3,7 @@ const bun = @import("bun");
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const WebCore = bun.jsc.WebCore;
 
 const logger = bun.Output.scoped(.telemetry, .visible);
 
@@ -12,6 +13,87 @@ pub const RequestId = u64;
 
 /// Global telemetry instance
 var instance: ?*Telemetry = null;
+
+/// Response builder for collecting telemetry data
+/// This struct collects response metadata and fires telemetry once
+/// It's designed to be a zero-cost abstraction when telemetry is disabled
+pub const ResponseBuilder = struct {
+    request_id: RequestId,
+    status_code: u16 = 0,
+    content_length: u64 = 0,
+    headers_js: JSValue = .zero,
+    global: *JSGlobalObject,
+    telemetry: *Telemetry,
+
+    const Self = @This();
+
+    /// Set the HTTP status code
+    pub fn setStatus(self: *Self, status: u16) void {
+        self.status_code = status;
+    }
+
+    /// Set the content length
+    pub fn setContentLength(self: *Self, length: u64) void {
+        self.content_length = length;
+    }
+
+    /// Capture whitelisted headers from FetchHeaders
+    /// For now, we'll pass all headers to JS and let it filter
+    /// Future optimization: filter in native code based on config
+    pub fn setHeaders(self: *Self, headers: *WebCore.FetchHeaders) void {
+        // Convert headers to JS and store
+        // We protect the headers so they don't get GC'd before we fire
+        const headers_js = headers.toJS(self.global);
+        if (headers_js != .zero and headers_js != .js_undefined) {
+            headers_js.protect();
+            // Unprotect old headers if we had any
+            if (self.headers_js != .zero) {
+                self.headers_js.unprotect();
+            }
+            self.headers_js = headers_js;
+        }
+    }
+
+    /// Fire the telemetry callback and clean up
+    pub fn fireAndForget(self: *Self) void {
+        defer self.deinit();
+
+        // Only fire if we have the callback
+        if (!self.telemetry.enabled or self.telemetry.on_response_headers == .zero) {
+            return;
+        }
+
+        const id_js = jsRequestId(self.request_id);
+        const status_js = JSValue.jsNumber(@as(f64, @floatFromInt(self.status_code)));
+        const content_length_js = JSValue.jsNumber(@as(f64, @floatFromInt(self.content_length)));
+
+        // Call with headers if we have them, otherwise call with just status and length
+        if (self.headers_js != .zero) {
+            _ = self.telemetry.on_response_headers.call(
+                self.global,
+                .js_undefined,
+                &.{ id_js, status_js, content_length_js, self.headers_js },
+            ) catch |err|
+                self.global.takeException(err);
+        } else {
+            _ = self.telemetry.on_response_headers.call(
+                self.global,
+                .js_undefined,
+                &.{ id_js, status_js, content_length_js },
+            ) catch |err|
+                self.global.takeException(err);
+        }
+    }
+
+    fn deinit(self: *Self) void {
+        // Unprotect headers if we have them
+        if (self.headers_js != .zero) {
+            self.headers_js.unprotect();
+        }
+        // Free the builder
+        bun.default_allocator.destroy(self);
+    }
+};
 
 pub const Telemetry = struct {
     /// Atomic counter for generating request IDs
@@ -269,6 +351,35 @@ pub const Telemetry = struct {
             self.global.takeException(err);
     }
 
+    /// Called when response headers are about to be sent (with headers object)
+    /// Headers are protected during the callback and unprotected after
+    pub fn notifyResponseStatusWithHeaders(self: *Self, id: RequestId, status_code: u16, content_length: u64, headers_js: JSValue) void {
+        if (!self.enabled or self.on_response_headers == .zero) {
+            return;
+        }
+
+        const id_js = jsRequestId(id);
+        const status_js = JSValue.jsNumber(@as(f64, @floatFromInt(status_code)));
+        const content_length_js = JSValue.jsNumber(@as(f64, @floatFromInt(content_length)));
+
+        // Protect headers during callback execution
+        if (headers_js != .js_undefined and headers_js != .null) {
+            headers_js.protect();
+        }
+        defer {
+            if (headers_js != .js_undefined and headers_js != .null) {
+                headers_js.unprotect();
+            }
+        }
+
+        _ = self.on_response_headers.call(
+            self.global,
+            .js_undefined,
+            &.{ id_js, status_js, content_length_js, headers_js },
+        ) catch |err|
+            self.global.takeException(err);
+    }
+
     /// Called when response headers are about to be sent (full Response object)
     /// WARNING: This has lifecycle issues and is currently disabled
     pub fn notifyResponseHeaders(self: *Self, id: RequestId, response_js: JSValue) void {
@@ -289,6 +400,29 @@ pub const Telemetry = struct {
     /// Check if telemetry is enabled
     pub inline fn isEnabled(self: *const Self) bool {
         return self.enabled;
+    }
+
+    /// Create a response builder for collecting telemetry data
+    /// Returns null if telemetry is disabled (zero-cost when off)
+    pub fn responseBuilder(self: *Self, request_id: RequestId) ?*ResponseBuilder {
+        // Return null if telemetry is disabled or no response callback
+        if (!self.enabled or self.on_response_headers == .zero) {
+            return null;
+        }
+
+        // Allocate and initialize the builder
+        const builder = bun.default_allocator.create(ResponseBuilder) catch {
+            // If allocation fails, silently fail telemetry
+            return null;
+        };
+
+        builder.* = .{
+            .request_id = request_id,
+            .global = self.global,
+            .telemetry = self,
+        };
+
+        return builder;
     }
 };
 

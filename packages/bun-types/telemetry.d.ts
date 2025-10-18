@@ -18,8 +18,12 @@ declare module "bun" {
    *   onRequestError(id, error) {
    *     console.error(`Request ${id} failed:`, error);
    *   },
-   *   onResponseHeaders(id, statusCode, contentLength) {
+   *   onResponseHeaders(id, statusCode, contentLength, headers) {
    *     console.log(`Request ${id} response status: ${statusCode}`);
+   *     // Optional headers parameter available in 4th position
+   *     if (headers) {
+   *       console.log('Response headers:', headers);
+   *     }
    *   }
    * });
    * ```
@@ -32,19 +36,35 @@ declare module "bun" {
     type RequestId = number;
 
     /**
+     * Request-like type for different server implementations.
+     * Can be either a Bun Request object (from Bun.serve) or a Node.js IncomingMessage
+     * (from http.createServer), allowing the same telemetry to work with both APIs.
+     */
+    type RequestLike = Request | import("http").IncomingMessage;
+
+    /**
+     * Minimal headers interface that can be implemented by both native objects and Headers.
+     * Designed to work with OpenTelemetry's TextMapGetter for header extraction.
+     *
+     * Can be either:
+     * - Bun-style: Object with get(name) and keys() methods (like Headers)
+     * - Node-style: Plain object with header key-value pairs
+     */
+    type HeadersLike =
+      | { get(name: string): string | null; keys(): string[] } // Bun-style (Headers-like)
+      | Record<string, string | string[] | undefined>; // Node-style (plain object)
+
+    /**
      * Configuration options for telemetry callbacks.
      */
     interface TelemetryConfig {
       /**
        * Called when a request starts.
        *
-       * Accepts either a Bun Request object (from Bun.serve) or a Node.js IncomingMessage
-       * (from http.createServer), allowing the same telemetry to work with both APIs.
-       *
        * @param id - Unique identifier for this request
        * @param request - The incoming Request object or IncomingMessage
        */
-      onRequestStart?: (id: RequestId, request: Request | import("http").IncomingMessage) => void;
+      onRequestStart?: (id: RequestId, request: RequestLike) => void;
 
       /**
        * Called when a request ends successfully.
@@ -68,8 +88,10 @@ declare module "bun" {
        * @param id - The request identifier
        * @param statusCode - The HTTP response status code
        * @param contentLength - The response content length in bytes (0 if not set)
+       * @param headers - Optional response headers object (available as 4th parameter)
+       *                  Supports both Headers instances and plain objects
        */
-      onResponseHeaders?: (id: RequestId, statusCode: number, contentLength: number) => void;
+      onResponseHeaders?: (id: RequestId, statusCode: number, contentLength: number, headers?: HeadersLike) => void;
     }
 
     /**

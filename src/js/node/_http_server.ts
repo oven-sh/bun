@@ -1210,7 +1210,11 @@ function _writeHead(statusCode, reason, obj, response) {
   if (telemetryId !== undefined) {
     const contentLengthHeader = response.getHeader("content-length");
     const contentLength = typeof contentLengthHeader === "string" ? parseInt(contentLengthHeader, 10) : 0;
-    Bun.telemetry?._node_binding?.onResponseHeaders(telemetryId, statusCode, contentLength);
+
+    // Get all headers as a plain object to pass to telemetry
+    const headers = response.getHeaders();
+
+    Bun.telemetry?._node_binding?.onResponseHeaders(telemetryId, statusCode, contentLength, headers);
   }
 }
 

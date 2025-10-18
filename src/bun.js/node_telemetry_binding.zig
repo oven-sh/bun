@@ -69,9 +69,9 @@ pub fn onRequestError(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) 
 }
 
 /// Called when a Node.js ServerResponse sends headers
-/// Parameters: id (request ID), statusCode, contentLength
+/// Parameters: id (request ID), statusCode, contentLength, headers (optional)
 pub fn onResponseHeaders(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.arguments_old(4); // Accept 3 or 4 arguments
     if (arguments.len < 3) {
         return globalObject.throwNotEnoughArguments("onResponseHeaders", 3, arguments.len);
     }
@@ -90,7 +90,15 @@ pub fn onResponseHeaders(globalObject: *JSGlobalObject, callframe: *JSC.CallFram
         return .js_undefined;
     }
 
-    telemetry.notifyResponseStatus(id, status, content_length);
+    // Check if headers were provided (4th argument)
+    if (arguments.len >= 4) {
+        const headers_js = arguments.ptr[3];
+        // Headers from Node.js are already a plain JS object, no conversion needed
+        telemetry.notifyResponseStatusWithHeaders(id, status, content_length, headers_js);
+    } else {
+        // Backward compatibility - call without headers
+        telemetry.notifyResponseStatus(id, status, content_length);
+    }
 
     return .js_undefined;
 }

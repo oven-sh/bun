@@ -67,11 +67,13 @@ Telemetry tests are split into two categories with different purposes and locati
 ## Architecture
 
 ### Bun.serve
+
 - Uses **high-level callbacks**: `onRequestStart`, `onResponseHeaders`, `onRequestEnd`, `onRequestError`
 - Configured via `Bun.telemetry.configure({ onRequestStart, ... })`
 - These callbacks are invoked directly by Bun's HTTP server
 
 ### Node.js http.createServer
+
 - Uses **_node_binding hooks**: `handleIncomingRequest`, `handleWriteHead`
 - Configured via `Bun.telemetry.configure({ _node_binding: { ... } })`
 - These hooks are internal, used by OTel integration
@@ -87,6 +89,7 @@ This keeps the insertion surface area minimal in `src/js/node/_http_server.ts`:
 ## Example Test Comparison
 
 ### ✅ Core Test
+
 ```typescript
 // test/js/bun/http/node-telemetry.test.ts
 test("_node_binding.handleIncomingRequest is invoked with IncomingMessage and ServerResponse", async () => {
@@ -109,6 +112,7 @@ test("_node_binding.handleIncomingRequest is invoked with IncomingMessage and Se
 ```
 
 ### ✅ bun-otel Test
+
 ```typescript
 // packages/bun-otel/node-http.test.ts
 test("extracts user-agent header from IncomingMessage", async () => {
@@ -126,11 +130,13 @@ test("extracts user-agent header from IncomingMessage", async () => {
 ## Writing New Tests
 
 ### When to add a core test
+
 - Adding new telemetry insertion points
 - Adding new callback parameters
 - Testing that callbacks are invoked at the right time
 
 ### When to add a bun-otel test
+
 - Adding new span attributes
 - Changing header extraction logic
 - Adding trace context handling
@@ -138,7 +144,7 @@ test("extracts user-agent header from IncomingMessage", async () => {
 
 ## Migration History
 
-Previously, tests were mixed together. The refactoring separated them:
+Previously, tests were mixed. The refactoring separated them:
 - **Deleted:** `test/js/bun/http/telemetry-headers.test.ts` (was testing OTel behavior in core)
 - **Split:** `packages/bun-otel/index.test.ts` → multiple focused test files
 - **Clarified:** Core tests now only test insertion points

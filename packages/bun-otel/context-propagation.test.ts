@@ -19,7 +19,7 @@ describe("W3C trace context propagation", () => {
 
     sdk.start();
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch() {
         return new Response("test");
@@ -39,8 +39,7 @@ describe("W3C trace context propagation", () => {
       const spanContext = spans[0].spanContext();
       expect(spanContext.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
     } finally {
-      server.stop();
-      sdk.shutdown();
+      await sdk.shutdown();
     }
   });
 

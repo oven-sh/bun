@@ -53,6 +53,4 @@ test("onResponseHeaders captures custom status codes (201 Created)", async () =>
   const endEvent = events.find(e => e.type === "end");
   expect(endEvent).toBeDefined();
   expect(endEvent?.id).toBe(startEvent?.id);
-
-  Bun.telemetry.disable();
 });

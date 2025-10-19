@@ -55,10 +55,10 @@ pub const ResponseBuilder = struct {
     }
 
     /// Inject correlation headers into FetchHeaders before they are written
-    /// This calls onResponseStart callback and injects the returned headers
+    /// This calls onResponseStart callback and injects the returned headers using pre-parsed header names
     pub fn injectHeaders(self: *Self, headers: *WebCore.FetchHeaders) void {
-        // Fast path: no callback configured
-        if (self.telemetry.on_response_start == .zero) {
+        // Fast path: no callback or no headers configured
+        if (self.telemetry.on_response_start == .zero or self.telemetry.copy2response_headers.len == 0) {
             return;
         }
 
@@ -82,26 +82,20 @@ pub const ResponseBuilder = struct {
             return;
         }
 
-        const array_len = callback_result.getLength(self.global) catch return;
+        const values_len = callback_result.getLength(self.global) catch return;
 
-        // Must be even (name-value pairs)
-        if (array_len == 0 or array_len % 2 != 0) {
-            return;
+        // Length must match configured headers (values array should match header names array)
+        if (values_len != self.telemetry.copy2response_headers.len) {
+            return; // Mismatch between configured headers and returned values
         }
 
-        // Inject headers as name-value pairs directly into FetchHeaders
-        var i: u32 = 0;
-        while (i + 1 < array_len) : (i += 2) {
-            const name_js = callback_result.getIndex(self.global, i) catch return;
-            const value_js = callback_result.getIndex(self.global, i + 1) catch return;
-
-            const name = bun.String.fromJS(name_js, self.global) catch return;
-            defer name.deref();
-
-            const value = bun.String.fromJS(value_js, self.global) catch return;
+        // Inject headers using pre-parsed names
+        for (self.telemetry.copy2response_headers, 0..) |header_name, i| {
+            const value_js = callback_result.getIndex(self.global, @intCast(i)) catch continue;
+            const value = bun.String.fromJS(value_js, self.global) catch continue;
             defer value.deref();
 
-            var name_zig = name.toZigString();
+            var name_zig = header_name.toZigString();
             var value_zig = value.toZigString();
             headers.append(&name_zig, &value_zig, self.global);
         }
@@ -162,6 +156,9 @@ pub const Telemetry = struct {
     /// Node.js compatibility binding object (set via configure)
     _node_binding: JSValue = .zero,
 
+    /// Headers to copy to response (stored as bun.String for uncommon headers like x-trace-id)
+    copy2response_headers: []const bun.String = &.{},
+
     /// Whether telemetry is enabled
     enabled: bool = false,
 
@@ -208,6 +205,13 @@ pub const Telemetry = struct {
             self._node_binding.unprotect();
         }
 
+        for (self.copy2response_headers) |header| {
+            header.deref();
+        }
+        if (self.copy2response_headers.len > 0) {
+            bun.default_allocator.free(self.copy2response_headers);
+        }
+
         if (instance == self) {
             instance = null;
         }
@@ -252,6 +256,14 @@ pub const Telemetry = struct {
         if (self._node_binding != .zero) {
             self._node_binding.unprotect();
             self._node_binding = .zero;
+        }
+
+        for (self.copy2response_headers) |header| {
+            header.deref();
+        }
+        if (self.copy2response_headers.len > 0) {
+            bun.default_allocator.free(self.copy2response_headers);
+            self.copy2response_headers = &.{};
         }
 
         self.enabled = false;
@@ -335,6 +347,44 @@ pub const Telemetry = struct {
             const protected = callback.withAsyncContextIfNeeded(self.global);
             protected.protect();
             self.on_response_start = protected;
+        }
+
+        // Parse correlationHeaderNames array
+        // If we add traceid and traceparent etc to fast headers, we can optimize this further
+        if (try options.getTruthyComptime(self.global, "correlationHeaderNames")) |header_names_array| {
+            if (header_names_array.jsType().isArray()) {
+                const array_len = header_names_array.getLength(self.global) catch 0;
+                if (array_len > 0) {
+                    // Allocate header names array
+                    const headers = bun.default_allocator.alloc(bun.String, array_len) catch {
+                        return self.global.throwOutOfMemory();
+                    };
+                    errdefer bun.default_allocator.free(headers);
+
+                    // Parse header names from JS array
+                    var parsed_count: usize = 0;
+                    for (0..array_len) |i| {
+                        const name_js = header_names_array.getIndex(self.global, @intCast(i)) catch continue;
+                        const name = bun.String.fromJS(name_js, self.global) catch continue;
+                        headers[parsed_count] = name;
+                        parsed_count += 1;
+                    }
+
+                    // Clean up old array if it exists
+                    for (self.copy2response_headers) |header| {
+                        header.deref();
+                    }
+                    if (self.copy2response_headers.len > 0) {
+                        bun.default_allocator.free(self.copy2response_headers);
+                    }
+
+                    // Store new array (may be smaller if some parsing failed)
+                    self.copy2response_headers = if (parsed_count > 0)
+                        headers[0..parsed_count]
+                    else
+                        &.{};
+                }
+            }
         }
 
         // Parse onResponseHeaders callback
@@ -433,70 +483,6 @@ pub const Telemetry = struct {
             self.global.takeException(err);
     }
 
-    /// Called when response headers are about to be sent (with status code and content length)
-    pub fn notifyResponseStatus(self: *Self, id: RequestId, status_code: u16, content_length: u64) void {
-        if (!self.enabled or self.on_response_headers == .zero) {
-            return;
-        }
-
-        const id_js = jsRequestId(id);
-        const status_js = JSValue.jsNumber(@as(f64, @floatFromInt(status_code)));
-        const content_length_js = JSValue.jsNumber(@as(f64, @floatFromInt(content_length)));
-
-        _ = self.on_response_headers.call(
-            self.global,
-            .js_undefined,
-            &.{ id_js, status_js, content_length_js },
-        ) catch |err|
-            self.global.takeException(err);
-    }
-
-    /// Called when response headers are about to be sent (with headers object)
-    /// Headers are protected during the callback and unprotected after
-    pub fn notifyResponseStatusWithHeaders(self: *Self, id: RequestId, status_code: u16, content_length: u64, headers_js: JSValue) void {
-        if (!self.enabled or self.on_response_headers == .zero) {
-            return;
-        }
-
-        const id_js = jsRequestId(id);
-        const status_js = JSValue.jsNumber(@as(f64, @floatFromInt(status_code)));
-        const content_length_js = JSValue.jsNumber(@as(f64, @floatFromInt(content_length)));
-
-        // Protect headers during callback execution
-        if (headers_js != .js_undefined and headers_js != .null) {
-            headers_js.protect();
-        }
-        defer {
-            if (headers_js != .js_undefined and headers_js != .null) {
-                headers_js.unprotect();
-            }
-        }
-
-        _ = self.on_response_headers.call(
-            self.global,
-            .js_undefined,
-            &.{ id_js, status_js, content_length_js, headers_js },
-        ) catch |err|
-            self.global.takeException(err);
-    }
-
-    /// Called when response headers are about to be sent (full Response object)
-    /// WARNING: This has lifecycle issues and is currently disabled
-    pub fn notifyResponseHeaders(self: *Self, id: RequestId, response_js: JSValue) void {
-        if (!self.enabled or self.on_response_headers == .zero) {
-            return;
-        }
-
-        const id_js = jsRequestId(id);
-
-        _ = self.on_response_headers.call(
-            self.global,
-            .js_undefined,
-            &.{ id_js, response_js },
-        ) catch |err|
-            self.global.takeException(err);
-    }
-
     /// Check if telemetry is enabled
     pub inline fn isEnabled(self: *const Self) bool {
         return self.enabled;
@@ -509,10 +495,7 @@ pub const Telemetry = struct {
         if (!self.enabled or self.on_response_headers == .zero) {
             return null;
         }
-
-        // Allocate and initialize the builder
         const builder = bun.default_allocator.create(ResponseBuilder) catch {
-            // If allocation fails, silently fail telemetry
             return null;
         };
 

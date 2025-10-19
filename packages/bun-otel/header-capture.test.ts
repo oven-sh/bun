@@ -173,9 +173,8 @@ describe("Header capture and normalization", () => {
 
     const headers = config.onResponseStart?.(1);
     expect(headers).toBeDefined();
-    expect(headers).toBeArrayOfSize(2);
-    expect(headers?.[0]).toBe("x-trace-id");
-    expect(headers?.[1]).toMatch(/^[0-9a-f]{32}$/); // 32-char hex trace ID
+    expect(headers).toBeArrayOfSize(1); // Only value, not key-value pair
+    expect(headers?.[0]).toMatch(/^[0-9a-f]{32}$/); // 32-char hex trace ID
   });
 
   test("onResponseStart returns undefined when correlation disabled", () => {
@@ -218,8 +217,10 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const headers = config.onResponseStart?.(1);
-    expect(headers?.[0]).toBe("x-custom-trace");
-    expect(headers?.[1]).toMatch(/^[0-9a-f]{32}$/);
+    expect(headers).toBeArrayOfSize(1); // Only value
+    expect(headers?.[0]).toMatch(/^[0-9a-f]{32}$/); // Trace ID
+    // Header name is now in config.correlationHeaderNames, not in return value
+    expect(config.correlationHeaderNames).toEqual(["x-custom-trace"]);
   });
 
   test("captures multiple request headers efficiently", () => {

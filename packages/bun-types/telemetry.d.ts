@@ -115,23 +115,52 @@ declare module "bun" {
       onRequestError?: (id: RequestId, error: unknown) => void;
 
       /**
+       * Header names for response correlation (e.g., ["x-trace-id"])
+       * These are pre-parsed at configuration time for performance.
+       *
+       * Header names are parsed once during configure() to determine if they are:
+       * - Fast headers (common HTTP headers with optimized enum-based lookup)
+       * - Uncommon headers (arbitrary headers requiring string-based storage)
+       *
+       * This pre-parsing eliminates per-request parsing overhead.
+       *
+       * @example
+       * ```ts
+       * Bun.telemetry.configure({
+       *   correlationHeaderNames: ["x-trace-id", "x-request-id"],
+       *   onResponseStart(id) {
+       *     // Return only values (header names come from correlationHeaderNames)
+       *     return [traceId, requestId];
+       *   }
+       * });
+       * ```
+       */
+      correlationHeaderNames?: string[];
+
+      /**
        * Called before response headers are written, allowing injection of correlation headers.
-       * Returns a flat array of header name-value pairs: [name1, value1, name2, value2, ...].
+       * Returns a flat array of header VALUES only: [value1, value2, ...].
+       *
+       * Header names are configured via `correlationHeaderNames` and pre-parsed at configuration
+       * time for performance. This callback only provides the dynamic values for those headers.
        *
        * This is called BEFORE headers are serialized and sent, enabling trace ID correlation
        * where clients can reference server-side trace IDs in support tickets, logs, or debugging.
        *
        * @param id - The request identifier
-       * @returns Flat array of header pairs, or undefined if no headers to inject
+       * @returns Flat array of header values (order matches correlationHeaderNames), or undefined
        *
        * @example
        * ```ts
-       * onResponseStart(id) {
-       *   const span = spans.get(id);
-       *   if (!span) return undefined;
-       *   const traceId = span.spanContext().traceId;
-       *   return ["x-trace-id", traceId];
-       * }
+       * Bun.telemetry.configure({
+       *   correlationHeaderNames: ["x-trace-id"],
+       *   onResponseStart(id) {
+       *     const span = spans.get(id);
+       *     if (!span) return undefined;
+       *     const traceId = span.spanContext().traceId;
+       *     return [traceId]; // Only value, not ["x-trace-id", traceId]
+       *   }
+       * });
        * ```
        */
       onResponseStart?: (id: RequestId) => string[] | undefined;

@@ -1,9 +1,9 @@
 import type { Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HeadersLike, RequestLike } from "./otel-types";
 import { getUrlInfo, headerLikeHeaderGetter, requestLikeHeaderGetter } from "./otel-types";
-import { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
 // Symbols for Node.js http.Server span tracking
 const kSpan = Symbol("kOtelSpan");
@@ -265,8 +265,8 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
 
       const traceId = span.spanContext().traceId;
 
-      // Return flat array of headers to inject
-      return [correlationHeaderName, traceId];
+      // Return only values (header names are pre-parsed at config time)
+      return [traceId];
     } catch (error) {
       return undefined; // Silently fail - telemetry should never break app
     }
@@ -433,6 +433,7 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
       onRequestEnd,
       onRequestError,
       onResponseStart,
+      correlationHeaderNames: correlationHeaderName ? [correlationHeaderName] : undefined,
       onResponseHeaders,
 
       // Node.js http.Server callbacks

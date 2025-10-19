@@ -19,7 +19,7 @@ const sdk = new BunSDK({
 sdk.start();
 
 // Now all Bun.serve requests include rich resource context!
-Bun.serve({
+const server = Bun.serve({
   port: 3000,
   fetch(req) {
     return new Response("Hello World with rich telemetry context!");
@@ -32,10 +32,17 @@ console.log("- Service name: my-production-service");
 console.log("- Custom attributes: deployment.environment, service.version, service.namespace");
 console.log("- Auto-detected: host info, process info, environment variables");
 
-// Graceful shutdown
+// Graceful, idempotent shutdown
+let shuttingDown = false;
 const shutdown = async () => {
-  await sdk.shutdown();
-  process.exit(0);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    server.stop();
+    await sdk.shutdown();
+  } finally {
+    process.exit(0);
+  }
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

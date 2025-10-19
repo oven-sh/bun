@@ -206,11 +206,11 @@ pub const StatWatcher = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub fn eventLoop(this: StatWatcher) *EventLoop {
+    pub fn eventLoop(this: *const StatWatcher) *EventLoop {
         return this.ctx.eventLoop();
     }
 
-    pub fn enqueueTaskConcurrent(this: StatWatcher, task: *jsc.ConcurrentTask) void {
+    pub fn enqueueTaskConcurrent(this: *const StatWatcher, task: *jsc.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
 
@@ -357,6 +357,7 @@ pub const StatWatcher = struct {
 
         pub fn createAndSchedule(watcher: *StatWatcher) void {
             const task = bun.new(InitialStatTask, .{ .watcher = watcher });
+            watcher.ref();
             jsc.WorkPool.schedule(&task.task);
         }
 
@@ -366,6 +367,7 @@ pub const StatWatcher = struct {
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
+                this.deref(); // Balance the ref() from createAndSchedule().
                 return;
             }
 
@@ -395,6 +397,7 @@ pub const StatWatcher = struct {
     };
 
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
+        defer this.deref(); // Balance the ref from createAndSchedule().
         if (this.closed) {
             return;
         }
@@ -408,6 +411,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
+        defer this.deref(); // Balance the ref from createAndSchedule().
         if (this.closed) {
             return;
         }
@@ -471,11 +475,13 @@ pub const StatWatcher = struct {
             return;
 
         this.setLastStat(&res);
+        this.ref(); // Ensure it stays alive long enough to receive the callback.
         this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
     }
 
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
+        defer this.deref(); // Balance the ref from restat().
         const prev_jsvalue = this.last_jsvalue.swap();
         const globalThis = this.globalThis;
         const current_jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch return; // TODO: properly propagate exception upwards

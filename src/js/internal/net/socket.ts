@@ -1,158 +1,23 @@
-const Duplex = require("internal/streams/duplex");
-const { getDefaultHighWaterMark } = require("internal/streams/state");
-const EventEmitter = require("node:events");
-let dns: typeof import("node:dns");
-
-const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
-const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError, ErrnoException } = require("internal/shared");
-
-const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypePush = Array.prototype.push;
-const MathMax = Math.max;
-
-const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
-const isWindows = process.platform === "win32";
-
-const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
-const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
-const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
-
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
-
-// IPv4 Segment
-const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
-const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-var IPv4Reg;
-
-// IPv6 Segment
-const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-var IPv6Reg;
-
-function isIPv4(s): boolean {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
-}
-
-function isIPv6(s): boolean {
-  return (IPv6Reg ??= new RegExp(
-    "^(?:" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(?::${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(?::${v6Seg}){0,1}:${v4Str}|(?::${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(?::${v6Seg}){0,2}:${v4Str}|(?::${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(?::${v6Seg}){0,3}:${v4Str}|(?::${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
-      `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
-}
-
-function isIP(s): 0 | 4 | 6 {
-  if (isIPv4(s)) return 4;
-  if (isIPv6(s)) return 6;
-  return 0;
-}
-
-const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
-
-const kServerSocket = Symbol("kServerSocket");
-const kBytesWritten = Symbol("kBytesWritten");
-const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
-const kReinitializeHandle = Symbol("kReinitializeHandle");
-
-const kRealListen = Symbol("kRealListen");
-const kSetNoDelay = Symbol("kSetNoDelay");
-const kSetKeepAlive = Symbol("kSetKeepAlive");
-const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
-const kConnectOptions = Symbol("connect-options");
-const kAttach = Symbol("kAttach");
-const kCloseRawConnection = Symbol("kCloseRawConnection");
-const kpendingRead = Symbol("kpendingRead");
-const kupgraded = Symbol("kupgraded");
-const ksocket = Symbol("ksocket");
-const khandlers = Symbol("khandlers");
-const kclosed = Symbol("closed");
-const kended = Symbol("ended");
-const kwriteCallback = Symbol("writeCallback");
-const kSocketClass = Symbol("kSocketClass");
-
-function endNT(socket, callback, err) {
-  socket.$end();
-  callback(err);
-}
-function emitCloseNT(self, hasError) {
-  self.emit("close", hasError);
-}
-function detachSocket(self) {
-  if (!self) self = this;
-  self._handle = null;
-}
-function destroyNT(self, err) {
-  self.destroy(err);
-}
-function destroyWhenAborted(err) {
-  if (!this.destroyed) {
-    this.destroy(err.target.reason);
-  }
-}
-// in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
-function onSocketEnd() {
-  if (!this.allowHalfOpen) {
-    this.write = writeAfterFIN;
-  }
-}
-// Provide a better error message when we call end() as a result
-// of the other side sending a FIN.  The standard 'write after end'
-// is overly vague, and makes it seem like the user's code is to blame.
-function writeAfterFIN(chunk, encoding, cb) {
-  if (!this.writableEnded) {
-    return Duplex.prototype.write.$call(this, chunk, encoding, cb);
-  }
-
-  if (typeof encoding === "function") {
-    cb = encoding;
-    encoding = null;
-  }
-
-  const err = new Error("This socket has been ended by the other party");
-  err.code = "EPIPE";
-  if (typeof cb === "function") {
-    process.nextTick(cb, err);
-  }
-  this.destroy(err);
-
-  return false;
-}
-function onConnectEnd() {
-  if (!this._hadError && this.secureConnecting) {
-    const options = this[kConnectOptions];
-    this._hadError = true;
-    const error = new ConnResetException(
-      "Client network socket disconnected before secure TLS connection was established",
-    );
-    error.path = options.path;
-    error.host = options.host;
-    error.port = options.port;
-    error.localAddress = options.localAddress;
-    this.destroy(error);
-  }
-}
+const {
+  Duplex, getDefaultHighWaterMark, EventEmitter, dns,
+  normalizedArgsSymbol, ExceptionWithHostPort, kTimeout, getTimerDuration,
+  validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString,
+  NodeAggregateError, ErrnoException,
+  ArrayPrototypeIncludes, ArrayPrototypePush, MathMax,
+  UV_ECANCELED, UV_ETIMEDOUT, isWindows,
+  getDefaultAutoSelectFamily, setDefaultAutoSelectFamily, getDefaultAutoSelectFamilyAttemptTimeout, setDefaultAutoSelectFamilyAttemptTimeout,
+  SocketAddress, BlockList, newDetachedSocket, doConnect,
+  addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount,
+  isIPv4, isIPv6, isIP,
+  bunTlsSymbol, bunSocketServerOptions, owner_symbol,
+  kServerSocket, kBytesWritten, bunTLSConnectOptions, kReinitializeHandle,
+  kRealListen, kSetNoDelay, kSetKeepAlive, kSetKeepAliveInitialDelay, kConnectOptions, kAttach, kCloseRawConnection,
+  kpendingRead, kupgraded, ksocket, khandlers, kclosed, kended, kwriteCallback, kSocketClass,
+  endNT, emitCloseNT, detachSocket, destroyNT, destroyWhenAborted, onSocketEnd, writeAfterFIN, onConnectEnd
+} = require("internal/net/shared");
 
 const SocketHandlers: SocketHandler = {
   close(socket, err) {

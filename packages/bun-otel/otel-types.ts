@@ -32,10 +32,10 @@ export interface UrlInfo {
 }
 
 /**
- * Type guard for fetch API Request
+ * Type guard for fetch API Request (cross-realm safe)
  */
 export function isFetchRequest(req: RequestLike): req is Request {
-  return req instanceof Request;
+  return !!req && typeof (req as any).url === "string" && !!(req as any).headers?.get;
 }
 
 export function isBunHeadersLike(headers: HeadersLike): headers is BunHeadersLike {

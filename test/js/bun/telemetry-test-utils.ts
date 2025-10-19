@@ -9,6 +9,7 @@
  * @param events - Array of telemetry events to poll
  * @param expectedTypes - Array of event types to wait for (e.g., ["start", "end"])
  * @param timeoutMs - Maximum time to wait in milliseconds (default: 500ms)
+ * @param intervalMs - Polling interval in milliseconds (default: 10ms)
  * @throws Error if timeout is reached before all expected events are found
  *
  * @example
@@ -23,21 +24,10 @@ export async function waitForEvents(
   events: Array<{ type: string; id?: number; [key: string]: any }>,
   expectedTypes: string[],
   timeoutMs = 500,
+  intervalMs = 10,
 ): Promise<void> {
-  const startTime = Date.now();
-  const pollInterval = 5; // Poll every 5ms
-
-  while (Date.now() - startTime < timeoutMs) {
-    const hasAll = expectedTypes.every(type => events.some(e => e.type === type));
-    if (hasAll) {
-      return; // Success - all events present
-    }
-    await Bun.sleep(pollInterval);
-  }
-
-  // Timeout - fail with helpful message
-  const found = events.map(e => e.type);
-  throw new Error(`Timeout waiting for telemetry events. Expected: [${expectedTypes}], Found: [${found}]`);
+  await waitForCondition(() => expectedTypes.every(type => events.some(e => e.type === type)), timeoutMs, intervalMs);
+  // If we reach here, all expected events are present
 }
 
 /**
@@ -50,16 +40,12 @@ export async function waitForEvents(
  * @throws Error if timeout is reached before condition becomes true
  */
 export async function waitForCondition(condition: () => boolean, timeoutMs = 500, intervalMs = 10): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const start = performance.now();
   let attempts = 0;
-  const maxAttempts = Math.ceil(timeoutMs / intervalMs);
-
-  while (!condition() && attempts < maxAttempts && Date.now() < deadline) {
-    await Bun.sleep(intervalMs);
+  while (performance.now() - start < timeoutMs) {
+    if (condition()) return;
     attempts++;
+    await Bun.sleep(intervalMs);
   }
-
-  if (!condition()) {
-    throw new Error(`Timeout waiting for condition after ${attempts} attempts (${timeoutMs}ms)`);
-  }
+  throw new Error(`Timeout waiting for condition after ${attempts} attempts (${timeoutMs}ms)`);
 }

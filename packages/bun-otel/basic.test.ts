@@ -1,3 +1,4 @@
+import { SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./index";
@@ -62,7 +63,7 @@ describe("BunSDK basic functionality", () => {
 
     // Verify ERROR status is preserved (not overwritten with OK by onRequestEnd)
     // This test would fail without the fix - onRequestEnd would set OK unconditionally
-    expect(spans[0].status.code).toBe(2); // SpanStatusCode.ERROR = 2
+    expect(spans[0].status.code).toBe(SpanStatusCode.ERROR);
 
     await sdk.shutdown();
   });

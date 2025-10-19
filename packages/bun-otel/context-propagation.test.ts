@@ -89,7 +89,7 @@ describe("W3C trace context propagation", () => {
       await new Promise<void>(resolve => {
         server.close(() => resolve());
       });
-      sdk.shutdown();
+      await sdk.shutdown();
     }
   });
 });

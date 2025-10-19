@@ -44,7 +44,7 @@ pub const ResponseBuilder = struct {
         // Convert headers to JS and store
         // We protect the headers so they don't get GC'd before we fire
         const headers_js = headers.toJS(self.global);
-        if (headers_js != .zero and headers_js != .js_undefined) {
+        if (!headers_js.isUndefinedOrNull()) {
             headers_js.protect();
             // Unprotect old headers if we had any
             if (self.headers_js != .zero) {

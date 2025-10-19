@@ -1,15 +1,10 @@
-import { propagation } from "@opentelemetry/api";
-import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./index";
 import { waitForSpans } from "./test-utils";
 
 describe("W3C trace context propagation", () => {
-  // Set up W3C propagator for this suite only, avoiding test isolation issues
-  beforeAll(() => {
-    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
-  });
+  // Uses default W3C propagator installed by BunSDK.start()
   test("propagates trace context in Bun.serve", async () => {
     const exporter = new InMemorySpanExporter();
 
@@ -53,7 +48,7 @@ describe("W3C trace context propagation", () => {
     sdk.start();
 
     const http = await import("node:http");
-    const server = http.createServer((req, res) => {
+    await using server = http.createServer((req, res) => {
       res.writeHead(200);
       res.end("OK");
     });
@@ -85,9 +80,6 @@ describe("W3C trace context propagation", () => {
       const spanContext = spans[0].spanContext();
       expect(spanContext.traceId).toBe("abcdef1234567890abcdef1234567890");
     } finally {
-      await new Promise<void>(resolve => {
-        server.close(() => resolve());
-      });
       await sdk.shutdown();
     }
   });

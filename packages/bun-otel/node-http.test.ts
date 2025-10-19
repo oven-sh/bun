@@ -1,6 +1,7 @@
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./index";
+import { waitForSpans } from "./test-utils";
 
 describe("Node.js http.createServer integration", () => {
   test("creates spans for Node.js http server requests", async () => {
@@ -13,7 +14,7 @@ describe("Node.js http.createServer integration", () => {
     sdk.start();
 
     const http = await import("node:http");
-    const server = http.createServer((req, res) => {
+    await using server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("Node.js server");
     });
@@ -35,7 +36,7 @@ describe("Node.js http.createServer integration", () => {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Node.js server");
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForSpans(exporter, 1);
 
       const spans = exporter.getFinishedSpans();
       expect(spans).toHaveLength(1);
@@ -44,10 +45,7 @@ describe("Node.js http.createServer integration", () => {
       expect(spans[0].attributes["http.target"]).toBe("/test");
       expect(spans[0].attributes["http.status_code"]).toBe(200);
     } finally {
-      await new Promise<void>(resolve => {
-        server.close(() => resolve());
-      });
-      sdk.shutdown();
+      await sdk.shutdown();
     }
   });
 
@@ -61,7 +59,7 @@ describe("Node.js http.createServer integration", () => {
     sdk.start();
 
     const http = await import("node:http");
-    const server = http.createServer((req, res) => {
+    await using server = http.createServer((req, res) => {
       res.writeHead(200);
       res.end("OK");
     });
@@ -86,7 +84,7 @@ describe("Node.js http.createServer integration", () => {
         },
       });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForSpans(exporter, 1);
 
       const spans = exporter.getFinishedSpans();
       expect(spans).toHaveLength(1);
@@ -96,10 +94,7 @@ describe("Node.js http.createServer integration", () => {
       expect(span.attributes["http.target"]).toBe("/api/users/123");
       expect(span.attributes["http.host"]).toContain("localhost");
     } finally {
-      await new Promise<void>(resolve => {
-        server.close(() => resolve());
-      });
-      sdk.shutdown();
+      await sdk.shutdown();
     }
   });
 });

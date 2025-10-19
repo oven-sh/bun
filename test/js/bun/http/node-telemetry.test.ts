@@ -19,11 +19,6 @@ afterEach(() => {
   }
 });
 
-// Helper to close Node.js http.Server deterministically
-async function closeServer(server: http.Server): Promise<void> {
-  await new Promise<void>(resolve => server.close(() => resolve()));
-}
-
 test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with correct arguments", async () => {
   const calls: Array<{ method: string; args: any[] }> = [];
 
@@ -43,7 +38,7 @@ test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with c
     _node_binding: mockBinding,
   });
 
-  const server = http.createServer((req, res) => {
+  await using server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Hello!");
   });
@@ -83,8 +78,6 @@ test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with c
   expect(writeHeadCall).toBeDefined();
   expect(writeHeadCall?.args[0]).toBe(incomingCall?.args[1]); // Same response object
   expect(writeHeadCall?.args[1]).toBe(200); // Status code
-
-  await closeServer(server);
 });
 
 test("handleWriteHead deduplication - called only once even with multiple writes", async () => {
@@ -102,7 +95,7 @@ test("handleWriteHead deduplication - called only once even with multiple writes
 
   Bun.telemetry.configure({ _node_binding: mockBinding });
 
-  const server = http.createServer((req, res) => {
+  await using server = http.createServer((req, res) => {
     // Call writeHead explicitly
     res.writeHead(200);
     res.write("chunk1");
@@ -123,8 +116,6 @@ test("handleWriteHead deduplication - called only once even with multiple writes
   // handleWriteHead should be called exactly once (deduplication works)
   const writeHeadCalls = calls.filter(c => c === "handleWriteHead");
   expect(writeHeadCalls.length).toBe(1);
-
-  await closeServer(server);
 });
 
 test("handleWriteHead receives ServerResponse with accessible headers via getHeader()", async () => {
@@ -143,7 +134,7 @@ test("handleWriteHead receives ServerResponse with accessible headers via getHea
 
   Bun.telemetry.configure({ _node_binding: mockBinding });
 
-  const server = http.createServer((req, res) => {
+  await using server = http.createServer((req, res) => {
     res.writeHead(201, { "Content-Length": "42" });
     res.end();
   });
@@ -164,8 +155,6 @@ test("handleWriteHead receives ServerResponse with accessible headers via getHea
   // The mock can inspect the response object to verify content-length is accessible
   const contentLength = capturedResponse.getHeader("content-length");
   expect(contentLength).toBe("42");
-
-  await closeServer(server);
 });
 
 test("telemetry failures are isolated and don't crash request path", async () => {
@@ -181,7 +170,7 @@ test("telemetry failures are isolated and don't crash request path", async () =>
 
   Bun.telemetry.configure({ _node_binding: mockBinding });
 
-  const server = http.createServer((req, res) => {
+  await using server = http.createServer((req, res) => {
     // This should succeed despite telemetry failures
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Request handled successfully");
@@ -198,6 +187,4 @@ test("telemetry failures are isolated and don't crash request path", async () =>
   expect(response.status).toBe(200);
   const body = await response.text();
   expect(body).toBe("Request handled successfully");
-
-  await closeServer(server);
 });

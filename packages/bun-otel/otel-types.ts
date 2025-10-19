@@ -69,8 +69,11 @@ export function getUrlInfo(req: RequestLike): UrlInfo {
   // IncomingMessage (Node.js http.createServer)
   const host = (Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host) || "localhost";
   const protocol = (req.socket as any)?.encrypted ? "https" : "http";
-  const pathname = req.url || "/";
-  const fullUrl = `${protocol}://${host}${pathname}`;
+  const path = req.url || "/";
+  const fullUrl = `${protocol}://${host}${path}`;
+
+  // Parse URL to separate pathname from query string
+  const parsed = new URL(fullUrl);
 
   const userAgent = req.headers["user-agent"];
   const contentLengthHeader = req.headers["content-length"];
@@ -79,7 +82,7 @@ export function getUrlInfo(req: RequestLike): UrlInfo {
 
   return {
     fullUrl,
-    pathname,
+    pathname: parsed.pathname,
     host,
     scheme: protocol,
     userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent,

@@ -132,14 +132,14 @@ const nodeRequestHeaderGetter: TextMapGetter<IncomingMessage> = {
   },
 };
 
-export function headerLikeHeaderGetter(headers: HeadersLike): TextMapGetter<HeadersLike> {
+export function headerLikeHeaderGetter(headers: HeadersLike): TextMapGetter<unknown> {
   return headers ? (isBunHeadersLike(headers) ? bunHeadersGetter : nodeHeaderGetter) : nilHeaderGetter;
 }
 
 /**
  * Get appropriate header getter for the request type
  */
-export function requestLikeHeaderGetter(req: RequestLike): TextMapGetter<RequestLike> {
+export function requestLikeHeaderGetter(req: RequestLike): TextMapGetter<unknown> {
   return req && req.headers
     ? isFetchRequest(req)
       ? fetchRequestHeaderGetter

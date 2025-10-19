@@ -455,7 +455,7 @@ pub const BunTest = struct {
 
         return .js_undefined;
     }
-    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -472,8 +472,6 @@ pub const BunTest = struct {
         run(this_strong, vm.global) catch |e| {
             this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
         };
-
-        return .disarm; // this won't disable the timer if .run() re-arms it
     }
     pub fn runNextTick(weak: BunTestPtr.Weak, globalThis: *jsc.JSGlobalObject, phase: RefDataValue) void {
         const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });

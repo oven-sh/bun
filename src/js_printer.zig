@@ -414,6 +414,9 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
+    /// The module type of the importing file (after linking), used to determine interop helper behavior.
+    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    input_module_type: options.ModuleType = .unknown,
     module_type: options.Format = .esm,
 
     // /// Used for cross-module inlining of import items when bundling
@@ -1711,7 +1714,7 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (module_type.isESM()) {
+                    if (p.options.input_module_type == .esm) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");

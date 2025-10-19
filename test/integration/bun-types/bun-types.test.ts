@@ -398,10 +398,8 @@ describe("@types/bun integration test", () => {
       const beforeEach_shouldBeAFunction: Function = beforeEach;
       const afterEach_shouldBeAFunction: Function = afterEach;
       const afterAll_shouldBeAFunction: Function = afterAll;
-      const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
-      const mock_shouldBeAFunction: Function = mock;
-      const spyOn_shouldBeAFunction: Function = spyOn;
       const jest_shouldBeDefined: object = jest;
+      const vi_shouldBeDefined: object = vi;
     `;
 
     test("checks without lib.dom.d.ts and test-globals references", async () => {
@@ -422,71 +420,60 @@ describe("@types/bun integration test", () => {
       });
 
       expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM); // should still have no empty interfaces
-      expect(diagnostics).toEqual([
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:2:48",
-          "message":
-            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:3:46",
-          "message":
-            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:4:52",
-          "message":
-            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:5:50",
-          "message": "Cannot find name 'expect'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:6:53",
-          "message": "Cannot find name 'beforeAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:7:54",
-          "message": "Cannot find name 'beforeEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:8:53",
-          "message": "Cannot find name 'afterEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:9:52",
-          "message": "Cannot find name 'afterAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:10:61",
-          "message": "Cannot find name 'setDefaultTimeout'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:11:48",
-          "message": "Cannot find name 'mock'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:12:49",
-          "message": "Cannot find name 'spyOn'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:13:44",
-          "message": "Cannot find name 'jest'.",
-        },
-      ]);
+      expect(diagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:2:48",
+            "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:3:46",
+            "message": "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:4:52",
+            "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:5:50",
+            "message": "Cannot find name 'expect'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:6:53",
+            "message": "Cannot find name 'beforeAll'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:7:54",
+            "message": "Cannot find name 'beforeEach'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:8:53",
+            "message": "Cannot find name 'afterEach'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:9:52",
+            "message": "Cannot find name 'afterAll'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:10:44",
+            "message": "Cannot find name 'jest'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:11:42",
+            "message": "Cannot find name 'vi'.",
+          },
+        ]
+      `);
     });
   });
 

@@ -103,15 +103,12 @@ describe("WebSocket", () => {
       });
 
       const { promise, resolve, reject } = Promise.withResolvers<void>();
-      const timeout = setTimeout(() => reject(new Error("Test timeout after 5s")), 5000);
 
       client = new WebSocket(`ws://${server.hostname}:${server.port}`);
       client.addEventListener("error", () => {
-        clearTimeout(timeout);
         reject(new Error("WebSocket error"));
       });
       client.addEventListener("close", event => {
-        clearTimeout(timeout);
         try {
           expect(event.code).toBe(1000);
           expect(event.reason).toBe("fragmented close test");

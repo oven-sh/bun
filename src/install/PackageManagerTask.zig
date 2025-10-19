@@ -98,10 +98,25 @@ pub fn callback(task: *ThreadPool.Task) void {
             const body = &manifest.network.response_buffer;
             defer body.deinit();
 
+            const metadata = manifest.network.response.metadata orelse {
+                // Network error occurred (e.g., connection refused, DNS failure)
+                // This should have been handled in runTasks.zig, but handle it here as a safety check
+                const err = manifest.network.response.fail orelse error.NetworkError;
+                this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Network error downloading package manifest for {s}: {s}", .{
+                    manifest.name.slice(),
+                    @errorName(err),
+                }) catch unreachable;
+
+                this.err = err;
+                this.status = Status.fail;
+                this.data = .{ .package_manifest = .{} };
+                return;
+            };
+
             const package_manifest = Npm.Registry.getPackageMetadata(
                 allocator,
                 manager.scopeForPackageName(manifest.name.slice()),
-                (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
+                metadata.response,
                 body.slice(),
                 &this.log,
                 manifest.name.slice(),

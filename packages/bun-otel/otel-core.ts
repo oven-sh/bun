@@ -198,25 +198,24 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
 
       const urlInfo = getUrlInfo(request);
       const method = request.method ?? "UNKNOWN";
+      const attrs: Record<string, string | number | boolean> = {
+        "http.method": method,
+        "http.url": urlInfo.fullUrl,
+        "http.target": urlInfo.pathname,
+        "http.scheme": urlInfo.scheme,
+        "http.host": urlInfo.host,
+      };
+      if (urlInfo.userAgent) attrs["http.user_agent"] = urlInfo.userAgent;
+      if (Number.isFinite(urlInfo.contentLength)) attrs["http.request_content_length"] = urlInfo.contentLength!;
       const span = tracer.startSpan(
         `${method} ${urlInfo.pathname}`,
-        {
-          kind: SpanKind.SERVER,
-          attributes: {
-            "http.method": method,
-            "http.url": urlInfo.fullUrl,
-            "http.target": urlInfo.pathname,
-            "http.scheme": urlInfo.scheme,
-            "http.host": urlInfo.host,
-            "http.user_agent": urlInfo.userAgent,
-            "http.request_content_length": urlInfo.contentLength,
-          },
-        },
+        { kind: SpanKind.SERVER, attributes: attrs },
         extractedContext,
       );
       if (ENABLE_DEBUG_LOGGING) {
+        const parent = trace.getSpan(extractedContext)?.spanContext().spanId;
         console.log(
-          `[onRequestStart] Created SERVER span: ${method} ${urlInfo.pathname} (spanId: ${span.spanContext().spanId}, parentSpanId: ${span.parentSpanId}, traceId: ${span.spanContext().traceId})`,
+          `[onRequestStart] Created SERVER span: ${method} ${urlInfo.pathname} (spanId: ${span.spanContext().spanId}, parentSpanId: ${parent ?? "none"}, traceId: ${span.spanContext().traceId})`,
         );
       }
 

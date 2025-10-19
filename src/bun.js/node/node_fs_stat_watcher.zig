@@ -405,7 +405,7 @@ pub const StatWatcher = struct {
         const globalThis = this.globalThis;
 
         const jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch |err| return globalThis.reportActiveExceptionAsUnhandled(err);
-        this.last_jsvalue = .create(jsvalue, globalThis);
+        this.last_jsvalue.set(globalThis, jsvalue);
 
         this.scheduler.data.append(this);
     }
@@ -418,7 +418,7 @@ pub const StatWatcher = struct {
 
         const globalThis = this.globalThis;
         const jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch |err| return globalThis.reportActiveExceptionAsUnhandled(err);
-        this.last_jsvalue = .create(jsvalue, globalThis);
+        this.last_jsvalue.set(globalThis, jsvalue);
 
         _ = js.listenerGetCached(this.js_this).?.call(
             globalThis,

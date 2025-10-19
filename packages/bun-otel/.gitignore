@@ -1,4 +1,14 @@
 node_modules
 dist
+build
+lib
 *.log
+.env
+.env.local
+.env.*.local
+coverage/
+.nyc_output/
+*.tsbuildinfo
 .DS_Store
+.vscode/settings.json
+.idea/

@@ -110,19 +110,17 @@ pub const StatWatcherScheduler = struct {
         this.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(&holder.task)));
     }
 
-    pub fn timerCallback(this: *StatWatcherScheduler) EventLoopTimer.Arm {
+    pub fn timerCallback(this: *StatWatcherScheduler) void {
         const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
         this.event_loop_timer.state = .FIRED;
         this.event_loop_timer.heap = .{};
 
         if (has_been_cleared) {
-            return .disarm;
+            return;
         }
 
         jsc.WorkPool.schedule(&this.task);
-
-        return .disarm;
     }
 
     pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {

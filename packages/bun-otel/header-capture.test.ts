@@ -37,6 +37,7 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.request.header.user_agent"]).toBe("test-client/1.0");
     expect(attrs["http.request.header.x_request_id"]).toBe("req-123");
     expect(attrs["http.request.header.accept_language"]).toBe("en-US");
+    config.onRequestEnd?.(1);
   });
 
   test("normalizes header names: dashes to underscores", () => {
@@ -64,6 +65,7 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.request.header.content_type"]).toBe("application/json");
     expect(attrs["http.request.header.x_custom_header"]).toBe("custom-value");
     expect(attrs["http.request.header.accept_encoding"]).toBe("gzip, deflate");
+    config.onRequestEnd?.(1);
   });
 
   test("captures response headers with correct attribute naming", () => {
@@ -94,6 +96,7 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.response.header.content_type"]).toBe("application/json");
     expect(attrs["http.response.header.cache_control"]).toBe("max-age=3600");
     expect(attrs["http.response.header.x_response_time"]).toBe("42ms");
+    config.onRequestEnd?.(1);
   });
 
   test("handles missing headers gracefully", () => {
@@ -120,6 +123,7 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.request.header.user_agent"]).toBe("test-client/1.0");
     expect(attrs["http.request.header.x_missing_header"]).toBeUndefined();
     expect(attrs["http.request.header.authorization"]).toBeUndefined();
+    config.onRequestEnd?.(1);
   });
 
   test("skips header capture when arrays are empty", () => {
@@ -144,6 +148,7 @@ describe("Header capture and normalization", () => {
     // Only standard attributes should exist
     expect(attrs["http.method"]).toBeDefined();
     expect(attrs["http.request.header.user_agent"]).toBeUndefined();
+    config.onRequestEnd?.(1);
   });
 
   test("handles case-insensitive header lookup", () => {
@@ -170,6 +175,7 @@ describe("Header capture and normalization", () => {
     // Normalized to lowercase with underscores
     expect(attrs["http.request.header.content_type"]).toBe("text/html");
     expect(attrs["http.request.header.user_agent"]).toBe("browser/1.0");
+    config.onRequestEnd?.(1);
   });
 
   test("onResponseStart returns trace ID when enabled", () => {
@@ -274,6 +280,7 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.request.header.x_request_id"]).toBe("req-1");
     expect(attrs["http.request.header.x_correlation_id"]).toBe("corr-1");
     expect(attrs["http.request.header.authorization"]).toBeUndefined();
+    config.onRequestEnd?.(1);
   });
 
   test("captures multiple response headers efficiently", () => {
@@ -313,5 +320,6 @@ describe("Header capture and normalization", () => {
     expect(attrs["http.response.header.etag"]).toBe('"abc123"');
     expect(attrs["http.response.header.x_response_time"]).toBe("15ms");
     expect(attrs["http.response.header.x_rate_limit_remaining"]).toBeUndefined();
+    config.onRequestEnd?.(1);
   });
 });

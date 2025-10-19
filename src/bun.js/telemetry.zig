@@ -63,43 +63,14 @@ pub const ResponseBuilder = struct {
         }
 
         const id_js = jsRequestId(self.request_id);
-        const callback_result = self.telemetry.on_response_start.call(
+        Telemetry.callAndInjectHeaders(
+            self.telemetry.on_response_start,
+            self.telemetry.copy2response_headers,
+            headers,
             self.global,
-            .js_undefined,
             &.{id_js},
-        ) catch |err| {
-            _ = self.global.takeException(err);
-            return;
-        };
-
-        // Handle undefined/null return (common case: no headers to inject)
-        if (callback_result == .zero or callback_result.isUndefinedOrNull()) {
-            return;
-        }
-
-        // Validate it's an array
-        if (!callback_result.jsType().isArray()) {
-            return;
-        }
-
-        const values_len = callback_result.getLength(self.global) catch return;
-
-        // Length must match configured headers (values array should match header names array)
-        if (values_len != self.telemetry.copy2response_headers.len) {
-            logger("onResponseStart values length ({d}) != configured header names ({d}); skipping injection", .{ values_len, self.telemetry.copy2response_headers.len });
-            return;
-        }
-
-        // Inject headers using pre-parsed names
-        for (self.telemetry.copy2response_headers, 0..) |header_name, i| {
-            const value_js = callback_result.getIndex(self.global, @intCast(i)) catch continue;
-            const value = bun.String.fromJS(value_js, self.global) catch continue;
-            defer value.deref();
-
-            var name_zig = header_name.toZigString();
-            var value_zig = value.toZigString();
-            headers.append(&name_zig, &value_zig, self.global);
-        }
+            "onResponseStart",
+        );
     }
 
     /// Fire the telemetry callback and clean up
@@ -272,6 +243,102 @@ pub const Telemetry = struct {
         logger("Telemetry reset", .{});
     }
 
+    /// Shared helper to call a callback and inject headers into FetchHeaders
+    /// Used by both response correlation headers and fetch distributed tracing
+    fn callAndInjectHeaders(
+        callback: JSValue,
+        header_names: []const bun.String,
+        headers: *WebCore.FetchHeaders,
+        global: *JSGlobalObject,
+        args: []const JSValue,
+        comptime log_prefix: []const u8,
+    ) void {
+        const callback_result = callback.call(
+            global,
+            .js_undefined,
+            args,
+        ) catch |err| {
+            _ = global.takeException(err);
+            return;
+        };
+
+        // Handle undefined/null return (common case: no headers to inject)
+        if (callback_result == .zero or callback_result.isUndefinedOrNull()) {
+            return;
+        }
+
+        // Validate it's an array
+        if (!callback_result.jsType().isArray()) {
+            return;
+        }
+
+        const values_len = callback_result.getLength(global) catch return;
+
+        // Length must match configured headers (values array should match header names array)
+        if (values_len != header_names.len) {
+            logger("{s} values length ({d}) != configured header names ({d}); skipping injection", .{ log_prefix, values_len, header_names.len });
+            return;
+        }
+
+        // Inject headers using pre-parsed names
+        for (header_names, 0..) |header_name, i| {
+            const value_js = callback_result.getIndex(global, @intCast(i)) catch continue;
+            const value = bun.String.fromJS(value_js, global) catch continue;
+            defer value.deref();
+
+            var name_zig = header_name.toZigString();
+            var value_zig = value.toZigString();
+            headers.append(&name_zig, &value_zig, global);
+        }
+    }
+
+    /// Shared helper to parse header name arrays from JS
+    fn parseHeaderNames(
+        self: *Self,
+        array_js: JSValue,
+        old_headers: []const bun.String,
+    ) ![]const bun.String {
+        if (!array_js.jsType().isArray()) {
+            return &.{};
+        }
+
+        const array_len = array_js.getLength(self.global) catch 0;
+        if (array_len == 0) {
+            return &.{};
+        }
+
+        // Allocate header names array
+        const headers = bun.default_allocator.alloc(bun.String, array_len) catch {
+            return self.global.throwOutOfMemory();
+        };
+        errdefer bun.default_allocator.free(headers);
+
+        // Parse header names from JS array
+        var parsed_count: usize = 0;
+        for (0..array_len) |i| {
+            const name_js = array_js.getIndex(self.global, @intCast(i)) catch continue;
+            const name = bun.String.fromJS(name_js, self.global) catch continue;
+            headers[parsed_count] = name;
+            parsed_count += 1;
+        }
+
+        // Clean up old array if it exists
+        for (old_headers) |header| {
+            header.deref();
+        }
+        if (old_headers.len > 0) {
+            bun.default_allocator.free(old_headers);
+        }
+
+        // Return new array (may be smaller if some parsing failed)
+        if (parsed_count > 0) {
+            return headers[0..parsed_count];
+        } else {
+            bun.default_allocator.free(headers);
+            return &.{};
+        }
+    }
+
     /// Configure telemetry with JavaScript callbacks
     pub fn configure(self: *Self, options: JSValue) !void {
         // Handle reset: configure(null) clears all callbacks and allows reconfiguration
@@ -353,41 +420,7 @@ pub const Telemetry = struct {
         // Parse correlationHeaderNames array
         // If we add traceid and traceparent etc to fast headers, we can optimize this further
         if (try options.getTruthyComptime(self.global, "correlationHeaderNames")) |header_names_array| {
-            if (header_names_array.jsType().isArray()) {
-                const array_len = header_names_array.getLength(self.global) catch 0;
-                if (array_len > 0) {
-                    // Allocate header names array
-                    const headers = bun.default_allocator.alloc(bun.String, array_len) catch {
-                        return self.global.throwOutOfMemory();
-                    };
-                    errdefer bun.default_allocator.free(headers);
-
-                    // Parse header names from JS array
-                    var parsed_count: usize = 0;
-                    for (0..array_len) |i| {
-                        const name_js = header_names_array.getIndex(self.global, @intCast(i)) catch continue;
-                        const name = bun.String.fromJS(name_js, self.global) catch continue;
-                        headers[parsed_count] = name;
-                        parsed_count += 1;
-                    }
-
-                    // Clean up old array if it exists
-                    for (self.copy2response_headers) |header| {
-                        header.deref();
-                    }
-                    if (self.copy2response_headers.len > 0) {
-                        bun.default_allocator.free(self.copy2response_headers);
-                    }
-
-                    // Store new array (may be smaller if some parsing failed)
-                    if (parsed_count > 0) {
-                        self.copy2response_headers = headers[0..parsed_count];
-                    } else {
-                        bun.default_allocator.free(headers);
-                        self.copy2response_headers = &.{};
-                    }
-                }
-            }
+            self.copy2response_headers = try self.parseHeaderNames(header_names_array, self.copy2response_headers);
         }
 
         // Parse onResponseHeaders callback

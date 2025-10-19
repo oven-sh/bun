@@ -55,6 +55,8 @@
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-async-hooks": "^2.1.0",
+    "@opentelemetry/instrumentation-fetch": "^0.206.0",
     "bun-types": "canary"
   }
 }

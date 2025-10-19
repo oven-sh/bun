@@ -1,5 +1,6 @@
 import { context, ContextManager, diag, propagation, type Span, TextMapPropagator, trace } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
+import { Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
   type DetectorSync,
   detectResourcesSync,
@@ -121,6 +122,23 @@ export interface BunSDKConfiguration {
    * Dashes are normalized to underscores and names are lowercased.
    */
   responseHeaderAttributes?: string[];
+
+  /**
+   * Instrumentations to register with the SDK.
+   * Accepts individual instrumentations or nested arrays (will be flattened).
+   *
+   * @example
+   * ```typescript
+   * import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch';
+   *
+   * const sdk = new BunSDK({
+   *   instrumentations: [
+   *     new FetchInstrumentation(),
+   *   ],
+   * });
+   * ```
+   */
+  instrumentations?: (Instrumentation | Instrumentation[])[];
 }
 /**
  * OpenTelemetry SDK for Bun
@@ -165,11 +183,15 @@ export class BunSDK {
   private _serviceName?: string;
   private _tracerName: string;
   private _spans?: Map<number, Span>;
+  private _instrumentations: Instrumentation[];
 
   constructor(config: BunSDKConfiguration = {}) {
     this._config = config;
     this._serviceName = config.serviceName;
     this._tracerName = config.tracerName ?? "@bun/otel";
+
+    // Flatten instrumentations array (handles nested arrays like NodeSDK)
+    this._instrumentations = config.instrumentations?.flat() ?? [];
 
     // Initialize resource
     this._resource = config.resource ?? Resource.empty();
@@ -203,12 +225,19 @@ export class BunSDK {
       return;
     }
 
-    // Setup context manager
+    // 1. Register instrumentations FIRST (before setting up providers)
+    // Following NodeSDK pattern - instrumentations need to be registered early
+    // so they can hook into modules before they're loaded
+    registerInstrumentations({
+      instrumentations: this._instrumentations,
+    });
+
+    // 2. Setup context manager
     if (this._config.contextManager) {
       context.setGlobalContextManager(this._config.contextManager);
     }
 
-    // Setup propagator (default to W3C Trace Context + Baggage)
+    // 3. Setup propagator (default to W3C Trace Context + Baggage)
     if (this._config.textMapPropagator !== null) {
       const propagator =
         this._config.textMapPropagator ??
@@ -251,6 +280,16 @@ export class BunSDK {
     });
     this._spans = spans;
     Bun.telemetry.configure(config);
+
+    // NodeSDK workaround: Update instrumentations with MeterProvider after it's created
+    // See https://github.com/open-telemetry/opentelemetry-js/issues/3609
+    // BunSDK doesn't support MeterProvider yet, but we follow the pattern for future compatibility
+    // When MeterProvider support is added, uncomment this:
+    // if (this._meterProvider) {
+    //   for (const instrumentation of this._instrumentations) {
+    //     instrumentation.setMeterProvider(metrics.getMeterProvider());
+    //   }
+    // }
   }
 
   /**

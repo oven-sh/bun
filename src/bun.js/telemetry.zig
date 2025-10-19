@@ -86,7 +86,8 @@ pub const ResponseBuilder = struct {
 
         // Length must match configured headers (values array should match header names array)
         if (values_len != self.telemetry.copy2response_headers.len) {
-            return; // Mismatch between configured headers and returned values
+            logger("onResponseStart values length ({d}) != configured header names ({d}); skipping injection", .{ values_len, self.telemetry.copy2response_headers.len });
+            return;
         }
 
         // Inject headers using pre-parsed names

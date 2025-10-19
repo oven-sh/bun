@@ -5,7 +5,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const WebCore = bun.jsc.WebCore;
 
-const logger = bun.Output.scoped(.telemetry, .visible);
+const logger = bun.Output.scoped(.telemetry, .hidden);
 
 /// Request ID type - using u64 for simplicity and performance
 /// This is similar to how Node.js handles timer IDs
@@ -515,13 +515,13 @@ pub const Telemetry = struct {
 };
 
 /// JavaScript API: Bun.telemetry.configure(options)
-pub fn configure(global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn configure(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        return global.throwNotEnoughArguments("configure", 1, 0);
+        return globalObject.throwNotEnoughArguments("configure", 1, 0);
     }
 
-    const telemetry = try Telemetry.init(global);
+    const telemetry = try Telemetry.init(globalObject);
     try telemetry.configure(arguments.ptr[0]);
 
     return .js_undefined;
@@ -557,8 +557,8 @@ pub fn getNodeBinding(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue
 /// JavaScript API: Bun.telemetry.generateRequestId()
 /// Generates a unique request ID for use in telemetry tracking
 /// This is exposed to allow Node.js compatibility layer to generate IDs
-pub fn jsGenerateRequestId(global: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    const telemetry = try Telemetry.init(global);
+pub fn jsGenerateRequestId(globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+    const telemetry = try Telemetry.init(globalObject);
     const id = telemetry.generateRequestId();
     return jsRequestId(id);
 }

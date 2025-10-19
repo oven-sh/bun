@@ -101,7 +101,7 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
-test("process.title with UTF-16 characters", () => {
+it("process.title with UTF-16 characters", () => {
   // Test with various UTF-16 characters
   process.title = "Hello, 世界! 🌍";
   expect(process.title).toBe("Hello, 世界! 🌍");

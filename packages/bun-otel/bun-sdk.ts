@@ -1,4 +1,4 @@
-import { context, ContextManager, diag, propagation, TextMapPropagator, trace } from "@opentelemetry/api";
+import { context, ContextManager, diag, propagation, type Span, TextMapPropagator, trace } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import {
   type DetectorSync,

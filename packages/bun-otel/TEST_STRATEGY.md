@@ -63,6 +63,7 @@ Telemetry tests are split into two categories with different purposes and locati
 | `context-propagation.test.ts` | W3C trace context propagation |
 | `node-http.test.ts` | Node.js http.createServer integration |
 | `resources.test.ts` | Resource configuration and auto-detection |
+| `distributed-tracing.test.ts` | AsyncLocalStorage context propagation across async boundaries (setTimeout, setImmediate, nested async functions, generators, parallel requests) |
 
 ## Architecture
 

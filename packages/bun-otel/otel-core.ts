@@ -1,8 +1,13 @@
-import type { Span, Tracer, TracerProvider } from "@opentelemetry/api";
-import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import type { Context, Span, Tracer, TracerProvider } from "@opentelemetry/api";
+import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { BunAsyncLocalStorageContextManager } from "./BunAsyncLocalStorageContextManager";
 import type { HeadersLike, RequestLike } from "./otel-types";
 import { getUrlInfo, headerLikeHeaderGetter, requestLikeHeaderGetter } from "./otel-types";
+
+// Enable to debug context propagation issues
+const ENABLE_DEBUG_LOGGING = false;
 
 // Symbols for Node.js http.Server span tracking
 const kSpan = Symbol("kOtelSpan");
@@ -59,11 +64,17 @@ export interface InstallBunNativeTracingOptions {
  * @returns Cleanup function to disable tracing
  */
 export function installBunNativeTracing(options: InstallBunNativeTracingOptions): () => void {
-  const { config, spans } = createBunTelemetryConfig(options);
+  const { config, spans, contextManager } = createBunTelemetryConfig(options);
+
   // ============================================================================
   // Configure Bun.telemetry with both Bun.serve and Node.js callbacks
   // ============================================================================
   Bun.telemetry.configure(config);
+
+  // Install context manager AFTER Bun.telemetry is configured
+  // This ensures the shared AsyncLocalStorage is ready before any requests come in
+  context.setGlobalContextManager(contextManager);
+
   // Return cleanup function
   return () => {
     Bun.telemetry.disable();
@@ -75,6 +86,7 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
 export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions): {
   config: Bun.telemetry.TelemetryConfig;
   spans: Map<number, Span>;
+  contextManager: BunAsyncLocalStorageContextManager;
 } {
   const {
     tracerProvider,
@@ -84,6 +96,14 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     requestHeaderAttributes = [],
     responseHeaderAttributes = [],
   } = options;
+  // explicitly create AsyncLocalStorage and ContextManager.
+  // we pass contextStorage to zig, zig makes the frames and cleans up
+  const contextStorage = new AsyncLocalStorage<Context>();
+  const contextManager = new BunAsyncLocalStorageContextManager(contextStorage);
+
+  // NOTE: We return contextManager but don't install it here.
+  // Installation happens in BunSDK.start() or installBunNativeTracing()
+  // AFTER Bun.telemetry.configure() to ensure proper bootstrapping order.
 
   const tracer: Tracer = tracerProvider.getTracer(tracerName);
   const spans = externalSpans ?? new Map<number, Span>();
@@ -172,6 +192,8 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     try {
       // Extract trace context from headers
       const headerGetter = requestLikeHeaderGetter(request);
+      // this should tap into the installed ContextManager, which is our BunAsyncLocalStorageContextManager
+      // which has the shared AsyncLocalStorage with Bun.telemetry, who is responsible for making the frames
       const extractedContext = propagation.extract(context.active(), request, headerGetter);
 
       const urlInfo = getUrlInfo(request);
@@ -192,6 +214,11 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
         },
         extractedContext,
       );
+      if (ENABLE_DEBUG_LOGGING) {
+        console.log(
+          `[onRequestStart] Created SERVER span: ${method} ${urlInfo.pathname} (spanId: ${span.spanContext().spanId}, parentSpanId: ${span.parentSpanId}, traceId: ${span.spanContext().traceId})`,
+        );
+      }
 
       // Capture configured request headers as attributes
       // Sanitize headerGetter output to always be a string for attribute assignment
@@ -210,10 +237,12 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
 
       spans.set(id, span);
 
-      // Phase 2: Context propagation via AsyncLocalStorage will be added in a future update.
-      // The current implementation correctly extracts and uses trace context when starting spans,
-      // but does not propagate the active span to downstream operations via context.with().
-      // return context.with(trace.setSpan(extractedContext, span), () => {});
+      // Store span in OpenTelemetry Context and update AsyncLocalStorage frame
+      // Bun's Zig code has already called enterWith({ requestId }) to create the async frame,
+      // but we need to replace it with a proper OpenTelemetry Context object that contains our span.
+      // This allows context.active() to work correctly and enables trace propagation.
+      const spanContext = trace.setSpan(extractedContext, span);
+      contextStorage.enterWith(spanContext);
     } catch (error) {
       // Silently fail - telemetry should never break the application
     }
@@ -223,6 +252,12 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     try {
       const span = spans.get(id);
       if (!span) return;
+
+      if (ENABLE_DEBUG_LOGGING) {
+        console.log(
+          `[onRequestEnd] Ending SERVER span: ${span.name} (spanId: ${span.spanContext().spanId}, traceId: ${span.spanContext().traceId})`,
+        );
+      }
 
       // Only set OK if status hasn't been set (don't overwrite ERROR)
       if (!spansWithStatus.has(span)) {
@@ -434,7 +469,9 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
         handleIncomingRequest,
         handleWriteHead,
       },
+      _contextStorage: contextStorage,
     },
     spans,
+    contextManager,
   };
 }

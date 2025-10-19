@@ -160,6 +160,16 @@ export interface BunSDKConfiguration {
  * sdk.start();
  * ```
  *
+ * @example Using with automatic cleanup
+ * ```typescript
+ * await using sdk = new BunSDK({
+ *   traceExporter: new ConsoleSpanExporter(),
+ *   serviceName: 'my-service',
+ * });
+ * sdk.start();
+ * // await sdk.shutdown() called automatically when scope exits
+ * ```
+ *
  * @example Advanced usage with resource detection
  * ```typescript
  * import { BunSDK } from "bun-otel";
@@ -175,7 +185,7 @@ export interface BunSDKConfiguration {
  * sdk.start();
  * ```
  */
-export class BunSDK {
+export class BunSDK implements AsyncDisposable {
   private _config: BunSDKConfiguration;
   private _tracerProvider?: NodeTracerProvider;
   private _resource: Resource;
@@ -184,6 +194,7 @@ export class BunSDK {
   private _tracerName: string;
   private _spans?: Map<number, Span>;
   private _instrumentations: Instrumentation[];
+  private _instrumentationCleanup?: () => void;
 
   constructor(config: BunSDKConfiguration = {}) {
     this._config = config;
@@ -228,16 +239,12 @@ export class BunSDK {
     // 1. Register instrumentations FIRST (before setting up providers)
     // Following NodeSDK pattern - instrumentations need to be registered early
     // so they can hook into modules before they're loaded
-    registerInstrumentations({
+    // Store cleanup function to disable instrumentations on shutdown
+    this._instrumentationCleanup = registerInstrumentations({
       instrumentations: this._instrumentations,
     });
 
-    // 2. Setup context manager
-    if (this._config.contextManager) {
-      context.setGlobalContextManager(this._config.contextManager);
-    }
-
-    // 3. Setup propagator (default to W3C Trace Context + Baggage)
+    // 2. Setup propagator (default to W3C Trace Context + Baggage)
     if (this._config.textMapPropagator !== null) {
       const propagator =
         this._config.textMapPropagator ??
@@ -271,7 +278,7 @@ export class BunSDK {
     trace.setGlobalTracerProvider(this._tracerProvider);
 
     // Create Bun telemetry config and install it ourselves so we can hold onto spans
-    const { config, spans } = createBunTelemetryConfig({
+    const { config, spans, contextManager } = createBunTelemetryConfig({
       tracerProvider: this._tracerProvider,
       tracerName: this._tracerName,
       correlationHeaderName: this._config.correlationHeaderName,
@@ -281,10 +288,20 @@ export class BunSDK {
     this._spans = spans;
     Bun.telemetry.configure(config);
 
-    // NodeSDK workaround: Update instrumentations with MeterProvider after it's created
+    // 3. Install shared context manager AFTER Bun.telemetry is configured
+    // This MUST override any user-provided context manager because Bun's telemetry
+    // requires a shared AsyncLocalStorage instance. The context manager returned from
+    // createBunTelemetryConfig uses the same storage that Bun.telemetry writes to.
+    context.setGlobalContextManager(contextManager);
+
+    // NodeSDK workaround: Update instrumentations with TracerProvider after it's created
     // See https://github.com/open-telemetry/opentelemetry-js/issues/3609
-    // BunSDK doesn't support MeterProvider yet, but we follow the pattern for future compatibility
-    // When MeterProvider support is added, uncomment this:
+    // Instrumentations need to be notified of the tracer provider after it's been set globally
+    for (const instrumentation of this._instrumentations) {
+      instrumentation.setTracerProvider(this._tracerProvider);
+    }
+
+    // BunSDK doesn't support MeterProvider yet, but when it does:
     // if (this._meterProvider) {
     //   for (const instrumentation of this._instrumentations) {
     //     instrumentation.setMeterProvider(metrics.getMeterProvider());
@@ -293,20 +310,29 @@ export class BunSDK {
   }
 
   /**
-   * Shutdown the SDK: disable Bun telemetry and shutdown tracer provider.
+   * Shutdown the SDK: disable instrumentations, Bun telemetry, and shutdown tracer provider.
    * Flushes any pending spans and cleans up resources.
    */
   async shutdown(): Promise<void> {
-    // Clear local span map; do not force-end in-flight spans
+    // 1. Disable instrumentations (unpatch fetch, http, etc.)
+    if (this._instrumentationCleanup) {
+      this._instrumentationCleanup();
+      this._instrumentationCleanup = undefined;
+    }
+
+    // 2. Clear local span map; do not force-end in-flight spans
     if (this._spans) {
       this._spans.clear();
       this._spans = undefined;
     }
 
-    // Disable Bun telemetry
-    Bun.telemetry.disable();
+    // 3. Reset Bun telemetry (allows reconfiguration)
+    Bun.telemetry.configure(null);
 
-    // Shutdown tracer provider (flushes pending spans to exporters)
+    // 4. Disable global context manager to prevent test isolation issues
+    context.disable();
+
+    // 5. Shutdown tracer provider (flushes pending spans to exporters)
     if (this._tracerProvider) {
       await this._tracerProvider.shutdown();
       this._tracerProvider = undefined;
@@ -319,5 +345,20 @@ export class BunSDK {
    */
   getTracerProvider(): NodeTracerProvider | undefined {
     return this._tracerProvider;
+  }
+
+  /**
+   * Async dispose method for 'await using' statement support.
+   * Automatically shuts down the SDK and waits for all spans to flush.
+   *
+   * @example
+   * ```typescript
+   * await using sdk = new BunSDK({ ... });
+   * sdk.start();
+   * // await sdk.shutdown() called automatically when scope exits
+   * ```
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown();
   }
 }

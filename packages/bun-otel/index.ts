@@ -17,3 +17,6 @@ export type { HeadersLike, RequestLike, UrlInfo } from "./otel-types";
 // BunSDK - built on stable @opentelemetry packages (1.x)
 export { BunSDK } from "./bun-sdk";
 export type { BunSDKConfiguration } from "./bun-sdk";
+
+// BunFetchInstrumentation - instruments global.fetch for distributed tracing
+export { BunFetchInstrumentation } from "./BunFetchInstrumentation";

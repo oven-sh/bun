@@ -727,7 +727,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (this.telemetry_request_id != 0) {
-                if (Telemetry.getInstance()) |t| t.notifyRequestEnd(this.telemetry_request_id);
+                if (Telemetry.getInstance()) |t| {
+                    t.notifyRequestEnd(this.telemetry_request_id);
+                    // Exit AsyncLocalStorage context for this request
+                    telemetry.exitContext(t.global);
+                }
                 this.telemetry_request_id = 0;
             }
 
@@ -2709,4 +2713,5 @@ const FetchHeaders = jsc.WebCore.FetchHeaders;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
 
+const telemetry = bun.telemetry;
 const Telemetry = bun.telemetry.Telemetry;

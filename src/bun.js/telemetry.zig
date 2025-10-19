@@ -128,6 +128,9 @@ pub const Telemetry = struct {
     /// Node.js compatibility binding object (set via configure)
     _node_binding: JSValue = .zero,
 
+    /// AsyncLocalStorage instance for context propagation (provided by user)
+    _context_storage: JSValue = .zero,
+
     /// Headers to copy to response (stored as bun.String for uncommon headers like x-trace-id)
     copy2response_headers: []const bun.String = &.{},
 
@@ -175,6 +178,9 @@ pub const Telemetry = struct {
         }
         if (self._node_binding != .zero) {
             self._node_binding.unprotect();
+        }
+        if (self._context_storage != .zero) {
+            self._context_storage.unprotect();
         }
 
         for (self.copy2response_headers) |header| {
@@ -228,6 +234,10 @@ pub const Telemetry = struct {
         if (self._node_binding != .zero) {
             self._node_binding.unprotect();
             self._node_binding = .zero;
+        }
+        if (self._context_storage != .zero) {
+            self._context_storage.unprotect();
+            self._context_storage = .zero;
         }
 
         for (self.copy2response_headers) |header| {
@@ -452,6 +462,20 @@ pub const Telemetry = struct {
             self._node_binding = binding;
         }
 
+        // Parse _contextStorage (AsyncLocalStorage instance for context propagation)
+        if (try options.getTruthyComptime(self.global, "_contextStorage")) |storage| {
+            if (!storage.isObject()) {
+                return self.global.throwInvalidArguments("_contextStorage must be an AsyncLocalStorage instance", .{});
+            }
+
+            if (self._context_storage != .zero) {
+                self._context_storage.unprotect();
+            }
+
+            storage.protect();
+            self._context_storage = storage;
+        }
+
         // Enable telemetry if any callbacks or _node_binding are set
         self.enabled = self.on_request_start != .zero or
             self.on_request_end != .zero or
@@ -620,4 +644,80 @@ pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSErro
         return globalObject.throwTypeError("Request ID must be a positive safe integer", .{});
     }
     return @intCast(id_u64);
+}
+
+// ============================================================================
+// Telemetry Context - AsyncLocalStorage-based request context
+// ============================================================================
+// AsyncLocalStorage Direct Integration
+// Calls AsyncLocalStorage.enterWith() and .disable() directly from Zig
+// No C++ bridge or internal module needed!
+// ============================================================================
+
+/// Enter telemetry context for a request by calling AsyncLocalStorage.enterWith()
+/// This sets up AsyncLocalStorage for the current request lifecycle.
+/// Should be called at the start of HTTP request handling.
+///
+/// @param global The JavaScript global object
+/// @param request_id The unique request identifier
+pub fn enterContext(
+    global: *JSGlobalObject,
+    request_id: RequestId,
+) void {
+    const telemetry = Telemetry.getInstance() orelse return;
+
+    // Fast path: no context storage configured
+    if (telemetry._context_storage == .zero) {
+        return;
+    }
+
+    // Get the enterWith method from AsyncLocalStorage
+    const enter_with_maybe = telemetry._context_storage.get(global, "enterWith") catch return;
+    const enter_with = enter_with_maybe orelse return;
+    if (!enter_with.isCallable()) {
+        return;
+    }
+
+    // Create context object: { requestId: <id> }
+    const context_obj = JSValue.createEmptyObject(global, 1);
+    const id_js = jsRequestId(request_id);
+    _ = context_obj.put(global, "requestId", id_js);
+
+    // Call storage.enterWith(context)
+    _ = enter_with.call(
+        global,
+        telemetry._context_storage, // 'this' context for the method call
+        &.{context_obj},
+    ) catch |err| {
+        _ = global.takeException(err);
+    };
+}
+
+/// Exit telemetry context for a request by calling AsyncLocalStorage.disable()
+/// This clears AsyncLocalStorage for the current request.
+/// Should be called at the end of HTTP request handling.
+///
+/// @param global The JavaScript global object
+pub fn exitContext(global: *JSGlobalObject) void {
+    const telemetry = Telemetry.getInstance() orelse return;
+
+    if (telemetry._context_storage == .zero) {
+        return;
+    }
+
+    // Get the disable method from AsyncLocalStorage
+    const disable_fn_maybe = telemetry._context_storage.get(global, "disable") catch return;
+    const disable_fn = disable_fn_maybe orelse return;
+    if (!disable_fn.isCallable()) {
+        return;
+    }
+
+    // Call storage.disable()
+    _ = disable_fn.call(
+        global,
+        telemetry._context_storage,
+        &.{},
+    ) catch |err| {
+        _ = global.takeException(err);
+    };
 }

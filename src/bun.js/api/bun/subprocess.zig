@@ -350,16 +350,15 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) void {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return;
     if (this.hasExited()) {
         this.event_loop_timer.state = .CANCELLED;
-        return .disarm;
+        return;
     }
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
-    return .disarm;
 }
 
 pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {

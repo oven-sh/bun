@@ -1987,7 +1987,7 @@ pub const Resolver = struct {
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
-    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) void {
         defer {
             vm.timer.incrementTimerRef(-1);
             this.deref();
@@ -1998,13 +1998,9 @@ pub const Resolver = struct {
         if (this.getChannelOrError(vm.global)) |channel| {
             if (this.anyRequestsPending()) {
                 c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
-                if (this.addTimer(now)) {
-                    return .{ .rearm = this.event_loop_timer.next };
-                }
+                _ = this.addTimer(now);
             }
         } else |_| {}
-
-        return .disarm;
     }
 
     fn anyRequestsPending(this: *Resolver) bool {

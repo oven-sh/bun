@@ -598,6 +598,12 @@ pub const PathLike = union(enum) {
             }
         }
 
+        // Check if we have room for the null terminator
+        // buf.len is MAX_PATH_BYTES, but we need sliced.len + 1 bytes
+        if (sliced.len >= buf.len) {
+            @panic("Path is too long");
+        }
+
         @memcpy(buf[0..sliced.len], sliced);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];

@@ -95,7 +95,7 @@ describe("WebSocket", () => {
             setTimeout(() => {
               socket.write(reasonBytes.slice(10));
               socket.flush();
-            }, 0);
+            }, 10);
           },
         },
         hostname,

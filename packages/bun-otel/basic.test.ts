@@ -13,28 +13,25 @@ describe("BunSDK basic functionality", () => {
 
     sdk.start();
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch() {
         return new Response("test");
       },
     });
 
-    try {
-      const response = await fetch(`http://localhost:${server.port}/`);
-      expect(response.status).toBe(200);
+    const response = await fetch(`http://localhost:${server.port}/`);
+    expect(response.status).toBe(200);
 
-      await waitForSpans(exporter, 1);
+    await waitForSpans(exporter, 1);
 
-      const spans = exporter.getFinishedSpans();
-      expect(spans).toHaveLength(1);
-      expect(spans[0].name).toBe("GET /");
-      expect(spans[0].attributes["http.method"]).toBe("GET");
-      expect(spans[0].attributes["http.status_code"]).toBe(200);
-    } finally {
-      server.stop();
-      sdk.shutdown();
-    }
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(1);
+    expect(spans[0].name).toBe("GET /");
+    expect(spans[0].attributes["http.method"]).toBe("GET");
+    expect(spans[0].attributes["http.status_code"]).toBe(200);
+
+    await sdk.shutdown();
   });
 
   test("ERROR status from 5xx is not overwritten by onRequestEnd", async () => {
@@ -46,30 +43,27 @@ describe("BunSDK basic functionality", () => {
 
     sdk.start();
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch() {
         return new Response("Server Error", { status: 500 });
       },
     });
 
-    try {
-      const response = await fetch(`http://localhost:${server.port}/error`);
-      expect(response.status).toBe(500);
+    const response = await fetch(`http://localhost:${server.port}/error`);
+    expect(response.status).toBe(500);
 
-      await waitForSpans(exporter, 1);
+    await waitForSpans(exporter, 1);
 
-      const spans = exporter.getFinishedSpans();
-      expect(spans).toHaveLength(1);
-      expect(spans[0].name).toBe("GET /error");
-      expect(spans[0].attributes["http.status_code"]).toBe(500);
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(1);
+    expect(spans[0].name).toBe("GET /error");
+    expect(spans[0].attributes["http.status_code"]).toBe(500);
 
-      // Verify ERROR status is preserved (not overwritten with OK by onRequestEnd)
-      // This test would fail without the fix - onRequestEnd would set OK unconditionally
-      expect(spans[0].status.code).toBe(2); // SpanStatusCode.ERROR = 2
-    } finally {
-      server.stop();
-      sdk.shutdown();
-    }
+    // Verify ERROR status is preserved (not overwritten with OK by onRequestEnd)
+    // This test would fail without the fix - onRequestEnd would set OK unconditionally
+    expect(spans[0].status.code).toBe(2); // SpanStatusCode.ERROR = 2
+
+    await sdk.shutdown();
   });
 });

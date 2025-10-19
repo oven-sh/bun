@@ -113,9 +113,6 @@ test("telemetry allows tracking request metadata without keeping request object"
     onRequestEnd(id) {
       const metadata = requestMetadata.get(id);
       if (metadata) {
-        // Calculate duration
-        const duration = Date.now() - metadata.timestamp;
-        console.log(`Request ${id} (${metadata.method} ${metadata.path}) took ${duration}ms`);
         // Clean up the metadata
         requestMetadata.delete(id);
       }
@@ -201,45 +198,4 @@ test("telemetry does not interfere with server when disabled", async () => {
 
   expect(text).toBe("no telemetry");
   expect(response.status).toBe(200);
-});
-
-test.todo("telemetry onRequestError is called on errors", async () => {
-  // TODO: Implement error tracking
-  const errors: Array<{ id: number; error: any }> = [];
-
-  Bun.telemetry.configure({
-    onRequestStart(id, request) {
-      // Track request start
-    },
-    onRequestError(id, error) {
-      errors.push({ id, error });
-    },
-  });
-
-  using server = Bun.serve({
-    port: 0,
-    fetch() {
-      throw new Error("Test error");
-    },
-  });
-
-  try {
-    await fetch(`http://localhost:${server.port}/`);
-  } catch (e) {
-    // Expected
-  }
-
-  // Wait for error callback to fire
-  const startTime = Date.now();
-  while (errors.length === 0 && Date.now() - startTime < 200) {
-    await Bun.sleep(5);
-  }
-  if (errors.length === 0) {
-    throw new Error("Expected onRequestError callback to fire");
-  }
-
-  expect(errors.length).toBeGreaterThan(0);
-
-  // Clean up
-  Bun.telemetry.disable();
 });

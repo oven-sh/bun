@@ -418,15 +418,16 @@ pub const Telemetry = struct {
             self._node_binding = binding;
         }
 
-        // Enable telemetry if any callbacks are set
+        // Enable telemetry if any callbacks or _node_binding are set
         self.enabled = self.on_request_start != .zero or
             self.on_request_end != .zero or
             self.on_request_error != .zero or
-            self.on_response_headers != .zero;
+            self.on_response_headers != .zero or
+            self._node_binding != .zero;
 
         // Require at least one callback to avoid sticky configured state
         if (!self.enabled) {
-            return self.global.throwInvalidArguments("Telemetry.configure: provide at least one callback (onRequestStart, onRequestEnd, onRequestError, or onResponseHeaders)", .{});
+            return self.global.throwInvalidArguments("Telemetry.configure: provide at least one callback (onRequestStart, onRequestEnd, onRequestError, onResponseHeaders, or _node_binding)", .{});
         }
 
         // Mark as configured

@@ -18,6 +18,11 @@ afterEach(() => {
   }
 });
 
+// Helper to close Node.js http.Server deterministically
+async function closeServer(server: http.Server): Promise<void> {
+  await new Promise<void>(resolve => server.close(() => resolve()));
+}
+
 test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with correct arguments", async () => {
   const calls: Array<{ method: string; args: any[] }> = [];
 
@@ -82,7 +87,7 @@ test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with c
   expect(writeHeadCall?.args[0]).toBe(incomingCall?.args[1]); // Same response object
   expect(writeHeadCall?.args[1]).toBe(200); // Status code
 
-  server.close();
+  await closeServer(server);
 });
 
 test("handleWriteHead deduplication - called only once even with multiple writes", async () => {
@@ -126,7 +131,7 @@ test("handleWriteHead deduplication - called only once even with multiple writes
   const writeHeadCalls = calls.filter(c => c === "handleWriteHead");
   expect(writeHeadCalls.length).toBe(1);
 
-  server.close();
+  await closeServer(server);
 });
 
 test("handleWriteHead receives ServerResponse with accessible headers via getHeader()", async () => {
@@ -171,7 +176,7 @@ test("handleWriteHead receives ServerResponse with accessible headers via getHea
   const contentLength = capturedResponse.getHeader("content-length");
   expect(contentLength).toBe("42");
 
-  server.close();
+  await closeServer(server);
 });
 
 test("telemetry failures are isolated and don't crash request path", async () => {
@@ -205,5 +210,5 @@ test("telemetry failures are isolated and don't crash request path", async () =>
   const body = await response.text();
   expect(body).toBe("Request handled successfully");
 
-  server.close();
+  await closeServer(server);
 });

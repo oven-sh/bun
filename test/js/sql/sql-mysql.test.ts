@@ -589,6 +589,29 @@ if (isDockerEnabled()) {
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
         });
 
+        // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.
+        // This happened when FieldType.fromJS returned error.JSError without throwing an exception first.
+        test("should handle NumberObject parameter without crashing", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Number(42) creates a NumberObject (not a primitive number)
+          // This used to cause a panic because FieldType.fromJS returned error.JSError without throwing
+          const numberObject = new Number(42);
+          const err = await sql`SELECT ${numberObject} as value`.catch(x => x);
+          // Should throw a proper error, not crash
+          expect(err).toBeDefined();
+          expect(err.message).toBeDefined();
+        });
+
+        test("should handle BooleanObject parameter without crashing", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Boolean(true) creates a BooleanObject (not a primitive boolean)
+          const booleanObject = new Boolean(true);
+          const err = await sql`SELECT ${booleanObject} as value`.catch(x => x);
+          // Should throw a proper error, not crash
+          expect(err).toBeDefined();
+          expect(err.message).toBeDefined();
+        });
+
         test("should work with fragments", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));

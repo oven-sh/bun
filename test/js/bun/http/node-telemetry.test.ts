@@ -173,3 +173,37 @@ test("handleWriteHead receives ServerResponse with accessible headers via getHea
 
   server.close();
 });
+
+test("telemetry failures are isolated and don't crash request path", async () => {
+  // Create a binding that throws errors
+  const mockBinding = {
+    handleIncomingRequest() {
+      throw new Error("Telemetry system failure in handleIncomingRequest");
+    },
+    handleWriteHead() {
+      throw new Error("Telemetry system failure in handleWriteHead");
+    },
+  };
+
+  Bun.telemetry.configure({ _node_binding: mockBinding });
+
+  const server = http.createServer((req, res) => {
+    // This should succeed despite telemetry failures
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Request handled successfully");
+  });
+
+  await new Promise<void>(resolve => {
+    server.listen(0, () => resolve());
+  });
+
+  const port = (server.address() as any).port;
+
+  // Make request - should succeed despite telemetry errors
+  const response = await fetch(`http://localhost:${port}/test`);
+  expect(response.status).toBe(200);
+  const body = await response.text();
+  expect(body).toBe("Request handled successfully");
+
+  server.close();
+});

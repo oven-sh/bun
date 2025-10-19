@@ -553,7 +553,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         });
 
         // Telemetry: notify about incoming request
-        Bun.telemetry?._node_binding?.()?.handleIncomingRequest?.(http_req, http_res);
+        try {
+          Bun.telemetry?._node_binding?.()?.handleIncomingRequest?.(http_req, http_res);
+        } catch {
+          // Telemetry failures should not crash the request path
+        }
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
@@ -751,12 +755,12 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
       if (!socket.destroyed) {
         socket.destroy();
       }
-  // Removed handleRequestAbort telemetry hook for minimal insertion footprint
+      // Removed handleRequestAbort telemetry hook for minimal insertion footprint
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-  // Removed handleRequestTimeout telemetry hook for minimal insertion footprint
+      // Removed handleRequestTimeout telemetry hook for minimal insertion footprint
       break;
     }
   }
@@ -1198,7 +1202,11 @@ function _writeHead(statusCode, reason, obj, response) {
   updateHasBody(response, statusCode);
 
   // Telemetry: notify about response headers
-  Bun.telemetry?._node_binding?.()?.handleWriteHead?.(response, statusCode);
+  try {
+    Bun.telemetry?._node_binding?.()?.handleWriteHead?.(response, statusCode);
+  } catch {
+    // Telemetry failures should not crash the request path
+  }
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

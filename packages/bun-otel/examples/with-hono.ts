@@ -20,8 +20,8 @@ app.get("/users/:id", async c => {
   // Add custom attributes to the active span
   const span = trace.getActiveSpan();
   if (span) {
-    span.setAttribute("user.id", id);
-    span.setAttribute("route", "/users/:id");
+    span.setAttribute("enduser.id", id);
+    span.setAttribute("http.route", "/users/:id");
   }
 
   // Simulate database query

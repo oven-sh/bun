@@ -16,13 +16,13 @@ const app = new Elysia()
   .onRequest(ctx => {
     const span = trace.getActiveSpan();
     if (span) {
-      span.setAttribute("route", ctx.path);
+      span.setAttribute("http.route", ctx.path);
     }
   })
   .get("/users/:id", async ({ params }) => {
     const span = trace.getActiveSpan();
     if (span) {
-      span.setAttribute("user.id", params.id);
+      span.setAttribute("enduser.id", params.id);
     }
 
     // Simulate database query

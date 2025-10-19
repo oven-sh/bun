@@ -426,23 +426,27 @@ describe("bundler", () => {
     },
   });
 
-  // Test 21: Input=ESM, output=CJS - ensure __toESM wrapper prints correctly
+  // Test 21: Input=ESM, output=CJS, importing CJS with __esModule and named imports
   // This test covers the specific fix for printing __toESM when output format is CJS
+  // and input uses ESM syntax to import both default and named exports from CJS with __esModule
   itBundled("cjs/__toESM_input_esm_output_cjs_wrapper_print", {
     files: {
       "/entry.js": /* js */ `
-        import def, { named } from "./esm.mjs";
-        console.log(JSON.stringify({ def, named }));
+        import lib, { named } from "./lib.cjs";
+        console.log(JSON.stringify({ default: lib, named }));
       `,
-      "/esm.mjs": /* js */ `
-        export const named = "n";
-        const def = { v: 1 };
-        export default def;
+      "/lib.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.default = { value: "default" };
+        exports.named = "named export";
       `,
     },
     format: "cjs",
     run: {
-      stdout: '{"def":{"v":1},"named":"n"}',
+      // With the fix: ignores __esModule, wraps entire module as default
+      // So default gets the whole exports object, named gets the named property
+      stdout:
+        '{"default":{"__esModule":true,"default":{"value":"default"},"named":"named export"},"named":"named export"}',
     },
   });
 

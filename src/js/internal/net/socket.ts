@@ -69,10 +69,11 @@ const {
   onSocketEnd,
   writeAfterFIN,
   onConnectEnd,
+  ConnResetException,
 } = require("internal/net/shared");
 let dns: typeof import("node:dns");
 
-const SocketHandlers: SocketHandler = {
+export const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
     if (!self || self[kclosed]) return;

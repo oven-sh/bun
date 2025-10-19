@@ -149,3 +149,14 @@ export function onConnectEnd() {
     this.destroy(error);
   }
 }
+
+export class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+
+  get ["constructor"]() {
+    return Error;
+  }
+}

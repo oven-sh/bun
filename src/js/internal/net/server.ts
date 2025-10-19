@@ -1,25 +1,399 @@
-import type { Socket, SocketHandler, SocketListener } from "bun";
+import type { Socket, SocketHandler } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const {
-  Duplex, getDefaultHighWaterMark, EventEmitter, dns,
-  normalizedArgsSymbol, ExceptionWithHostPort, kTimeout, getTimerDuration,
-  validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString,
-  NodeAggregateError, ErrnoException,
-  ArrayPrototypeIncludes, ArrayPrototypePush, MathMax,
-  UV_ECANCELED, UV_ETIMEDOUT, isWindows,
-  getDefaultAutoSelectFamily, setDefaultAutoSelectFamily, getDefaultAutoSelectFamilyAttemptTimeout, setDefaultAutoSelectFamilyAttemptTimeout,
-  SocketAddress, BlockList, newDetachedSocket, doConnect,
-  addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount,
-  isIPv4, isIPv6, isIP,
-  bunTlsSymbol, bunSocketServerOptions, owner_symbol,
-  kServerSocket, kBytesWritten, bunTLSConnectOptions, kReinitializeHandle,
-  kRealListen, kSetNoDelay, kSetKeepAlive, kSetKeepAliveInitialDelay, kConnectOptions, kAttach, kCloseRawConnection,
-  kpendingRead, kupgraded, ksocket, khandlers, kclosed, kended, kwriteCallback, kSocketClass,
-  endNT, emitCloseNT, detachSocket, destroyNT, destroyWhenAborted, onSocketEnd, writeAfterFIN, onConnectEnd
+  Duplex,
+  getDefaultHighWaterMark,
+  EventEmitter,
+  dns,
+  normalizedArgsSymbol,
+  ExceptionWithHostPort,
+  kTimeout,
+  getTimerDuration,
+  validateFunction,
+  validateNumber,
+  validateAbortSignal,
+  validatePort,
+  validateBoolean,
+  validateInt32,
+  validateString,
+  NodeAggregateError,
+  ErrnoException,
+  ArrayPrototypeIncludes,
+  ArrayPrototypePush,
+  MathMax,
+  UV_ECANCELED,
+  UV_ETIMEDOUT,
+  isWindows,
+  getDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamily,
+  getDefaultAutoSelectFamilyAttemptTimeout,
+  setDefaultAutoSelectFamilyAttemptTimeout,
+  SocketAddress,
+  BlockList,
+  newDetachedSocket,
+  doConnect,
+  addServerName,
+  upgradeDuplexToTLS,
+  isNamedPipeSocket,
+  getBufferedAmount,
+  isIPv4,
+  isIPv6,
+  isIP,
+  bunTlsSymbol,
+  bunSocketServerOptions,
+  owner_symbol,
+  kServerSocket,
+  kBytesWritten,
+  bunTLSConnectOptions,
+  kReinitializeHandle,
+  kRealListen,
+  kSetNoDelay,
+  kSetKeepAlive,
+  kSetKeepAliveInitialDelay,
+  kConnectOptions,
+  kAttach,
+  kCloseRawConnection,
+  kpendingRead,
+  kupgraded,
+  ksocket,
+  khandlers,
+  kclosed,
+  kended,
+  kwriteCallback,
+  kSocketClass,
+  endNT,
+  emitCloseNT,
+  detachSocket,
+  destroyNT,
+  destroyWhenAborted,
+  onSocketEnd,
+  writeAfterFIN,
+  onConnectEnd,
+  ConnResetException,
 } = require("internal/net/shared");
-const { Socket } = require("internal/net/socket");
+const { Socket, SocketHandlers } = require("internal/net/socket");
 
+const SocketEmitEndNT = function SocketEmitEndNT(self, err) {
+  if (!self.writable) emitCloseNT(self, !!err);
+  if (!self.destroyed) self.emit("end");
+};
+
+const ServerHandlers: SocketHandler<NetSocket> = {
+  data(socket, buffer) {
+    const { data: self } = socket;
+    if (!self) return;
+
+    self.bytesRead += buffer.length;
+    if (!self.push(buffer)) {
+      socket.pause();
+    }
+  },
+  close(socket, err) {
+    $debug("Bun.Server close");
+    const data = this.data;
+    if (!data) return;
+
+    {
+      if (!data[kclosed]) {
+        data[kclosed] = true;
+        //socket cannot be used after close
+        detachSocket(data);
+        SocketEmitEndNT(data, err);
+        data.data = null;
+        socket[owner_symbol] = null;
+      }
+    }
+  },
+  end(socket) {
+    SocketHandlers.end(socket);
+  },
+  open(socket) {
+    $debug("Bun.Server open");
+    const self = socket.data as any as NetServer;
+    socket[kServerSocket] = self._handle;
+    const options = self[bunSocketServerOptions];
+    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const _socket = new SClass({}) as NetSocket | TLSSocket;
+    _socket.isServer = true;
+    _socket._requestCert = requestCert;
+    _socket._rejectUnauthorized = rejectUnauthorized;
+
+    _socket[kAttach](this.localPort, socket);
+
+    if (self.blockList) {
+      const addressType = isIP(socket.remoteAddress);
+      if (addressType && self.blockList.check(socket.remoteAddress, `ipv${addressType}`)) {
+        const data = {
+          localAddress: _socket.localAddress,
+          localPort: _socket.localPort || this.localPort,
+          localFamily: _socket.localFamily,
+          remoteAddress: _socket.remoteAddress,
+          remotePort: _socket.remotePort,
+          remoteFamily: _socket.remoteFamily || "IPv4",
+        };
+        socket.end();
+        self.emit("drop", data);
+        return;
+      }
+    }
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+      const data = {
+        localAddress: _socket.localAddress,
+        localPort: _socket.localPort || this.localPort,
+        localFamily: _socket.localFamily,
+        remoteAddress: _socket.remoteAddress,
+        remotePort: _socket.remotePort,
+        remoteFamily: _socket.remoteFamily || "IPv4",
+      };
+
+      socket.end();
+      self.emit("drop", data);
+      return;
+    }
+
+    const bunTLS = _socket[bunTlsSymbol];
+    const isTLS = typeof bunTLS === "function";
+
+    self._connections++;
+    _socket.server = self;
+
+    if (pauseOnConnect) {
+      _socket.pause();
+    }
+
+    if (typeof connectionListener === "function") {
+      this.pauseOnConnect = pauseOnConnect;
+      if (!isTLS) {
+        self.prependOnceListener("connection", connectionListener);
+      }
+    }
+    self.emit("connection", _socket);
+    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+    if (!pauseOnConnect && !isTLS) {
+      _socket.resume();
+    }
+  },
+  handshake(socket, success, verifyError) {
+    const self = socket.data;
+    if (!success && verifyError?.code === "ECONNRESET") {
+      const err = new ConnResetException("socket hang up");
+      self.emit("_tlsError", err);
+      self.server.emit("tlsClientError", err, self);
+      self._hadError = true;
+      // error before handshake on the server side will only be emitted using tlsClientError
+      self.destroy();
+      return;
+    }
+    self._securePending = false;
+    self.secureConnecting = false;
+    self._secureEstablished = !!success;
+    self.servername = socket.getServername();
+    const server = self.server!;
+    self.alpnProtocol = socket.alpnProtocol;
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        server.emit("tlsClientError", verifyError, self);
+        if (self._rejectUnauthorized) {
+          // if we reject we still need to emit secure
+          self.emit("secure", self);
+          self.destroy(verifyError);
+          return;
+        }
+      } else {
+        self.authorized = true;
+      }
+    } else {
+      self.authorized = true;
+    }
+    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+    if (typeof connectionListener === "function") {
+      server.prependOnceListener("secureConnection", connectionListener);
+    }
+    server.emit("secureConnection", self);
+    // after secureConnection event we emmit secure and secureConnect
+    self.emit("secure", self);
+    self.emit("secureConnect", verifyError);
+    if (server.pauseOnConnect) {
+      self.pause();
+    } else {
+      self.resume();
+    }
+  },
+  error(socket, error) {
+    const data = this.data;
+    if (!data) return;
+
+    if (data._hadError) return;
+    data._hadError = true;
+    const bunTLS = this[bunTlsSymbol];
+
+    if (typeof bunTLS === "function") {
+      // Destroy socket if error happened before handshake's finish
+      if (!data._secureEstablished) {
+        data.destroy(error);
+      } else if (
+        data.isServer &&
+        data._rejectUnauthorized &&
+        /peer did not return a certificate/.test(error?.message)
+      ) {
+        // Ignore server's authorization errors
+        data.destroy();
+      } else {
+        // Emit error
+        data._emitTLSError(error);
+        this.emit("_tlsError", error);
+        this.server.emit("tlsClientError", error, data);
+        SocketHandlers.error(socket, error, true);
+        return;
+      }
+    }
+    SocketHandlers.error(socket, error, true);
+    data.server.emit("clientError", error, data);
+  },
+  timeout(socket) {
+    SocketHandlers.timeout(socket);
+  },
+  drain(socket) {
+    SocketHandlers.drain(socket);
+  },
+  binaryType: "buffer",
+} as const;
+
+// TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
+const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
+  open(socket) {
+    $debug("Bun.Socket open");
+    let { self, req } = socket.data;
+    socket[owner_symbol] = self;
+    $debug("self[kupgraded]", String(self[kupgraded]));
+    if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
+    socket.data.req = undefined;
+    if (self.pauseOnConnect) {
+      self.pause();
+    }
+    if (self[kupgraded]) {
+      self.connecting = false;
+      const options = self[bunTLSConnectOptions];
+      if (options) {
+        const { session } = options;
+        if (session) {
+          self.setSession(session);
+        }
+      }
+      SocketHandlers2.drain!(socket);
+    }
+  },
+  data(socket, buffer) {
+    $debug("Bun.Socket data");
+    const { self } = socket.data;
+    self.bytesRead += buffer.length;
+    if (!self.push(buffer)) socket.pause();
+  },
+  drain(socket) {
+    $debug("Bun.Socket drain");
+    const { self } = socket.data;
+    const callback = self[kwriteCallback];
+    self.connecting = false;
+    if (callback) {
+      const writeChunk = self._pendingData;
+      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        self[kBytesWritten] = socket.bytesWritten;
+        self._pendingData = self[kwriteCallback] = null;
+        callback(null);
+      } else {
+        self[kBytesWritten] = socket.bytesWritten;
+        self._pendingData = null;
+      }
+    }
+  },
+  end(socket) {
+    $debug("Bun.Socket end");
+    const { self } = socket.data;
+    if (self[kended]) return;
+    self[kended] = true;
+    if (!self.allowHalfOpen) self.write = writeAfterFIN;
+    self.push(null);
+    self.read(0);
+  },
+  close(socket, err) {
+    $debug("Bun.Socket close");
+    let { self } = socket.data;
+    if (err) $debug(err);
+    if (self[kclosed]) return;
+    self[kclosed] = true;
+    // TODO: should we be doing something with err?
+    self[kended] = true;
+    if (!self.allowHalfOpen) self.write = writeAfterFIN;
+    self.push(null);
+    self.read(0);
+  },
+  handshake(socket, success, verifyError) {
+    $debug("Bun.Socket handshake");
+    const { self } = socket.data;
+    if (!success && verifyError?.code === "ECONNRESET") {
+      // will be handled in onConnectEnd
+      return;
+    }
+
+    self._securePending = false;
+    self.secureConnecting = false;
+    self._secureEstablished = !!success;
+
+    self.emit("secure", self);
+    self.alpnProtocol = socket.alpnProtocol;
+    const { checkServerIdentity } = self[bunTLSConnectOptions];
+    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+      const cert = self.getPeerCertificate(true);
+      verifyError = checkServerIdentity(self.servername, cert);
+    }
+    if (self._requestCert || self._rejectUnauthorized) {
+      if (verifyError) {
+        self.authorized = false;
+        self.authorizationError = verifyError.code || verifyError.message;
+        if (self._rejectUnauthorized) {
+          self.destroy(verifyError);
+          return;
+        }
+      } else {
+        self.authorized = true;
+      }
+    } else {
+      self.authorized = true;
+    }
+    self.emit("secureConnect", verifyError);
+    self.removeListener("end", onConnectEnd);
+  },
+  error(socket, error) {
+    $debug("Bun.Socket error");
+    if (socket.data === undefined) return;
+    const { self } = socket.data;
+    if (self._hadError) return;
+    self._hadError = true;
+
+    const callback = self[kwriteCallback];
+    if (callback) {
+      self[kwriteCallback] = null;
+      callback(error);
+    }
+
+    if (!self.destroyed) process.nextTick(destroyNT, self, error);
+  },
+  timeout(socket) {
+    $debug("Bun.Socket timeout");
+    const { self } = socket.data;
+    self.emit("timeout", self);
+  },
+  connectError(socket, error) {
+    $debug("Bun.Socket connectError");
+    let { self, req } = socket.data;
+    socket[owner_symbol] = self;
+    req!.oncomplete(error.errno, self._handle, req, true, true);
+    socket.data.req = undefined;
+  },
+};
 
 export function Server();
 export function Server(options?: null | undefined);
@@ -437,17 +811,6 @@ function addServerAbortSignalOption(self, options) {
   }
 }
 
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-  }
-
-  get ["constructor"]() {
-    return Error;
-  }
-}
-
 function emitListeningNextTick(self) {
   if (!self._handle) return;
   self.emit("listening");
@@ -523,4 +886,3 @@ function listenInCluster(
     );
   });
 }
-

@@ -184,15 +184,12 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         if (ctx.bundler_options.production) {
+            try this_transpiler.env.map.put("BUN_ENV", "production");
             try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
-
-        if (ctx.bundler_options.production) {
-            bun.assert(!this_transpiler.options.jsx.development);
-        }
 
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});
@@ -202,6 +199,10 @@ pub const BuildCommand = struct {
         this_transpiler.resolver.env_loader = this_transpiler.env;
         this_transpiler.options.jsx.development = !this_transpiler.options.production;
         this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
+
+        if (ctx.bundler_options.production) {
+            bun.assert(!this_transpiler.options.jsx.development);
+        }
 
         switch (ctx.debug.macros) {
             .disable => {

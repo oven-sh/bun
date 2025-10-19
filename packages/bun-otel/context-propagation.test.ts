@@ -3,6 +3,7 @@ import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./index";
+import { waitForSpans } from "./test-utils";
 
 // Set up W3C propagator globally for trace context tests
 propagation.setGlobalPropagator(new W3CTraceContextPropagator());
@@ -31,7 +32,7 @@ describe("W3C trace context propagation", () => {
         },
       });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForSpans(exporter, 1);
 
       const spans = exporter.getFinishedSpans();
       const spanContext = spans[0].spanContext();
@@ -76,7 +77,7 @@ describe("W3C trace context propagation", () => {
         },
       });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForSpans(exporter, 1);
 
       const spans = exporter.getFinishedSpans();
       expect(spans).toHaveLength(1);

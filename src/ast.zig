@@ -345,6 +345,18 @@ pub const ExportsKind = enum {
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
     }
+
+    pub fn toModuleType(self: @This()) bun.options.ModuleType {
+        return switch (self) {
+            .none => .unknown,
+            .cjs => .cjs,
+
+            .esm_with_dynamic_fallback,
+            .esm_with_dynamic_fallback_from_cjs,
+            .esm,
+            => .esm,
+        };
+    }
 };
 
 pub const DeclaredSymbol = struct {

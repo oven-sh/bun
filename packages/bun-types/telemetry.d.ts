@@ -1,5 +1,3 @@
-import { Context } from "node:vm";
-
 declare module "bun" {
   /**
    * Telemetry API for application observability and OpenTelemetry support.
@@ -189,7 +187,7 @@ declare module "bun" {
        * Used to share async context between Bun.telemetry and OpenTelemetry instrumentations.
        * @internal
        */
-      _contextStorage?: import("node:async_hooks").AsyncLocalStorage<Context>;
+      _contextStorage?: import("node:async_hooks").AsyncLocalStorage<unknown>;
     }
 
     /**

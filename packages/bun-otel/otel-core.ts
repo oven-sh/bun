@@ -337,32 +337,24 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
       // Extract context from incoming headers
       const extractedContext = propagation.extract(context.active(), req.headers);
 
-      // Extract headers
       const method = req.method || "GET";
-      const url = req.url || "/";
-      const userAgent = req.headers["user-agent"];
-      const host = req.headers["host"];
-      const contentLengthHeader = req.headers["content-length"];
-      const contentLength = typeof contentLengthHeader === "string" ? parseInt(contentLengthHeader, 10) : 0;
-
-      // Determine scheme (http vs https) from the socket
-      const scheme = (req.socket as any)?.encrypted ? "https" : "http";
+      const urlInfo = getUrlInfo(req);
+      const attributes: Record<string, string | number> = {
+        "http.method": method,
+        "http.url": urlInfo.fullUrl,
+        "http.target": urlInfo.pathname,
+        "http.scheme": urlInfo.scheme,
+        "http.host": urlInfo.host,
+      };
+      if (urlInfo.userAgent) attributes["http.user_agent"] = urlInfo.userAgent;
+      if (Number.isFinite(urlInfo.contentLength)) {
+        attributes["http.request_content_length"] = urlInfo.contentLength!;
+      }
 
       // Start a new span (match Bun.serve format: "GET /path" not "HTTP GET /path")
       const span = tracer.startSpan(
-        `${method} ${url}`,
-        {
-          kind: SpanKind.SERVER,
-          attributes: {
-            "http.method": method,
-            "http.url": url,
-            "http.target": url,
-            "http.scheme": scheme,
-            "http.host": host,
-            "http.user_agent": userAgent,
-            "http.request_content_length": contentLength > 0 ? contentLength : undefined,
-          },
-        },
+        `${method} ${urlInfo.pathname}`,
+        { kind: SpanKind.SERVER, attributes },
         extractedContext,
       );
 

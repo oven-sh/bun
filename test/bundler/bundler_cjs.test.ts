@@ -426,26 +426,24 @@ describe("bundler", () => {
     },
   });
 
-  // Test 21: Comparison showing format doesn't matter
-  itBundled("cjs/__toESM_esm_vs_cjs_format_comparison", {
+  // Test 21: Input=ESM, output=CJS - ensure __toESM wrapper prints correctly
+  // This test covers the specific fix for printing __toESM when output format is CJS
+  itBundled("cjs/__toESM_input_esm_output_cjs_wrapper_print", {
     files: {
-      "/entry-esm.js": /* js */ `
-        import lib from './lib.cjs';
-        export const result = JSON.stringify(lib);
+      "/entry.js": /* js */ `
+        import def, { named } from "./esm.mjs";
+        console.log(JSON.stringify({ def, named }));
       `,
-      "/entry-cjs.js": /* js */ `
-        import lib from './lib.cjs';
-        export const result = JSON.stringify(lib);
-      `,
-      "/lib.cjs": /* js */ `
-        exports.__esModule = true;
-        exports.default = 'value';
-        exports.other = 'other';
+      "/esm.mjs": /* js */ `
+        export const named = "n";
+        const def = { v: 1 };
+        export default def;
       `,
     },
-    outfile: "/out-esm.js",
-    format: "esm",
-    run: false, // Just checking compilation
+    format: "cjs",
+    run: {
+      stdout: '{"def":{"v":1},"named":"n"}',
+    },
   });
 
   // Test 22: Star import with __esModule

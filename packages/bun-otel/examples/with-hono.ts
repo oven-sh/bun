@@ -38,11 +38,12 @@ Bun.serve({
 console.log("Hono server with automatic tracing at http://localhost:3000");
 
 // Graceful shutdown to flush spans
-process.on("SIGINT", async () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   await sdk.shutdown();
   process.exit(0);
-});
-process.on("SIGTERM", async () => {
-  await sdk.shutdown();
-  process.exit(0);
-});
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

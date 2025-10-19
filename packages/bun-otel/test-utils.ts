@@ -25,19 +25,28 @@ export async function waitForSpans(
   exporter: InMemorySpanExporter,
   expectedCount: number,
   timeoutMs = 500,
+  options?: { traceId?: string; pollIntervalMs?: number },
 ): Promise<void> {
   const startTime = Date.now();
-  const pollInterval = 5; // Poll every 5ms
+  const pollInterval = options?.pollIntervalMs ?? 5; // Poll every 5ms by default
 
   while (Date.now() - startTime < timeoutMs) {
     const spans = exporter.getFinishedSpans();
-    if (spans.length >= expectedCount) {
+
+    // If traceId filter is provided, only count spans with matching traceId
+    const matchingSpans = options?.traceId ? spans.filter(s => s.spanContext().traceId === options.traceId) : spans;
+
+    if (matchingSpans.length >= expectedCount) {
       return; // Success
     }
     await Bun.sleep(pollInterval);
   }
 
   // Timeout - fail with helpful message
-  const actual = exporter.getFinishedSpans().length;
-  throw new Error(`Timeout waiting for spans. Expected: ${expectedCount}, Found: ${actual}`);
+  const spans = exporter.getFinishedSpans();
+  const matchingSpans = options?.traceId ? spans.filter(s => s.spanContext().traceId === options.traceId) : spans;
+  throw new Error(
+    `Timeout waiting for spans. Expected: ${expectedCount}, Found: ${matchingSpans.length}` +
+      (options?.traceId ? ` with traceId ${options.traceId}` : ""),
+  );
 }

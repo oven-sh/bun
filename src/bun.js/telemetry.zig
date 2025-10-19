@@ -379,10 +379,12 @@ pub const Telemetry = struct {
                     }
 
                     // Store new array (may be smaller if some parsing failed)
-                    self.copy2response_headers = if (parsed_count > 0)
-                        headers[0..parsed_count]
-                    else
-                        &.{};
+                    if (parsed_count > 0) {
+                        self.copy2response_headers = headers[0..parsed_count];
+                    } else {
+                        bun.default_allocator.free(headers);
+                        self.copy2response_headers = &.{};
+                    }
                 }
             }
         }

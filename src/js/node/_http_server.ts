@@ -748,19 +748,18 @@ Server.prototype.setTimeout = function (msecs, callback) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
-  const res = socket._httpMessage;
 
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
-      // Removed handleRequestAbort telemetry hook for minimal insertion footprint
+      // Error handling is done via Bun.telemetry.configure() callbacks
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-      // Removed handleRequestTimeout telemetry hook for minimal insertion footprint
+      // Error handling is done via Bun.telemetry.configure() callbacks
       break;
     }
   }

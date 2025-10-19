@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 const hostname = "127.0.0.1";
 const port = 0;
+const MAX_HEADER_SIZE = 16 * 1024; // 16KB max for handshake headers
 
 describe("WebSocket", () => {
   test("fragmented close frame", async () => {
@@ -26,6 +27,12 @@ describe("WebSocket", () => {
             newBuffer.set(handshakeBuffer);
             newBuffer.set(data, handshakeBuffer.length);
             handshakeBuffer = newBuffer;
+
+            // Prevent unbounded growth
+            if (handshakeBuffer.length > MAX_HEADER_SIZE) {
+              socket.end();
+              throw new Error("Handshake headers too large");
+            }
 
             // Check for end of HTTP headers
             const dataStr = new TextDecoder("utf-8").decode(handshakeBuffer);
@@ -96,12 +103,15 @@ describe("WebSocket", () => {
       });
 
       const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const timeout = setTimeout(() => reject(new Error("Test timeout after 5s")), 5000);
 
       client = new WebSocket(`ws://${server.hostname}:${server.port}`);
       client.addEventListener("error", () => {
+        clearTimeout(timeout);
         reject(new Error("WebSocket error"));
       });
       client.addEventListener("close", event => {
+        clearTimeout(timeout);
         try {
           expect(event.code).toBe(1000);
           expect(event.reason).toBe("fragmented close test");

@@ -155,6 +155,7 @@ All BunSDK configuration options:
 ## Features
 
 ### Tracing (Current)
+
 - ✅ Automatic span creation for all HTTP requests
 - ✅ Works with both `Bun.serve()` and `http.createServer()`
 - ✅ W3C TraceContext propagation (traceparent headers)
@@ -165,6 +166,7 @@ All BunSDK configuration options:
 - ✅ ~10x faster than traditional monkey-patching
 
 ### Future Support
+
 - 🔮 Metrics - Performance metrics and custom measurements
 - 🔮 Logs - Structured logging with trace correlation
 

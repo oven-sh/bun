@@ -111,6 +111,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearSendBuffers(true);
             this.ping_received = false;
             this.ping_len = 0;
+            this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
             this.receiving_compressed = false;
             this.message_is_compressed = false;

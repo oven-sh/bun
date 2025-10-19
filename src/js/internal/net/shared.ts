@@ -1,7 +1,6 @@
 export const Duplex = require("internal/streams/duplex");
 export const { getDefaultHighWaterMark } = require("internal/streams/state");
 export const EventEmitter = require("node:events");
-export let dns: typeof import("node:dns");
 
 export const normalizedArgsSymbol = Symbol("normalizedArgs");
 export const { ExceptionWithHostPort } = require("internal/shared");

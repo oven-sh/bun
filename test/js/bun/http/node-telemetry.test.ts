@@ -8,6 +8,7 @@
  */
 import { afterEach, expect, test } from "bun:test";
 import * as http from "node:http";
+import { waitForCondition } from "../telemetry-test-utils";
 
 // Reset telemetry after each test
 afterEach(() => {
@@ -64,12 +65,8 @@ test("_node_binding.handleIncomingRequest and handleWriteHead are invoked with c
   expect(response.status).toBe(200);
   await response.text();
 
-  // Wait for callbacks (short spin to avoid flakiness)
-  let attempts = 0;
-  while (calls.length < 2 && attempts < 50) {
-    await Bun.sleep(10);
-    attempts++;
-  }
+  // Wait for callbacks
+  await waitForCondition(() => calls.length >= 2);
 
   // Verify the hooks were called
   expect(calls.length).toBeGreaterThanOrEqual(2);
@@ -121,11 +118,7 @@ test("handleWriteHead deduplication - called only once even with multiple writes
   await fetch(`http://localhost:${port}/`);
 
   // Wait for all calls
-  let attempts = 0;
-  while (calls.length < 2 && attempts < 50) {
-    await Bun.sleep(10);
-    attempts++;
-  }
+  await waitForCondition(() => calls.length >= 2);
 
   // handleWriteHead should be called exactly once (deduplication works)
   const writeHeadCalls = calls.filter(c => c === "handleWriteHead");
@@ -163,11 +156,7 @@ test("handleWriteHead receives ServerResponse with accessible headers via getHea
   await fetch(`http://localhost:${port}/`);
 
   // Wait for callback
-  let attempts = 0;
-  while (!capturedStatusCode && attempts < 50) {
-    await Bun.sleep(10);
-    attempts++;
-  }
+  await waitForCondition(() => capturedStatusCode !== undefined);
 
   expect(capturedStatusCode).toBe(201);
   expect(capturedResponse).toBeDefined();

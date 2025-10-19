@@ -39,3 +39,27 @@ export async function waitForEvents(
   const found = events.map(e => e.type);
   throw new Error(`Timeout waiting for telemetry events. Expected: [${expectedTypes}], Found: [${found}]`);
 }
+
+/**
+ * Wait for a condition to become true with polling
+ * Generic helper for any boolean condition
+ *
+ * @param condition - Function that returns true when condition is met
+ * @param timeoutMs - Maximum time to wait in milliseconds (default: 500ms)
+ * @param intervalMs - Polling interval in milliseconds (default: 10ms)
+ * @throws Error if timeout is reached before condition becomes true
+ */
+export async function waitForCondition(condition: () => boolean, timeoutMs = 500, intervalMs = 10): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  const maxAttempts = Math.ceil(timeoutMs / intervalMs);
+
+  while (!condition() && attempts < maxAttempts && Date.now() < deadline) {
+    await Bun.sleep(intervalMs);
+    attempts++;
+  }
+
+  if (!condition()) {
+    throw new Error(`Timeout waiting for condition after ${attempts} attempts (${timeoutMs}ms)`);
+  }
+}

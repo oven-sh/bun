@@ -17,7 +17,7 @@ import {
   SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { installBunNativeTracing } from "./otel-core";
+import { createBunTelemetryConfig } from "./otel-core";
 
 /**
  * Configuration options for BunSDK
@@ -145,7 +145,7 @@ export class BunSDK {
   private _spanProcessors: SpanProcessor[] = [];
   private _serviceName?: string;
   private _tracerName: string;
-  private _bunCleanup?: () => void;
+  private _spans?: Map<number, Span>;
 
   constructor(config: BunSDKConfiguration = {}) {
     this._config = config;
@@ -222,25 +222,36 @@ export class BunSDK {
     // Register as global tracer provider
     trace.setGlobalTracerProvider(this._tracerProvider);
 
-    // Install Bun native tracing
-    this._bunCleanup = installBunNativeTracing({
+    // Create Bun telemetry config and install it ourselves so we can hold onto spans
+    const { config, spans } = createBunTelemetryConfig({
       tracerProvider: this._tracerProvider,
       tracerName: this._tracerName,
+      correlationHeaderName: this._config.correlationHeaderName,
+      requestHeaderAttributes: this._config.requestHeaderAttributes,
+      responseHeaderAttributes: this._config.responseHeaderAttributes,
     });
+    this._spans = spans;
+    Bun.telemetry.configure(config);
   }
 
   /**
-   * Shutdown the SDK: disable Bun telemetry and shutdown tracer provider.
+   * Shutdown the SDK: end any pending spans, disable Bun telemetry, and shutdown tracer provider.
    * Flushes any pending spans and cleans up resources.
    */
   async shutdown(): Promise<void> {
-    // Cleanup Bun telemetry first
-    if (this._bunCleanup) {
-      this._bunCleanup();
-      this._bunCleanup = undefined;
+    // End any pending spans before shutting down
+    if (this._spans) {
+      for (const span of this._spans.values()) {
+        span.end();
+      }
+      this._spans.clear();
+      this._spans = undefined;
     }
 
-    // Shutdown tracer provider
+    // Disable Bun telemetry
+    Bun.telemetry.disable();
+
+    // Shutdown tracer provider (flushes pending spans to exporters)
     if (this._tracerProvider) {
       await this._tracerProvider.shutdown();
       this._tracerProvider = undefined;

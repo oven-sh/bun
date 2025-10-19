@@ -1,9 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, withoutAggressiveGC, tempDir } from "harness";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import path, { join } from "path";
-import { beforeEach, afterEach } from "bun:test";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =

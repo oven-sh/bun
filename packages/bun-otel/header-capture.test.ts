@@ -193,6 +193,7 @@ describe("Header capture and normalization", () => {
     expect(headers).toBeDefined();
     expect(headers).toBeArrayOfSize(1); // Only value, not key-value pair
     expect(headers?.[0]).toMatch(/^[0-9a-f]{32}$/); // 32-char hex trace ID
+    config.onRequestEnd?.(1);
   });
 
   test("onResponseStart returns undefined when correlation disabled", () => {
@@ -208,6 +209,7 @@ describe("Header capture and normalization", () => {
 
     const headers = config.onResponseStart?.(1);
     expect(headers).toBeUndefined();
+    config.onRequestEnd?.(1);
   });
 
   test("onResponseStart returns undefined for missing span", () => {

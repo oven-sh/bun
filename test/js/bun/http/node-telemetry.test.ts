@@ -14,7 +14,7 @@ afterEach(() => {
   try {
     Bun.telemetry.configure(null);
   } catch (e) {
-    // Ignore if already reset
+    // Defensive: ignore any errors from configure(null)
   }
 });
 

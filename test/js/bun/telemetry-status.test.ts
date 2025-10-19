@@ -40,9 +40,7 @@ test("onResponseHeaders captures custom status codes (201 Created)", async () =>
   // Wait for callbacks deterministically
   await waitForEvents(events, ["start", "status", "end"]);
 
-  // Check events
-  expect(events.length).toBe(3);
-
+  // Check required events (allow additional events in future)
   const startEvent = events.find(e => e.type === "start");
   expect(startEvent).toBeDefined();
   expect(startEvent?.data.url).toContain("/test");

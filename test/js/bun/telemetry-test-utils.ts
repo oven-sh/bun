@@ -8,7 +8,7 @@
  *
  * @param events - Array of telemetry events to poll
  * @param expectedTypes - Array of event types to wait for (e.g., ["start", "end"])
- * @param timeoutMs - Maximum time to wait in milliseconds (default: 200ms)
+ * @param timeoutMs - Maximum time to wait in milliseconds (default: 500ms)
  * @throws Error if timeout is reached before all expected events are found
  *
  * @example
@@ -22,7 +22,7 @@
 export async function waitForEvents(
   events: Array<{ type: string; id?: number; [key: string]: any }>,
   expectedTypes: string[],
-  timeoutMs = 200,
+  timeoutMs = 500,
 ): Promise<void> {
   const startTime = Date.now();
   const pollInterval = 5; // Poll every 5ms

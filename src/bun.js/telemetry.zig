@@ -424,12 +424,14 @@ pub const Telemetry = struct {
             self.on_request_error != .zero or
             self.on_response_headers != .zero;
 
+        // Require at least one callback to avoid sticky configured state
+        if (!self.enabled) {
+            return self.global.throwInvalidArguments("Telemetry.configure: provide at least one callback (onRequestStart, onRequestEnd, onRequestError, or onResponseHeaders)", .{});
+        }
+
         // Mark as configured
         self.configured = true;
-
-        if (self.enabled) {
-            logger("Telemetry enabled", .{});
-        }
+        logger("Telemetry enabled", .{});
     }
 
     /// Called when a request starts

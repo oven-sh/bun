@@ -1,6 +1,5 @@
 import type { Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
-import { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HeadersLike, RequestLike } from "./otel-types";
 import { getUrlInfo, headerLikeHeaderGetter, requestLikeHeaderGetter } from "./otel-types";
@@ -88,6 +87,8 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
 
   const tracer: Tracer = tracerProvider.getTracer(tracerName);
   const spans = externalSpans ?? new Map<number, Span>();
+  // Track spans that have had their status explicitly set
+  const spansWithStatus = new WeakSet<Span>();
 
   // ============================================================================
   // Shared Helpers
@@ -103,6 +104,7 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
       code: SpanStatusCode.ERROR,
       message: err.message,
     });
+    spansWithStatus.add(span);
   }
 
   /**
@@ -123,30 +125,21 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     return 0;
   }
 
-  // Narrow a Span to one that exposes a readable `status` field (SDK span implementation).
-  // The public API `Span` lacks `status`, but SDK spans have it. We only inspect `status.code`.
-  type SpanWithStatus = Span & { status: ReadableSpan["status"] };
-  function isReadableSpan(span: Span): span is SpanWithStatus {
-    const s: any = (span as any).status;
-    return s && typeof s === "object" && typeof s.code === "number";
-  }
-
   /**
    * Set span status from HTTP status code
    * Only sets status if not already set (avoids overwriting ERROR with OK)
    */
   function setSpanStatusFromHttpCode(span: Span, statusCode: number): void {
     // Don't overwrite status if already set (e.g., from recordError)
-    if (!isReadableSpan(span) || span.status.code !== SpanStatusCode.UNSET) {
+    if (spansWithStatus.has(span)) {
       return;
     }
 
     // Set ERROR for 5xx, OK for everything else
-    if (statusCode >= 500) {
-      span.setStatus({ code: SpanStatusCode.ERROR });
-    } else {
-      span.setStatus({ code: SpanStatusCode.OK });
-    }
+    span.setStatus({
+      code: statusCode >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
+    });
+    spansWithStatus.add(span);
   }
 
   /**
@@ -232,7 +225,7 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
       if (!span) return;
 
       // Only set OK if status hasn't been set (don't overwrite ERROR)
-      if (isReadableSpan(span) && span.status.code === SpanStatusCode.UNSET) {
+      if (!spansWithStatus.has(span)) {
         span.setStatus({ code: SpanStatusCode.OK });
       }
       span.end();

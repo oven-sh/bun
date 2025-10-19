@@ -31,3 +31,11 @@ console.log("Traces include:");
 console.log("- Service name: my-production-service");
 console.log("- Custom attributes: deployment.environment, service.version, service.namespace");
 console.log("- Auto-detected: host info, process info, environment variables");
+
+// Graceful shutdown
+const shutdown = async () => {
+  await sdk.shutdown();
+  process.exit(0);
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

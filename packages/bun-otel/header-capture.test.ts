@@ -1,7 +1,13 @@
+import { Span } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { describe, expect, test } from "bun:test";
 import { createBunTelemetryConfig } from "./otel-core";
+
+// Helper to access span attributes (Span API doesn't type attributes)
+function getSpanAttributes(span: Span | undefined): Record<string, unknown> {
+  return (span as any)?.attributes as Record<string, unknown>;
+}
 
 describe("Header capture and normalization", () => {
   test("captures request headers with correct attribute naming", () => {
@@ -27,9 +33,10 @@ describe("Header capture and normalization", () => {
 
     const span = spans.get(1);
     expect(span).toBeDefined();
-    expect(span?.attributes["http.request.header.user_agent"]).toBe("test-client/1.0");
-    expect(span?.attributes["http.request.header.x_request_id"]).toBe("req-123");
-    expect(span?.attributes["http.request.header.accept_language"]).toBe("en-US");
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.request.header.user_agent"]).toBe("test-client/1.0");
+    expect(attrs["http.request.header.x_request_id"]).toBe("req-123");
+    expect(attrs["http.request.header.accept_language"]).toBe("en-US");
   });
 
   test("normalizes header names: dashes to underscores", () => {
@@ -53,9 +60,10 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const span = spans.get(1);
-    expect(span?.attributes["http.request.header.content_type"]).toBe("application/json");
-    expect(span?.attributes["http.request.header.x_custom_header"]).toBe("custom-value");
-    expect(span?.attributes["http.request.header.accept_encoding"]).toBe("gzip, deflate");
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.request.header.content_type"]).toBe("application/json");
+    expect(attrs["http.request.header.x_custom_header"]).toBe("custom-value");
+    expect(attrs["http.request.header.accept_encoding"]).toBe("gzip, deflate");
   });
 
   test("captures response headers with correct attribute naming", () => {
@@ -82,9 +90,10 @@ describe("Header capture and normalization", () => {
     config.onResponseHeaders?.(1, 200, 123, mockHeaders);
 
     const span = spans.get(1);
-    expect(span?.attributes["http.response.header.content_type"]).toBe("application/json");
-    expect(span?.attributes["http.response.header.cache_control"]).toBe("max-age=3600");
-    expect(span?.attributes["http.response.header.x_response_time"]).toBe("42ms");
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.response.header.content_type"]).toBe("application/json");
+    expect(attrs["http.response.header.cache_control"]).toBe("max-age=3600");
+    expect(attrs["http.response.header.x_response_time"]).toBe("42ms");
   });
 
   test("handles missing headers gracefully", () => {
@@ -107,9 +116,10 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const span = spans.get(1);
-    expect(span?.attributes["http.request.header.user_agent"]).toBe("test-client/1.0");
-    expect(span?.attributes["http.request.header.x_missing_header"]).toBeUndefined();
-    expect(span?.attributes["http.request.header.authorization"]).toBeUndefined();
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.request.header.user_agent"]).toBe("test-client/1.0");
+    expect(attrs["http.request.header.x_missing_header"]).toBeUndefined();
+    expect(attrs["http.request.header.authorization"]).toBeUndefined();
   });
 
   test("skips header capture when arrays are empty", () => {
@@ -130,9 +140,10 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const span = spans.get(1);
+    const attrs = getSpanAttributes(span);
     // Only standard attributes should exist
-    expect(span?.attributes["http.method"]).toBeDefined();
-    expect(span?.attributes["http.request.header.user_agent"]).toBeUndefined();
+    expect(attrs["http.method"]).toBeDefined();
+    expect(attrs["http.request.header.user_agent"]).toBeUndefined();
   });
 
   test("handles case-insensitive header lookup", () => {
@@ -155,9 +166,10 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const span = spans.get(1);
+    const attrs = getSpanAttributes(span);
     // Normalized to lowercase with underscores
-    expect(span?.attributes["http.request.header.content_type"]).toBe("text/html");
-    expect(span?.attributes["http.request.header.user_agent"]).toBe("browser/1.0");
+    expect(attrs["http.request.header.content_type"]).toBe("text/html");
+    expect(attrs["http.request.header.user_agent"]).toBe("browser/1.0");
   });
 
   test("onResponseStart returns trace ID when enabled", () => {
@@ -254,13 +266,14 @@ describe("Header capture and normalization", () => {
     config.onRequestStart?.(1, mockRequest);
 
     const span = spans.get(1);
-    expect(span?.attributes["http.request.header.user_agent"]).toBe("client/1.0");
-    expect(span?.attributes["http.request.header.accept"]).toBe("application/json");
-    expect(span?.attributes["http.request.header.accept_language"]).toBe("en");
-    expect(span?.attributes["http.request.header.accept_encoding"]).toBe("gzip");
-    expect(span?.attributes["http.request.header.x_request_id"]).toBe("req-1");
-    expect(span?.attributes["http.request.header.x_correlation_id"]).toBe("corr-1");
-    expect(span?.attributes["http.request.header.authorization"]).toBeUndefined();
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.request.header.user_agent"]).toBe("client/1.0");
+    expect(attrs["http.request.header.accept"]).toBe("application/json");
+    expect(attrs["http.request.header.accept_language"]).toBe("en");
+    expect(attrs["http.request.header.accept_encoding"]).toBe("gzip");
+    expect(attrs["http.request.header.x_request_id"]).toBe("req-1");
+    expect(attrs["http.request.header.x_correlation_id"]).toBe("corr-1");
+    expect(attrs["http.request.header.authorization"]).toBeUndefined();
   });
 
   test("captures multiple response headers efficiently", () => {
@@ -293,11 +306,12 @@ describe("Header capture and normalization", () => {
     config.onResponseHeaders?.(1, 200, 1234, mockHeaders);
 
     const span = spans.get(1);
-    expect(span?.attributes["http.response.header.content_type"]).toBe("application/json");
-    expect(span?.attributes["http.response.header.content_length"]).toBe("1234");
-    expect(span?.attributes["http.response.header.cache_control"]).toBe("no-cache");
-    expect(span?.attributes["http.response.header.etag"]).toBe('"abc123"');
-    expect(span?.attributes["http.response.header.x_response_time"]).toBe("15ms");
-    expect(span?.attributes["http.response.header.x_rate_limit_remaining"]).toBeUndefined();
+    const attrs = getSpanAttributes(span);
+    expect(attrs["http.response.header.content_type"]).toBe("application/json");
+    expect(attrs["http.response.header.content_length"]).toBe("1234");
+    expect(attrs["http.response.header.cache_control"]).toBe("no-cache");
+    expect(attrs["http.response.header.etag"]).toBe('"abc123"');
+    expect(attrs["http.response.header.x_response_time"]).toBe("15ms");
+    expect(attrs["http.response.header.x_rate_limit_remaining"]).toBeUndefined();
   });
 });

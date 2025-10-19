@@ -19,3 +19,11 @@ Bun.serve({
 
 console.log("Server running at http://localhost:3000");
 console.log("All requests are automatically traced!");
+
+// Graceful shutdown
+const shutdown = async () => {
+  await sdk.shutdown();
+  process.exit(0);
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

@@ -254,15 +254,12 @@ export class BunSDK {
   }
 
   /**
-   * Shutdown the SDK: end any pending spans, disable Bun telemetry, and shutdown tracer provider.
+   * Shutdown the SDK: disable Bun telemetry and shutdown tracer provider.
    * Flushes any pending spans and cleans up resources.
    */
   async shutdown(): Promise<void> {
-    // End any pending spans before shutting down
+    // Clear local span map; do not force-end in-flight spans
     if (this._spans) {
-      for (const span of this._spans.values()) {
-        span.end();
-      }
       this._spans.clear();
       this._spans = undefined;
     }

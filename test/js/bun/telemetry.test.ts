@@ -167,6 +167,12 @@ test("telemetry IDs are unique per request", async () => {
     fetch(`http://localhost:${server.port}/3`),
   ]);
 
+  // Wait for all 3 start callbacks to complete
+  const deadline = Date.now() + 500;
+  while (ids.size < 3 && Date.now() < deadline) {
+    await Bun.sleep(5);
+  }
+
   // All IDs should be unique
   expect(ids.size).toBe(3);
 

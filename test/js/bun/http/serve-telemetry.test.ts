@@ -7,6 +7,7 @@
  * Note: Bun.serve uses high-level callbacks; Node.js uses _node_binding hooks.
  */
 import { expect, test } from "bun:test";
+import { waitForEvents } from "../telemetry-test-utils";
 
 test("onResponseHeaders receives statusCode and contentLength for non-empty response body", async () => {
   const events: Array<{ type: string; id: number; data?: any }> = [];
@@ -37,7 +38,7 @@ test("onResponseHeaders receives statusCode and contentLength for non-empty resp
   const response = await fetch(`http://localhost:${server.port}/test`);
   expect(response.status).toBe(200);
 
-  await Bun.sleep(50);
+  await waitForEvents(events, ["start", "headers", "end"]);
 
   // Should keep 200 status since body is not empty
   const headersEvent = events.find(e => e.type === "headers");
@@ -78,7 +79,7 @@ test("onResponseHeaders receives explicit 204 status code for no-content respons
   const response = await fetch(`http://localhost:${server.port}/test`);
   expect(response.status).toBe(204);
 
-  await Bun.sleep(50);
+  await waitForEvents(events, ["start", "headers", "end"]);
 
   const headersEvent = events.find(e => e.type === "headers");
   expect(headersEvent).toBeDefined();

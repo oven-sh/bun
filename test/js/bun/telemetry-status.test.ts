@@ -4,7 +4,12 @@
  * Verifies status codes are captured correctly in onResponseHeaders.
  * Does NOT test OpenTelemetry span status mapping - see packages/bun-otel/ for that.
  */
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
+import { waitForEvents } from "./telemetry-test-utils";
+
+beforeEach(() => {
+  Bun.telemetry.disable();
+});
 
 test("onResponseHeaders captures custom status codes (201 Created)", async () => {
   const events: Array<{ type: string; id: number; data?: any }> = [];
@@ -32,8 +37,8 @@ test("onResponseHeaders captures custom status codes (201 Created)", async () =>
   expect(response.status).toBe(201);
   expect(await response.text()).toBe("created");
 
-  // Wait for callbacks
-  await Bun.sleep(10);
+  // Wait for callbacks deterministically
+  await waitForEvents(events, ["start", "status", "end"]);
 
   // Check events
   expect(events.length).toBe(3);

@@ -51,6 +51,12 @@ Bun.serve({
     return new Response('Hello World');
   }
 });
+
+// Optional: flush spans on shutdown
+process.on('SIGINT', async () => {
+  await sdk.shutdown();
+  process.exit(0);
+});
 ```
 
 That's it! `BunSDK` automatically instruments both `Bun.serve()` and `http.createServer()` via `Bun.telemetry` hooks.
@@ -183,7 +189,7 @@ const app = new Hono();
 app.use('*', async (c, next) => {
   const span = trace.getActiveSpan();
   if (span) {
-    span.setAttribute('route', c.req.routePath);
+    span.setAttribute('http.route', c.req.routePath);
   }
   await next();
 });
@@ -201,7 +207,7 @@ const app = new Elysia()
   .onRequest((ctx) => {
     const span = trace.getActiveSpan();
     if (span) {
-      span.setAttribute('route', ctx.path);
+      span.setAttribute('http.route', ctx.path);
     }
   });
 

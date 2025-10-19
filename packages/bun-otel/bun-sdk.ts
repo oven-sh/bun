@@ -102,6 +102,25 @@ export interface BunSDKConfiguration {
    * @default '@bun/otel'
    */
   tracerName?: string;
+
+  /**
+   * Name of the response correlation header to emit with the current traceId.
+   * Set to false to disable emitting a correlation header.
+   * @default "x-trace-id"
+   */
+  correlationHeaderName?: string | false;
+
+  /**
+   * Request header names to capture as span attributes (attr prefix: http.request.header.*).
+   * Dashes are normalized to underscores and names are lowercased.
+   */
+  requestHeaderAttributes?: string[];
+
+  /**
+   * Response header names to capture as span attributes (attr prefix: http.response.header.*).
+   * Dashes are normalized to underscores and names are lowercased.
+   */
+  responseHeaderAttributes?: string[];
 }
 /**
  * OpenTelemetry SDK for Bun

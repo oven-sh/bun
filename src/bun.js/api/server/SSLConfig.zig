@@ -92,10 +92,10 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
 }
 
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
-    inline for (comptime std.meta.fieldNames(SSLConfig)) |field| {
-        const first = @field(this, field);
-        const second = @field(other, field);
-        switch (@FieldType(SSLConfig, field)) {
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        const first = @field(this, field.name);
+        const second = @field(other, field.name);
+        switch (field.type) {
             ?[*:0]const u8 => {
                 const a = first orelse return second == null;
                 const b = second orelse return false;
@@ -206,6 +206,14 @@ pub fn fromJS(
 ) bun.JSError!?SSLConfig {
     var generated: jsc.generated.SSLConfig = try .fromJS(global, value);
     defer generated.deinit();
+    return .fromGenerated(vm, global, &generated);
+}
+
+pub fn fromGenerated(
+    vm: *jsc.VirtualMachine,
+    global: *jsc.JSGlobalObject,
+    generated: *const jsc.generated.SSLConfig,
+) bun.JSError!?SSLConfig {
     var result: SSLConfig = zero;
     errdefer result.deinit();
     var any = false;
@@ -379,6 +387,18 @@ fn handleSingleFile(
         },
         .file => |blob| try readFromBlob(global, blob),
     };
+}
+
+pub fn takeProtos(this: *SSLConfig) ?[]const u8 {
+    defer this.protos = null;
+    const protos = this.protos orelse return null;
+    return bun.handleOom(bun.memory.dropSentinel(protos, bun.default_allocator));
+}
+
+pub fn takeServerName(this: *SSLConfig) ?[]const u8 {
+    defer this.server_name = null;
+    const server_name = this.server_name orelse return null;
+    return bun.handleOom(bun.memory.dropSentinel(server_name, bun.default_allocator));
 }
 
 const std = @import("std");

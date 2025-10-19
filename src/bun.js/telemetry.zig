@@ -438,12 +438,12 @@ pub const Telemetry = struct {
     /// Called when a request starts
     /// Returns the request ID that should be used for subsequent calls
     pub fn notifyRequestStart(self: *Self, request_js: JSValue) RequestId {
-        const id = self.generateRequestId();
-
+        // Defensive: return sentinel (0) when disabled to avoid ID generation overhead
         if (!self.enabled or self.on_request_start == .zero) {
-            return id;
+            return 0; // 0 is a valid sentinel for "not tracked"
         }
 
+        const id = self.generateRequestId();
         const id_js = jsRequestId(id);
 
         _ = self.on_request_start.call(

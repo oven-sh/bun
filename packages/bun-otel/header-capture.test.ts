@@ -241,6 +241,7 @@ describe("Header capture and normalization", () => {
     expect(headers?.[0]).toMatch(/^[0-9a-f]{32}$/); // Trace ID
     // Header name is now in config.correlationHeaderNames, not in return value
     expect(config.correlationHeaderNames).toEqual(["x-custom-trace"]);
+    config.onRequestEnd?.(1);
   });
 
   test("captures multiple request headers efficiently", () => {

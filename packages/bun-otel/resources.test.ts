@@ -1,6 +1,7 @@
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./index";
+import { waitForSpans } from "./test-utils";
 
 describe("BunSDK resource configuration", () => {
   test("sets service name in resource", async () => {
@@ -20,7 +21,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(1);
@@ -57,7 +58,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(1);
@@ -97,7 +98,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(1);

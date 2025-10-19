@@ -2266,6 +2266,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     status = 206;
                 }
                 this.doWriteStatus(status);
+                if (telemetry_builder) |builder| builder.injectHeaders(headers_);
                 this.doWriteHeaders(headers_);
                 if (telemetry_builder) |builder| builder.setHeaders(headers_);
             } else if (needs_content_range) {

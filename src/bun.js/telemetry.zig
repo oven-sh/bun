@@ -54,6 +54,59 @@ pub const ResponseBuilder = struct {
         }
     }
 
+    /// Inject correlation headers into FetchHeaders before they are written
+    /// This calls onResponseStart callback and injects the returned headers
+    pub fn injectHeaders(self: *Self, headers: *WebCore.FetchHeaders) void {
+        // Fast path: no callback configured
+        if (self.telemetry.on_response_start == .zero) {
+            return;
+        }
+
+        const id_js = jsRequestId(self.request_id);
+        const callback_result = self.telemetry.on_response_start.call(
+            self.global,
+            .js_undefined,
+            &.{id_js},
+        ) catch |err| {
+            _ = self.global.takeException(err);
+            return;
+        };
+
+        // Handle undefined/null return (common case: no headers to inject)
+        if (callback_result == .zero or callback_result.isUndefinedOrNull()) {
+            return;
+        }
+
+        // Validate it's an array
+        if (!callback_result.jsType().isArray()) {
+            return;
+        }
+
+        const array_len = callback_result.getLength(self.global) catch return;
+
+        // Must be even (name-value pairs)
+        if (array_len == 0 or array_len % 2 != 0) {
+            return;
+        }
+
+        // Inject headers as name-value pairs directly into FetchHeaders
+        var i: u32 = 0;
+        while (i + 1 < array_len) : (i += 2) {
+            const name_js = callback_result.getIndex(self.global, i) catch return;
+            const value_js = callback_result.getIndex(self.global, i + 1) catch return;
+
+            const name = bun.String.fromJS(name_js, self.global) catch return;
+            defer name.deref();
+
+            const value = bun.String.fromJS(value_js, self.global) catch return;
+            defer value.deref();
+
+            var name_zig = name.toZigString();
+            var value_zig = value.toZigString();
+            headers.append(&name_zig, &value_zig, self.global);
+        }
+    }
+
     /// Fire the telemetry callback and clean up
     pub fn fireAndForget(self: *Self) void {
         defer self.deinit();
@@ -103,6 +156,7 @@ pub const Telemetry = struct {
     on_request_start: JSValue = .zero,
     on_request_end: JSValue = .zero,
     on_request_error: JSValue = .zero,
+    on_response_start: JSValue = .zero,
     on_response_headers: JSValue = .zero,
 
     /// Node.js compatibility binding object (set via configure)
@@ -144,6 +198,9 @@ pub const Telemetry = struct {
         if (self.on_request_error != .zero) {
             self.on_request_error.unprotect();
         }
+        if (self.on_response_start != .zero) {
+            self.on_response_start.unprotect();
+        }
         if (self.on_response_headers != .zero) {
             self.on_response_headers.unprotect();
         }
@@ -183,6 +240,10 @@ pub const Telemetry = struct {
         if (self.on_request_error != .zero) {
             self.on_request_error.unprotect();
             self.on_request_error = .zero;
+        }
+        if (self.on_response_start != .zero) {
+            self.on_response_start.unprotect();
+            self.on_response_start = .zero;
         }
         if (self.on_response_headers != .zero) {
             self.on_response_headers.unprotect();
@@ -259,6 +320,21 @@ pub const Telemetry = struct {
             const protected = callback.withAsyncContextIfNeeded(self.global);
             protected.protect();
             self.on_request_error = protected;
+        }
+
+        // Parse onResponseStart callback
+        if (try options.getTruthyComptime(self.global, "onResponseStart")) |callback| {
+            if (!callback.isCallable()) {
+                return self.global.throwInvalidArguments("onResponseStart must be a function", .{});
+            }
+
+            if (self.on_response_start != .zero) {
+                self.on_response_start.unprotect();
+            }
+
+            const protected = callback.withAsyncContextIfNeeded(self.global);
+            protected.protect();
+            self.on_response_start = protected;
         }
 
         // Parse onResponseHeaders callback

@@ -1,8 +1,9 @@
 import type { Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RequestLike } from "./otel-types";
-import { getUrlInfo, requestLikeHeaderGetter } from "./otel-types";
+import type { HeadersLike, RequestLike } from "./otel-types";
+import { getUrlInfo, headerLikeHeaderGetter, requestLikeHeaderGetter } from "./otel-types";
+import { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
 // Symbols for Node.js http.Server span tracking
 const kSpan = Symbol("kOtelSpan");
@@ -24,6 +25,29 @@ export interface InstallBunNativeTracingOptions {
    * Optional span storage map (useful for testing or custom lifecycle management)
    */
   spans?: Map<number, Span>;
+
+  /**
+   * Response header name for trace ID correlation
+   * @default "x-trace-id"
+   * Set to `false` to disable trace ID injection
+   *
+   * The trace ID will be included in response headers to enable client-side
+   * correlation with server traces. Useful for support tickets, debugging,
+   * and log correlation.
+   */
+  correlationHeaderName?: string | false;
+
+  /**
+   * Request headers to capture as span attributes
+   * Example: ["user-agent", "x-request-id", "accept"]
+   */
+  requestHeaderAttributes?: string[];
+
+  /**
+   * Response headers to capture as span attributes
+   * Example: ["content-type", "cache-control", "x-response-time"]
+   */
+  responseHeaderAttributes?: string[];
 }
 
 /**
@@ -36,7 +60,31 @@ export interface InstallBunNativeTracingOptions {
  * @returns Cleanup function to disable tracing
  */
 export function installBunNativeTracing(options: InstallBunNativeTracingOptions): () => void {
-  const { tracerProvider, tracerName = "@bun/otel", spans: externalSpans } = options;
+  const { config, spans } = createBunTelemetryConfig(options);
+  // ============================================================================
+  // Configure Bun.telemetry with both Bun.serve and Node.js callbacks
+  // ============================================================================
+  Bun.telemetry.configure(config);
+  // Return cleanup function
+  return () => {
+    Bun.telemetry.disable();
+    spans.clear();
+  };
+}
+
+/** Exposed for testing */
+export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions): {
+  config: Bun.telemetry.TelemetryConfig;
+  spans: Map<number, Span>;
+} {
+  const {
+    tracerProvider,
+    tracerName = "@bun/otel",
+    spans: externalSpans,
+    correlationHeaderName = "x-trace-id",
+    requestHeaderAttributes = [],
+    responseHeaderAttributes = [],
+  } = options;
 
   const tracer: Tracer = tracerProvider.getTracer(tracerName);
   const spans = externalSpans ?? new Map<number, Span>();
@@ -75,6 +123,54 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
     return 0;
   }
 
+  // Narrow a Span to one that exposes a readable `status` field (SDK span implementation).
+  // The public API `Span` lacks `status`, but SDK spans have it. We only inspect `status.code`.
+  type SpanWithStatus = Span & { status: ReadableSpan["status"] };
+  function isReadableSpan(span: Span): span is SpanWithStatus {
+    const s: any = (span as any).status;
+    return s && typeof s === "object" && typeof s.code === "number";
+  }
+
+  /**
+   * Set span status from HTTP status code
+   * Only sets status if not already set (avoids overwriting ERROR with OK)
+   */
+  function setSpanStatusFromHttpCode(span: Span, statusCode: number): void {
+    // Don't overwrite status if already set (e.g., from recordError)
+    if (!isReadableSpan(span) || span.status.code !== SpanStatusCode.UNSET) {
+      return;
+    }
+
+    // Set ERROR for 5xx, OK for everything else
+    if (statusCode >= 500) {
+      span.setStatus({ code: SpanStatusCode.ERROR });
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK });
+    }
+  }
+
+  /**
+   * Generic helper to capture configured headers (request or response) as span attributes
+   * DRY replacement for separate request/response implementations.
+   */
+  function captureHeaderAttributes<T>(
+    span: Span,
+    carrier: T,
+    headerNames: string[],
+    headerGetter: { get: (carrier: T, key: string) => string | string[] | undefined },
+    attrPrefix: string,
+  ): void {
+    if (headerNames.length === 0) return;
+    for (const headerName of headerNames) {
+      const raw = headerGetter.get(carrier, headerName);
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (value != null && value !== "") {
+        const attrName = `${attrPrefix}${headerName.toLowerCase().replace(/-/g, "_")}`;
+        span.setAttribute(attrName, value);
+      }
+    }
+  }
+
   // ============================================================================
   // Bun.serve Callbacks (for Bun's native HTTP server)
   // ============================================================================
@@ -104,6 +200,21 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
         extractedContext,
       );
 
+      // Capture configured request headers as attributes
+      // Sanitize headerGetter output to always be a string for attribute assignment
+      captureHeaderAttributes(
+        span,
+        request,
+        requestHeaderAttributes,
+        {
+          get: (carrier, key) => {
+            const v = headerGetter.get(carrier, key);
+            return Array.isArray(v) ? v[0] : v;
+          },
+        },
+        "http.request.header.",
+      );
+
       spans.set(id, span);
 
       // Phase 2: Context propagation via AsyncLocalStorage will be added in a future update.
@@ -120,7 +231,10 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
       const span = spans.get(id);
       if (!span) return;
 
-      span.setStatus({ code: SpanStatusCode.OK });
+      // Only set OK if status hasn't been set (don't overwrite ERROR)
+      if (isReadableSpan(span) && span.status.code === SpanStatusCode.UNSET) {
+        span.setStatus({ code: SpanStatusCode.OK });
+      }
       span.end();
       spans.delete(id);
     } catch (error) {
@@ -141,15 +255,47 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
     }
   }
 
-  function onResponseHeaders(id: number, statusCode: number, contentLength: number): void {
+  function onResponseStart(id: number): string[] | undefined {
+    // Early exit if correlation disabled (zero overhead path)
+    if (!correlationHeaderName) return undefined;
+
+    try {
+      const span = spans.get(id);
+      if (!span) return undefined;
+
+      const traceId = span.spanContext().traceId;
+
+      // Return flat array of headers to inject
+      return [correlationHeaderName, traceId];
+    } catch (error) {
+      return undefined; // Silently fail - telemetry should never break app
+    }
+  }
+
+  function onResponseHeaders(id: number, statusCode: number, contentLength: number, headers?: HeadersLike): void {
     try {
       const span = spans.get(id);
       if (!span) return;
 
+      // Always set status code and content length
       span.setAttribute("http.status_code", statusCode);
       if (contentLength > 0) {
         span.setAttribute("http.response_content_length", contentLength);
       }
+
+      // Capture configured response headers as attributes
+      if (headers) {
+        captureHeaderAttributes(
+          span,
+          headers,
+          responseHeaderAttributes,
+          headerLikeHeaderGetter(headers),
+          "http.response.header.",
+        );
+      }
+
+      // Set status based on HTTP status code
+      setSpanStatusFromHttpCode(span, statusCode);
     } catch (error) {
       // Silently fail
     }
@@ -193,6 +339,21 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
         extractedContext,
       );
 
+      // Capture configured request headers as attributes
+      captureHeaderAttributes(
+        span,
+        req.headers,
+        requestHeaderAttributes,
+        {
+          get: (headers, key) => {
+            const value = headers[key.toLowerCase()];
+            if (value == null) return undefined;
+            return Array.isArray(value) ? value[0] : String(value);
+          },
+        },
+        "http.request.header.",
+      );
+
       // Generate request ID
       const requestId = Bun.telemetry.generateRequestId();
 
@@ -223,6 +384,12 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
       const span: Span | undefined = (response as any)[kSpan];
       if (!span) return;
 
+      // Inject correlation headers if configured
+      if (correlationHeaderName) {
+        const traceId = span.spanContext().traceId;
+        response.setHeader(correlationHeaderName, traceId);
+      }
+
       // Set HTTP response attributes
       span.setAttribute("http.status_code", statusCode);
 
@@ -231,38 +398,49 @@ export function installBunNativeTracing(options: InstallBunNativeTracingOptions)
         span.setAttribute("http.response_content_length", contentLength);
       }
 
-      // Set span status based on status code
-      if (statusCode >= 400) {
-        span.setStatus({
-          code: statusCode >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
-        });
+      // Capture configured response headers as attributes
+      if (responseHeaderAttributes.length > 0) {
+        // Build a HeadersLike object from ServerResponse headers
+        const headers: Record<string, string> = {};
+        for (const headerName of responseHeaderAttributes) {
+          const value = response.getHeader(headerName);
+          if (value != null) {
+            headers[headerName] = Array.isArray(value) ? value[0] : String(value);
+          }
+        }
+        if (Object.keys(headers).length > 0) {
+          captureHeaderAttributes(
+            span,
+            headers,
+            responseHeaderAttributes,
+            headerLikeHeaderGetter(headers),
+            "http.response.header.",
+          );
+        }
       }
+
+      // Set span status based on status code
+      setSpanStatusFromHttpCode(span, statusCode);
     } catch (error) {
       // Silently fail
     }
   }
 
-  // ============================================================================
-  // Configure Bun.telemetry with both Bun.serve and Node.js callbacks
-  // ============================================================================
+  return {
+    config: {
+      // Bun.serve callbacks
+      onRequestStart,
+      onRequestEnd,
+      onRequestError,
+      onResponseStart,
+      onResponseHeaders,
 
-  Bun.telemetry.configure({
-    // Bun.serve callbacks
-    onRequestStart,
-    onRequestEnd,
-    onRequestError,
-    onResponseHeaders,
-
-    // Node.js http.Server callbacks
-    _node_binding: {
-      handleIncomingRequest,
-      handleWriteHead,
+      // Node.js http.Server callbacks
+      _node_binding: {
+        handleIncomingRequest,
+        handleWriteHead,
+      },
     },
-  });
-
-  // Return cleanup function
-  return () => {
-    Bun.telemetry.disable();
-    spans.clear();
+    spans,
   };
 }

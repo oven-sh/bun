@@ -115,6 +115,28 @@ declare module "bun" {
       onRequestError?: (id: RequestId, error: unknown) => void;
 
       /**
+       * Called before response headers are written, allowing injection of correlation headers.
+       * Returns a flat array of header name-value pairs: [name1, value1, name2, value2, ...].
+       *
+       * This is called BEFORE headers are serialized and sent, enabling trace ID correlation
+       * where clients can reference server-side trace IDs in support tickets, logs, or debugging.
+       *
+       * @param id - The request identifier
+       * @returns Flat array of header pairs, or undefined if no headers to inject
+       *
+       * @example
+       * ```ts
+       * onResponseStart(id) {
+       *   const span = spans.get(id);
+       *   if (!span) return undefined;
+       *   const traceId = span.spanContext().traceId;
+       *   return ["x-trace-id", traceId];
+       * }
+       * ```
+       */
+      onResponseStart?: (id: RequestId) => string[] | undefined;
+
+      /**
        * Called when response headers are about to be sent.
        * This is useful for capturing response metadata for tracing.
        *

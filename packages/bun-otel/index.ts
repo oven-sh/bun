@@ -1,8 +1,7 @@
 // Barrel export for bun-otel package
 
-// Core functionality - no dependency on @opentelemetry/sdk-node
-export { installBunNativeTracing } from "./otel-core";
-export type { InstallBunNativeTracingOptions } from "./otel-core";
+// raw telemetry core (internal use)
+export { installBunNativeTracing, type InstallBunNativeTracingOptions } from "./otel-core";
 
 // Shared types and utilities
 export {

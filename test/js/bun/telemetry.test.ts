@@ -4,8 +4,12 @@
  * Tests API methods with servers and request tracking.
  * Does NOT test OpenTelemetry integration - see packages/bun-otel/ for that.
  */
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { waitForEvents } from "./telemetry-test-utils";
+
+beforeEach(() => {
+  Bun.telemetry.disable();
+});
 
 test("Bun.telemetry API exists", () => {
   expect(Bun.telemetry).toBeDefined();

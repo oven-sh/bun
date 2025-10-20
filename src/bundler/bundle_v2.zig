@@ -829,7 +829,11 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling()) {
+            // Mark files for copying if they use the file loader OR if they're copy-only entrypoints
+            const should_copy = loader.shouldCopyForBundling() or
+                (is_entry_point and loader.shouldCopyAsEntrypoint());
+
+            if (should_copy) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1473,6 +1477,33 @@ pub const BundleV2 = struct {
         try fetcher.onFetch(fetcher.ctx, &result);
     }
 
+    /// Filter entry points into those that need JS chunks vs those that should only be copied as assets.
+    /// Returns a slice of entry points that should go through chunk creation.
+    /// Copy-only entrypoints (static assets when used as user-specified entrypoints) are filtered out.
+    ///
+    /// Note: This is called before addServerComponentBoundariesAsExtraEntryPoints(), so at this point
+    /// entry_points only contains user-specified entries.
+    fn filterEntryPointsForChunking(this: *BundleV2, alloc: std.mem.Allocator) ![]Index {
+        const loaders = this.graph.input_files.items(.loader);
+        const entry_points = this.graph.entry_points.items;
+
+        var js_entry_points = std.ArrayList(Index).init(alloc);
+
+        for (entry_points) |entry_point| {
+            const source_index = entry_point.get();
+            const loader = loaders[source_index];
+
+            // Skip copy-only entrypoints (JSON, PNG, etc.) - they'll be copied as assets
+            if (loader.shouldCopyAsEntrypoint()) {
+                continue;
+            }
+
+            try js_entry_points.append(entry_point);
+        }
+
+        return js_entry_points.toOwnedSlice();
+    }
+
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         alloc: std.mem.Allocator,
@@ -1526,12 +1557,9 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
-        const chunks = try this.linker.link(
-            this,
-            this.graph.entry_points.items,
-            this.graph.server_component_boundaries,
-            reachable_files,
-        );
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(alloc);
+        defer alloc.free(entry_points_for_chunking);
 
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
@@ -1539,7 +1567,20 @@ pub const BundleV2 = struct {
             return std.ArrayList(options.OutputFile).init(alloc);
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        // Only create chunks if there are JS/CSS/HTML entrypoints
+        if (entry_points_for_chunking.len > 0) {
+            const chunks = try this.linker.link(
+                this,
+                entry_points_for_chunking,
+                this.graph.server_component_boundaries,
+                reachable_files,
+            );
+
+            return try this.linker.generateChunksInParallel(chunks, false);
+        } else {
+            // All entrypoints are copy-only assets
+            return std.ArrayList(options.OutputFile).init(alloc);
+        }
     }
 
     pub fn generateFromBakeProductionCLI(
@@ -1588,9 +1629,18 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(bun.default_allocator);
+        defer bun.default_allocator.free(entry_points_for_chunking);
+
+        if (entry_points_for_chunking.len == 0) {
+            // All entrypoints are copy-only assets
+            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+        }
+
         const chunks = try this.linker.link(
             this,
-            this.graph.entry_points.items,
+            entry_points_for_chunking,
             this.graph.server_component_boundaries,
             reachable_files,
         );
@@ -2635,9 +2685,24 @@ pub const BundleV2 = struct {
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
 
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(bun.default_allocator);
+        defer bun.default_allocator.free(entry_points_for_chunking);
+
+        if (entry_points_for_chunking.len == 0) {
+            // All entrypoints are copy-only assets
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+            // Return the additional output files (copied assets)
+            var output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
+        }
+
         const chunks = try this.linker.link(
             this,
-            this.graph.entry_points.items,
+            entry_points_for_chunking,
             this.graph.server_component_boundaries,
             reachable_files,
         );

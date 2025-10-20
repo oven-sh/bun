@@ -46,7 +46,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         upgrade_context: ?*uws.SocketContext = null,
 
         /// Telemetry request ID for tracking this request (0 = no telemetry)
+        // Both set in server.zig, 16b (32kb total) cost if telemetry is disabled
         telemetry_request_id: bun.telemetry.RequestId = 0,
+        request_start_time_ns: u64 = 0,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
@@ -728,7 +730,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.telemetry_request_id != 0) {
                 if (Telemetry.getInstance()) |t| {
-                    t.notifyRequestEnd(this.telemetry_request_id);
+                    const duration = bun.timespec.now().ns() - this.request_start_time_ns;
+                    t.notifyRequestEnd(this.telemetry_request_id, duration);
                     // Exit AsyncLocalStorage context for this request
                     telemetry.exitContext(t.global);
                 }

@@ -20,3 +20,6 @@ export type { BunSDKConfiguration } from "./bun-sdk";
 
 // BunFetchInstrumentation - instruments global.fetch for distributed tracing
 export { BunFetchInstrumentation } from "./BunFetchInstrumentation";
+
+// BunServerMetricsInstrumentation - instruments Bun.serve for HTTP metrics
+export { BunServerMetricsInstrumentation } from "./BunServerMetricsInstrumentation";

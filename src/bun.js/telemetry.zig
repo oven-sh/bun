@@ -522,17 +522,21 @@ pub const Telemetry = struct {
     }
 
     /// Called when a request ends successfully
-    pub fn notifyRequestEnd(self: *Self, id: RequestId) void {
+    pub fn notifyRequestEnd(self: *Self, id: RequestId, duration: u64) void {
         if (!self.enabled or self.on_request_end == .zero) {
             return;
         }
 
         const id_js = jsRequestId(id);
+        // Convert ns to seconds (float)
+        const duration_ns_f64: f64 = @floatFromInt(duration);
+        const duration_s: f64 = duration_ns_f64 / 1_000_000_000.0;
+        const duration_s_js = JSValue.jsNumber(duration_s);
 
         _ = self.on_request_end.call(
             self.global,
             .js_undefined,
-            &.{id_js},
+            &.{ id_js, duration_s_js },
         ) catch |err|
             self.global.takeException(err);
     }

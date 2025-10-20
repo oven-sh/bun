@@ -4,7 +4,7 @@
   "type": "module",
   "module": "index.ts",
   "types": "index.ts",
-  "description": "OpenTelemetry tracing bridge for Bun's native telemetry system - automatic distributed tracing for Bun.serve()",
+  "description": "OpenTelemetry tracing and metrics bridge for Bun's native telemetry system - automatic distributed tracing and HTTP metrics for Bun.serve()",
   "exports": {
     ".": {
       "import": "./index.ts",
@@ -32,6 +32,8 @@
     "index.ts",
     "bun-sdk.ts",
     "BunFetchInstrumentation.ts",
+    "BunServerMetricsInstrumentation.ts",
+    "BunAsyncLocalStorageContextManager.ts",
     "otel-core.ts",
     "otel-types.ts",
     "tsconfig.json",
@@ -48,7 +50,9 @@
     "opentelemetry",
     "telemetry",
     "tracing",
-    "observability"
+    "metrics",
+    "observability",
+    "prometheus"
   ],
   "peerDependencies": {
     "@opentelemetry/api": "^1.0.0"
@@ -56,6 +60,7 @@
   "dependencies": {
     "@opentelemetry/core": "^1.30.1",
     "@opentelemetry/resources": "^1.30.1",
+    "@opentelemetry/sdk-metrics": "^1.30.1",
     "@opentelemetry/sdk-trace-base": "^1.30.1",
     "@opentelemetry/sdk-trace-node": "^1.30.1"
   },

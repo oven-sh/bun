@@ -2097,7 +2097,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     prepared.request_object.ensureURL() catch {};
                     const request_id = t.notifyRequestStart(prepared.js_request);
                     prepared.ctx.telemetry_request_id = request_id;
-
+                    prepared.ctx.request_start_time_ns = bun.timespec.now().ns();
                     // NOTE: Do NOT call enterContext here - it would overwrite the proper OTel Context
                     // that onRequestStart (called via notifyRequestStart above) sets up via contextStorage.enterWith()
                     // The enterContext/exitContext functions are for Node.js http.Server compatibility only

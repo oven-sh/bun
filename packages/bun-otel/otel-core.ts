@@ -1,8 +1,9 @@
-import type { Context, Span, Tracer, TracerProvider } from "@opentelemetry/api";
+import type { Context, MeterProvider, Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BunAsyncLocalStorageContextManager } from "./BunAsyncLocalStorageContextManager";
+import { BunServerMetricsInstrumentation } from "./BunServerMetricsInstrumentation";
 import type { HeadersLike, RequestLike } from "./otel-types";
 import { getUrlInfo, headerLikeHeaderGetter, requestLikeHeaderGetter } from "./otel-types";
 
@@ -24,6 +25,18 @@ export interface InstallBunNativeTracingOptions {
    * @default '@bun/otel'
    */
   tracerName?: string;
+
+  /**
+   * Optional MeterProvider for metrics collection
+   * When provided, HTTP server metrics will be automatically recorded
+   */
+  meterProvider?: MeterProvider;
+
+  /**
+   * Name to use for the meter
+   * @default '@bun/http-server'
+   */
+  meterName?: string;
 
   /**
    * Optional span storage map (useful for testing or custom lifecycle management)
@@ -87,10 +100,13 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
   config: Bun.telemetry.TelemetryConfig;
   spans: Map<number, Span>;
   contextManager: BunAsyncLocalStorageContextManager;
+  metricsInstrumentation?: BunServerMetricsInstrumentation;
 } {
   const {
     tracerProvider,
     tracerName = "@bun/otel",
+    meterProvider,
+    meterName = "@bun/http-server",
     spans: externalSpans,
     correlationHeaderName = "x-trace-id",
     requestHeaderAttributes = [],
@@ -109,6 +125,11 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
   const spans = externalSpans ?? new Map<number, Span>();
   // Track spans that have had their status explicitly set
   const spansWithStatus = new WeakSet<Span>();
+
+  // Initialize metrics instrumentation if MeterProvider is provided
+  const metricsInstrumentation = meterProvider
+    ? new BunServerMetricsInstrumentation(meterProvider.getMeter(meterName))
+    : undefined;
 
   // ============================================================================
   // Shared Helpers
@@ -247,14 +268,22 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     }
   }
 
-  function onRequestEnd(id: number): void {
+  function onRequestEnd(id: number, duration_s: number): void {
     try {
+      // Record metrics independently of tracing
+      // Metrics should work even if tracing is disabled or span wasn't created
+      // TODO: Pass request/response objects for richer attributes (method, status, route)
+      if (metricsInstrumentation) {
+        metricsInstrumentation.recordRequest(id, duration_s);
+      }
+
+      // Handle span (tracing) if it exists
       const span = spans.get(id);
       if (!span) return;
 
       if (ENABLE_DEBUG_LOGGING) {
         console.log(
-          `[onRequestEnd] Ending SERVER span: ${span.name} (spanId: ${span.spanContext().spanId}, traceId: ${span.spanContext().traceId})`,
+          `[onRequestEnd] Ending SERVER span: ${span.name} (spanId: ${span.spanContext().spanId}, traceId: ${span.spanContext().traceId}, duration: ${duration_s}s)`,
         );
       }
 
@@ -477,5 +506,6 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
     },
     spans,
     contextManager,
+    metricsInstrumentation,
   };
 }

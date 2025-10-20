@@ -102,4 +102,23 @@ describe("path.resolve", () => {
       return path.posix.resolve(undefined, "/hi");
     }).not.toThrow();
   });
+
+  test("very long paths", () => {
+    // Regression test: buffer overflow with very long paths
+    // This used to panic because the buffer didn't account for the null terminator
+    for (const len of [4096, 10000, 50000, 98340, 100000]) {
+      const longPath = "/" + "a".repeat(len);
+      const result = path.resolve(longPath);
+      // Should return the absolute path
+      assert.ok(result.startsWith("/"));
+      assert.ok(result.includes("a"));
+      assert.strictEqual(result.length, len + 1); // +1 for the leading /
+    }
+
+    // Test with multiple paths that concatenate to a very long path
+    const longSegment = "b".repeat(50000);
+    const result = path.resolve("/", longSegment, "c");
+    assert.ok(result.includes("b"));
+    assert.ok(result.endsWith("/c"));
+  });
 });

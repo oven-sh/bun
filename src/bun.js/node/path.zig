@@ -2753,9 +2753,10 @@ pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocato
     var bufLen: usize = if (isWindows) 8 else 0;
     for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
     bufLen = @max(bufLen, PATH_SIZE(T));
-    const buf = try allocator.alloc(T, bufLen);
+    // +2 to account for separator and null terminator during path resolution
+    const buf = try allocator.alloc(T, bufLen + 2);
     defer allocator.free(buf);
-    const buf2 = try allocator.alloc(T, bufLen);
+    const buf2 = try allocator.alloc(T, bufLen + 2);
     defer allocator.free(buf2);
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }

@@ -2,6 +2,8 @@
 
 #include "ZigGeneratedClasses.h"
 
+extern "C" SYSV_ABI size_t ShellInterpreter__estimatedSize(void* ptr);
+
 namespace Bun {
 
 using namespace JSC;
@@ -21,6 +23,9 @@ extern "C" SYSV_ABI EncodedJSValue Bun__createShellInterpreter(Zig::GlobalObject
     ASSERT(structure);
 
     auto* result = WebCore::JSShellInterpreter::create(vm, globalObject, structure, ptr, WTFMove(args), resolveFn, rejectFn);
+
+    size_t size = ShellInterpreter__estimatedSize(ptr);
+    vm.heap.reportExtraMemoryAllocated(result, size);
     return JSValue::encode(result);
 }
 

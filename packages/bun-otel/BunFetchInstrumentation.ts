@@ -183,8 +183,11 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
     // Unwrap using shimmer
     this._unwrap(globalThis, "fetch");
 
-    // DEFENSIVE: If unwrap didn't work, force restore original
-    // Only do this if the current fetch is still marked as ours
+    // DEFENSIVE: Force restore original fetch if unwrap failed
+    // This is critical for test cleanup when instrumentation is repeatedly
+    // enabled/disabled (15 distributed tracing tests rely on this).
+    // Shimmer unwrap() doesn't reliably restore in Bun's globalThis context.
+    // Safety: Only restore if current fetch is still marked as ours.
     if (globalThis.fetch !== ORIGINAL_FETCH && isBunOtelPatched(globalThis.fetch)) {
       debugLog("⚠️ Shimmer unwrap failed, forcing restore to ORIGINAL_FETCH");
       globalThis.fetch = ORIGINAL_FETCH;

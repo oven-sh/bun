@@ -515,7 +515,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 if (log_level != .silent) {
                     Output.warn("Failed to read package.json for production mode prune: {s}. Skipping devDependency removal.", .{@errorName(err)});
                 }
-                break :prune_cleanup;
+                break :blk null;
             };
             break :blk contents;
         } else null;
@@ -527,7 +527,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 if (log_level != .silent) {
                     Output.warn("Failed to parse package.json for production mode prune. Skipping devDependency removal.", .{});
                 }
-                break :prune_cleanup;
+                break :blk null;
             };
             break :blk parsed;
         } else null;

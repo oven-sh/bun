@@ -20,6 +20,15 @@ import {
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { createBunTelemetryConfig } from "./otel-core";
 
+// Enable debug logging for SDK lifecycle (useful for troubleshooting test isolation issues)
+const ENABLE_DEBUG_LOGGING = false;
+
+function debugLog(...args: unknown[]) {
+  if (ENABLE_DEBUG_LOGGING) {
+    console.log("[BunSDK]", ...args);
+  }
+}
+
 /**
  * Configuration options for BunSDK
  *
@@ -242,14 +251,14 @@ export class BunSDK implements AsyncDisposable {
     // Following NodeSDK pattern - instrumentations need to be registered early
     // so they can hook into modules before they're loaded
     // Store cleanup function to disable instrumentations on shutdown
-    console.log(
-      "[BunSDK] Registering instrumentations:",
+    debugLog(
+      "Registering instrumentations:",
       this._instrumentations.map(i => i.instrumentationName),
     );
     this._instrumentationCleanup = registerInstrumentations({
       instrumentations: this._instrumentations,
     });
-    console.log("[BunSDK] Instrumentations registered, cleanup function:", typeof this._instrumentationCleanup);
+    debugLog("Instrumentations registered, cleanup function:", typeof this._instrumentationCleanup);
 
     // 2. Setup propagator (default to W3C Trace Context + Baggage)
     if (this._config.textMapPropagator !== null) {
@@ -322,30 +331,30 @@ export class BunSDK implements AsyncDisposable {
    * Flushes any pending spans and cleans up resources.
    */
   async shutdown(): Promise<void> {
-    console.log("[BunSDK] shutdown() called, cleaning up instrumentations...");
+    debugLog("shutdown() called, cleaning up instrumentations...");
     // 1. Disable instrumentations (unpatch fetch, http, etc.)
-    console.log(
-      "[BunSDK] Instrumentations before cleanup:",
+    debugLog(
+      "Instrumentations before cleanup:",
       this._instrumentations.map(i => `${i.instrumentationName} (patched: ${(i as any)._isPatched})`),
     );
 
     // CRITICAL: Manually disable each instrumentation to ensure proper cleanup
     // The registerInstrumentations() cleanup function may not be sufficient
     for (const instrumentation of this._instrumentations) {
-      console.log(`[BunSDK] Explicitly calling disable() on ${instrumentation.instrumentationName}...`);
+      debugLog(`Explicitly calling disable() on ${instrumentation.instrumentationName}...`);
       instrumentation.disable();
     }
 
     if (this._instrumentationCleanup) {
-      console.log("[BunSDK] Calling _instrumentationCleanup()...");
+      debugLog("Calling _instrumentationCleanup()...");
       this._instrumentationCleanup();
       this._instrumentationCleanup = undefined;
-      console.log("[BunSDK] _instrumentationCleanup() complete");
+      debugLog("_instrumentationCleanup() complete");
     } else {
-      console.log("[BunSDK] ⚠️ No _instrumentationCleanup function!");
+      debugLog("⚠️ No _instrumentationCleanup function!");
     }
-    console.log(
-      "[BunSDK] Instrumentations after cleanup:",
+    debugLog(
+      "Instrumentations after cleanup:",
       this._instrumentations.map(i => `${i.instrumentationName} (patched: ${(i as any)._isPatched})`),
     );
 
@@ -388,8 +397,8 @@ export class BunSDK implements AsyncDisposable {
    * ```
    */
   async [Symbol.asyncDispose](): Promise<void> {
-    console.log("[BunSDK] Symbol.asyncDispose called - shutting down...");
+    debugLog("Symbol.asyncDispose called - shutting down...");
     await this.shutdown();
-    console.log("[BunSDK] Symbol.asyncDispose complete");
+    debugLog("Symbol.asyncDispose complete");
   }
 }

@@ -7,9 +7,23 @@ import {
   SEMATTRS_HTTP_STATUS_CODE,
   SEMATTRS_HTTP_URL,
 } from "@opentelemetry/semantic-conventions";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "./bun-sdk";
 import { BunFetchInstrumentation } from "./BunFetchInstrumentation";
+import { EchoServer } from "./test-echo-server";
+import { waitForSpans } from "./test-utils";
+
+// Shared echo server for all tests - runs in separate process to avoid instrumentation interference
+let echoServer: EchoServer;
+
+beforeAll(async () => {
+  echoServer = new EchoServer();
+  await echoServer.start();
+});
+
+afterAll(async () => {
+  await echoServer.stop();
+});
 
 describe("BunFetchInstrumentation - Span Naming", () => {
   test("uses HTTP method only in span name (not URL)", async () => {
@@ -23,15 +37,15 @@ describe("BunFetchInstrumentation - Span Naming", () => {
 
     sdk.start();
 
-    await fetch("https://example.com/api/users");
-    await Bun.sleep(100);
+    await fetch(echoServer.getUrl("/api/users"));
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
 
     const span = spans[0];
     expect(span.name).toBe("HTTP GET");
-    expect(span.name).not.toContain("example.com");
+    expect(span.name).not.toContain("127.0.0.1");
     expect(span.name).not.toContain("/api/users");
   });
 
@@ -46,17 +60,12 @@ describe("BunFetchInstrumentation - Span Naming", () => {
 
     sdk.start();
 
-    try {
-      await fetch("https://httpbin.org/post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ test: "data" }),
-      });
-    } catch {
-      // Ignore network errors
-    }
-
-    await Bun.sleep(100);
+    await fetch(echoServer.getUrl("/post"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ test: "data" }),
+    });
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -78,8 +87,9 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     sdk.start();
 
-    await fetch("https://example.com/");
-    await Bun.sleep(100);
+    const url = echoServer.getUrl("/");
+    await fetch(url);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -88,11 +98,11 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     // Both OLD and STABLE attributes should exist (http/dup is default)
     expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
-    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe(url);
     expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
 
     expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
-    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_URL_FULL]).toBe(url);
     expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
   });
 
@@ -111,8 +121,9 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     sdk.start();
 
-    await fetch("https://example.com/");
-    await Bun.sleep(100);
+    const url = echoServer.getUrl("/");
+    await fetch(url);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -121,7 +132,7 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     // OLD attributes should exist
     expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
-    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe(url);
     expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
 
     // STABLE attributes should NOT exist
@@ -145,8 +156,9 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     sdk.start();
 
-    await fetch("https://example.com/");
-    await Bun.sleep(100);
+    const url = echoServer.getUrl("/");
+    await fetch(url);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -155,7 +167,7 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     // STABLE attributes should exist
     expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
-    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_URL_FULL]).toBe(url);
     expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
 
     // OLD attributes should NOT exist
@@ -179,8 +191,9 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     sdk.start();
 
-    await fetch("https://example.com/");
-    await Bun.sleep(100);
+    const url = echoServer.getUrl("/");
+    await fetch(url);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -189,11 +202,11 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
     // Both OLD and STABLE attributes should exist
     expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
-    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe(url);
     expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
 
     expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
-    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_URL_FULL]).toBe(url);
     expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
   });
 
@@ -217,8 +230,8 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
 
       sdk.start();
 
-      await fetch("https://example.com/");
-      await Bun.sleep(100);
+      await fetch(echoServer.getUrl("/"));
+      await waitForSpans(exporter, 1);
 
       const spans = exporter.getFinishedSpans();
       expect(spans.length).toBeGreaterThanOrEqual(1);

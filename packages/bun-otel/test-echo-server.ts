@@ -39,45 +39,50 @@ export class EchoServer {
       stderr: "inherit",
     });
 
-    // Read the port from stdout with timeout
+    // Read the port from stdout with a real timeout using Promise.race
     const decoder = new TextDecoder();
-    const startTime = Date.now();
     const timeoutMs = 5000;
 
-    for await (const chunk of this.proc.stdout) {
-      const text = decoder.decode(chunk);
-      const match = text.match(/listening on (\d+)/);
-      if (match) {
-        this.port = parseInt(match[1]);
-        break;
+    try {
+      this.port = await Promise.race([
+        (async () => {
+          for await (const chunk of this.proc!.stdout) {
+            const text = decoder.decode(chunk);
+            const match = text.match(/listening on (\d+)/);
+            if (match) return parseInt(match[1]);
+          }
+          throw new Error("Echo server exited before reporting port");
+        })(),
+        (async () => {
+          await Bun.sleep(timeoutMs);
+          throw new Error("Echo server failed to start within 5 seconds");
+        })(),
+      ]);
+    } catch (err) {
+      if (this.proc) {
+        this.proc.kill();
+        this.proc = null;
       }
-
-      if (Date.now() - startTime > timeoutMs) {
-        await this.stop();
-        throw new Error("Echo server failed to start within 5 seconds");
-      }
-    }
-
-    if (!this.port) {
-      await this.stop();
-      throw new Error("Echo server did not report listening port");
+      throw err;
     }
   }
 
   async stop(): Promise<void> {
     if (this.port) {
-      // Send shutdown request
+      // Send graceful shutdown request
       try {
         const { $ } = await import("bun");
         await $`curl -s http://localhost:${this.port}/shutdown`.quiet();
       } catch {
-        // Ignore errors during shutdown
+        // Ignore errors during shutdown request
       }
     }
 
     if (this.proc) {
+      // Wait for graceful exit (up to 2 seconds), then force-kill if needed
+      await Promise.race([this.proc.exited, Bun.sleep(2000)]).catch(() => {});
       this.proc.kill();
-      await this.proc.exited;
+      await this.proc.exited.catch(() => {});
       this.proc = null;
     }
 

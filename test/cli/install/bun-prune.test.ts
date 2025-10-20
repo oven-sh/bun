@@ -278,6 +278,9 @@ describe("bun prune", () => {
 
     expect(exitCode2).toBe(0);
     expect(stderr2).not.toContain("error:");
+    
+    // Verify second run removes zero packages (idempotent)
+    expect(stdout2).toContain("no changes");
   });
 
   it("should work with missing package.json", async () => {

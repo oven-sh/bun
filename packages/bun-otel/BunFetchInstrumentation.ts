@@ -20,6 +20,7 @@
  */
 
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
+import { isTracingSuppressed, suppressTracing } from "@opentelemetry/core";
 import {
   InstrumentationBase,
   InstrumentationConfig,
@@ -211,13 +212,19 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
         input: RequestInfo | URL,
         init?: RequestInit,
       ): Promise<Response> {
+        // Respect global suppression to avoid self-instrumentation (e.g., exporter using fetch)
+        const active = context.active();
+        if (isTracingSuppressed(active)) {
+          return originalFetch.call(this, input as any, init as any);
+        }
+
         // Extract URL and method for span naming
         // Handle input as string, URL, or Request object
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
         const method = init?.method?.toUpperCase() || (input instanceof Request ? input.method.toUpperCase() : "GET");
 
         // Get active context - this is critical for distributed tracing!
-        const activeContext = context.active();
+        const activeContext = active;
         const activeSpan = trace.getSpan(activeContext);
 
         debugLog(
@@ -266,7 +273,8 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
 
         // CRITICAL: Wrap the entire fetch call in context.with() synchronously
         // This ensures the context is active for the entire async operation
-        return context.with(spanContext, () => {
+        // Suppress nested instrumentation to prevent re-entrancy (e.g., exporter using fetch)
+        return context.with(suppressTracing(spanContext), () => {
           // Merge headers: start with input Request headers (if any), then overlay init.headers
           // This preserves headers from Request objects while allowing init to override
           const headers = new Headers(input instanceof Request ? input.headers : undefined);

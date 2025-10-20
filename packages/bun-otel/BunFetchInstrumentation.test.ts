@@ -1,3 +1,5 @@
+import { context } from "@opentelemetry/api";
+import { suppressTracing } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import {
   ATTR_HTTP_REQUEST_METHOD,
@@ -256,5 +258,53 @@ describe("BunFetchInstrumentation - Semconv Stability", () => {
         process.env.OTEL_SEMCONV_STABILITY_OPT_IN = originalEnv;
       }
     }
+  });
+});
+
+describe("BunFetchInstrumentation - Tracing Suppression", () => {
+  test("respects suppressTracing and does not create spans when suppressed", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "suppression-test",
+      instrumentations: [new BunFetchInstrumentation()],
+    });
+
+    sdk.start();
+
+    const url = echoServer.getUrl("/");
+
+    // Make a fetch call within a suppressed context
+    await context.with(suppressTracing(context.active()), async () => {
+      await fetch(url);
+    });
+
+    // Wait a bit to ensure no spans were created
+    await Bun.sleep(100);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBe(0); // No spans should be created when suppressed
+  });
+
+  test("creates spans normally when not suppressed", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "no-suppression-test",
+      instrumentations: [new BunFetchInstrumentation()],
+    });
+
+    sdk.start();
+
+    const url = echoServer.getUrl("/");
+
+    // Make a normal fetch call without suppression
+    await fetch(url);
+    await waitForSpans(exporter, 1);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1); // Span should be created
   });
 });

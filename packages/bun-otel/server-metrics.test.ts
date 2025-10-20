@@ -6,7 +6,6 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-// Note: relative import explicitly kept with './' prefix for clarity
 import { createBunTelemetryConfig } from "./otel-core";
 
 // Test helpers to reduce duplication

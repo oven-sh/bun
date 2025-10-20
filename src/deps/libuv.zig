@@ -2699,6 +2699,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_EIO => bun.sys.E.IO,
         UV_ENXIO => bun.sys.E.NXIO,
         UV_E2BIG => bun.sys.E.@"2BIG",
+        UV_ENOEXEC => bun.sys.E.NOEXEC,
         UV_EBADF => bun.sys.E.BADF,
         UV_EAGAIN => bun.sys.E.AGAIN,
         UV_ENOMEM => bun.sys.E.NOMEM,
@@ -2714,6 +2715,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ENFILE => bun.sys.E.NFILE,
         UV_EMFILE => bun.sys.E.MFILE,
         UV_ENOTTY => bun.sys.E.NOTTY,
+        UV_EFTYPE => bun.sys.E.FTYPE,
         UV_ETXTBSY => bun.sys.E.TXTBSY,
         UV_EFBIG => bun.sys.E.FBIG,
         UV_ENOSPC => bun.sys.E.NOSPC,
@@ -2760,7 +2762,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECANCELED => bun.sys.E.CANCELED,
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
-        else => @enumFromInt(-code),
+        else => @enumFromInt(@as(u16, @intCast(@abs(code)))),
     };
 }
 
@@ -2804,6 +2806,7 @@ pub const ReturnCode = enum(c_int) {
                 UV_EIO => @intFromEnum(bun.sys.E.IO),
                 UV_ENXIO => @intFromEnum(bun.sys.E.NXIO),
                 UV_E2BIG => @intFromEnum(bun.sys.E.@"2BIG"),
+                UV_ENOEXEC => @intFromEnum(bun.sys.E.NOEXEC),
                 UV_EBADF => @intFromEnum(bun.sys.E.BADF),
                 UV_EAGAIN => @intFromEnum(bun.sys.E.AGAIN),
                 UV_ENOMEM => @intFromEnum(bun.sys.E.NOMEM),
@@ -2819,6 +2822,7 @@ pub const ReturnCode = enum(c_int) {
                 UV_ENFILE => @intFromEnum(bun.sys.E.NFILE),
                 UV_EMFILE => @intFromEnum(bun.sys.E.MFILE),
                 UV_ENOTTY => @intFromEnum(bun.sys.E.NOTTY),
+                UV_EFTYPE => @intFromEnum(bun.sys.E.FTYPE),
                 UV_ETXTBSY => @intFromEnum(bun.sys.E.TXTBSY),
                 UV_EFBIG => @intFromEnum(bun.sys.E.FBIG),
                 UV_ENOSPC => @intFromEnum(bun.sys.E.NOSPC),

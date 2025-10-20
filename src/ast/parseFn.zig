@@ -61,14 +61,7 @@ pub fn ParseFn(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            var scopeIndex: usize = 0;
-            var pushedScopeForFunctionArgs = false;
-            // Push scope if the current lexer token is an open parenthesis token.
-            // That is, the parser is about parsing function arguments
-            if (p.lexer.token == .t_open_paren) {
-                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
-                pushedScopeForFunctionArgs = true;
-            }
+            const scopeIndex: usize = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
 
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
@@ -85,7 +78,7 @@ pub fn ParseFn(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) and pushedScopeForFunctionArgs) {
+                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration))) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -101,9 +94,7 @@ pub fn ParseFn(
                 }
             }
 
-            if (pushedScopeForFunctionArgs) {
-                p.popScope();
-            }
+            p.popScope();
 
             // Only declare the function after we know if it had a body or not. Otherwise
             // TypeScript code such as this will double-declare the symbol:

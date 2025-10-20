@@ -1571,6 +1571,36 @@ pub fn Package(comptime SemverIntType: type) type {
                         },
                     }
                 }
+
+                if (json.asProperty("skipLifecycleScripts")) |q| {
+                    switch (q.expr.data) {
+                        .e_array => |arr| {
+                            if (lockfile.skip_lifecycle_scripts == null) lockfile.skip_lifecycle_scripts = .{};
+                            try lockfile.skip_lifecycle_scripts.?.ensureUnusedCapacity(allocator, arr.items.len);
+                            for (arr.slice()) |item| {
+                                const name = item.asString(allocator) orelse {
+                                    log.addErrorFmt(source, q.loc, allocator,
+                                        \\skipLifecycleScripts expects an array of strings, e.g.
+                                        \\  <r><green>"skipLifecycleScripts"<r>: [
+                                        \\    <green>"package_name"<r>
+                                        \\  ]
+                                    , .{}) catch {};
+                                    return error.InvalidPackageJSON;
+                                };
+                                lockfile.skip_lifecycle_scripts.?.putAssumeCapacity(@as(TruncatedPackageNameHash, @truncate(String.Builder.stringHash(name))), {});
+                            }
+                        },
+                        else => {
+                            log.addErrorFmt(source, q.loc, allocator,
+                                \\skipLifecycleScripts expects an array of strings, e.g.
+                                \\  <r><green>"skipLifecycleScripts"<r>: [
+                                \\    <green>"package_name"<r>
+                                \\  ]
+                            , .{}) catch {};
+                            return error.InvalidPackageJSON;
+                        },
+                    }
+                }
             }
 
             if (comptime features.is_main) {

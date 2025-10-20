@@ -1125,30 +1125,35 @@ pub const PackageInstaller = struct {
                             // these will never be blocked
                         },
                         else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
-                            // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                            // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
-                            var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
-                            defer folder_path.deinit();
-                            folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+                            const alias_str = alias.slice(this.lockfile.buffers.string_bytes.items);
+                            const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str);
 
-                            const count = this.getInstalledPackageScriptsCount(
-                                alias.slice(this.lockfile.buffers.string_bytes.items),
-                                package_id,
-                                resolution.tag,
-                                &folder_path,
-                                log_level,
-                            );
-                            if (count > 0) {
-                                if (log_level.isVerbose()) {
-                                    Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
-                                        count,
-                                        alias.slice(this.lockfile.buffers.string_bytes.items),
-                                        resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
-                                    });
+                            if (!should_skip) {
+                                // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
+                                // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                                var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                                defer folder_path.deinit();
+                                folder_path.append(alias_str);
+
+                                const count = this.getInstalledPackageScriptsCount(
+                                    alias_str,
+                                    package_id,
+                                    resolution.tag,
+                                    &folder_path,
+                                    log_level,
+                                );
+                                if (count > 0) {
+                                    if (log_level.isVerbose()) {
+                                        Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
+                                            count,
+                                            alias_str,
+                                            resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
+                                        });
+                                    }
+                                    const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
+                                    if (!entry.found_existing) entry.value_ptr.* = 0;
+                                    entry.value_ptr.* += count;
                                 }
-                                const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
-                                if (!entry.found_existing) entry.value_ptr.* = 0;
-                                entry.value_ptr.* += count;
                             }
                         },
                     }
@@ -1268,28 +1273,33 @@ pub const PackageInstaller = struct {
             };
 
             if (resolution.tag != .root and is_trusted) {
-                var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
-                defer folder_path.deinit();
-                folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+                const alias_str = alias.slice(this.lockfile.buffers.string_bytes.items);
+                const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str);
 
-                if (this.enqueueLifecycleScripts(
-                    alias.slice(this.lockfile.buffers.string_bytes.items),
-                    log_level,
-                    &folder_path,
-                    package_id,
-                    dep.behavior.optional,
-                    resolution,
-                )) {
-                    if (is_trusted_through_update_request) {
-                        this.manager.trusted_deps_to_add_to_package_json.append(
-                            this.manager.allocator,
-                            bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
-                        ) catch |err| bun.handleOom(err);
-                    }
+                if (!should_skip) {
+                    var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                    defer folder_path.deinit();
+                    folder_path.append(alias_str);
 
-                    if (add_to_lockfile) {
-                        if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                        this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
+                    if (this.enqueueLifecycleScripts(
+                        alias_str,
+                        log_level,
+                        &folder_path,
+                        package_id,
+                        dep.behavior.optional,
+                        resolution,
+                    )) {
+                        if (is_trusted_through_update_request) {
+                            this.manager.trusted_deps_to_add_to_package_json.append(
+                                this.manager.allocator,
+                                bun.handleOom(this.manager.allocator.dupe(u8, alias_str)),
+                            ) catch |err| bun.handleOom(err);
+                        }
+
+                        if (add_to_lockfile) {
+                            if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
+                            this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
+                        }
                     }
                 }
             }

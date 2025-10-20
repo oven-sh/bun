@@ -24,6 +24,8 @@ workspace_versions: VersionHashMap = .{},
 /// Optional because `trustedDependencies` in package.json might be an
 /// empty list or it might not exist
 trusted_dependencies: ?TrustedDependenciesSet = null,
+/// Optional: packages whose lifecycle scripts should be skipped AND excluded from "blocked" count
+skip_lifecycle_scripts: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
@@ -2106,6 +2108,79 @@ pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     }
 
     return default_trusted_dependencies.has(name);
+}
+
+const max_default_skipped_lifecycle_scripts = 512;
+
+pub const default_skipped_lifecycle_scripts_list: []const []const u8 = brk: {
+    // This file contains a list of packages whose lifecycle scripts should be skipped
+    // and excluded from the "blocked" count message
+    const data = @embedFile("./default-skipped-lifecycle-scripts.txt");
+    @setEvalBranchQuota(999999);
+    var buf: [max_default_skipped_lifecycle_scripts][]const u8 = undefined;
+    var i: usize = 0;
+    var iter = std.mem.tokenizeAny(u8, data, " \r\n\t");
+    while (iter.next()) |package_ptr| {
+        const package = package_ptr[0..].*;
+        buf[i] = &package;
+        i += 1;
+    }
+
+    const Sorter = struct {
+        pub fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    };
+
+    // alphabetical so we don't need to sort later
+    std.sort.pdq([]const u8, buf[0..i], {}, Sorter.lessThan);
+
+    var names: [i][]const u8 = undefined;
+    @memcpy(names[0..i], buf[0..i]);
+    const final = names;
+    break :brk &final;
+};
+
+/// The default list of skipped lifecycle scripts is a static hashmap
+pub const default_skipped_lifecycle_scripts = brk: {
+    const StringHashContext = struct {
+        pub fn hash(_: @This(), s: []const u8) u64 {
+            @setEvalBranchQuota(999999);
+            // truncate to u32 because Lockfile uses the same u32 string hash
+            return @intCast(@as(u32, @truncate(String.Builder.stringHash(s))));
+        }
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            @setEvalBranchQuota(999999);
+            return std.mem.eql(u8, a, b);
+        }
+    };
+
+    var map: StaticHashMap([]const u8, void, StringHashContext, max_default_skipped_lifecycle_scripts) = .{};
+
+    for (default_skipped_lifecycle_scripts_list) |dep| {
+        if (map.len == max_default_skipped_lifecycle_scripts) {
+            @compileError("default-skipped-lifecycle-scripts.txt is too large, please increase 'max_default_skipped_lifecycle_scripts' in lockfile.zig");
+        }
+
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate skipped lifecycle script: " ++ dep);
+        }
+    }
+
+    const final = map;
+    break :brk &final;
+};
+
+pub fn shouldSkipLifecycleScripts(this: *const Lockfile, name: []const u8) bool {
+    // Check user-specified skipLifecycleScripts first (higher precedence)
+    if (this.skip_lifecycle_scripts) |skip_scripts| {
+        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+        if (skip_scripts.contains(hash)) return true;
+    }
+
+    // Fall back to default skipped list
+    return default_skipped_lifecycle_scripts.has(name);
 }
 
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);

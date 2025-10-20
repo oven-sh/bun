@@ -3685,6 +3685,8 @@ fn NewPrinter(
 
             switch (stmt.data) {
                 .s_comment => |s| {
+                    p.printIndent();
+                    p.addSourceMapping(stmt.loc);
                     p.printIndentedComment(s.text);
                 },
                 .s_function => |s| {

@@ -37,25 +37,34 @@
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Via requestHeaders config array",
-          "tests": ["packages/bun-otel/header-capture.test.ts"]
+          "tests": [
+            "packages/bun-otel/header-capture.test.ts"
+          ]
         },
         "response_header_capture": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Via responseHeaders config array",
-          "tests": ["packages/bun-otel/header-capture.test.ts"]
+          "tests": [
+            "packages/bun-otel/header-capture.test.ts"
+          ]
         },
         "error_tracking_with_stack_traces": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Automatic error recording",
-          "tests": ["packages/bun-otel/distributed-tracing.test.ts", "test/js/bun/telemetry-status.test.ts"]
+          "tests": [
+            "packages/bun-otel/distributed-tracing.test.ts",
+            "test/js/bun/telemetry-status.test.ts"
+          ]
         },
         "custom_span_attributes": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Via hooks",
-          "tests": ["packages/bun-otel/distributed-tracing.test.ts"]
+          "tests": [
+            "packages/bun-otel/distributed-tracing.test.ts"
+          ]
         },
         "ignoreincomingrequesthook": {
           "nodejs": "✅",
@@ -134,25 +143,33 @@
           "nodejs": "✅",
           "bun": "✅",
           "notes": "HTTP semantic conventions",
-          "tests": ["packages/bun-otel/BunFetchInstrumentation.test.ts"]
+          "tests": [
+            "packages/bun-otel/BunFetchInstrumentation.test.ts"
+          ]
         },
         "request_header_capture": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Via requestHeaders config array",
-          "tests": ["packages/bun-otel/header-capture.test.ts"]
+          "tests": [
+            "packages/bun-otel/header-capture.test.ts"
+          ]
         },
         "response_header_capture": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Via responseHeaders config array",
-          "tests": ["packages/bun-otel/header-capture.test.ts"]
+          "tests": [
+            "packages/bun-otel/header-capture.test.ts"
+          ]
         },
         "error_tracking": {
           "nodejs": "✅",
           "bun": "✅",
           "notes": "Network errors recorded",
-          "tests": ["packages/bun-otel/BunFetchInstrumentation.test.ts"]
+          "tests": [
+            "packages/bun-otel/BunFetchInstrumentation.test.ts"
+          ]
         },
         "ignoreoutgoingrequesthook": {
           "nodejs": "✅",
@@ -202,37 +219,50 @@
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Standard implementation",
-        "tests": ["packages/bun-otel/context-propagation.test.ts", "packages/bun-otel/distributed-tracing.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts",
+          "packages/bun-otel/distributed-tracing.test.ts"
+        ]
       },
       "baggage_propagator": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Standard implementation",
-        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts"
+        ]
       },
       "b3_propagator": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard OTel packages",
-        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts"
+        ]
       },
       "jaeger_propagator": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard OTel packages",
-        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts"
+        ]
       },
       "composite_propagator": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Multiple propagators",
-        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts"
+        ]
       },
       "asynclocalstorage_context_manager": {
         "nodejs": "✅",
         "bun": "⚠️",
         "notes": "Custom spanStorage workaround; context.with() propagation limited",
-        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+        "tests": [
+          "packages/bun-otel/context-propagation.test.ts"
+        ]
       },
       "contextwith_async_propagation": {
         "nodejs": "✅",
@@ -293,49 +323,65 @@
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via BunSDK config",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "host_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "process_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "os_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "container_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "cloud_provider_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "kubernetes_detection": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via standard detectors",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       },
       "custom_resource_attributes": {
         "nodejs": "✅",
         "bun": "✅",
         "notes": "Via BunSDK config",
-        "tests": ["packages/bun-otel/resources.test.ts"]
+        "tests": [
+          "packages/bun-otel/resources.test.ts"
+        ]
       }
     },
     "exporters": {
@@ -591,6 +637,38 @@
         "nodejs": "✅",
         "bun": "✅",
         "notes": "BunSDK constructor"
+      }
+    },
+    "instrumentation": {
+      "postgres": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Bun.sql postgres tracing - pg package instrumentation available in Node",
+        "priority": "high"
+      },
+      "mysql": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Bun.sql mysql tracing - mysql/mysql2 instrumentation available in Node",
+        "priority": "high"
+      },
+      "sqlite": {
+        "nodejs": "➖",
+        "bun": "❌",
+        "notes": "Bun.sql sqlite tracing - no official Node instrumentation exists",
+        "priority": "medium"
+      },
+      "redis": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Bun.redis tracing - redis/ioredis/redis-4 instrumentation available in Node",
+        "priority": "high"
+      },
+      "s3": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Bun.s3 tracing - AWS SDK instrumentation available in Node",
+        "priority": "medium"
       }
     }
   }

@@ -1,8 +1,9 @@
+import { context } from "@opentelemetry/api";
 import {
+  AggregationTemporality,
   InMemoryMetricExporter,
   MeterProvider,
   PeriodicExportingMetricReader,
-  AggregationTemporality,
 } from "@opentelemetry/sdk-metrics";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -78,14 +79,24 @@ function getDataPointSum(dp: any): number {
 
 describe("HTTP Server Metrics", () => {
   let ctx: TestTelemetryContext;
+  // Track providers created during tests for cleanup
+  const providers: { shutdown: () => Promise<void> }[] = [];
 
   beforeEach(() => {
     ctx = createTestTelemetry();
+    providers.push(ctx.tracerProvider);
+    providers.push(ctx.meterProvider);
   });
 
   afterEach(async () => {
     Bun.telemetry.disable();
-    await ctx.meterProvider.shutdown();
+
+    // Shutdown all providers created during tests
+    await Promise.all(providers.map(p => p.shutdown()));
+    providers.length = 0;
+
+    // Clear global context manager to prevent test isolation issues
+    context.disable();
   });
 
   test("records http.server.request.duration metric", async () => {

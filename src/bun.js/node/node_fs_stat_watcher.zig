@@ -238,7 +238,12 @@ pub const StatWatcher = struct {
         log("deinit {x}", .{@intFromPtr(this)});
 
         this.persistent = false;
-        this.poll_ref.disable();
+        if (comptime bun.Environment.allow_assert) {
+            if (this.poll_ref.isActive()) {
+                bun.assert(jsc.VirtualMachine.get() == this.ctx); // We cannot unref() on another thread this way.
+            }
+        }
+        this.poll_ref.unref(this.ctx);
         this.closed = true;
         this.last_jsvalue.deinit();
 
@@ -333,8 +338,8 @@ pub const StatWatcher = struct {
     pub fn close(this: *StatWatcher) void {
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
         }
+        this.poll_ref.unref(this.ctx);
         this.closed = true;
         this.last_jsvalue.clearWithoutDeallocation();
     }

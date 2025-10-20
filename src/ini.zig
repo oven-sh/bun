@@ -731,7 +731,7 @@ pub const ConfigIterator = struct {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
         }
 
-        pub fn deinit(self: *const Item, allocator: Allocator) void {
+        pub fn deinit(self: *Item, allocator: Allocator) void {
             allocator.free(self.registry_url);
             allocator.free(self.value);
         }
@@ -865,7 +865,7 @@ pub fn loadNpmrcConfig(
     // to be created at the end.
     var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
     defer {
-        for (configs.items) |item| {
+        for (configs.items) |*item| {
             item.deinit(allocator);
         }
         configs.deinit();

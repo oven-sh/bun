@@ -1769,9 +1769,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 line_indent: Indent,
                 multiline: bool = false,
 
-                pub fn done(ctx: *const @This()) Token(enc) {
+                pub fn done(ctx: *@This()) Token(enc) {
                     const scalar: Token(enc).Scalar = scalar: {
-                        const scalar_str = ctx.str_builder.done();
+                        var scalar_str = ctx.str_builder.done();
 
                         if (ctx.scalar) |scalar| {
                             if (scalar_str.len() == ctx.resolved_scalar_len) {
@@ -4530,7 +4530,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 };
             }
 
-            pub fn deinit(self: *const @This()) void {
+            pub fn deinit(self: *@This()) void {
                 switch (self.*) {
                     .range => {},
                     .list => |*list| list.deinit(),

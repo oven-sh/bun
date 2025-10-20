@@ -561,8 +561,12 @@ pub const Telemetry = struct {
     /// Create a response builder for collecting telemetry data
     /// Returns null if telemetry is disabled (zero-cost when off)
     pub fn responseBuilder(self: *Self, request_id: RequestId) ?*ResponseBuilder {
-        // Return null if telemetry is disabled or no response callback
-        if (!self.enabled or self.on_response_headers == .zero) {
+        // Disabled → no builder
+        if (!self.enabled) return null;
+        // Require either on_response_headers OR on_response_start with configured header names
+        if (self.on_response_headers == .zero and
+            (self.on_response_start == .zero or self.copy2response_headers.len == 0))
+        {
             return null;
         }
         const builder = bun.default_allocator.create(ResponseBuilder) catch {

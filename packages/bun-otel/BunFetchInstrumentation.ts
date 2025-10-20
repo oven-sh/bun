@@ -1,6 +1,11 @@
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { InstrumentationBase, InstrumentationConfig, isWrapped } from "@opentelemetry/instrumentation";
 import {
+  // Stable semconv (1.27+)
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_URL_FULL,
+  // Old (deprecated) semconv - still supported for backward compatibility
   SEMATTRS_HTTP_METHOD,
   SEMATTRS_HTTP_STATUS_CODE,
   SEMATTRS_HTTP_URL,
@@ -165,13 +170,19 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         // Start a new CLIENT span with active context as parent
         // CRITICAL: Use this.tracer (from InstrumentationBase) instead of trace.getTracer()
         // This ensures we use the TracerProvider that was set via setTracerProvider()
+        // Span naming: Use just the HTTP method (not method + URL) per OTel standards
+        // URL is captured in attributes only to avoid PII in span names
         const span = instrumentation.tracer.startSpan(
-          `${method} ${url}`,
+          `HTTP ${method}`,
           {
             kind: SpanKind.CLIENT,
             attributes: {
+              // Old semconv (deprecated but still supported for backward compatibility)
               [SEMATTRS_HTTP_METHOD]: method,
               [SEMATTRS_HTTP_URL]: url,
+              // Stable semconv (1.27+)
+              [ATTR_HTTP_REQUEST_METHOD]: method,
+              [ATTR_URL_FULL]: url,
             },
           },
           activeContext, // CRITICAL: Use active context as parent
@@ -216,8 +227,9 @@ export class BunFetchInstrumentation extends InstrumentationBase {
               response => {
                 // Success handler
                 try {
-                  // Record response status
-                  span.setAttribute(SEMATTRS_HTTP_STATUS_CODE, response.status);
+                  // Record response status - emit both old and stable semconv
+                  span.setAttribute(SEMATTRS_HTTP_STATUS_CODE, response.status); // Old (deprecated)
+                  span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, response.status); // Stable
                   span.setStatus({
                     code: response.status >= 400 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
                   });

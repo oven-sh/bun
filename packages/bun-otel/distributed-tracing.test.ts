@@ -125,15 +125,9 @@ describe("Distributed tracing with fetch propagation", () => {
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(2);
 
-    // Sort spans by start time to ensure consistent ordering
-    spans.sort((a, b) => {
-      const aTime = a.startTime[0] * 1_000_000_000 + a.startTime[1];
-      const bTime = b.startTime[0] * 1_000_000_000 + b.startTime[1];
-      return aTime - bTime;
-    });
-
     // With fetch instrumentation: serverA (SERVER), fetchClient (CLIENT)
-    const [serverASpan, fetchClientSpan] = spans;
+    const serverASpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
 
     // CRITICAL ASSERTIONS for distributed tracing:
 

@@ -20,7 +20,7 @@
  */
 
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
-import { isTracingSuppressed, suppressTracing } from "@opentelemetry/core";
+import { isTracingSuppressed } from "@opentelemetry/core";
 import {
   InstrumentationBase,
   InstrumentationConfig,
@@ -273,8 +273,7 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
 
         // CRITICAL: Wrap the entire fetch call in context.with() synchronously
         // This ensures the context is active for the entire async operation
-        // Suppress nested instrumentation to prevent re-entrancy (e.g., exporter using fetch)
-        return context.with(suppressTracing(spanContext), () => {
+        return context.with(spanContext, () => {
           // Merge headers: start with input Request headers (if any), then overlay init.headers
           // This preserves headers from Request objects while allowing init to override
           const headers = new Headers(input instanceof Request ? input.headers : undefined);

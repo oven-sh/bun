@@ -497,20 +497,26 @@ pub const Telemetry = struct {
     /// Called when a request starts
     /// Returns the request ID that should be used for subsequent calls
     pub fn notifyRequestStart(self: *Self, request_js: JSValue) RequestId {
-        // Defensive: return sentinel (0) when disabled to avoid ID generation overhead
-        if (!self.enabled or self.on_request_start == .zero) {
+        // Return sentinel (0) only when telemetry is completely disabled
+        if (!self.enabled) {
             return 0; // 0 is a valid sentinel for "not tracked"
         }
 
+        // Always generate an ID if telemetry is enabled
+        // This allows response-only telemetry (onResponseHeaders without onRequestStart)
         const id = self.generateRequestId();
-        const id_js = jsRequestId(id);
 
-        _ = self.on_request_start.call(
-            self.global,
-            .js_undefined,
-            &.{ id_js, request_js },
-        ) catch |err|
-            self.global.takeException(err);
+        // Only call the callback if it's configured
+        if (self.on_request_start != .zero) {
+            const id_js = jsRequestId(id);
+
+            _ = self.on_request_start.call(
+                self.global,
+                .js_undefined,
+                &.{ id_js, request_js },
+            ) catch |err|
+                self.global.takeException(err);
+        }
 
         return id;
     }

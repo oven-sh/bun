@@ -105,6 +105,10 @@ struct IDLHumanReadableName<WebCore::IDLOptional<IDL>> : BaseIDLHumanReadableNam
         "undefined");
 };
 
+template<typename IDL>
+struct IDLHumanReadableName<IDLLooseNullable<IDL>>
+    : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
+
 template<HasIDLHumanReadableName IDL>
 struct IDLHumanReadableName<Bun::IDLArray<IDL>> : BaseIDLHumanReadableName {
     static constexpr bool hasPreposition = true;

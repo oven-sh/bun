@@ -84,13 +84,11 @@ $ bun publish --dry-run
 
 ### `--tolerate-republish`
 
-The `--tolerate-republish` flag makes `bun publish` exit with code 0 instead of code 1 when attempting to republish over an existing version number. This is useful in automated workflows where republishing the same version might occur and should not be treated as an error.
+Exit with code 0 instead of 1 if the package version already exists. Useful in CI/CD where jobs may be re-run.
 
 ```sh
 $ bun publish --tolerate-republish
 ```
-
-Without this flag, attempting to publish a version that already exists will result in an error and exit code 1. With this flag, the command will exit successfully even when trying to republish an existing version.
 
 ### `--gzip-level`
 

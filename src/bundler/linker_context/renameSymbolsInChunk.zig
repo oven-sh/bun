@@ -25,28 +25,15 @@ pub fn renameSymbolsInChunk(
         const entry_point_source_index = chunk.entry_point.source_index;
         const resolved_exports = c.graph.meta.items(.resolved_exports)[entry_point_source_index];
 
-        // For each source file in the chunk, check if any of its exports are re-exported
-        // by the entry point, and if so, mark them as must_not_be_renamed
-        for (files_in_order) |source_index| {
-            const named_exports = c.graph.ast.items(.named_exports)[source_index];
-            var named_iter = named_exports.iterator();
-            while (named_iter.next()) |export_entry| {
-                const export_name = export_entry.key_ptr.*;
-                const export_ref = export_entry.value_ptr.*.ref;
-
-                // Check if this export from this file is re-exported by the entry point
-                if (resolved_exports.get(export_name)) |resolved_data| {
-                    // Follow the ref chain to get the actual symbol
-                    const final_ref = c.graph.symbols.follow(resolved_data.data.import_ref);
-                    const original_ref = c.graph.symbols.follow(export_ref);
-
-                    // If they point to the same symbol, this export is re-exported
-                    if (final_ref.eql(original_ref)) {
-                        if (c.graph.symbols.get(export_ref)) |symbol| {
-                            symbol.must_not_be_renamed = true;
-                        }
-                    }
-                }
+        // resolved_exports contains the complete mapping of export names to their final symbols
+        // This includes direct exports, re-exports via "export *", and "export { x } from"
+        var iter = resolved_exports.iterator();
+        while (iter.next()) |entry| {
+            const export_data = entry.value_ptr.*;
+            // Follow the ref to get the actual symbol (handles symbol merging/aliasing)
+            const export_ref = c.graph.symbols.follow(export_data.data.import_ref);
+            if (c.graph.symbols.get(export_ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
             }
         }
     }

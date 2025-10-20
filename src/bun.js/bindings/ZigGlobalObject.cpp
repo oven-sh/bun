@@ -258,6 +258,9 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
     return getWebKitBytecodeCacheVersion();
 }
 
+// Declare fuzzilli function registration from FuzzilliREPRL.cpp
+extern "C" void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject*);
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     static std::once_flag jsc_init_flag;
@@ -500,6 +503,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
+
+    // Register fuzzilli() function if in fuzzilli mode
+    if (std::getenv("BUN_FUZZILLI_MODE")) {
+        Bun__REPRL__registerFuzzilliFunction(static_cast<Zig::GlobalObject*>(globalObject));
+    }
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);

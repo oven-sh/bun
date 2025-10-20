@@ -978,6 +978,7 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-deprecated-declarations
       -Werror
     )
   else()
@@ -995,6 +996,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-deprecated-declarations
       -Werror
     )
 

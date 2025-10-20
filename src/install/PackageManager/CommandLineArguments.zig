@@ -170,7 +170,45 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
-const prune_params: []const ParamType = &(shared_params ++ [_]ParamType{
+const prune_specific_params = [_]ParamType{
+    clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
+    clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
+    clap.parseParam("-p, --production                      Also remove devDependencies") catch unreachable,
+    clap.parseParam("-P, --prod                            Alias for --production") catch unreachable,
+    clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
+    clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
+    clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
+    clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
+    clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
+    clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
+    clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
+    clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
+    clap.parseParam("--no-cache                            Ignore manifest cache entirely") catch unreachable,
+    clap.parseParam("--silent                              Don't log anything") catch unreachable,
+    clap.parseParam("--quiet                               Only show tarball name when packing") catch unreachable,
+    clap.parseParam("--verbose                             Excessively verbose logging") catch unreachable,
+    clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
+    clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
+    clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
+    clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
+    clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
+    clap.parseParam("-g, --global                          Install globally") catch unreachable,
+    clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
+    clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
+    clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
+    clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+    clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
+    clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
+    clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
+    clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
+    clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)") catch unreachable,
+    clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
+    clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
+    clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
+};
+
+const prune_params: []const ParamType = &(prune_specific_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                              ") catch unreachable,
 });
 

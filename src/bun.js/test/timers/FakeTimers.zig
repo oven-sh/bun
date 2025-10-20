@@ -119,11 +119,7 @@ fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Tim
     }
     const now = next.next;
     current_time.set(globalObject, &now);
-    const arm = next.fire(&now, vm);
-    switch (arm) {
-        .disarm => {},
-        .rearm => {},
-    }
+    next.fire(&now, vm);
 }
 fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
     this.assertValid(.unlocked);

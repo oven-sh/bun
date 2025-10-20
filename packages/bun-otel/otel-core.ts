@@ -373,12 +373,25 @@ export function createBunTelemetryConfig(options: InstallBunNativeTracingOptions
         "http.request.header.",
       );
 
+      if (ENABLE_DEBUG_LOGGING) {
+        const parent = trace.getSpan(extractedContext)?.spanContext().spanId;
+        console.log(
+          `[handleIncomingRequest] Created SERVER span: ${method} ${urlInfo.pathname} (spanId: ${span.spanContext().spanId}, parentSpanId: ${parent ?? "none"}, traceId: ${span.spanContext().traceId})`,
+        );
+      }
+
       // Generate request ID
       const requestId = Bun.telemetry.generateRequestId();
 
       // Store span in BOTH the map and on the response object
       spans.set(requestId, span);
       (res as any)[kSpan] = span;
+
+      // Store span in OpenTelemetry Context and update AsyncLocalStorage
+      // This is critical for context propagation - without this, context.active() won't
+      // return the span and fetch calls won't inherit the correct parent context.
+      const spanContext = trace.setSpan(extractedContext, span);
+      contextStorage.enterWith(spanContext);
 
       // Attach one-time listeners using existing high-level telemetry handlers for DRYness.
       res.once("finish", () => onRequestEnd(requestId));

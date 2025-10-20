@@ -75,10 +75,12 @@ describe("Distributed tracing with fetch propagation", () => {
     // Use curl to avoid instrumenting the test's own fetch
     await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
 
-    // Wait for the server span to be exported
-    await waitForSpans(exporter, 1);
+    // Wait for the server span to be exported (scoped to our trace)
+    await waitForSpans(exporter, 1, 1000, { traceId: upstreamTraceId });
 
-    const spans = exporter.getFinishedSpans().filter(s => s.kind === SpanKind.SERVER);
+    const spans = exporter
+      .getFinishedSpans()
+      .filter(s => s.kind === SpanKind.SERVER && s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -197,7 +199,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const echoData = JSON.parse(output); // Parse the JSON response from our server (which contains echo server data)
 
     // Wait for 2 spans with our specific trace ID
-    await waitForSpans(exporter, 2, 500, { traceId: upstreamTraceId });
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
 
     // Filter to only get spans from this test (by trace ID)
     const allSpans = exporter.getFinishedSpans();
@@ -272,6 +274,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
+    expect(serverSpan.parentSpanId).toBe(upstreamSpanId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
     expect(echoData.headers.traceparent).toBeDefined();
@@ -315,7 +318,8 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "aabbccdd11223344";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const output = await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const echoData = JSON.parse(output);
 
     await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
     const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
@@ -327,6 +331,8 @@ describe("Distributed tracing with fetch propagation", () => {
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(echoData.headers.traceparent).toBeDefined();
+    expect(echoData.headers.traceparent).toContain(upstreamTraceId);
   });
 
   test("propagates trace context through async generator", async () => {
@@ -434,15 +440,12 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 1 gateway (SERVER) + 3 fetch (CLIENT) = 4 spans
     // (Echo server is external, so no SERVER spans from it)
-    await waitForSpans(exporter, 4);
+    await waitForSpans(exporter, 4, 1000, { traceId });
 
-    const spans = exporter.getFinishedSpans();
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === traceId);
     expect(spans).toHaveLength(4);
 
-    // All spans share the same trace ID
-    for (const span of spans) {
-      expect(span.spanContext().traceId).toBe(traceId);
-    }
+    // All spans share the same trace ID by construction (filtered)
 
     // Find the gateway span (parent of the 3 fetch CLIENT spans)
     const gatewaySpan = spans.find(s => s.name === "GET /gateway");

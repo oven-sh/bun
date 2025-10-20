@@ -208,6 +208,7 @@ export interface BundlerTestInput {
   minifySyntax?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
+  minifyInternalExports?: boolean;
   splitting?: boolean;
   serverComponents?: boolean;
   treeShaking?: boolean;
@@ -460,6 +461,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
+    minifyInternalExports,
     onAfterBundle,
     outdir,
     dotenv,
@@ -729,6 +731,7 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              minifyInternalExports && `--minify-internal-exports`,
               drop?.length && drop.map(x => ["--drop=" + x]),
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
@@ -769,6 +772,7 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              minifyInternalExports && `--minify-internal-exports`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
@@ -1075,6 +1079,7 @@ function expectBundled(
             identifiers: minifyIdentifiers,
             syntax: minifySyntax,
             keepNames: keepNames,
+            internalExports: minifyInternalExports,
           },
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,

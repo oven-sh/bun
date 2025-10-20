@@ -1109,15 +1109,15 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         // Test all equality operators with typeof undefined
         console.log(typeof x !== 'undefined');
-        console.log(typeof x != 'undefined'); 
+        console.log(typeof x != 'undefined');
         console.log('undefined' !== typeof x);
         console.log('undefined' != typeof x);
-        
+
         console.log(typeof x === 'undefined');
         console.log(typeof x == 'undefined');
         console.log('undefined' === typeof x);
         console.log('undefined' == typeof x);
-        
+
         // These should not be optimized
         console.log(typeof x === 'string');
         console.log(x === 'undefined');
@@ -1133,6 +1133,145 @@ describe("bundler", () => {
       expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
         `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
       );
+    },
+  });
+
+  itBundled("minify/InternalExportsBasic", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as baz from "./baz";
+        export * from "./bar";
+        export const a = 123;
+        export const b = baz.qux + 1;
+      `,
+      "/bar.ts": /* ts */ `
+        export const barExport1 = "bar1";
+        export const barExport2 = "bar2";
+      `,
+      "/baz.ts": /* ts */ `
+        export const qux = 456;
+        export const internalExport = "internal";
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Entry point exports and re-exports should NOT be minified
+      // The export names should appear in the export statement
+      expect(code).toMatch(/export\s*\{[^}]*\ba\b[^}]*\}/);
+      expect(code).toMatch(/export\s*\{[^}]*\bb\b[^}]*\}/);
+      expect(code).toMatch(/export\s*\{[^}]*\bbarExport1\b[^}]*\}/);
+      expect(code).toMatch(/export\s*\{[^}]*\bbarExport2\b[^}]*\}/);
+
+      // The actual variable names should also not be minified for entry point exports
+      expect(code).toContain("var a =");
+      expect(code).toContain("var b =");
+      expect(code).toContain("var barExport1 =");
+      expect(code).toContain("var barExport2 =");
+
+      // Internal exports from baz that are not re-exported should be minified
+      expect(code).not.toContain("qux");
+      expect(code).not.toContain("internalExport");
+    },
+  });
+
+  itBundled("minify/InternalExportsWithoutFlag", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as baz from "./baz";
+        export * from "./bar";
+        export const a = 123;
+        export const b = baz.qux + 1;
+      `,
+      "/bar.ts": /* ts */ `
+        export const barExport1 = "bar1";
+        export const barExport2 = "bar2";
+      `,
+      "/baz.ts": /* ts */ `
+        export const qux = 456;
+        export const internalExport = "internal";
+      `,
+    },
+    minifyIdentifiers: true,
+    // minifyInternalExports is NOT set - exports can be minified
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Without minifyInternalExports, variable names can be minified
+      // but export names are preserved via aliasing (e.g., "x as barExport1")
+      // Check that the export names still appear (in the export statement)
+      expect(code).toMatch(/export\s*\{[^}]*\bbarExport1\b[^}]*\}/);
+      expect(code).toMatch(/export\s*\{[^}]*\bbarExport2\b[^}]*\}/);
+
+      // Variables from imported modules (bar.ts) should be minified
+      expect(code).not.toContain("var barExport1 =");
+      expect(code).not.toContain("var barExport2 =");
+    },
+  });
+
+  itBundled("minify/InternalExportsNamedReexports", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export { namedExport } from "./lib";
+        import { internalHelper } from "./lib";
+        console.log(internalHelper);
+      `,
+      "/lib.ts": /* ts */ `
+        export const namedExport = "public";
+        export const internalHelper = "helper";
+        export const unused = "unused";
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // namedExport should NOT be minified (re-exported)
+      expect(code).toContain("namedExport");
+
+      // internalHelper and unused should be minified
+      expect(code).not.toContain("internalHelper");
+      expect(code).not.toContain("unused");
+    },
+  });
+
+  itBundled("minify/InternalExportsMultipleEntryPoints", {
+    files: {
+      "/entry1.ts": /* ts */ `
+        export { shared1 } from "./shared";
+        import { helper } from "./shared";
+        console.log(helper);
+      `,
+      "/entry2.ts": /* ts */ `
+        export { shared2 } from "./shared";
+        import { helper } from "./shared";
+        console.log(helper);
+      `,
+      "/shared.ts": /* ts */ `
+        export const shared1 = "s1";
+        export const shared2 = "s2";
+        export const helper = "help";
+        export const unused = "u";
+      `,
+    },
+    entryPoints: ["/entry1.ts", "/entry2.ts"],
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    onAfterBundle(api) {
+      const code1 = api.readFile("/out/entry1.js");
+      const code2 = api.readFile("/out/entry2.js");
+
+      // Each entry point should preserve its own exports
+      expect(code1).toContain("shared1");
+      expect(code2).toContain("shared2");
+
+      // Helper is used but not exported, should be minified in both
+      expect(code1).not.toContain("helper");
+      expect(code2).not.toContain("helper");
+
+      // Unused should be minified (or removed by tree-shaking)
+      expect(code1).not.toContain("unused");
+      expect(code2).not.toContain("unused");
     },
   });
 });

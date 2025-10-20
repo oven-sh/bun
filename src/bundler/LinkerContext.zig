@@ -64,6 +64,7 @@ pub const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        minify_internal_exports: bool = false,
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,

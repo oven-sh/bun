@@ -918,6 +918,7 @@ pub const BundleV2 = struct {
 
         this.linker.options.minify_syntax = transpiler.options.minify_syntax;
         this.linker.options.minify_identifiers = transpiler.options.minify_identifiers;
+        this.linker.options.minify_internal_exports = transpiler.options.minify_internal_exports;
         this.linker.options.minify_whitespace = transpiler.options.minify_whitespace;
         this.linker.options.emit_dce_annotations = transpiler.options.emit_dce_annotations;
         this.linker.options.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
@@ -1893,6 +1894,7 @@ pub const BundleV2 = struct {
             transpiler.options.minify_syntax = config.minify.syntax;
             transpiler.options.minify_whitespace = config.minify.whitespace;
             transpiler.options.minify_identifiers = config.minify.identifiers;
+            transpiler.options.minify_internal_exports = config.minify.internal_exports;
             transpiler.options.keep_names = config.minify.keep_names;
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;

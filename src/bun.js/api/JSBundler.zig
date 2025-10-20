@@ -463,6 +463,9 @@ pub const JSBundler = struct {
                     if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
                         this.minify.keep_names = keep_names;
                     }
+                    if (try minify.getBooleanLoose(globalThis, "internalExports")) |internal_exports| {
+                        this.minify.internal_exports = internal_exports;
+                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
@@ -743,6 +746,7 @@ pub const JSBundler = struct {
             identifiers: bool = false,
             syntax: bool = false,
             keep_names: bool = false,
+            internal_exports: bool = false,
         };
 
         pub const Serve = struct {

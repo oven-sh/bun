@@ -19,6 +19,44 @@ pub fn renameSymbolsInChunk(
         renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
     }
 
+    // When minify_internal_exports is enabled, we need to preserve export names from entry points
+    // but allow minification of internal exports from non-entry-point files
+    if (c.options.minify_internal_exports and c.options.minify_identifiers and chunk.isEntryPoint()) {
+        const entry_point_source_index = chunk.entry_point.source_index;
+        const named_exports = c.graph.ast.items(.named_exports)[entry_point_source_index];
+
+        // Mark all symbols exported from this entry point as must_not_be_renamed
+        var iter = named_exports.iterator();
+        while (iter.next()) |entry| {
+            const export_ref = entry.value_ptr.*.ref;
+            if (c.graph.symbols.get(export_ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
+        // Also need to track re-exports (export * from / export { x } from)
+        const export_star_import_records = c.graph.ast.items(.export_star_import_records)[entry_point_source_index];
+        const import_records = c.graph.ast.items(.import_records)[entry_point_source_index].slice();
+
+        // For export *, we need to mark all exports from the re-exported module
+        for (export_star_import_records) |import_record_index| {
+            const record = &import_records[import_record_index];
+            if (record.source_index.isValid()) {
+                const reexported_source = record.source_index.get();
+                if (reexported_source < c.graph.ast.len) {
+                    const reexported_exports = c.graph.ast.items(.named_exports)[reexported_source];
+                    var reexport_iter = reexported_exports.iterator();
+                    while (reexport_iter.next()) |entry| {
+                        const export_ref = entry.value_ptr.*.ref;
+                        if (c.graph.symbols.get(export_ref)) |symbol| {
+                            symbol.must_not_be_renamed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
         var list = std.ArrayList(StableRef).init(allocator);
         var count: u32 = 0;

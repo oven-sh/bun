@@ -170,6 +170,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--minify-internal-exports        Minify internal export names that are not re-exported by entry points") catch unreachable,
     clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
@@ -858,6 +859,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
         ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        ctx.bundler_options.minify_internal_exports = args.flag("--minify-internal-exports");
         ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");

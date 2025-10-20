@@ -1796,6 +1796,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    minify_internal_exports: bool = false,
     keep_names: bool = false,
     dead_code_elimination: bool = true,
     css_chunking: bool,

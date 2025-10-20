@@ -430,6 +430,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            minify_internal_exports: bool = false,
             keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,

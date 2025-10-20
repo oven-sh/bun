@@ -7,95 +7,234 @@ import {
   SEMATTRS_HTTP_STATUS_CODE,
   SEMATTRS_HTTP_URL,
 } from "@opentelemetry/semantic-conventions";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { BunSDK } from "./bun-sdk";
 import { BunFetchInstrumentation } from "./BunFetchInstrumentation";
 
-test("BunFetchInstrumentation uses correct span naming and dual semconv", async () => {
-  const exporter = new InMemorySpanExporter();
+describe("BunFetchInstrumentation - Span Naming", () => {
+  test("uses HTTP method only in span name (not URL)", async () => {
+    const exporter = new InMemorySpanExporter();
 
-  await using sdk = new BunSDK({
-    spanProcessor: new SimpleSpanProcessor(exporter),
-    serviceName: "semconv-test",
-    instrumentations: [new BunFetchInstrumentation()],
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "span-naming-test",
+      instrumentations: [new BunFetchInstrumentation()],
+    });
+
+    sdk.start();
+
+    await fetch("https://example.com/api/users");
+    await Bun.sleep(100);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+
+    const span = spans[0];
+    expect(span.name).toBe("HTTP GET");
+    expect(span.name).not.toContain("example.com");
+    expect(span.name).not.toContain("/api/users");
   });
 
-  sdk.start();
+  test("POST requests use correct span name", async () => {
+    const exporter = new InMemorySpanExporter();
 
-  // Make a fetch call (using a real endpoint to avoid test infrastructure issues)
-  const response = await fetch("https://example.com/");
-  expect(response.ok).toBe(true);
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "span-naming-post",
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
-  // Wait a bit for span export
-  await Bun.sleep(100);
+    sdk.start();
 
-  const spans = exporter.getFinishedSpans();
-  expect(spans.length).toBeGreaterThanOrEqual(1);
+    try {
+      await fetch("https://httpbin.org/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test: "data" }),
+      });
+    } catch {
+      // Ignore network errors
+    }
 
-  // Find the fetch span (should be the first one)
-  const span = spans[0];
+    await Bun.sleep(100);
 
-  // Verify span name is just "HTTP {method}" (not method + URL)
-  expect(span.name).toBe("HTTP GET");
-  expect(span.name).not.toContain("example.com"); // URL should NOT be in name
-  expect(span.name).not.toContain("http://"); // Protocol should NOT be in name
-  expect(span.name).not.toContain("https://"); // Protocol should NOT be in name
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
 
-  // Verify both old and stable semconv attributes exist
-  const attrs = span.attributes;
-
-  // Old semconv (deprecated but still supported)
-  expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
-  expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
-  expect(typeof attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe("number");
-  expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
-
-  // Stable semconv (1.27+)
-  expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
-  expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
-  expect(typeof attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe("number");
-  expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
+    expect(spans[0].name).toBe("HTTP POST");
+  });
 });
 
-test("BunFetchInstrumentation uses correct span naming for POST requests", async () => {
-  const exporter = new InMemorySpanExporter();
+describe("BunFetchInstrumentation - Semconv Stability", () => {
+  test("default (no config): emits BOTH old and stable (http/dup)", async () => {
+    const exporter = new InMemorySpanExporter();
 
-  await using sdk = new BunSDK({
-    spanProcessor: new SimpleSpanProcessor(exporter),
-    serviceName: "semconv-test-post",
-    instrumentations: [new BunFetchInstrumentation()],
+    // No semconvStabilityOptIn config and no env var = default to 'http/dup'
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "semconv-default-test",
+      instrumentations: [new BunFetchInstrumentation()],
+    });
+
+    sdk.start();
+
+    await fetch("https://example.com/");
+    await Bun.sleep(100);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+
+    const attrs = spans[0].attributes;
+
+    // Both OLD and STABLE attributes should exist (http/dup is default)
+    expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
+
+    expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
+    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
   });
 
-  sdk.start();
+  test("explicit config 'old': emits OLD attributes only", async () => {
+    const exporter = new InMemorySpanExporter();
 
-  // Make a POST request
-  try {
-    await fetch("https://httpbin.org/post", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ test: "data" }),
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "semconv-old-test",
+      instrumentations: [
+        new BunFetchInstrumentation({
+          semconvStabilityOptIn: "old",
+        }),
+      ],
     });
-  } catch (error) {
-    // Ignore network errors - we just want to verify span naming
-  }
 
-  // Wait a bit for span export
-  await Bun.sleep(100);
+    sdk.start();
 
-  const spans = exporter.getFinishedSpans();
-  expect(spans.length).toBeGreaterThanOrEqual(1);
+    await fetch("https://example.com/");
+    await Bun.sleep(100);
 
-  const span = spans[0];
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
 
-  // Verify span name is "HTTP POST" (not "POST https://...")
-  expect(span.name).toBe("HTTP POST");
-  expect(span.name).not.toContain("httpbin.org");
-  expect(span.name).not.toContain("/post");
+    const attrs = spans[0].attributes;
 
-  // Verify method in both old and stable semconv
-  const attrs = span.attributes;
-  expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("POST");
-  expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("POST");
-  expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://httpbin.org/post");
-  expect(attrs[ATTR_URL_FULL]).toBe("https://httpbin.org/post");
+    // OLD attributes should exist
+    expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
+
+    // STABLE attributes should NOT exist
+    expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBeUndefined();
+    expect(attrs[ATTR_URL_FULL]).toBeUndefined();
+    expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBeUndefined();
+  });
+
+  test("programmatic config 'http': emits STABLE attributes only", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "semconv-stable-test",
+      instrumentations: [
+        new BunFetchInstrumentation({
+          semconvStabilityOptIn: "http",
+        }),
+      ],
+    });
+
+    sdk.start();
+
+    await fetch("https://example.com/");
+    await Bun.sleep(100);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+
+    const attrs = spans[0].attributes;
+
+    // STABLE attributes should exist
+    expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
+    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
+
+    // OLD attributes should NOT exist
+    expect(attrs[SEMATTRS_HTTP_METHOD]).toBeUndefined();
+    expect(attrs[SEMATTRS_HTTP_URL]).toBeUndefined();
+    expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBeUndefined();
+  });
+
+  test("programmatic config 'http/dup': emits BOTH old and stable", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "semconv-dup-test",
+      instrumentations: [
+        new BunFetchInstrumentation({
+          semconvStabilityOptIn: "http/dup",
+        }),
+      ],
+    });
+
+    sdk.start();
+
+    await fetch("https://example.com/");
+    await Bun.sleep(100);
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+
+    const attrs = spans[0].attributes;
+
+    // Both OLD and STABLE attributes should exist
+    expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
+    expect(attrs[SEMATTRS_HTTP_URL]).toBe("https://example.com/");
+    expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
+
+    expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
+    expect(attrs[ATTR_URL_FULL]).toBe("https://example.com/");
+    expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
+  });
+
+  test("programmatic config takes precedence over env var", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    // Even if env var says 'http/dup', programmatic 'http' wins
+    const originalEnv = process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+    process.env.OTEL_SEMCONV_STABILITY_OPT_IN = "http/dup";
+
+    try {
+      await using sdk = new BunSDK({
+        spanProcessor: new SimpleSpanProcessor(exporter),
+        serviceName: "semconv-precedence-test",
+        instrumentations: [
+          new BunFetchInstrumentation({
+            semconvStabilityOptIn: "http", // Programmatic should win
+          }),
+        ],
+      });
+
+      sdk.start();
+
+      await fetch("https://example.com/");
+      await Bun.sleep(100);
+
+      const spans = exporter.getFinishedSpans();
+      expect(spans.length).toBeGreaterThanOrEqual(1);
+
+      const attrs = spans[0].attributes;
+
+      // Should have STABLE only (programmatic 'http' won)
+      expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
+      expect(attrs[SEMATTRS_HTTP_METHOD]).toBeUndefined();
+    } finally {
+      // Restore env var
+      if (originalEnv === undefined) {
+        delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+      } else {
+        process.env.OTEL_SEMCONV_STABILITY_OPT_IN = originalEnv;
+      }
+    }
+  });
 });

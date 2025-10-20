@@ -1,5 +1,32 @@
+/**
+ * BunFetchInstrumentation - Custom fetch instrumentation for Bun runtime
+ *
+ * WHY FORKED:
+ * Official @opentelemetry/instrumentation-fetch is browser-only and explicitly
+ * refuses to enable on Node.js-like environments (checks process.release.name).
+ * It also depends on browser APIs (PerformanceObserver) and sdk-trace-web, making
+ * it incompatible with server-side runtimes like Bun.
+ *
+ * REFERENCE:
+ * Based on patterns from:
+ * https://github.com/open-telemetry/opentelemetry-js/blob/main/experimental/packages/opentelemetry-instrumentation-fetch/
+ * https://github.com/open-telemetry/opentelemetry-js/blob/main/experimental/packages/opentelemetry-instrumentation-http/
+ *
+ * KEY DIFFERENCES:
+ * - Works on Bun (no Node.js detection that blocks activation)
+ * - Server-side optimized (no PerformanceObserver delays)
+ * - Defensive patching guards (prevents test isolation issues)
+ * - Uses sdk-trace-base/node instead of sdk-trace-web
+ */
+
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
-import { InstrumentationBase, InstrumentationConfig, isWrapped } from "@opentelemetry/instrumentation";
+import {
+  InstrumentationBase,
+  InstrumentationConfig,
+  isWrapped,
+  SemconvStability,
+  semconvStabilityFromStr,
+} from "@opentelemetry/instrumentation";
 import {
   // Stable semconv (1.27+)
   ATTR_HTTP_REQUEST_METHOD,
@@ -53,14 +80,42 @@ function markAsPatched(fn: any, instrumentationId: string): void {
 }
 
 /**
+ * Configuration for BunFetchInstrumentation
+ *
+ * Supports both programmatic configuration and environment variable fallbacks.
+ * Programmatic config takes precedence over env vars.
+ */
+export interface BunFetchInstrumentationConfig extends InstrumentationConfig {
+  /**
+   * Semantic convention stability level. Controls which attributes are emitted:
+   * - 'old': Emit only deprecated attributes (http.method, http.url, http.status_code)
+   * - 'stable' or 'http': Emit only stable attributes (http.request.method, url.full, http.response.status_code)
+   * - 'http/dup': Emit both old and stable (recommended for migration period)
+   *
+   * Programmatic value takes precedence over OTEL_SEMCONV_STABILITY_OPT_IN env var.
+   *
+   * @default 'http/dup' (emit both for maximum compatibility during migration)
+   */
+  semconvStabilityOptIn?: string;
+}
+
+/**
  * BunFetchInstrumentation - Automatic instrumentation for Bun's global fetch API
  *
  * Creates CLIENT spans for outbound fetch requests and automatically injects
  * trace context headers (traceparent) for distributed tracing.
  */
-export class BunFetchInstrumentation extends InstrumentationBase {
-  constructor(config: InstrumentationConfig = {}) {
+export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrumentationConfig> {
+  private _semconvStability: SemconvStability;
+
+  constructor(config: BunFetchInstrumentationConfig = {}) {
     super("@bun/otel-fetch-instrumentation", "1.0.0", config);
+
+    // Determine semconv stability from config (programmatic) or env var (fallback)
+    // Programmatic config takes precedence per best practice
+    // Default to 'http/dup' (emit both) for maximum compatibility during migration
+    const semconvOptIn = config.semconvStabilityOptIn ?? process.env.OTEL_SEMCONV_STABILITY_OPT_IN ?? "http/dup";
+    this._semconvStability = semconvStabilityFromStr("http", semconvOptIn);
   }
 
   init() {
@@ -167,6 +222,21 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         );
         debugLog(`  context manager:`, (context as any)._getContextManager?.() || "no context manager");
 
+        // Build span attributes based on semconv stability setting
+        const attributes: Record<string, string> = {};
+
+        // Emit old (deprecated) attributes if configured
+        if (instrumentation._semconvStability & SemconvStability.OLD) {
+          attributes[SEMATTRS_HTTP_METHOD] = method;
+          attributes[SEMATTRS_HTTP_URL] = url;
+        }
+
+        // Emit stable attributes if configured
+        if (instrumentation._semconvStability & SemconvStability.STABLE) {
+          attributes[ATTR_HTTP_REQUEST_METHOD] = method;
+          attributes[ATTR_URL_FULL] = url;
+        }
+
         // Start a new CLIENT span with active context as parent
         // CRITICAL: Use this.tracer (from InstrumentationBase) instead of trace.getTracer()
         // This ensures we use the TracerProvider that was set via setTracerProvider()
@@ -176,14 +246,7 @@ export class BunFetchInstrumentation extends InstrumentationBase {
           `HTTP ${method}`,
           {
             kind: SpanKind.CLIENT,
-            attributes: {
-              // Old semconv (deprecated but still supported for backward compatibility)
-              [SEMATTRS_HTTP_METHOD]: method,
-              [SEMATTRS_HTTP_URL]: url,
-              // Stable semconv (1.27+)
-              [ATTR_HTTP_REQUEST_METHOD]: method,
-              [ATTR_URL_FULL]: url,
-            },
+            attributes,
           },
           activeContext, // CRITICAL: Use active context as parent
         );
@@ -227,9 +290,13 @@ export class BunFetchInstrumentation extends InstrumentationBase {
               response => {
                 // Success handler
                 try {
-                  // Record response status - emit both old and stable semconv
-                  span.setAttribute(SEMATTRS_HTTP_STATUS_CODE, response.status); // Old (deprecated)
-                  span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, response.status); // Stable
+                  // Record response status based on semconv stability setting
+                  if (instrumentation._semconvStability & SemconvStability.OLD) {
+                    span.setAttribute(SEMATTRS_HTTP_STATUS_CODE, response.status);
+                  }
+                  if (instrumentation._semconvStability & SemconvStability.STABLE) {
+                    span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, response.status);
+                  }
                   span.setStatus({
                     code: response.status >= 400 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
                   });

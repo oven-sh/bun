@@ -368,7 +368,9 @@ export class BunSDK implements AsyncDisposable {
     Bun.telemetry.configure(null);
 
     // 4. Disable global context manager to prevent test isolation issues
-    context.disable();
+    if (this._config.enableContextManager !== false) {
+      context.disable();
+    }
 
     // 5. Shutdown tracer provider (flushes pending spans to exporters)
     if (this._tracerProvider) {

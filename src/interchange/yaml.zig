@@ -3117,7 +3117,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentEnd;
                     }
                     nl = false;
@@ -3127,7 +3127,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '-' => {
-                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentStart;
                     }
                     nl = false;

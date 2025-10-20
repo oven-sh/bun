@@ -34,7 +34,7 @@ export class EchoServer {
     const { bunEnv, bunExe } = await import("../../test/harness");
 
     this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test-echo-server.ts"], {
-      env: bunEnv,
+      env: { ...bunEnv, PORT: "0" }, // ensure ephemeral port regardless of CI env
       stdout: "pipe",
       stderr: "inherit",
     });

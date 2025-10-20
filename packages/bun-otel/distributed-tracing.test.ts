@@ -37,7 +37,12 @@ describe("Distributed tracing with fetch propagation", () => {
   async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
     const { $ } = await import("bun");
     const headerFlags = Object.entries(headers).flatMap(([key, value]) => ["-H", `${key}: ${value}`]);
-    return await $`curl -s ${headerFlags} ${url}`.text();
+    try {
+      // -sSf: silent, show errors, fail on HTTP >=400
+      return await $`curl -sSf ${headerFlags} ${url}`.text();
+    } catch (err) {
+      throw new Error(`curl request failed for ${url}: ${err}`);
+    }
   }
   test("context.active() returns the correct span synchronously in request handler", async () => {
     const exporter = new InMemorySpanExporter();
@@ -73,10 +78,11 @@ describe("Distributed tracing with fetch propagation", () => {
     // Wait for the server span to be exported
     await waitForSpans(exporter, 1);
 
-    const spans = exporter.getFinishedSpans();
+    const spans = exporter.getFinishedSpans().filter(s => s.kind === SpanKind.SERVER);
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
+    expect(serverSpan.kind).toBe(SpanKind.SERVER);
 
     // Verify that context.active() returned the correct span
     expect(capturedTraceId).toBe(upstreamTraceId);
@@ -120,9 +126,9 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 2 spans: serverA (SERVER) + fetch to echoServer (CLIENT)
     // Note: Echo server runs in separate process, so we only see serverA's spans
-    await waitForSpans(exporter, 2);
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
 
-    const spans = exporter.getFinishedSpans();
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(2);
 
     // With fetch instrumentation: serverA (SERVER), fetchClient (CLIENT)
@@ -255,10 +261,11 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "1122334455667788";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const output = await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const echoData = JSON.parse(output);
 
-    await waitForSpans(exporter, 2);
-    const spans = exporter.getFinishedSpans();
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
@@ -267,6 +274,9 @@ describe("Distributed tracing with fetch propagation", () => {
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(echoData.headers.traceparent).toBeDefined();
+    expect(echoData.headers.traceparent).toContain(upstreamTraceId);
+    expect(echoData.headers.traceparent).toContain(fetchClientSpan.spanContext().spanId);
   });
 
   test("propagates trace context through nested async functions", async () => {
@@ -307,8 +317,8 @@ describe("Distributed tracing with fetch propagation", () => {
 
     await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
 
-    await waitForSpans(exporter, 2);
-    const spans = exporter.getFinishedSpans();
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
@@ -359,11 +369,12 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "ffeeddccbbaa9988";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const output = await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const result = JSON.parse(output);
 
-    // Wait for 1 SERVER + 3 CLIENT spans
-    await waitForSpans(exporter, 4);
-    const spans = exporter.getFinishedSpans();
+    // Wait for 1 SERVER + 3 CLIENT spans (scoped to our trace)
+    await waitForSpans(exporter, 4, 1500, { traceId: upstreamTraceId });
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(4);
 
     // All spans should share same trace ID
@@ -378,6 +389,11 @@ describe("Distributed tracing with fetch propagation", () => {
     // All CLIENT spans created by generator should be children of SERVER span
     for (const clientSpan of clientSpans) {
       expect(clientSpan.parentSpanId).toBe(serverSpan!.spanContext().spanId);
+    }
+    // And each downstream response should include a traceparent with the same traceId
+    for (const r of result.results) {
+      expect(r.headers.traceparent).toBeDefined();
+      expect(r.headers.traceparent).toContain(upstreamTraceId);
     }
   });
 
@@ -433,7 +449,6 @@ describe("Distributed tracing with fetch propagation", () => {
     expect(gatewaySpan).toBeDefined();
 
     // All 3 fetch CLIENT spans should be children of the gateway span
-
     const fetchClientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
     expect(fetchClientSpans).toHaveLength(3);
 
@@ -442,9 +457,9 @@ describe("Distributed tracing with fetch propagation", () => {
     }
 
     // Verify traceparent was injected in all 3 parallel requests
-    for (const serviceResult of result.results) {
-      expect(serviceResult.headers.traceparent).toBeDefined();
-      expect(serviceResult.headers.traceparent).toContain(traceId);
+    const headers = result.results.map((r: any) => String(r.headers.traceparent));
+    for (const fetchSpan of fetchClientSpans) {
+      expect(headers.some(h => h?.includes(fetchSpan.spanContext().spanId))).toBe(true);
     }
   });
 });

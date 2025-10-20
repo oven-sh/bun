@@ -25,6 +25,7 @@ test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
 test/js/node/test/system-ca/test-native-root-certs.test.mjs
 test/js/node/events/event-emitter.test.ts
+test/js/node/test/parallel/test-fs-promises-file-handle-readLines.mjs
 test/js/node/module/node-module-module.test.js
 test/js/node/process/call-constructor.test.js
 test/js/node/stubs.test.js

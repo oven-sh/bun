@@ -664,10 +664,10 @@ pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSErro
 /// This sets up AsyncLocalStorage for the current request lifecycle.
 /// Should be called at the start of HTTP request handling.
 ///
-/// @param global The JavaScript global object
+/// @param globalObject The JavaScript global object
 /// @param request_id The unique request identifier
 pub fn enterContext(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     request_id: RequestId,
 ) void {
     const telemetry = Telemetry.getInstance() orelse return;
@@ -678,24 +678,24 @@ pub fn enterContext(
     }
 
     // Get the enterWith method from AsyncLocalStorage
-    const enter_with_maybe = telemetry._context_storage.get(global, "enterWith") catch return;
+    const enter_with_maybe = telemetry._context_storage.get(globalObject, "enterWith") catch return;
     const enter_with = enter_with_maybe orelse return;
     if (!enter_with.isCallable()) {
         return;
     }
 
     // Create context object: { requestId: <id> }
-    const context_obj = JSValue.createEmptyObject(global, 1);
+    const context_obj = JSValue.createEmptyObject(globalObject, 1);
     const id_js = jsRequestId(request_id);
-    _ = context_obj.put(global, "requestId", id_js);
+    _ = context_obj.put(globalObject, "requestId", id_js);
 
     // Call storage.enterWith(context)
     _ = enter_with.call(
-        global,
+        globalObject,
         telemetry._context_storage, // 'this' context for the method call
         &.{context_obj},
     ) catch |err| {
-        _ = global.takeException(err);
+        _ = globalObject.takeException(err);
     };
 }
 
@@ -703,8 +703,8 @@ pub fn enterContext(
 /// This clears AsyncLocalStorage for the current request.
 /// Should be called at the end of HTTP request handling.
 ///
-/// @param global The JavaScript global object
-pub fn exitContext(global: *JSGlobalObject) void {
+/// @param globalObject The JavaScript global object
+pub fn exitContext(globalObject: *JSGlobalObject) void {
     const telemetry = Telemetry.getInstance() orelse return;
 
     if (telemetry._context_storage == .zero) {
@@ -712,7 +712,7 @@ pub fn exitContext(global: *JSGlobalObject) void {
     }
 
     // Get the disable method from AsyncLocalStorage
-    const disable_fn_maybe = telemetry._context_storage.get(global, "disable") catch return;
+    const disable_fn_maybe = telemetry._context_storage.get(globalObject, "disable") catch return;
     const disable_fn = disable_fn_maybe orelse return;
     if (!disable_fn.isCallable()) {
         return;
@@ -720,10 +720,10 @@ pub fn exitContext(global: *JSGlobalObject) void {
 
     // Call storage.disable()
     _ = disable_fn.call(
-        global,
+        globalObject,
         telemetry._context_storage,
         &.{},
     ) catch |err| {
-        _ = global.takeException(err);
+        _ = globalObject.takeException(err);
     };
 }

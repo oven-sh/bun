@@ -1,6 +1,6 @@
 import { file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
@@ -216,7 +216,7 @@ describe("bun prune", () => {
     // Verify production dep and its transitive dep are preserved
     expect(existsSync(join(String(dir), "node_modules/is-odd"))).toBe(true);
     expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
-    
+
     // Verify devDependency was removed
     expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
   });
@@ -277,7 +277,7 @@ describe("bun prune", () => {
 
     // Verify output indicates dry-run mode
     expect(stdout.toLowerCase()).toMatch(/would|dry-run|dry run/);
-    
+
     // Verify output shows is-number (package that will remain) and count
     expect(stdout).toContain("is-number");
     expect(stdout).toContain("1 package would be removed");
@@ -334,7 +334,7 @@ describe("bun prune", () => {
 
     expect(exitCode2).toBe(0);
     expect(stderr2).not.toContain("error:");
-    
+
     // Verify second run removes zero packages (idempotent)
     expect(stdout2).toContain("no changes");
   });
@@ -354,7 +354,7 @@ describe("bun prune", () => {
 
     // Should fail gracefully when no package.json exists
     expect(exitCode).not.toBe(0);
-    
+
     // Verify error message is clear and mentions package.json
     expect(stderr.toLowerCase()).toContain("package.json");
     expect(stderr.toLowerCase()).toContain("nothing to prune");
@@ -587,7 +587,7 @@ describe("bun prune", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).not.toContain("error:");
-    
+
     // Verify verbose output differs from non-verbose (shows at least package removal)
     expect(stdout).toContain("removed");
   });
@@ -773,5 +773,68 @@ describe("bun prune", () => {
     // Check both top-level and potential nested locations
     const lodashExists = existsSync(join(String(dir), "node_modules/lodash"));
     expect(lodashExists).toBe(false);
+  });
+
+  // TODO(bun-39): Implement recursive traversal for isolated linker mode
+  it.skip("should handle isolated linker mode with nested node_modules", async () => {
+    using dir = tempDir("prune-isolated-nested", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          // is-number has no dependencies, so it won't create nested structure
+          // but we can manually create one to test
+          "is-number": "^7.0.0",
+        },
+      }),
+      "bunfig.toml": `
+[install]
+linker = "isolated"
+`,
+    });
+
+    // Install with isolated linker
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Manually create a nested node_modules structure to simulate isolated mode
+    // In isolated mode, packages can have their dependencies nested like:
+    // node_modules/pkg-a/node_modules/pkg-b
+    const nestedPath = join(String(dir), "node_modules/is-number/node_modules");
+    mkdirSync(nestedPath, { recursive: true });
+
+    const nestedPkgPath = join(nestedPath, "lodash");
+    mkdirSync(nestedPkgPath, { recursive: true });
+    writeFileSync(join(nestedPkgPath, "package.json"), JSON.stringify({ name: "lodash", version: "4.17.21" }));
+
+    // Verify nested package exists
+    expect(existsSync(nestedPkgPath)).toBe(true);
+
+    // Run prune - should remove lodash since it's not in lockfile
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify nested lodash was removed
+    expect(existsSync(nestedPkgPath)).toBe(false);
   });
 });

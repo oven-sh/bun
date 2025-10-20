@@ -1546,9 +1546,9 @@ function lookupAndConnect(self, options) {
     family: socketToDnsFamily(options.family),
     hints: options.hints || 0,
   };
-  if (!isWindows && dnsopts.family !== 4 && dnsopts.family !== 6 && dnsopts.hints === 0) {
-    dnsopts.hints = dns.ADDRCONFIG;
-  }
+  // Note: We don't use dns.ADDRCONFIG here because it can filter out IPv6 addresses
+  // on systems that have IPv6 configured but report as IPv4-only, causing connection
+  // failures when servers bind to localhost (which resolves to ::1).
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);

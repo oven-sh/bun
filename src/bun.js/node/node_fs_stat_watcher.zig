@@ -186,6 +186,9 @@ pub const StatWatcher = struct {
     last_check: std.time.Instant,
 
     globalThis: *jsc.JSGlobalObject,
+
+    /// Kept alive by `last_jsvalue` via `.bind(this)`, which holds a reference
+    /// to `this._handle`.
     js_this: jsc.JSValue,
 
     poll_ref: bun.Async.KeepAlive = .{},
@@ -216,8 +219,8 @@ pub const StatWatcher = struct {
 
     /// Copy the last stat by value.
     ///
-    /// This field is sometimes set from aonther thread, so we shoudl copy it by
-    // /value instead of referencing by pointer.
+    /// This field is sometimes set from aonther thread, so we should copy by
+    /// value instead of referencing by pointer.
     pub fn getLastStat(this: *StatWatcher) bun.sys.PosixStat {
         this.#last_stat_lock.lock();
         defer this.#last_stat_lock.unlock();
@@ -236,8 +239,9 @@ pub const StatWatcher = struct {
 
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
         }
+
+        this.poll_ref.disable();
         this.closed = true;
         this.last_jsvalue.deinit();
 

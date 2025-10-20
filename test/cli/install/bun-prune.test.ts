@@ -219,8 +219,16 @@ describe("bun prune", () => {
     expect(exitCode).toBe(0);
     expect(stderr).not.toContain("error:");
 
-    // Verify output mentions what would be removed or indicates dry-run mode
+    // Verify output indicates dry-run mode
     expect(stdout.toLowerCase()).toMatch(/would|dry-run|dry run/);
+    
+    // Verify output shows is-number (package that will remain) and count
+    expect(stdout).toContain("is-number");
+    expect(stdout).toContain("1 package would be removed");
+
+    // Verify nothing is actually removed after dry-run
+    expect(existsSync(join(String(dir), "node_modules", "lodash"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules", "is-number"))).toBe(true);
   });
 
   it("should be idempotent", async () => {

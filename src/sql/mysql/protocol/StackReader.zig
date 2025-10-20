@@ -54,6 +54,11 @@ pub fn read(this: StackReader, count: usize) AnyMySQLError.Error!Data {
         return AnyMySQLError.Error.ShortRead;
     }
 
+    // Validate that count can be safely cast to isize to prevent integer overflow
+    if (count > std.math.maxInt(isize)) {
+        return AnyMySQLError.Error.ShortRead;
+    }
+
     this.skip(@intCast(count));
     return Data{
         .temporary = this.buffer[offset..this.offset.*],
@@ -74,5 +79,6 @@ pub fn readZ(this: StackReader) AnyMySQLError.Error!Data {
 
 const AnyMySQLError = @import("./AnyMySQLError.zig");
 const bun = @import("bun");
+const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;

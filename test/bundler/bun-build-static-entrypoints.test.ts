@@ -107,7 +107,7 @@ describe("Bun.build with static file entrypoints", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
-    expect(build.outputs[0].path).toMatch(/logo.*\.png$/); // Should be a PNG file, not JS
+    expect(build.outputs[0].path).toEndWith("logo.png"); // Should preserve original filename (no hash)
 
     const content = await build.outputs[0].arrayBuffer();
     const buffer = Buffer.from(content);
@@ -129,7 +129,7 @@ describe("Bun.build with static file entrypoints", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
-    expect(build.outputs[0].path).toMatch(/readme.*\.txt$/);
+    expect(build.outputs[0].path).toEndWith("readme.txt"); // Should preserve original filename (no hash)
 
     const content = await build.outputs[0].text();
     expect(content).toBe("Hello World");
@@ -160,7 +160,7 @@ describe("Bun.build with static file entrypoints", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
-    expect(build.outputs[0].path).toMatch(/module.*\.wasm$/);
+    expect(build.outputs[0].path).toEndWith("module.wasm"); // Should preserve original filename (no hash)
 
     const content = await build.outputs[0].arrayBuffer();
     const buffer = Buffer.from(content);
@@ -185,6 +185,10 @@ describe("Bun.build with static file entrypoints", () => {
     expect(build.outputs).toHaveLength(3);
     expect(build.outputs.every(o => o.kind === "asset")).toBe(true);
     expect(build.outputs.every(o => o.path.endsWith(".txt"))).toBe(true);
+    // Should preserve original filenames (no hash)
+    expect(build.outputs.some(o => o.path.endsWith("a.txt"))).toBe(true);
+    expect(build.outputs.some(o => o.path.endsWith("b.txt"))).toBe(true);
+    expect(build.outputs.some(o => o.path.endsWith("c.txt"))).toBe(true);
   });
 
   test("importing static files from JS should still create proxy + asset", async () => {
@@ -258,6 +262,10 @@ describe("Bun.build with static file entrypoints", () => {
     // Should produce ONLY asset files, no JS wrappers
     expect(build.outputs.every(o => o.kind === "asset")).toBe(true);
     expect(build.outputs.every(o => o.path.endsWith(".png"))).toBe(true);
+
+    // Should preserve original filenames (no hash) for entrypoints
+    expect(build.outputs.some(o => o.path.endsWith("logo.png"))).toBe(true);
+    expect(build.outputs.some(o => o.path.endsWith("favicon.png"))).toBe(true);
 
     // Verify actual PNG content
     for (const output of build.outputs) {

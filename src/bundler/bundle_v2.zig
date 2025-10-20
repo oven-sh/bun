@@ -1682,18 +1682,42 @@ pub const BundleV2 = struct {
             const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
             const loaders = this.graph.input_files.items(.loader);
 
+            // Check which files are copy-only entrypoints (should not have hash in filename)
+            const entry_points = this.graph.entry_points.items;
+
             for (reachable_files) |reachable_source| {
                 const index = reachable_source.get();
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
-                    var template = if (this.graph.html_imports.server_source_indices.len > 0 and this.transpiler.options.asset_naming.len == 0)
+                    const loader = loaders[index];
+
+                    // Check if this is a copy-only entrypoint
+                    const is_copy_only_entrypoint = blk: {
+                        if (!loader.shouldCopyAsEntrypoint()) break :blk false;
+
+                        // Check if it's in the entry_points list
+                        for (entry_points) |entry_point| {
+                            if (entry_point.get() == index) break :blk true;
+                        }
+                        break :blk false;
+                    };
+
+                    var template = if (is_copy_only_entrypoint) brk: {
+                        // Use entry naming for copy-only entrypoints (no hash by default)
+                        const entry_naming = this.transpiler.options.entry_naming;
+                        if (entry_naming.len > 0) {
+                            break :brk PathTemplate{ .data = entry_naming };
+                        }
+                        // If no entry naming specified, use "[dir]/[name][ext]" (no hash)
+                        break :brk PathTemplate{ .data = "[dir]/[name][ext]" };
+                    } else if (this.graph.html_imports.server_source_indices.len > 0 and this.transpiler.options.asset_naming.len == 0)
                         PathTemplate.assetWithTarget
                     else
                         PathTemplate.asset;
 
                     const target = targets[index];
                     const asset_naming = this.transpilerForTarget(target).options.asset_naming;
-                    if (asset_naming.len > 0) {
+                    if (!is_copy_only_entrypoint and asset_naming.len > 0) {
                         template.data = asset_naming;
                     }
 
@@ -1720,8 +1744,6 @@ pub const BundleV2 = struct {
                         }
                         break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{template}));
                     };
-
-                    const loader = loaders[index];
 
                     additional_output_files.append(options.OutputFile.init(.{
                         .source_index = .init(index),

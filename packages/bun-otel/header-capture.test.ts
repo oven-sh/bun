@@ -1,7 +1,7 @@
-import { Span } from "@opentelemetry/api";
+import { context, Span } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createBunTelemetryConfig } from "./otel-core";
 
 // Helper to access span attributes (Span API doesn't type attributes)
@@ -10,13 +10,30 @@ function getSpanAttributes(span: Span | undefined): Record<string, unknown> {
 }
 
 describe("Header capture and normalization", () => {
-  test("captures request headers with correct attribute naming", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  // Track providers created during tests for cleanup
+  const providers: { shutdown: () => Promise<void> }[] = [];
 
+  afterEach(async () => {
+    // Shutdown all providers created during tests
+    await Promise.all(providers.map(p => p.shutdown()));
+    providers.length = 0;
+
+    // Clear global context manager to prevent test isolation issues
+    context.disable();
+  });
+  function createTracerProvider(): NodeTracerProvider {
+    const exporter = new InMemorySpanExporter();
+    const processor = new SimpleSpanProcessor(exporter);
+    const provider = new NodeTracerProvider({
+      spanProcessors: [processor],
+    });
+    providers.push(provider, exporter, processor);
+    return provider;
+  }
+
+  test("captures request headers with correct attribute naming", () => {
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: ["user-agent", "x-request-id", "accept-language"],
     });
 
@@ -41,12 +58,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("normalizes header names: dashes to underscores", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: ["content-type", "x-custom-header", "accept-encoding"],
     });
 
@@ -69,12 +82,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("captures response headers with correct attribute naming", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       responseHeaderAttributes: ["content-type", "cache-control", "x-response-time"],
     });
 
@@ -100,12 +109,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("handles missing headers gracefully", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: ["user-agent", "x-missing-header", "authorization"],
     });
 
@@ -127,12 +132,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("skips header capture when arrays are empty", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: [],
       responseHeaderAttributes: [],
     });
@@ -152,12 +153,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("handles case-insensitive header lookup", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider();
-    tracerProvider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: ["Content-Type", "USER-AGENT"], // Mixed case
     });
 
@@ -179,10 +176,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("onResponseStart returns trace ID when enabled", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       correlationHeaderName: "x-trace-id",
     });
 
@@ -197,10 +192,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("onResponseStart returns undefined when correlation disabled", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       correlationHeaderName: false, // Disabled
     });
 
@@ -213,10 +206,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("onResponseStart returns undefined for missing span", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       correlationHeaderName: "x-trace-id",
     });
 
@@ -226,10 +217,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("uses custom correlation header name", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       correlationHeaderName: "x-custom-trace", // Custom name
     });
 
@@ -245,10 +234,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("captures multiple request headers efficiently", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       requestHeaderAttributes: [
         "user-agent",
         "accept",
@@ -287,10 +274,8 @@ describe("Header capture and normalization", () => {
   });
 
   test("captures multiple response headers efficiently", () => {
-    const tracerProvider = new NodeTracerProvider();
-
     const { config, spans } = createBunTelemetryConfig({
-      tracerProvider,
+      tracerProvider: createTracerProvider(),
       responseHeaderAttributes: [
         "content-type",
         "content-length",

@@ -210,6 +210,7 @@ function propRow(
   isWrapped = true,
   defaultPropertyAttributes,
   supportsObjectCreate = false,
+  disableDom,
 ) {
   var {
     defaultValue,
@@ -288,21 +289,21 @@ function propRow(
   } else if (getter && setter) {
     return `
 
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (defaultValue) {
   } else if (getter && !supportsObjectCreate && !writable) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
 `.trim();
   } else if (getter && !supportsObjectCreate && writable) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (getter && supportsObjectCreate) {
     setter = getter.replace("Get", "Set");
     return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, &${getter}, &${setter} } }
 `.trim();
   } else if (setter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
   `.trim();
   }
 
@@ -347,6 +348,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
         wrapped,
         defaultPropertyAttributes,
         obj.supportsObjectCreate || false,
+        !!obj.forBind,
       ),
     );
   }
@@ -625,9 +627,6 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
     Object.keys(fields).length > 0 ? generateHashTable(name, classSymbolName, typeName, obj, fields, false) : "";
 
   const hashTableIdentifier = hashTable.length ? `${name}TableValues` : "";
-  if (obj.estimatedSize) {
-    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
-  }
 
   return (
     `
@@ -718,7 +717,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
       RETURN_IF_EXCEPTION(scope, {});
     }
-    
+
 ` +
     (!obj.constructNeedsThis
       ? `
@@ -1077,7 +1076,21 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${
+      obj.forBind
+        ? `
+      JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(JSValue::decode(encodedThisValue));
+      if (!thisBoundFunction) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+      JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+      ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+      if (!thisObject) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+    `
+        : `${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));`
+    }
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     if (JSValue cachedValue = thisObject->${cacheName}.get())
@@ -1244,7 +1257,19 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   auto& vm = JSC::getVM(lexicalGlobalObject);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
+  ${
+    obj.forBind
+      ? `
+        JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(callFrame->thisValue());
+        if (!thisBoundFunction) [[unlikely]] {
+          scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+          return {};
+        }
+        JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+        ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+    `
+      : `${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());`
+  }
 
   if (!thisObject) [[unlikely]] {
       ${
@@ -1343,6 +1368,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
   const name = className(typeName);
 
+  if (obj.estimatedSize) {
+    externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
+  }
+
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
@@ -1401,6 +1430,9 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         using Base = JSC::JSDestructibleObject;
         static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+        ${obj.valuesArray ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray);` : ""}
+        ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
+        ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
 
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -1437,6 +1469,13 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
             m_ctx = nullptr;
         }
 
+        ${
+          obj.valuesArray
+            ? `const WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>& values() const { return jsvalueArray; }
+        `
+            : ""
+        }
+
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
         static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
 
@@ -1452,12 +1491,33 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         void* m_ctx { nullptr };
 
-
-        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-            : Base(vm, structure)
+        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_" : ""})
+            : Base(vm, structure)${obj.valuesArray ? ", jsvalueArray(WTFMove(jsvalueArray_))" : ""}
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
+        }
+
+        ${
+          obj.valuesArray && obj.values && obj.values.length > 0
+            ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
+            : Base(vm, structure)${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
+        {
+            m_ctx = sinkPtr;
+            ${weakInit.trim()}
+        }`
+            : ""
+        }
+
+        ${
+          obj.valuesArray && obj.values && obj.values.length > 0
+            ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
+            : Base(vm, structure), jsvalueArray(WTFMove(jsvalueArray_))${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
+        {
+            m_ctx = sinkPtr;
+            ${weakInit.trim()}
+        }`
+            : ""
         }
 
         void finishCreation(JSC::VM&);
@@ -1485,6 +1545,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         ${renderCachedFieldsHeader(typeName, klass, proto, values)}
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
+        ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
     ${suffix}
   `.trim();
@@ -1567,6 +1628,7 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
+    ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
     ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
@@ -1699,11 +1761,40 @@ void ${name}::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>()" : ""});
   ptr->finishCreation(vm);
   return ptr;
+}
+
+${
+  obj.valuesArray
+    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray) {
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTFMove(jsvalueArray));
+  ptr->finishCreation(vm);
+  return ptr;
+}`
+    : ""
+}
+
+${
+  obj.valuesArray && obj.values && obj.values.length > 0
+    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx${obj.values.map(v => `, ${v}`).join("")});
+  ptr->finishCreation(vm);
+  return ptr;
+}`
+    : ""
+}
+
+${
+  obj.valuesArray && obj.values && obj.values.length > 0
+    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTFMove(jsvalueArray)${obj.values.map(v => `, ${v}`).join("")});
+  ptr->finishCreation(vm);
+  return ptr;
+}`
+    : ""
 }
 
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJS(JSC::EncodedJSValue value)  {
@@ -1786,7 +1877,7 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, globalObject->objectPrototype());
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.forBind ? "globalObject->functionPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
@@ -1803,6 +1894,70 @@ extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__cr
       : ""
   }
   return JSValue::encode(instance);
+}
+
+${
+  obj.valuesArray
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer) {
+  auto &vm = globalObject->vm();
+  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
+  auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
+  WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray(args->size());
+  for (size_t i = 0; i < args->size(); ++i) {
+    jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
+  }
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTFMove(jsvalueArray));
+  ${
+    obj.estimatedSize
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
+      : ""
+  }
+  return JSValue::encode(instance);
+}`
+    : ""
+}
+
+${
+  obj.valuesArray && obj.values && obj.values.length > 0
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithInitialValues(Zig::GlobalObject* globalObject, void* ptr${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
+  auto &vm = globalObject->vm();
+  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
+  ${
+    obj.estimatedSize
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
+      : ""
+  }
+  return JSValue::encode(instance);
+}`
+    : ""
+}
+
+${
+  obj.valuesArray && obj.values && obj.values.length > 0
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValuesAndInitialValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
+  auto &vm = globalObject->vm();
+  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
+  auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
+  WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray(args->size());
+  for (size_t i = 0; i < args->size(); ++i) {
+    jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
+  }
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTFMove(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
+  ${
+    obj.estimatedSize
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
+      : ""
+  }
+  return JSValue::encode(instance);
+}`
+    : ""
 }
 
 ${DEFINE_VISIT_CHILDREN}
@@ -1865,6 +2020,7 @@ function generateZig(
     call = false,
     memoryCost,
     values = [],
+    valuesArray = false,
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
@@ -2032,6 +2188,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSTerminated => return null,
           });
         }
       `;
@@ -2045,6 +2202,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSTerminated => return null,
           });
         }
       `;
@@ -2290,6 +2448,57 @@ pub const ${className(typeName)} = struct {
         : ""
     }
 
+    ${
+      valuesArray && !overridesToJS
+        ? `
+    /// Create a new instance of ${typeName} with a MarkedArgumentBuffer
+    pub fn toJSWithValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject, markedArgumentBuffer: *jsc.MarkedArgumentBuffer) jsc.JSValue {
+        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
+        if (comptime Environment.allow_assert) {
+            const value__ = ${symbolName(typeName, "createWithValues")}(globalObject, this, markedArgumentBuffer);
+            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ${symbolName(typeName, "createWithValues")}(globalObject, this, markedArgumentBuffer);
+        }
+    }`
+        : ""
+    }
+
+    ${
+      valuesArray && values.length > 0 && !overridesToJS
+        ? `
+    /// Create a new instance of ${typeName} with initial values
+    pub fn toJSWithInitialValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject${values.map(v => `, ${v}: jsc.JSValue`).join("")}) jsc.JSValue {
+        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
+        if (comptime Environment.allow_assert) {
+            const value__ = ${symbolName(typeName, "createWithInitialValues")}(globalObject, this${values.map(v => `, ${v}`).join("")});
+            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ${symbolName(typeName, "createWithInitialValues")}(globalObject, this${values.map(v => `, ${v}`).join("")});
+        }
+    }`
+        : ""
+    }
+
+    ${
+      valuesArray && values.length > 0 && !overridesToJS
+        ? `
+    /// Create a new instance of ${typeName} with both a MarkedArgumentBuffer and initial values
+    pub fn toJSWithValuesAndInitialValues(this: *${typeName}, globalObject: *jsc.JSGlobalObject, markedArgumentBuffer: *jsc.MarkedArgumentBuffer${values.map(v => `, ${v}: jsc.JSValue`).join("")}) jsc.JSValue {
+        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
+        if (comptime Environment.allow_assert) {
+            const value__ = ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject, this, markedArgumentBuffer${values.map(v => `, ${v}`).join("")});
+            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject, this, markedArgumentBuffer${values.map(v => `, ${v}`).join("")});
+        }
+    }`
+        : ""
+    }
+
     /// Modify the internal ptr to point to a new instance of ${typeName}.
     pub fn dangerouslySetPtr(value: jsc.JSValue, ptr: ?*${typeName}) bool {
       jsc.markBinding(@src());
@@ -2306,6 +2515,9 @@ pub const ${className(typeName)} = struct {
     extern fn ${symbolName(typeName, "fromJSDirect")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
     extern fn ${symbolName(typeName, "getConstructor")}(*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
     extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}) callconv(jsc.conv) jsc.JSValue;
+    ${valuesArray ? `extern fn ${symbolName(typeName, "createWithValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}, markedArgumentBuffer: *anyopaque) callconv(jsc.conv) jsc.JSValue;` : ""}
+    ${valuesArray && values.length > 0 ? `extern fn ${symbolName(typeName, "createWithInitialValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}${values.map(v => `, ${v}: jsc.JSValue`).join("")}) callconv(jsc.conv) jsc.JSValue;` : ""}
+    ${valuesArray && values.length > 0 ? `extern fn ${symbolName(typeName, "createWithValuesAndInitialValues")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}, markedArgumentBuffer: *anyopaque${values.map(v => `, ${v}: jsc.JSValue`).join("")}) callconv(jsc.conv) jsc.JSValue;` : ""}
 
     /// Create a new instance of ${typeName} without validating it works.
     pub const toJSUnchecked = ${symbolName(typeName, "create")};

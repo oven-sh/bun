@@ -540,11 +540,11 @@ pub const TransformTask = struct {
         }
     }
 
-    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) void {
+    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
 
         if (this.log.hasAny() or this.err != null) {
-            const error_value: bun.OOM!JSValue = brk: {
+            const error_value: bun.JSError!JSValue = brk: {
                 if (this.err) |err| {
                     if (!this.log.hasAny()) {
                         break :brk bun.api.BuildMessage.create(
@@ -557,18 +557,18 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            promise.reject(this.global, error_value);
+            try promise.reject(this.global, error_value);
             return;
         }
 
-        finish(this, promise);
+        try finish(this, promise);
     }
 
-    fn finish(this: *TransformTask, promise: *jsc.JSPromise) void {
-        promise.resolve(this.global, this.output_code.transferToJS(this.global));
+    fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
+        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
     }
 
     pub fn deinit(this: *TransformTask) void {
@@ -1014,7 +1014,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.cloneUTF8(entry.key_ptr.*);
+        names[i] = bun.String.fromBytes(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

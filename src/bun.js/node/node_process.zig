@@ -14,20 +14,26 @@ comptime {
 
 var title_mutex = bun.Mutex{};
 
-pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
+pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.cli.Bun__Node__ProcessTitle;
-    title.* = ZigString.init(str orelse "bun");
+    title.* = bun.String.cloneUTF8(str orelse "bun");
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
+pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.C) void {
+    defer newvalue.deref();
     title_mutex.lock();
     defer title_mutex.unlock();
-    if (bun.cli.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.cli.Bun__Node__ProcessTitle.?);
-    bun.cli.Bun__Node__ProcessTitle = bun.handleOom(newvalue.dupe(bun.default_allocator));
-    return newvalue.toJS(globalObject);
+
+    const new_title = newvalue.toOwnedSlice(bun.default_allocator) catch {
+        globalObject.throwOutOfMemory() catch {};
+        return;
+    };
+
+    if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
+    bun.cli.Bun__Node__ProcessTitle = new_title;
 }
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
@@ -189,8 +195,6 @@ fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
         }
     }
 
-    defer allocator.free(args);
-
     if (vm.worker) |worker| {
         for (worker.argv) |arg| {
             args_list.appendAssumeCapacity(bun.String.init(arg));
@@ -305,7 +309,7 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
     var buf2 = bun.handleOom(allocator.alloc(u16, v.utf16ByteLength() + 1));
     defer allocator.free(buf2);
     const len1: usize = switch (wtf1.is8Bit()) {
-        true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,
+        true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, wtf1.latin1Slice()).written,
         false => b: {
             @memcpy(buf1[0..wtf1.length()], wtf1.utf16Slice());
             break :b wtf1.length();
@@ -316,7 +320,7 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
         if (v.tag == .Empty) break :str (&[_]u16{0})[0..0 :0];
         const wtf2 = v.value.WTFStringImpl;
         const len2: usize = switch (wtf2.is8Bit()) {
-            true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, []const u8, wtf2.latin1Slice()).written,
+            true => bun.strings.copyLatin1IntoUTF16([]u16, buf2, wtf2.latin1Slice()).written,
             false => b: {
                 @memcpy(buf2[0..wtf2.length()], wtf2.utf16Slice());
                 break :b wtf2.length();

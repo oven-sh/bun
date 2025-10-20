@@ -367,6 +367,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     }
 
     // Convert to P1363 format if requested for EC keys
+    size_t finalSignatureLength = sigBuf.len;
     if (dsa_sig_enc == DSASigEnc::P1363 && pkey.isSigVariant()) {
         auto p1363Size = pkey.getBytesOfRS().value_or(0) * 2;
         if (p1363Size > 0) {
@@ -387,12 +388,13 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
             }
 
             sigBuffer = p1363Buffer;
+            finalSignatureLength = p1363Size;
         }
     }
 
     // Create and return JSUint8Array
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuf.len));
+    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, finalSignatureLength));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

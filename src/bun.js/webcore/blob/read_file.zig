@@ -8,10 +8,9 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
         promise: JSPromise.Strong = .{},
         globalThis: *JSGlobalObject,
 
-        pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) void {
+        pub fn run(handler: *@This(), maybe_bytes: ReadFileResultType) bun.JSTerminated!void {
             var promise = handler.promise.swap();
-            var blob = handler.context;
-            blob.allocator = null;
+            var blob = handler.context.takeOwnership();
             const globalThis = handler.globalThis;
             bun.destroy(handler);
             switch (maybe_bytes) {
@@ -25,10 +24,10 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                         }
                     };
 
-                    jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
+                    try jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
-                    promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    try promise.reject(globalThis, err.toErrorInstance(globalThis));
                 },
             }
         }
@@ -107,14 +106,14 @@ pub const ReadFile = struct {
         max_len: SizeType,
         comptime Context: type,
         context: Context,
-        comptime callback: fn (ctx: Context, bytes: ReadFileResultType) void,
+        comptime callback: fn (ctx: Context, bytes: ReadFileResultType) bun.JSTerminated!void,
     ) !*ReadFile {
         if (Environment.isWindows)
             @compileError("dont call this function on windows");
 
         const Handler = struct {
             pub fn run(ptr: *anyopaque, bytes: ReadFileResultType) void {
-                callback(bun.cast(Context, ptr), bytes);
+                callback(bun.cast(Context, ptr), bytes) catch {}; // TODO: properly propagate exception upwards
             }
         };
 
@@ -233,7 +232,7 @@ pub const ReadFile = struct {
         return true;
     }
 
-    pub fn then(this: *ReadFile, _: *jsc.JSGlobalObject) void {
+    pub fn then(this: *ReadFile, _: *jsc.JSGlobalObject) bun.JSTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 

@@ -47,11 +47,10 @@ pub fn less(_: void, a: *const Self, b: *const Self) bool {
     return order == .lt;
 }
 
-pub const Tag = if (Environment.isWindows) enum {
+pub const Tag = enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
-    TestRunner,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
@@ -68,6 +67,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
+    BunTest,
     EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
@@ -75,11 +75,10 @@ pub const Tag = if (Environment.isWindows) enum {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .DNSResolver => DNSResolver,
-            .WindowsNamedPipe => uws.WindowsNamedPipe,
+            .WindowsNamedPipe => if (Environment.isWindows) uws.WindowsNamedPipe else UnreachableTimer,
             .WTFTimer => WTFTimer,
             .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
             .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
@@ -93,60 +92,21 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
-        };
-    }
-} else enum {
-    TimerCallback,
-    TimeoutObject,
-    ImmediateObject,
-    TestRunner,
-    StatWatcherScheduler,
-    UpgradedDuplex,
-    WTFTimer,
-    DNSResolver,
-    PostgresSQLConnectionTimeout,
-    PostgresSQLConnectionMaxLifetime,
-    MySQLConnectionTimeout,
-    MySQLConnectionMaxLifetime,
-    ValkeyConnectionTimeout,
-    ValkeyConnectionReconnect,
-    SubprocessTimeout,
-    DevServerSweepSourceMaps,
-    DevServerMemoryVisualizerTick,
-    AbortSignalTimeout,
-    DateHeaderTimer,
-    EventLoopDelayMonitor,
-
-    pub fn Type(comptime T: Tag) type {
-        return switch (T) {
-            .TimerCallback => TimerCallback,
-            .TimeoutObject => TimeoutObject,
-            .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
-            .StatWatcherScheduler => StatWatcherScheduler,
-            .UpgradedDuplex => uws.UpgradedDuplex,
-            .WTFTimer => WTFTimer,
-            .DNSResolver => DNSResolver,
-            .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
-            .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
-            .MySQLConnectionTimeout => jsc.MySQL.MySQLConnection,
-            .MySQLConnectionMaxLifetime => jsc.MySQL.MySQLConnection,
-            .ValkeyConnectionTimeout => jsc.API.Valkey,
-            .ValkeyConnectionReconnect => jsc.API.Valkey,
-            .SubprocessTimeout => jsc.Subprocess,
-            .DevServerSweepSourceMaps,
-            .DevServerMemoryVisualizerTick,
-            => bun.bake.DevServer,
-            .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
-            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 };
 
+const UnreachableTimer = struct {
+    event_loop_timer: Self,
+    fn callback(_: *UnreachableTimer, _: *UnreachableTimer) void {
+        if (Environment.ci_assert) bun.assert(false);
+    }
+};
+
 const TimerCallback = struct {
-    callback: *const fn (*TimerCallback) Arm,
+    callback: *const fn (*TimerCallback) void,
     ctx: *anyopaque,
     event_loop_timer: Self,
 };
@@ -192,35 +152,32 @@ fn ns(self: *const Self) u64 {
     return self.next.ns();
 }
 
-pub const Arm = union(enum) {
-    rearm: timespec,
-    disarm,
-};
-
-pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
+pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) void {
     switch (self.tag) {
-        .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
-        .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
-        .MySQLConnectionTimeout => return @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
-        .MySQLConnectionMaxLifetime => return @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
-        .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
-        .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
-        .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
-        .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now),
+        .PostgresSQLConnectionTimeout => @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .PostgresSQLConnectionMaxLifetime => @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
+        .MySQLConnectionTimeout => @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .MySQLConnectionMaxLifetime => @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
+        .ValkeyConnectionTimeout => @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .ValkeyConnectionReconnect => @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
+        .DevServerMemoryVisualizerTick => bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
+        .DevServerSweepSourceMaps => bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now),
         .AbortSignalTimeout => {
             const timeout = @as(*jsc.WebCore.AbortSignal.Timeout, @fieldParentPtr("event_loop_timer", self));
             timeout.run(vm);
-            return .disarm;
         },
         .DateHeaderTimer => {
             const date_header_timer = @as(*jsc.API.Timer.DateHeaderTimer, @fieldParentPtr("event_loop_timer", self));
             date_header_timer.run(vm);
-            return .disarm;
+        },
+        .BunTest => {
+            var container_strong = jsc.Jest.bun_test.BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self));
+            defer container_strong.deinit();
+            jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(container_strong, now, vm);
         },
         .EventLoopDelayMonitor => {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
             monitor.onFire(vm, now);
-            return .disarm;
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {
@@ -228,44 +185,25 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             }
             var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", self));
             if (comptime t.Type() == TimeoutObject or t.Type() == ImmediateObject) {
-                return container.internals.fire(now, vm);
+                container.internals.fire(now, vm);
+            } else if (comptime t.Type() == WTFTimer) {
+                container.fire(now, vm);
+            } else if (comptime t.Type() == StatWatcherScheduler) {
+                container.timerCallback();
+            } else if (comptime t.Type() == uws.UpgradedDuplex) {
+                container.onTimeout();
+            } else if (Environment.isWindows and t.Type() == uws.WindowsNamedPipe) {
+                container.onTimeout();
+            } else if (comptime t.Type() == DNSResolver) {
+                container.checkTimeouts(now, vm);
+            } else if (comptime t.Type() == jsc.Subprocess) {
+                container.timeoutCallback();
+            } else {
+                container.callback(container);
             }
-
-            if (comptime t.Type() == WTFTimer) {
-                return container.fire(now, vm);
-            }
-
-            if (comptime t.Type() == StatWatcherScheduler) {
-                return container.timerCallback();
-            }
-            if (comptime t.Type() == uws.UpgradedDuplex) {
-                return container.onTimeout();
-            }
-            if (Environment.isWindows) {
-                if (comptime t.Type() == uws.WindowsNamedPipe) {
-                    return container.onTimeout();
-                }
-            }
-
-            if (comptime t.Type() == jsc.Jest.TestRunner) {
-                container.onTestTimeout(now, vm);
-                return .disarm;
-            }
-
-            if (comptime t.Type() == DNSResolver) {
-                return container.checkTimeouts(now, vm);
-            }
-
-            if (comptime t.Type() == jsc.Subprocess) {
-                return container.timeoutCallback();
-            }
-
-            return container.callback(container);
         },
     }
 }
-
-pub fn deinit(_: *Self) void {}
 
 /// A timer created by WTF code and invoked by Bun's event loop
 const WTFTimer = bun.api.Timer.WTFTimer;

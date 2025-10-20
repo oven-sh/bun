@@ -67,10 +67,7 @@ pub fn messageWithTypeAndLevel(
     vals: [*]const JSValue,
     len: usize,
 ) callconv(jsc.conv) void {
-    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
-    };
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
 }
 fn messageWithTypeAndLevel_(
     //console_: *ConsoleObject,
@@ -152,6 +149,10 @@ fn messageWithTypeAndLevel_(
         &console.writer;
     var writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
+
+    if (bun.jsc.Jest.Jest.runner) |runner| {
+        runner.bun_test_root.onBeforePrint();
+    }
 
     var print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default
@@ -1716,7 +1717,7 @@ pub const Formatter = struct {
             }
 
             pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                bun.fmt.formatUTF16Type(input, self.ctx) catch {
                     self.failed = true;
                 };
             }
@@ -2162,7 +2163,7 @@ pub const Formatter = struct {
                     writer.writeAll(slice);
                 } else if (!str.isEmpty()) {
                     // slow path
-                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
+                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.latin1()) catch &[_]u8{};
                     if (buf.len > 0) {
                         defer bun.default_allocator.free(buf);
                         writer.writeAll(buf);
@@ -2278,6 +2279,13 @@ pub const Formatter = struct {
                 }
             },
             .Error => {
+                // Temporarily remove from the visited map to allow printErrorlikeObject to process it
+                // The circular reference check is already done in printAs, so we know it's safe
+                const was_in_map = if (this.map_node != null) this.map.remove(value) else false;
+                defer if (was_in_map) {
+                    _ = this.map.put(value, {}) catch {};
+                };
+
                 VirtualMachine.get().printErrorlikeObject(
                     value,
                     null,
@@ -2709,7 +2717,7 @@ pub const Formatter = struct {
             },
             .Map => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2816,7 +2824,7 @@ pub const Formatter = struct {
             },
             .Set => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;

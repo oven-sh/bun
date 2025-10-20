@@ -1,10 +1,9 @@
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = &[0]u8{},
-    offset: usize = 0,
     len: usize = 0,
     byte_len: usize = 0,
-    typed_array_type: jsc.JSValue.JSType = .Cell,
     value: jsc.JSValue = jsc.JSValue.zero,
+    typed_array_type: jsc.JSValue.JSType = .Cell,
     shared: bool = false,
 
     // require('buffer').kMaxLength.
@@ -132,7 +131,7 @@ pub const ArrayBuffer = extern struct {
         }
     };
 
-    pub const empty = ArrayBuffer{ .offset = 0, .len = 0, .byte_len = 0, .typed_array_type = .Uint8Array, .ptr = undefined };
+    pub const empty = ArrayBuffer{ .len = 0, .byte_len = 0, .typed_array_type = .Uint8Array, .ptr = &.{} };
 
     pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);
@@ -186,11 +185,7 @@ pub const ArrayBuffer = extern struct {
     extern "c" fn Bun__createArrayBufferForCopy(*jsc.JSGlobalObject, ptr: ?*const anyopaque, len: usize) jsc.JSValue;
 
     pub fn fromTypedArray(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) ArrayBuffer {
-        var out: ArrayBuffer = .{};
-        const was = value.asArrayBuffer_(ctx, &out);
-        bun.assert(was);
-        out.value = value;
-        return out;
+        return value.asArrayBuffer(ctx).?;
     }
 
     extern "c" fn JSArrayBuffer__fromDefaultAllocator(*jsc.JSGlobalObject, ptr: [*]u8, len: usize) jsc.JSValue;
@@ -207,7 +202,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn fromBytes(bytes: []u8, typed_array_type: jsc.JSValue.JSType) ArrayBuffer {
-        return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
+        return ArrayBuffer{ .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -320,7 +315,7 @@ pub const ArrayBuffer = extern struct {
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
-        return this.ptr[this.offset..][0..this.byte_len];
+        return this.ptr[0..this.byte_len];
     }
 
     /// The equivalent of
@@ -331,15 +326,19 @@ pub const ArrayBuffer = extern struct {
     pub const slice = byteSlice;
 
     pub inline fn asU16(this: *const @This()) []u16 {
-        return std.mem.bytesAsSlice(u16, @as([*]u16, @ptrCast(@alignCast(this.ptr)))[this.offset..this.byte_len]);
+        return @alignCast(this.asU16Unaligned());
     }
 
     pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
-        return std.mem.bytesAsSlice(u16, @as([*]align(1) u16, @ptrCast(@alignCast(this.ptr)))[this.offset..this.byte_len]);
+        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u16) * @sizeOf(u16)]);
     }
 
     pub inline fn asU32(this: *const @This()) []u32 {
-        return std.mem.bytesAsSlice(u32, @as([*]u32, @ptrCast(@alignCast(this.ptr)))[this.offset..this.byte_len]);
+        return @alignCast(this.asU32Unaligned());
+    }
+
+    pub inline fn asU32Unaligned(this: *const @This()) []align(1) u32 {
+        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u32) * @sizeOf(u32)]);
     }
 
     pub const BinaryType = enum(u4) {
@@ -435,7 +434,9 @@ pub const ArrayBuffer = extern struct {
 
         pub fn fromJSValue(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?BinaryType {
             if (input.isString()) {
-                return Map.getWithEql(try input.toBunString(globalThis), bun.String.eqlComptime);
+                const str = try input.toBunString(globalThis);
+                defer str.deref();
+                return Map.getWithEql(str, bun.String.eqlComptime);
             }
 
             return null;
@@ -590,7 +591,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *jsc.JSGlobalObject) jsc.JSValue {
-        return jsc.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
+        return jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice());
     }
 
     pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -649,6 +650,29 @@ pub fn makeArrayBufferWithBytesNoCopy(globalObject: *jsc.JSGlobalObject, ptr: ?*
 pub fn makeTypedArrayWithBytesNoCopy(globalObject: *jsc.JSGlobalObject, arrayType: ArrayBuffer.TypedArrayType, ptr: ?*anyopaque, len: usize, deallocator: jsc.C.JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque) bun.JSError!jsc.JSValue {
     return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__makeTypedArrayWithBytesNoCopy, .{ globalObject, arrayType, ptr, len, deallocator, deallocatorContext });
 }
+
+/// Corresponds to `JSC::ArrayBuffer`.
+pub const JSCArrayBuffer = opaque {
+    const Self = @This();
+
+    extern fn JSC__ArrayBuffer__asBunArrayBuffer(self: *Self, out: *ArrayBuffer) void;
+    extern fn JSC__ArrayBuffer__ref(self: *Self) void;
+    extern fn JSC__ArrayBuffer__deref(self: *Self) void;
+
+    pub const Ref = bun.ptr.ExternalShared(Self);
+
+    pub const external_shared_descriptor = struct {
+        pub const ref = JSC__ArrayBuffer__ref;
+        pub const deref = JSC__ArrayBuffer__deref;
+    };
+
+    pub fn asArrayBuffer(self: *Self) ArrayBuffer {
+        var out: ArrayBuffer = undefined;
+        out.ptr = &.{}; // `ptr` might not get set if the ArrayBuffer is empty
+        JSC__ArrayBuffer__asBunArrayBuffer(self, &out);
+        return out;
+    }
+};
 
 const std = @import("std");
 

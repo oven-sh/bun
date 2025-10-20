@@ -545,6 +545,8 @@ pub const StringVoidMap = struct {
     allocator: Allocator,
     map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 
+    pub const deinit = void;
+
     /// Returns true if the map already contained the given key.
     pub fn getOrPutContains(this: *StringVoidMap, key: string) bool {
         const entry = this.map.getOrPut(this.allocator, key) catch unreachable;
@@ -928,16 +930,17 @@ pub const MacroState = struct {
 };
 
 pub const Jest = struct {
-    expect: Ref = Ref.None,
-    expectTypeOf: Ref = Ref.None,
-    describe: Ref = Ref.None,
     @"test": Ref = Ref.None,
     it: Ref = Ref.None,
+    describe: Ref = Ref.None,
+    expect: Ref = Ref.None,
+    expectTypeOf: Ref = Ref.None,
+    beforeAll: Ref = Ref.None,
     beforeEach: Ref = Ref.None,
     afterEach: Ref = Ref.None,
-    beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+    vi: Ref = Ref.None,
     xit: Ref = Ref.None,
     xtest: Ref = Ref.None,
     xdescribe: Ref = Ref.None,

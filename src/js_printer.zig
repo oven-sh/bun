@@ -414,6 +414,9 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
+    /// The module type of the importing file (after linking), used to determine interop helper behavior.
+    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    input_module_type: options.ModuleType = .unknown,
     module_type: options.Format = .esm,
 
     // /// Used for cross-module inlining of import items when bundling
@@ -926,19 +929,6 @@ fn NewPrinter(
                 p.print("=");
             } else {
                 p.print(" = ");
-            }
-        }
-
-        fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            comptime bun.assert(is_bun_platform);
-
-            switch (p.options.module_type) {
-                .cjs => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
-                },
-                else => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
-                },
             }
         }
 
@@ -1634,22 +1624,6 @@ fn NewPrinter(
                             return;
                         }
                     },
-                    .bun_test => {
-                        if (record.kind == .dynamic) {
-                            if (module_type == .cjs) {
-                                p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
-                            } else {
-                                p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
-                            }
-                        } else if (record.kind == .require) {
-                            if (module_type == .cjs) {
-                                p.print("globalThis.Bun.jest(__filename)");
-                            } else {
-                                p.print("globalThis.Bun.jest(import.meta.path)");
-                            }
-                        }
-                        return;
-                    },
                     else => {},
                 }
             }
@@ -1740,7 +1714,7 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (module_type.isESM()) {
+                    if (p.options.input_module_type == .esm) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");
@@ -2322,6 +2296,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".requireResolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -4336,10 +4313,6 @@ fn NewPrinter(
 
                     if (comptime is_bun_platform) {
                         switch (record.tag) {
-                            .bun_test => {
-                                p.printBunJestImportStatement(s.*);
-                                return;
-                            },
                             .bun => {
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
@@ -6030,11 +6003,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
-    var buffer = printer.writer.takeBuffer();
+    var buffer: MutableString = printer.writer.takeBuffer();
 
     return .{
         .result = .{
-            .code = buffer.toOwnedSlice(),
+            .code = buffer.takeSlice(),
             .source_map = source_map,
         },
     };

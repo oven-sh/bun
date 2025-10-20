@@ -12,7 +12,7 @@ pub fn toHaveLength(
         return globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected: JSValue = arguments[0];
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveLength", "<green>expected<r>");
@@ -72,7 +72,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

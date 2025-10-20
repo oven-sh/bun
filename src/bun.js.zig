@@ -1,6 +1,7 @@
 pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
+pub const bindgen = @import("./bun.js/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -47,7 +48,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
@@ -135,7 +136,7 @@ pub const Run = struct {
             null,
         );
         try bundle.runEnvLoader(false);
-        const mini = jsc.MiniEventLoop.initGlobal(bundle.env);
+        const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
@@ -185,7 +186,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);
@@ -310,8 +311,8 @@ pub const Run = struct {
         }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, this.entry_path),
+            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.entry_path),
             else => {},
         }
 
@@ -327,6 +328,7 @@ pub const Run = struct {
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
+                    vm.addMainToWatcherIfNeeded();
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
@@ -388,21 +390,21 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                vm.handlePendingInternalPromiseRejection();
+                vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        vm.handlePendingInternalPromiseRejection();
+                        vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
-                    vm.handlePendingInternalPromiseRejection();
+                    vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                     vm.eventLoop().tickPossiblyForever();
                 }
@@ -418,7 +420,7 @@ pub const Run = struct {
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc_vm)) {
                                 .pending => {
-                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -465,6 +467,7 @@ pub const Run = struct {
         }
 
         bun.api.napi.fixDeadCodeElimination();
+        bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
         @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();

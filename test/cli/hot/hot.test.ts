@@ -37,12 +37,18 @@ it("does not crash under stress", () => {
   using testDir = tempDir("watcher-stress-test", {
     "index.js": `
 const TEST_DIR = "./crash-test";
+import { writeFile, mkdir } from "fs/promises";
+
+setTimeout(() => {
+  process.exit(0);
+}, 1000);
 
 // Create a deeply nested module structure
 for (let i = 0; i < 100; i++) {
   for (let j = 0; j < 10; j++) {
     const dir = \`\${TEST_DIR}/dir\${i}\`;
-    await Bun.write(\`\${dir}/module\${j}.ts\`, \`export default \${i * 10 + j};\`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(\`\${dir}/module\${j}.ts\`, \`export default \${i * 10 + j};\`);
   }
 }
 
@@ -57,16 +63,10 @@ for (let worker = 0; worker < 10; worker++) {
         await import(\`\${TEST_DIR}/dir\${i}/module\${j}.ts\`);
       } catch {}
 
-      // Modify files to trigger WindowsWatcher.watchLoopCycle
-      await Bun.write(\`\${TEST_DIR}/dir\${i}/module\${j}.ts\`, \`export default \${Date.now()};\`);
+      await writeFile(\`\${TEST_DIR}/dir\${i}/module\${j}.ts\`, \`export default \${Date.now()};\`);
     }
   })();
 }
-
-// Keep process alive
-setTimeout(() => {
-  process.exit(0);
-}, 1000);
 `,
   });
 

@@ -33,7 +33,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
 
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*);
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*, JSC::EncodedJSValue);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -43,7 +43,7 @@ extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
     auto& vm = JSC::getVM(globalObject);
 
     // React does this:
@@ -213,7 +213,7 @@ public:
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
         int arg_was_jsx = 0;
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx, JSValue::encode(instance));
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
@@ -236,14 +236,14 @@ public:
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
     {
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr, JSValue::encode(instance));
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
@@ -300,7 +300,7 @@ Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalO
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(init.global);
+    auto* zigGlobal = static_cast<Zig::GlobalObject*>(init.global);
     auto* prototype = JSC::constructEmptyObject(zigGlobal, zigGlobal->JSResponsePrototype());
 
     auto* constructorStructure = JSBakeResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());

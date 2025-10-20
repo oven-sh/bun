@@ -53,7 +53,9 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        var buntest_strong = expect.bunTest() orelse return error.SnapshotFailed;
+        defer buntest_strong.deinit();
+        const bunTest = buntest_strong.get();
         switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
@@ -83,11 +85,9 @@ pub const Snapshots = struct {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if (bun.FeatureFlags.breaking_changes_1_3) {
-            if (bun.detectCI()) |_| {
-                if (!this.update_snapshots) {
-                    return error.SnapshotCreationNotAllowedInCI;
-                }
+        if (bun.detectCI()) |_| {
+            if (!this.update_snapshots) {
+                return error.SnapshotCreationNotAllowedInCI;
             }
         }
 

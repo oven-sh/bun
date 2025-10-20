@@ -22,6 +22,7 @@ pub const RedisError = error{
     InvalidVerbatimString,
     JSError,
     OutOfMemory,
+    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
@@ -55,8 +56,8 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
         error.JSError => return globalObject.takeException(error.JSError),
-        error.OutOfMemory => globalObject.throwOutOfMemory() catch
-            return globalObject.takeException(error.JSError),
+        error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
+        error.JSTerminated => return globalObject.takeException(error.JSTerminated),
     };
 
     if (message) |msg| {

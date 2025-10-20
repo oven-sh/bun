@@ -105,21 +105,21 @@ pub fn migratePnpmLockfile(
         return error.PnpmLockfileMissingVersion;
     };
 
-    const lockfile_version_num: u32 = lockfile_version: {
+    const lockfile_version_num: f64 = lockfile_version: {
         err: {
             switch (lockfile_version_expr.data) {
                 .e_number => |num| {
-                    if (num.value < 0 or num.value > std.math.maxInt(u32)) {
+                    if (num.value < 0) {
                         break :err;
                     }
 
-                    break :lockfile_version @intFromFloat(std.math.divExact(f64, num.value, 1) catch break :err);
+                    break :lockfile_version num.value;
                 },
                 .e_string => |version_str| {
                     const str = version_str.slice(allocator);
 
                     const end = strings.indexOfChar(str, '.') orelse str.len;
-                    break :lockfile_version std.fmt.parseUnsigned(u32, str[0..end], 10) catch break :err;
+                    break :lockfile_version std.fmt.parseFloat(f64, str[0..end]) catch break :err;
                 },
                 else => {},
             }
@@ -824,7 +824,7 @@ pub fn migratePnpmLockfile(
 
     try lockfile.resolve(log);
 
-    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, false);
 
     try updatePackageJsonAfterMigration(allocator, manager, log, dir, found_patches);
 
@@ -832,7 +832,7 @@ pub fn migratePnpmLockfile(
         .ok = .{
             .lockfile = lockfile,
             .loaded_from_binary_lockfile = false,
-            .was_migrated = true,
+            .migrated = .pnpm,
             .serializer_result = .{},
             .format = .text,
         },

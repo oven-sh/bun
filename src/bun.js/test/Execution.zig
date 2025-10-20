@@ -494,6 +494,8 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
+        log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});
+
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
                 if (debugger.test_reporter_agent.isEnabled()) {
@@ -593,8 +595,6 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
     groupLog.begin(@src());
     defer groupLog.end();
 
-    if (bun.jsc.Jest.Jest.runner) |runner| runner.current_file.printIfNeeded();
-
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
 
@@ -620,6 +620,8 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
         },
     };
 }
+
+const log = bun.Output.scoped(.jest, .visible);
 
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");

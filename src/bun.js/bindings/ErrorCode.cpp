@@ -121,10 +121,18 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     case JSC::ErrorType::SyntaxError:
         prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
         break;
-    default: {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+    case JSC::ErrorType::EvalError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_evalErrorStructure.prototype(globalObject));
         break;
-    }
+    case JSC::ErrorType::ReferenceError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_referenceErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::AggregateError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_aggregateErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SuppressedError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_suppressedErrorStructure.prototype(globalObject));
+        break;
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);

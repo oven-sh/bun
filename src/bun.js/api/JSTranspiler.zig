@@ -547,7 +547,7 @@ pub const TransformTask = struct {
         };
     }
 
-    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) void {
+    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
 
         if (this.log.hasAny()) {
@@ -557,22 +557,22 @@ pub const TransformTask = struct {
         if (this.err) |err| {
             return switch (err) {
                 error.OutOfMemory, error.JSError => |e| {
-                    promise.reject(this.global, e);
+                    try promise.reject(this.global, e);
                 },
                 error.StackOverflow => {
-                    promise.reject(this.global, this.global.throwStackOverflow());
+                    try promise.reject(this.global, this.global.throwStackOverflow());
                 },
                 else => {
-                    promise.reject(this.global, this.global.createSyntaxErrorInstance("Parse error: Unable to parse input string due to {s}", .{@errorName(err)}));
+                    try promise.reject(this.global, this.global.createSyntaxErrorInstance("Parse error: Unable to parse input string due to {s}", .{@errorName(err)}));
                 },
             };
         }
 
-        finish(this, promise);
+        try finish(this, promise);
     }
 
-    fn finish(this: *TransformTask, promise: *jsc.JSPromise) void {
-        promise.resolve(this.global, this.output_code.transferToJS(this.global));
+    fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
+        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
     }
 
     pub fn deinit(this: *TransformTask) void {

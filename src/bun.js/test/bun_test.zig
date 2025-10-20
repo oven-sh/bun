@@ -169,10 +169,25 @@ pub const BunTestRoot = struct {
         first: bool,
         last: bool,
     };
+
+    pub fn onBeforePrint(this: *BunTestRoot) void {
+        if (this.active_file.get()) |active_file| {
+            if (active_file.reporter) |reporter| {
+                if (reporter.reporters.dots and reporter.last_printed_dot) {
+                    bun.Output.prettyError("<r>\n", .{});
+                    bun.Output.flush();
+                    reporter.last_printed_dot = false;
+                }
+                if (bun.jsc.Jest.Jest.runner) |runner| {
+                    runner.current_file.printIfNeeded();
+                }
+            }
+        }
+    }
 };
 
 pub const BunTest = struct {
-    buntest: *BunTestRoot,
+    bun_test_root: *BunTestRoot,
     in_run_loop: bool,
     allocation_scope: bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -187,6 +202,7 @@ pub const BunTest = struct {
     default_concurrent: bool,
     first_last: BunTestRoot.FirstLast,
     extra_execution_entries: std.ArrayList(*ExecutionEntry),
+    wants_wakeup: bool = false,
 
     phase: enum {
         collection,
@@ -206,7 +222,7 @@ pub const BunTest = struct {
         this.arena = this.arena_allocator.allocator();
 
         this.* = .{
-            .buntest = bunTest,
+            .bun_test_root = bunTest,
             .in_run_loop = false,
             .allocation_scope = this.allocation_scope,
             .gpa = this.gpa,
@@ -310,10 +326,8 @@ pub const BunTest = struct {
             bun.destroy(this);
             buntest_weak.deinit();
         }
-        pub fn bunTest(this: *RefData) ?*BunTest {
-            var buntest_strong = this.buntest_weak.clone().upgrade() orelse return null;
-            defer buntest_strong.deinit();
-            return buntest_strong.get();
+        pub fn bunTest(this: *RefData) ?BunTestPtr {
+            return this.buntest_weak.upgrade() orelse return null;
         }
     };
     pub fn getCurrentStateData(this: *BunTest) RefDataValue {
@@ -379,7 +393,7 @@ pub const BunTest = struct {
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
         const has_one_ref = refdata.ref_count.hasOneRef();
-        var this_strong = refdata.buntest_weak.clone().upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
+        var this_strong = refdata.buntest_weak.upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
         defer this_strong.deinit();
         const this = this_strong.get();
 
@@ -433,7 +447,7 @@ pub const BunTest = struct {
 
         if (!should_run) return .js_undefined;
 
-        var strong = ref_in.buntest_weak.clone().upgrade() orelse return .js_undefined;
+        var strong = ref_in.buntest_weak.upgrade() orelse return .js_undefined;
         defer strong.deinit();
         const buntest = strong.get();
         buntest.addResult(ref_in.phase);
@@ -441,7 +455,7 @@ pub const BunTest = struct {
 
         return .js_undefined;
     }
-    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -458,14 +472,19 @@ pub const BunTest = struct {
         run(this_strong, vm.global) catch |e| {
             this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
         };
-
-        return .disarm; // this won't disable the timer if .run() re-arms it
     }
     pub fn runNextTick(weak: BunTestPtr.Weak, globalThis: *jsc.JSGlobalObject, phase: RefDataValue) void {
         const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });
         errdefer bun.destroy(done_callback_test);
         const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
-        jsc.VirtualMachine.get().enqueueTask(task);
+        const vm = globalThis.bunVM();
+        var strong = weak.upgrade() orelse {
+            if (bun.Environment.ci_assert) bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
+            return; // but just in case
+        };
+        defer strong.deinit();
+        strong.get().wants_wakeup = true; // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
+        vm.enqueueTask(task);
     }
     pub const RunTestsTask = struct {
         weak: BunTestPtr.Weak,
@@ -475,7 +494,7 @@ pub const BunTest = struct {
         pub fn call(this: *RunTestsTask) void {
             defer bun.destroy(this);
             defer this.weak.deinit();
-            var strong = this.weak.clone().upgrade() orelse return;
+            var strong = this.weak.upgrade() orelse return;
             defer strong.deinit();
             BunTest.run(strong, this.globalThis) catch |e| {
                 strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.phase);
@@ -563,10 +582,10 @@ pub const BunTest = struct {
                 });
                 defer order.deinit();
 
-                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items) else .empty;
+                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.bun_test_root.hook_scope.beforeAll.items) else .empty;
                 try order.generateOrderDescribe(this.collection.root_scope);
                 beforeall_order.setFailureSkipTo(&order);
-                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.buntest.hook_scope.afterAll.items) else .empty;
+                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.bun_test_root.hook_scope.afterAll.items) else .empty;
                 afterall_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);
@@ -650,7 +669,7 @@ pub const BunTest = struct {
                     .pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch) catch {}; // TODO: properly propagate exception upwards
                         return null;
                     },
                     .fulfilled => {
@@ -697,6 +716,7 @@ pub const BunTest = struct {
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
         if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
+        this.bun_test_root.onBeforePrint();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(
@@ -707,12 +727,14 @@ pub const BunTest = struct {
             , .{});
             bun.Output.flush();
         }
+
         globalThis.bunVM().runErrorHandler(exception.?, null);
-        bun.Output.flush();
+
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
-            bun.Output.flush();
         }
+
+        bun.Output.flush();
     }
 };
 

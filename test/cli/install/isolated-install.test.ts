@@ -226,6 +226,41 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("package with dependency on previous self works", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-transitive-self-dep",
+      dependencies: {
+        "self-dep": "1.0.2",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "self-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "self-dep", "node_modules", "self-dep", "package.json")).json(),
+    ]),
+  ).toEqual([
+    {
+      name: "self-dep",
+      version: "1.0.2",
+      dependencies: {
+        "self-dep": "1.0.1",
+      },
+    },
+    {
+      name: "self-dep",
+      version: "1.0.1",
+    },
+  ]);
+});
+
 test("can install folder dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
@@ -266,6 +301,46 @@ test("can install folder dependencies", async () => {
       join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep", "index.js"),
     ).text(),
   ).toBe("module.exports = 'hello from pkg-1';");
+});
+
+test("can install folder dependencies on root package", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root-file-dep",
+        workspaces: ["packages/*"],
+        dependencies: {
+          self: "file:.",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          root: "file:../..",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      readlink(join(packageDir, "node_modules", "self")),
+      readlink(join(packageDir, "packages", "pkg1", "node_modules", "root")),
+      file(join(packageDir, "node_modules", "self", "package.json")).json(),
+    ]),
+  ).toEqual([
+    join(".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    await file(packageJson).json(),
+  ]);
 });
 
 describe("isolated workspaces", () => {
@@ -454,6 +529,140 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
     });
   });
 }
+
+describe("existing node_modules, missing node_modules/.bun", () => {
+  test("root and workspace node_modules are reset", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "delete-node-modules",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "1.0.1",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "node_modules/oops": "delete me!",
+        "packages/pkg1/node_modules/oops1": "delete me!",
+        "packages/pkg2/node_modules/oops2": "delete me!",
+      },
+    });
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
+  });
+  test("some workspaces don't have node_modules", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "missing-workspace-node_modules",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "node_modules/hi": "BUN",
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg-one",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "packages/pkg1/node_modules/foo": "HI",
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg-two",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      },
+    });
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "no-deps"], ["no-deps"], ["a-dep"]]);
+
+    // another install will not reset the node_modules
+
+    const entries = await readdirSorted(join(packageDir, "node_modules"));
+
+    for (const entry of entries) {
+      if (entry.startsWith(".old_modules-")) {
+        await rm(join(packageDir, "node_modules", entry), { recursive: true, force: true });
+      }
+    }
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
+
+    // add things to workspace node_modules. these will go undetected
+    await Promise.all([
+      write(join(packageDir, "packages", "pkg1", "node_modules", "oops1"), "HI1"),
+      write(join(packageDir, "packages", "pkg2", "node_modules", "oops2"), "HI2"),
+    ]);
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([
+      [".bun", "no-deps"],
+      ["no-deps", "oops1"],
+      ["a-dep", "oops2"],
+    ]);
+  });
+});
 
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {

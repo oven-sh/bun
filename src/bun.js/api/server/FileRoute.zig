@@ -59,18 +59,19 @@ pub fn memoryCost(this: *const FileRoute) usize {
 
 pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*FileRoute {
     if (argument.as(jsc.WebCore.Response)) |response| {
-        response.body.value.toBlobIfPossible();
-        if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
-            if (response.body.value.Blob.store.?.data.file.pathlike == .fd) {
+        const bodyValue = response.getBodyValue();
+        bodyValue.toBlobIfPossible();
+        if (bodyValue.* == .Blob and bodyValue.Blob.needsToReadFile()) {
+            if (bodyValue.Blob.store.?.data.file.pathlike == .fd) {
                 return globalThis.throwTODO("Support serving files from a file descriptor. Please pass a path instead.");
             }
 
-            var blob = response.body.value.use();
+            var blob = bodyValue.use();
 
             blob.globalThis = globalThis;
             bun.assertf(!blob.isHeapAllocated(), "expected blob not to be heap-allocated", .{});
-            response.body.value = .{ .Blob = blob.dupe() };
-            const headers = bun.handleOom(Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }));
+            bodyValue.* = .{ .Blob = blob.dupe() };
+            const headers = bun.handleOom(Headers.from(response.getInitHeaders(), bun.default_allocator, .{ .body = &.{ .Blob = blob } }));
 
             return bun.new(FileRoute, .{
                 .ref_count = .init(),
@@ -396,7 +397,9 @@ const StreamTransfer = struct {
                     log("max_size reached, ending stream", .{});
                     if (this.route.server) |server| {
                         // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
-                        this.reader.pause();
+                        if (!bun.Environment.isPosix) {
+                            this.reader.pause();
+                        }
                         // we cannot free inside onReadChunk this would be UAF so we schedule it to be done in the next event loop tick
                         this.eof_task = jsc.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
                         server.vm().enqueueTask(jsc.Task.init(&this.eof_task.?));
@@ -429,7 +432,9 @@ const StreamTransfer = struct {
                 // pause the reader so deref until onWritable
                 defer this.deref();
                 this.resp.onWritable(*StreamTransfer, onWritable, this);
-                this.reader.pause();
+                if (!bun.Environment.isPosix) {
+                    this.reader.pause();
+                }
                 return false;
             },
             .want_more => {

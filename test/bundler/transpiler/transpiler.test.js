@@ -73,6 +73,10 @@ describe("Bun.Transpiler", () => {
       expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
     },
 
+    transpiledOutput: code => {
+      return ts.parsed(code, false, false);
+    },
+
     expectPrintedMin_: (code, out) => {
       expect(ts.parsedMin(code, !out.endsWith(";\n"), false)).toBe(out);
     },
@@ -320,6 +324,29 @@ describe("Bun.Transpiler", () => {
 
       err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
       err("enum [] { a }", 'Expected identifier but found "["');
+    });
+
+    it("doesn't crash with functions assigned to enum values", () => {
+      const exp = ts.expectPrinted_;
+
+      expect(
+        ts.transpiledOutput(
+          `
+enum ABC {
+  A = () => {},
+}
+function foo() {}
+`,
+          "hi",
+        ),
+      ).toMatchInlineSnapshot(`
+        "var ABC;
+        ((ABC) => {
+          ABC[ABC["A"] = () => {}] = "A";
+        })(ABC ||= {});
+        function foo() {}
+        "
+      `);
     });
 
     // TODO: fix all the cases that report generic "Parse error"

@@ -510,6 +510,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -521,6 +522,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return (this.tryTakeException() orelse {
@@ -904,6 +906,12 @@ pub const JSGlobalObject = opaque {
 
         // We're done validating. From now on, deal with extracting the body.
         body.toBlobIfPossible();
+
+        if (body.* == .Locked) {
+            if (response.getBodyReadableStream(this)) |stream| {
+                return stream.value;
+            }
+        }
 
         var any_blob = switch (body.*) {
             .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),

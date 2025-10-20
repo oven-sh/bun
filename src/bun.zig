@@ -8,7 +8,7 @@ const bun = @This();
 
 pub const Environment = @import("./env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zero-sized type whose `allocator` method returns `default_allocator`.
 pub const DefaultAllocator = allocators.Default;
@@ -157,15 +157,17 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+    /// Similar to error.JSError but always represents a termination exception.
+    JSTerminated,
 };
 
-pub const JSExecutionTerminated = error{
+pub const JSTerminated = error{
     /// JavaScript execution has been terminated.
     /// This condition is indicated by throwing an exception, so most code should still handle it
     /// with JSError. If you expect that you will not throw any errors other than the termination
     /// exception, you can catch JSError, assert that the exception is the termination exception,
-    /// and return error.JSExecutionTerminated.
-    JSExecutionTerminated,
+    /// and return error.JSTerminated.
+    JSTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -1315,7 +1317,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], wide_slice);
         return buf[0..res.written];
     }
 

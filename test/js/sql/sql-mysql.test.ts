@@ -413,6 +413,47 @@ if (isDockerEnabled()) {
             expect(result.getTime()).toBe(-251);
           }
         });
+        test("time", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME)`;
+          const times = [
+            { a: "00:00:00" },
+            { a: "01:01:01" },
+            { a: "10:10:10" },
+            { a: "12:12:59" },
+            { a: "-838:59:59" },
+            { a: "838:59:59" },
+            { a: null },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(times)}`;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result).toEqual(times);
+          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+          expect(result2).toEqual(times);
+        });
+
+        test("date", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a DATE)`;
+          const dates = [{ a: "2024-01-01" }, { a: "2024-01-02" }, { a: "2024-01-03" }, { a: null }];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(dates)}`;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result).toEqual([
+            { a: new Date("2024-01-01") },
+            { a: new Date("2024-01-02") },
+            { a: new Date("2024-01-03") },
+            { a: null },
+          ]);
+          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+          expect(result2).toEqual([
+            { a: new Date("2024-01-01") },
+            { a: new Date("2024-01-02") },
+            { a: new Date("2024-01-03") },
+            { a: null },
+          ]);
+        });
 
         test("JSON", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
@@ -546,6 +587,27 @@ if (isDockerEnabled()) {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const err = await sql`wat 1`.catch(x => x);
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
+        });
+
+        // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.
+        // This happened when FieldType.fromJS returned error.JSError without throwing an exception first.
+        test("should throw error for NumberObject parameter", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Number(42) creates a NumberObject (not a primitive number)
+          // This used to cause a panic because FieldType.fromJS returned error.JSError without throwing
+          const numberObject = new Number(42);
+          const err = await sql`SELECT ${numberObject} as value`.catch(x => x);
+          expect(err).toBeInstanceOf(Error);
+          expect(err.message).toContain("Cannot bind NumberObject to query parameter");
+        });
+
+        test("should throw error for BooleanObject parameter", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Boolean(true) creates a BooleanObject (not a primitive boolean)
+          const booleanObject = new Boolean(true);
+          const err = await sql`SELECT ${booleanObject} as value`.catch(x => x);
+          expect(err).toBeInstanceOf(Error);
+          expect(err.message).toContain("Cannot bind BooleanObject to query parameter");
         });
 
         test("should work with fragments", async () => {

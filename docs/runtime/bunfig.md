@@ -249,6 +249,81 @@ This is useful for:
 
 The `--concurrent` CLI flag will override this setting when specified.
 
+### `test.onlyFailures`
+
+When enabled, only failed tests are displayed in the output. This helps reduce noise in large test suites by hiding passing tests. Default `false`.
+
+```toml
+[test]
+onlyFailures = true
+```
+
+This is equivalent to using the `--only-failures` flag when running `bun test`.
+
+### `test.reporter`
+
+Configure the test reporter settings.
+
+#### `test.reporter.dots`
+
+Enable the dots reporter, which displays a compact output showing a dot for each test. Default `false`.
+
+```toml
+[test.reporter]
+dots = true
+```
+
+#### `test.reporter.junit`
+
+Enable JUnit XML reporting and specify the output file path.
+
+```toml
+[test.reporter]
+junit = "test-results.xml"
+```
+
+This generates a JUnit XML report that can be consumed by CI systems and other tools.
+
+### `test.randomize`
+
+Run tests in random order. Default `false`.
+
+```toml
+[test]
+randomize = true
+```
+
+This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+
+The `--randomize` CLI flag will override this setting when specified.
+
+### `test.seed`
+
+Set the random seed for test randomization. This option requires `randomize` to be `true`.
+
+```toml
+[test]
+randomize = true
+seed = 2444615283
+```
+
+Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+
+The `--seed` CLI flag will override this setting when specified.
+
+### `test.rerunEach`
+
+Re-run each test file a specified number of times. Default `0` (run once).
+
+```toml
+[test]
+rerunEach = 3
+```
+
+This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+
+The `--rerun-each` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -570,6 +645,20 @@ Valid values are:
 
 {% /table %}
 
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
+
 <!-- ## Debugging -->
 
 <!--
@@ -597,7 +686,7 @@ editor = "code"
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
 
-Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+Currently, `bunfig.toml` is only automatically loaded for `bun run` in a local project (it doesn't check for a global `.bunfig.toml`).
 
 ### `run.shell` - use the system shell or Bun's shell
 

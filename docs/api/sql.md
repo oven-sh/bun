@@ -449,7 +449,11 @@ You can cancel a query that is currently executing by calling the `cancel()` met
 ```ts
 const query = sql`SELECT * FROM users`;
 setTimeout(() => query.cancel(), 100);
-await query;
+try {
+  await query;
+} catch (error) {
+  console.error("Query was cancelled:", error.message);
+}
 ```
 
 ## Database Environment Variables

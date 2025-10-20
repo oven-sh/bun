@@ -237,10 +237,7 @@ pub const StatWatcher = struct {
     pub fn deinit(this: *StatWatcher) void {
         log("deinit {x}", .{@intFromPtr(this)});
 
-        if (this.persistent) {
-            this.persistent = false;
-        }
-
+        this.persistent = false;
         this.poll_ref.disable();
         this.closed = true;
         this.last_jsvalue.deinit();

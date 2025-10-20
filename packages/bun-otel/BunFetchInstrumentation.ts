@@ -113,14 +113,18 @@ export class BunFetchInstrumentation extends InstrumentationBase {
     debugLog(`  BunOtel patched: ${bunOtelPatched}`);
     debugLog(`  current fetch === ORIGINAL_FETCH: ${currentFetch === ORIGINAL_FETCH}`);
 
+    // CRITICAL: Only unwrap if we actually patched it
+    // Don't clobber patches from other instrumentations
     if (!bunOtelPatched) {
-      debugLog("⚠️ Not patched by us, but attempting unwrap anyway...");
+      debugLog("⚠️ Not patched by us, skipping unwrap");
+      return;
     }
 
     // Unwrap using shimmer
     this._unwrap(globalThis, "fetch");
 
     // DEFENSIVE: If unwrap didn't work, force restore original
+    // Only do this if the current fetch is still marked as ours
     if (globalThis.fetch !== ORIGINAL_FETCH && isBunOtelPatched(globalThis.fetch)) {
       debugLog("⚠️ Shimmer unwrap failed, forcing restore to ORIGINAL_FETCH");
       globalThis.fetch = ORIGINAL_FETCH;
@@ -144,9 +148,10 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         input: RequestInfo | URL,
         init?: RequestInit,
       ): Promise<Response> {
-        // Extract URL for span naming
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const method = init?.method?.toUpperCase() || "GET";
+        // Extract URL and method for span naming
+        // Handle input as string, URL, or Request object
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+        const method = init?.method?.toUpperCase() || (input instanceof Request ? input.method.toUpperCase() : "GET");
 
         // Get active context - this is critical for distributed tracing!
         const activeContext = context.active();
@@ -185,8 +190,13 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         // CRITICAL: Wrap the entire fetch call in context.with() synchronously
         // This ensures the context is active for the entire async operation
         return context.with(spanContext, () => {
-          // Inject trace context headers into the request
-          const headers = new Headers(init?.headers);
+          // Merge headers: start with input Request headers (if any), then overlay init.headers
+          // This preserves headers from Request objects while allowing init to override
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          if (init?.headers) {
+            new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+          }
+
           // CRITICAL: Use context.active() here, NOT spanContext directly!
           // We're inside context.with(spanContext), so context.active() returns spanContext,
           // but propagation.inject() expects to serialize from context.active()

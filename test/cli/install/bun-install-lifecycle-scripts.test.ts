@@ -3016,6 +3016,21 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
       expect(await exists(join(depDir, "install.txt"))).toBeFalse();
       expect(await exists(join(depDir, "postinstall.txt"))).toBeFalse();
+
+      // Verify skipped packages don't appear in untrusted list
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      }));
+
+      out = await stdout.text();
+      err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("all-lifecycle-scripts");
+      expect(await exited).toBe(0);
     });
 
     test("skipScriptsFrom works with aliased dependencies (default list)", async () => {
@@ -3122,6 +3137,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(scriptsDir, "prepare.txt"))).toBeTrue(); // prepare always runs
     });
 
+    // skipScriptsFrom accepts either the dependency alias or canonical package name for flexibility
     test("skipScriptsFrom by alias name", async () => {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
       await writeFile(

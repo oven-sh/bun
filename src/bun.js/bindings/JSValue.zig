@@ -1077,13 +1077,12 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    extern fn JSC__JSValue__asCell(this: JSValue) *JSCell;
     pub fn asCell(this: JSValue) *JSCell {
-        // NOTE: asCell already asserts this, but since we're crossing an FFI
-        // boundary, that assertion is opaque to the Zig compiler. By asserting
-        // it twice we let Zig possibly optimize out other checks.
+        // Asserting this lets Zig possibly optimize out other checks.
         bun.unsafeAssert(this.isCell());
-        return JSC__JSValue__asCell(this);
+        // We know `DecodedJSValue.asCell` cannot return null, since `isCell` already checked for
+        // `.zero`.
+        return this.decode().asCell().?;
     }
 
     pub fn isCallable(this: JSValue) bool {
@@ -1413,20 +1412,20 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue___then(this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject));
     }
 
-    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const jsc.JSHostFn, reject: *const jsc.JSHostFn) void {
+    pub fn then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const jsc.JSHostFn, reject: *const jsc.JSHostFn) bun.JSTerminated!void {
         var scope: CatchScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         JSC__JSValue___then(this, global, ctx, resolve, reject);
-        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        try scope.assertNoExceptionExceptTermination();
     }
 
-    pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) void {
+    pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!void {
         var scope: CatchScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
-        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        try scope.assertNoExceptionExceptTermination();
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {

@@ -149,10 +149,10 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
       return;
     }
 
-    // If shimmer thinks it's wrapped, unwrap it first
-    if (shimmerWrapped) {
-      debugLog("Removing shimmer wrapper before applying our patch...");
-      this._unwrap(globalThis, "fetch");
+    // If another tool already wrapped fetch, do not clobber it
+    if (shimmerWrapped && !bunOtelPatched) {
+      debugLog("⚠️ fetch already wrapped by another tool; skipping BunFetchInstrumentation patch");
+      return;
     }
 
     // Apply our patch

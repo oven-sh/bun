@@ -357,6 +357,7 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.format = FormatVersion.current;
     this.scripts = .{};
     this.trusted_dependencies = null;
+    this.skip_scripts_from = null;
     this.workspace_paths = .{};
     this.workspace_versions = .{};
     this.overrides = .{};
@@ -630,6 +631,7 @@ pub fn cleanWithLogger(
     }
 
     const old_trusted_dependencies = old.trusted_dependencies;
+    const old_skip_scripts_from = old.skip_scripts_from;
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
@@ -757,6 +759,7 @@ pub fn cleanWithLogger(
     try cloner.flush();
 
     new.trusted_dependencies = old_trusted_dependencies;
+    new.skip_scripts_from = old_skip_scripts_from;
     new.scripts = old_scripts;
     new.meta_hash = old.meta_hash;
 
@@ -1340,6 +1343,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .scratch = Scratch.init(allocator),
         .scripts = .{},
         .trusted_dependencies = null,
+        .skip_scripts_from = null,
         .workspace_paths = .{},
         .workspace_versions = .{},
         .overrides = .{},
@@ -1739,6 +1743,9 @@ pub fn deinit(this: *Lockfile) void {
     this.scripts.deinit(this.allocator);
     if (this.trusted_dependencies) |*trusted_dependencies| {
         trusted_dependencies.deinit(this.allocator);
+    }
+    if (this.skip_scripts_from) |*skip_scripts| {
+        skip_scripts.deinit(this.allocator);
     }
     this.patched_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
@@ -2172,7 +2179,7 @@ pub const default_skipped_lifecycle_scripts = brk: {
     break :brk &final;
 };
 
-pub fn shouldSkipLifecycleScripts(this: *const Lockfile, name: []const u8) bool {
+pub inline fn shouldSkipLifecycleScripts(this: *const Lockfile, name: []const u8) bool {
     // Check user-specified skipScriptsFrom first (higher precedence)
     if (this.skip_scripts_from) |skip_scripts| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));

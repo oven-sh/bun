@@ -1126,7 +1126,9 @@ pub const PackageInstaller = struct {
                         },
                         else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
                             const alias_str = alias.slice(this.lockfile.buffers.string_bytes.items);
-                            const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str);
+                            const canonical_name = this.names[package_id].slice(this.lockfile.buffers.string_bytes.items);
+                            const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str) or
+                                this.lockfile.shouldSkipLifecycleScripts(canonical_name);
 
                             if (!should_skip) {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
@@ -1274,7 +1276,9 @@ pub const PackageInstaller = struct {
 
             if (resolution.tag != .root and is_trusted) {
                 const alias_str = alias.slice(this.lockfile.buffers.string_bytes.items);
-                const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str);
+                const canonical_name = this.names[package_id].slice(this.lockfile.buffers.string_bytes.items);
+                const should_skip = this.lockfile.shouldSkipLifecycleScripts(alias_str) or
+                    this.lockfile.shouldSkipLifecycleScripts(canonical_name);
 
                 if (!should_skip) {
                     var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);

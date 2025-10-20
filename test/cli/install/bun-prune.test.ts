@@ -298,6 +298,9 @@ describe("bun prune", () => {
 
     // Should fail gracefully when no package.json exists
     expect(exitCode).not.toBe(0);
+    
+    // Verify error message is clear and mentions package.json
+    expect(stderr.toLowerCase()).toContain("package.json");
     expect(stderr.toLowerCase()).toContain("nothing to prune");
   });
 

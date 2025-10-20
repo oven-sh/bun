@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isCI } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT, gc, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -183,4 +183,22 @@ test("do not leak", async () => {
       prev = next;
     }
   }, 1e3);
+});
+
+test("should not leak using readable stream", async () => {
+  const buffer = Buffer.alloc(1024 * 128, "b");
+  using server = Bun.serve({
+    port: 0,
+    fetch: req => {
+      return new Response(buffer);
+    },
+  });
+
+  const { stdout, stderr } = bunRun(join(import.meta.dir, "fetch-leak-test-fixture-6.js"), {
+    ...bunEnv,
+    SERVER_URL: server.url.href,
+    MAX_MEMORY_INCREASE: "5", // in MB
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toContain("done");
 });

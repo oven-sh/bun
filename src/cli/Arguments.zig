@@ -197,6 +197,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
+    clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
     clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
     clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
@@ -208,6 +209,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
+    clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -462,6 +464,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.reporters.dots = true;
         }
 
+        // Handle --only-failures flag
+        if (args.flag("--only-failures")) {
+            ctx.test_options.reporters.only_failures = true;
+        }
+
         if (args.option("--coverage-dir")) |dir| {
             ctx.test_options.coverage.reports_directory = dir;
         }
@@ -509,6 +516,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
+        ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
 

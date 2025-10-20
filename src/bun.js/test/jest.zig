@@ -15,7 +15,7 @@ const CurrentFile = struct {
         repeat_index: u32,
         reporter: *CommandLineReporter,
     ) void {
-        if (Output.isAIAgent() or reporter.reporters.dots) {
+        if (reporter.reporters.dots or reporter.reporters.only_failures) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
             this.prefix = bun.handleOom(bun.default_allocator.dupe(u8, prefix));

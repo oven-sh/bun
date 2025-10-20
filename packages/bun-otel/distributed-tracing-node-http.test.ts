@@ -2,8 +2,8 @@ import { context, SpanKind, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
-import { bunEnv, bunExe } from "../../test/harness";
 import { BunFetchInstrumentation, BunSDK } from "./index";
+import { EchoServer } from "./test-echo-server";
 import { waitForSpans } from "./test-utils";
 
 /** NOTE: Critical to understand what is being tested here
@@ -26,49 +26,17 @@ import { waitForSpans } from "./test-utils";
  */
 describe("Distributed tracing with Node.js HTTP server", () => {
   // Shared echo server for all tests - runs in separate process to avoid instrumentation
-  let echoServerPort: number;
-  let echoServerProc: ReturnType<typeof Bun.spawn>;
+  let echoServer: EchoServer;
 
   // Start echo server once for all tests
   beforeAll(async () => {
-    echoServerProc = Bun.spawn([bunExe(), "packages/bun-otel/test-echo-server.ts"], {
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-
-    // Read the port from stdout with timeout
-    const decoder = new TextDecoder();
-    const startTime = Date.now();
-    const timeoutMs = 5000;
-
-    for await (const chunk of echoServerProc.stdout) {
-      const text = decoder.decode(chunk);
-      const match = text.match(/listening on (\d+)/);
-      if (match) {
-        echoServerPort = parseInt(match[1]);
-        break;
-      }
-
-      if (Date.now() - startTime > timeoutMs) {
-        echoServerProc.kill();
-        throw new Error("Echo server failed to start within 5 seconds");
-      }
-    }
-
-    if (!echoServerPort) {
-      echoServerProc.kill();
-      throw new Error("Echo server did not report listening port");
-    }
+    echoServer = new EchoServer();
+    await echoServer.start();
   });
 
   // Shutdown echo server after all tests
   afterAll(async () => {
-    if (echoServerPort) {
-      // Use uninstrumented request to avoid polluting test spans
-      await makeUninstrumentedRequest(`http://localhost:${echoServerPort}/shutdown`).catch(() => {});
-    }
-    echoServerProc?.kill();
+    await echoServer.stop();
   });
 
   // Test helper: make HTTP request without instrumentation (uses curl)
@@ -151,7 +119,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using serverA = http.createServer(async (req, res) => {
       try {
         // This fetch call should automatically inject traceparent from active span
-        const response = await fetch(`http://localhost:${echoServerPort}/downstream`);
+        const response = await fetch(echoServer.getUrl("/downstream"));
         const data = await response.json();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ downstream: data }));
@@ -241,7 +209,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
         const echoData = await new Promise<any>(resolve => {
           setTimeout(async () => {
             // This fetch should still be in the request's context
-            const response = await fetch(`http://localhost:${echoServerPort}/delayed`);
+            const response = await fetch(echoServer.getUrl("/delayed"));
             const data = await response.json();
             resolve(data);
           }, 10); // Small delay to test async boundary
@@ -327,7 +295,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
       try {
         const echoData = await new Promise<any>(resolve => {
           setImmediate(async () => {
-            const response = await fetch(`http://localhost:${echoServerPort}/immediate`);
+            const response = await fetch(echoServer.getUrl("/immediate"));
             const data = await response.json();
             resolve(data);
           });
@@ -395,7 +363,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
           return await level3();
         }
         async function level3() {
-          const response = await fetch(`http://localhost:${echoServerPort}/nested`);
+          const response = await fetch(echoServer.getUrl("/nested"));
           return await response.json();
         }
         const echoData = await level1();
@@ -456,13 +424,13 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using server = http.createServer(async (req, res) => {
       try {
         async function* fetchMultiple() {
-          const r1 = await fetch(`http://localhost:${echoServerPort}/gen1`);
+          const r1 = await fetch(echoServer.getUrl("/gen1"));
           yield await r1.json();
 
-          const r2 = await fetch(`http://localhost:${echoServerPort}/gen2`);
+          const r2 = await fetch(echoServer.getUrl("/gen2"));
           yield await r2.json();
 
-          const r3 = await fetch(`http://localhost:${echoServerPort}/gen3`);
+          const r3 = await fetch(echoServer.getUrl("/gen3"));
           yield await r3.json();
         }
 
@@ -532,9 +500,9 @@ describe("Distributed tracing with Node.js HTTP server", () => {
       try {
         // Make 3 parallel fetch calls - all should get the same parent span context
         const [r1, r2, r3] = await Promise.all([
-          fetch(`http://localhost:${echoServerPort}/service1`),
-          fetch(`http://localhost:${echoServerPort}/service2`),
-          fetch(`http://localhost:${echoServerPort}/service3`),
+          fetch(echoServer.getUrl("/service1")),
+          fetch(echoServer.getUrl("/service2")),
+          fetch(echoServer.getUrl("/service3")),
         ]);
 
         res.writeHead(200, { "Content-Type": "application/json" });

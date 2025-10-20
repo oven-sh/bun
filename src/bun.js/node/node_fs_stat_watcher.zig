@@ -444,8 +444,8 @@ pub const StatWatcher = struct {
         else brk: {
             const result = bun.sys.stat(this.path);
             break :brk switch (result) {
-                .result => |r| bun.sys.Maybe(bun.sys.PosixStat){ .result = bun.sys.PosixStat.init(&r) },
-                .err => |e| bun.sys.Maybe(bun.sys.PosixStat){ .err = e },
+                .result => |r| .{ .result = .init(&r) },
+                .err => |e| .{ .err = e },
             };
         };
         const res = switch (stat) {

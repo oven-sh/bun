@@ -9,6 +9,8 @@ export default [
     hasPendingActivity: false,
     configurable: false,
     valuesArray: true,
+    memoryCost: true,
+    estimatedSize: true,
     klass: {},
     proto: {
       setCwd: {

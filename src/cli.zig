@@ -355,6 +355,7 @@ pub const Command = struct {
 
         reporters: struct {
             dots: bool = false,
+            only_failures: bool = false,
             junit: bool = false,
         } = .{},
         reporter_outfile: ?[]const u8 = null,

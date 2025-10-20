@@ -12,6 +12,30 @@ export_env: ?EnvMap = null,
 quiet: bool = false,
 cwd: ?bun.String = null,
 this_jsvalue: JSValue = .zero,
+estimated_size_for_gc: usize = 0,
+
+fn #computeEstimatedSizeForGC(this: *const ParsedShellScript) usize {
+    var size: usize = @sizeOf(ParsedShellScript);
+    if (this.args) |args| {
+        size += args.memoryCost();
+    }
+    if (this.export_env) |*env| {
+        size += env.memoryCost();
+    }
+    if (this.cwd) |*cwd| {
+        size += cwd.estimatedSize();
+    }
+    size += std.mem.sliceAsBytes(this.jsobjs.allocatedSlice()).len;
+    return size;
+}
+
+pub fn memoryCost(this: *const ParsedShellScript) usize {
+    return this.#computeEstimatedSizeForGC();
+}
+
+pub fn estimatedSize(this: *const ParsedShellScript) usize {
+    return this.estimated_size_for_gc;
+}
 
 pub fn take(
     this: *ParsedShellScript,
@@ -161,6 +185,7 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         .args = shargs,
         .jsobjs = jsobjs,
     });
+    parsed_shell_script.estimated_size_for_gc = parsed_shell_script.#computeEstimatedSizeForGC();
     const this_jsvalue = jsc.Codegen.JSParsedShellScript.toJSWithValues(parsed_shell_script, globalThis, marked_argument_buffer);
     parsed_shell_script.this_jsvalue = this_jsvalue;
 

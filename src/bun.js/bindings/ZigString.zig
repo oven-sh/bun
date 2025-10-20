@@ -306,7 +306,7 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8 = undefined,
+        ptr: [*]const u8 = &.{},
         len: u32 = 0,
 
         pub fn reportExtraMemory(this: *const Slice, vm: *jsc.VM) void {
@@ -365,6 +365,25 @@ pub const ZigString = extern struct {
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
+        /// Converts this `ZigString.Slice` into a `[]const u8`, guaranteed to be allocated by
+        /// `allocator`.
+        ///
+        /// This method sets `this` to an empty string. If you don't need the original string,
+        /// this method may be more efficient than `toOwned`, which always allocates memory.
+        pub fn intoOwnedSlice(this: *Slice, allocator: std.mem.Allocator) OOM![]const u8 {
+            defer this.* = .{};
+            if (this.allocator.get()) |this_allocator| blk: {
+                if (allocator.vtable != this_allocator.vtable) break :blk;
+                // Can add support for more allocators here
+                if (allocator.vtable == bun.default_allocator.vtable) {
+                    return this.slice();
+                }
+            }
+            defer this.deinit();
+            return (try this.toOwned(allocator)).slice();
+        }
+
+        /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
         pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
             if (this.isAllocated()) {
                 return this;
@@ -615,10 +634,6 @@ pub const ZigString = extern struct {
         }
 
         return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
-    }
-
-    pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
-        return try allocator.dupe(u8, this.slice());
     }
 
     pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {

@@ -27,7 +27,7 @@ describe("Header capture and normalization", () => {
     const provider = new NodeTracerProvider({
       spanProcessors: [processor],
     });
-    providers.push(provider, exporter, processor);
+    providers.push(provider);
     return provider;
   }
 

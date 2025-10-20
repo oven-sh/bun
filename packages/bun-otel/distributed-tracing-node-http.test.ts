@@ -2,6 +2,7 @@ import { context, SpanKind, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
+import { bunEnv, bunExe } from "../../test/harness";
 import { BunFetchInstrumentation, BunSDK } from "./index";
 import { waitForSpans } from "./test-utils";
 
@@ -30,8 +31,8 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
   // Start echo server once for all tests
   beforeAll(async () => {
-    echoServerProc = Bun.spawn(["bun", "packages/bun-otel/test-echo-server.ts"], {
-      env: { ...process.env, PORT: "0" },
+    echoServerProc = Bun.spawn([bunExe(), "packages/bun-otel/test-echo-server.ts"], {
+      env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
     });

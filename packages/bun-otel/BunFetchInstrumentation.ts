@@ -297,8 +297,9 @@ export class BunFetchInstrumentation extends InstrumentationBase<BunFetchInstrum
                   if (instrumentation._semconvStability & SemconvStability.STABLE) {
                     span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, response.status);
                   }
+                  // Set span status: 5xx = ERROR, others = OK (matches OTel guidance)
                   span.setStatus({
-                    code: response.status >= 400 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
+                    code: response.status >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK,
                   });
 
                   debugLog(

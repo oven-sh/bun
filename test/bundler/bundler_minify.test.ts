@@ -1274,4 +1274,130 @@ describe("bundler", () => {
       expect(code2).not.toContain("unused");
     },
   });
+
+  itBundled("minify/InternalExportsCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require("./lib");
+        module.exports = { publicAPI: lib.publicExport };
+      `,
+      "/lib.js": /* js */ `
+        exports.publicExport = "public";
+        exports.internalExport = "internal";
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    format: "cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With CommonJS, object property names are not minified
+      // (this is standard minifier behavior for dynamic property access)
+      expect(code).toContain("publicAPI");
+      // But variable names should still be minified
+      expect(code).not.toMatch(/var\s+lib\s*=/);
+    },
+  });
+
+  itBundled("minify/InternalExportsMixedESMCJS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { esmExport } from "./esm";
+        const cjsModule = require("./cjs");
+        export { esmExport };
+        export const combined = esmExport + cjsModule.value;
+      `,
+      "/esm.ts": /* ts */ `
+        export const esmExport = "esm";
+        export const esmInternal = "internal";
+      `,
+      "/cjs.js": /* js */ `
+        exports.value = 123;
+        exports.internalValue = 456;
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Entry point exports should be preserved
+      expect(code).toContain("esmExport");
+      expect(code).toContain("combined");
+      // Internal ESM exports should be minified
+      expect(code).not.toContain("esmInternal");
+      // Note: CommonJS property names are not minified (standard behavior)
+    },
+  });
+
+  itBundled("minify/InternalExportsDefaultExport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export { default as myDefault } from "./lib";
+        export { namedExport } from "./lib";
+      `,
+      "/lib.ts": /* ts */ `
+        export default function defaultFunc() { return 42; }
+        export const namedExport = "named";
+        export const internalExport = "internal";
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Re-exported default and named exports should be preserved
+      expect(code).toContain("myDefault");
+      expect(code).toContain("namedExport");
+      // Internal exports should be minified
+      expect(code).not.toContain("internalExport");
+    },
+  });
+
+  itBundled("minify/InternalExportsAPIBackend", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as internal from "./internal";
+        export const publicAPI = internal.helper();
+      `,
+      "/internal.ts": /* ts */ `
+        export function helper() { return "help"; }
+        export function unused() { return "unused"; }
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    backend: "api",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Entry point export should be preserved
+      expect(code).toContain("publicAPI");
+      // Internal helper function name should be minified
+      expect(code).not.toContain("helper");
+      expect(code).not.toContain("unused");
+    },
+  });
+
+  itBundled("minify/InternalExportsCLIBackend", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as internal from "./internal";
+        export const publicAPI = internal.helper();
+      `,
+      "/internal.ts": /* ts */ `
+        export function helper() { return "help"; }
+        export function unused() { return "unused"; }
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyInternalExports: true,
+    backend: "cli",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Entry point export should be preserved
+      expect(code).toContain("publicAPI");
+      // Internal helper function name should be minified
+      expect(code).not.toContain("helper");
+      expect(code).not.toContain("unused");
+    },
+  });
 });

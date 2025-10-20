@@ -328,6 +328,14 @@ export class BunSDK implements AsyncDisposable {
       "[BunSDK] Instrumentations before cleanup:",
       this._instrumentations.map(i => `${i.instrumentationName} (patched: ${(i as any)._isPatched})`),
     );
+
+    // CRITICAL: Manually disable each instrumentation to ensure proper cleanup
+    // The registerInstrumentations() cleanup function may not be sufficient
+    for (const instrumentation of this._instrumentations) {
+      console.log(`[BunSDK] Explicitly calling disable() on ${instrumentation.instrumentationName}...`);
+      instrumentation.disable();
+    }
+
     if (this._instrumentationCleanup) {
       console.log("[BunSDK] Calling _instrumentationCleanup()...");
       this._instrumentationCleanup();

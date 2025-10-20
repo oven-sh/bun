@@ -14,6 +14,39 @@ function debugLog(...args: unknown[]) {
   }
 }
 
+// ============================================================================
+// DEFENSIVE PATCHING GUARDS
+// ============================================================================
+
+// Symbol to mark patched fetch functions
+const kBunOtelPatched = Symbol("kBunOtelPatched");
+
+// Store the ORIGINAL unpatched fetch (defensive copy at module load)
+const ORIGINAL_FETCH = globalThis.fetch;
+
+// WeakMap to track all patched versions (for debugging)
+const PATCHED_FETCH_INSTANCES = new WeakMap<
+  typeof globalThis.fetch,
+  {
+    instrumentationId: string;
+    patchedAt: number;
+  }
+>();
+
+// Check if a function is already patched by us
+function isBunOtelPatched(fn: any): boolean {
+  return fn && typeof fn === "function" && fn[kBunOtelPatched] === true;
+}
+
+// Mark a function as patched
+function markAsPatched(fn: any, instrumentationId: string): void {
+  fn[kBunOtelPatched] = true;
+  PATCHED_FETCH_INSTANCES.set(fn, {
+    instrumentationId,
+    patchedAt: Date.now(),
+  });
+}
+
 /**
  * BunFetchInstrumentation - Automatic instrumentation for Bun's global fetch API
  *
@@ -30,21 +63,71 @@ export class BunFetchInstrumentation extends InstrumentationBase {
   }
 
   override enable(): void {
-    // Use shimmer's isWrapped to check if already patched
-    if (isWrapped(globalThis.fetch)) {
-      this._unwrap(globalThis, "fetch");
-      debugLog("Removed previous patch");
+    const currentFetch = globalThis.fetch;
+    const shimmerWrapped = isWrapped(currentFetch);
+    const bunOtelPatched = isBunOtelPatched(currentFetch);
+
+    debugLog(`enable() called:`);
+    debugLog(`  shimmer isWrapped: ${shimmerWrapped}`);
+    debugLog(`  BunOtel patched: ${bunOtelPatched}`);
+    debugLog(`  current fetch === ORIGINAL_FETCH: ${currentFetch === ORIGINAL_FETCH}`);
+
+    // DEFENSIVE: Check for disagreement between shimmer and our tracking
+    if (shimmerWrapped !== bunOtelPatched) {
+      debugLog(`⚠️ DISAGREEMENT! shimmer says ${shimmerWrapped}, our symbol says ${bunOtelPatched}`);
     }
 
-    // Use shimmer's _wrap for proper lifecycle management
+    // If already patched by us, don't re-patch!
+    if (bunOtelPatched) {
+      debugLog("❌ Already patched by BunOtel, skipping re-patch");
+      const patchInfo = PATCHED_FETCH_INSTANCES.get(currentFetch);
+      if (patchInfo) {
+        debugLog(
+          `   Existing patch from: ${patchInfo.instrumentationId} at ${new Date(patchInfo.patchedAt).toISOString()}`,
+        );
+      }
+      return;
+    }
+
+    // If shimmer thinks it's wrapped, unwrap it first
+    if (shimmerWrapped) {
+      debugLog("Removing shimmer wrapper before applying our patch...");
+      this._unwrap(globalThis, "fetch");
+    }
+
+    // Apply our patch
     this._wrap(globalThis, "fetch", this._patchFetch());
+
+    // Mark the new patched version
+    markAsPatched(globalThis.fetch, this.instrumentationName);
+
     debugLog("✅ Enabled - global fetch is now instrumented");
+    debugLog(`   New fetch === ORIGINAL_FETCH: ${globalThis.fetch === ORIGINAL_FETCH}`);
   }
 
   override disable(): void {
-    // Use shimmer's _unwrap to restore original
+    const currentFetch = globalThis.fetch;
+    const bunOtelPatched = isBunOtelPatched(currentFetch);
+
+    debugLog(`disable() called:`);
+    debugLog(`  BunOtel patched: ${bunOtelPatched}`);
+    debugLog(`  current fetch === ORIGINAL_FETCH: ${currentFetch === ORIGINAL_FETCH}`);
+
+    if (!bunOtelPatched) {
+      debugLog("⚠️ Not patched by us, but attempting unwrap anyway...");
+    }
+
+    // Unwrap using shimmer
     this._unwrap(globalThis, "fetch");
+
+    // DEFENSIVE: If unwrap didn't work, force restore original
+    if (globalThis.fetch !== ORIGINAL_FETCH && isBunOtelPatched(globalThis.fetch)) {
+      debugLog("⚠️ Shimmer unwrap failed, forcing restore to ORIGINAL_FETCH");
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
+
     debugLog("✅ Disabled - restored original fetch");
+    debugLog(`   After disable, fetch === ORIGINAL_FETCH: ${globalThis.fetch === ORIGINAL_FETCH}`);
   }
 
   /**
@@ -72,6 +155,7 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         debugLog(
           `Before creating CLIENT span, context.active() has span: spanId=${activeSpan?.spanContext().spanId || "undefined"}, traceId=${activeSpan?.spanContext().traceId || "undefined"}`,
         );
+        debugLog(`  context manager:`, (context as any)._getContextManager?.() || "no context manager");
 
         // Start a new CLIENT span with active context as parent
         // CRITICAL: Use this.tracer (from InstrumentationBase) instead of trace.getTracer()
@@ -103,7 +187,10 @@ export class BunFetchInstrumentation extends InstrumentationBase {
         return context.with(spanContext, () => {
           // Inject trace context headers into the request
           const headers = new Headers(init?.headers);
-          propagation.inject(spanContext, headers, {
+          // CRITICAL: Use context.active() here, NOT spanContext directly!
+          // We're inside context.with(spanContext), so context.active() returns spanContext,
+          // but propagation.inject() expects to serialize from context.active()
+          propagation.inject(context.active(), headers, {
             set: (carrier, key, value) => {
               (carrier as Headers).set(key, value);
             },

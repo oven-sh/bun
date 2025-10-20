@@ -390,11 +390,20 @@ declare module "bun:test" {
      */
     repeats?: number;
   }
-  type IsTuple<T> = T extends readonly unknown[]
-    ? number extends T["length"]
-      ? false // It's an array with unknown length, not a tuple
-      : true // It's an array with a fixed length (a tuple)
-    : false; // Not an array at all
+
+  namespace __internal {
+    type IsTuple<T> = T extends readonly unknown[]
+      ? number extends T["length"]
+        ? false // It's an array with unknown length, not a tuple
+        : true // It's an array with a fixed length (a tuple)
+      : false; // Not an array at all
+
+    /**
+     * Accepts `[1, 2, 3] | ["a", "b", "c"]` and returns `[1 | "a", 2 | "b", 3 | "c"]`
+     */
+    type Flatten<T, Copy extends T = T> = { [Key in keyof T]: Copy[Key] };
+  }
+
   /**
    * Runs a test.
    *
@@ -418,10 +427,16 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test<T extends Readonly<any[]>> {
+  export interface Test<T extends ReadonlyArray<unknown>> {
     (
       label: string,
-      fn: (...args: IsTuple<T> extends true ? [...T, (err?: unknown) => void] : T) => void | Promise<unknown>,
+
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+
       /**
        * - If a `number`, sets the timeout for the test in milliseconds.
        * - If an `object`, sets the options for the test.
@@ -513,8 +528,8 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Test<[...T]>;
-    each<T extends any[]>(table: readonly T[]): Test<[...T]>;
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
+    each<T extends unknown[]>(table: readonly T[]): Test<T>;
     each<T>(table: T[]): Test<[T]>;
   }
   /**

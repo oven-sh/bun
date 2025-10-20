@@ -57,6 +57,7 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
 
 namespace Bun {
@@ -185,8 +186,6 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
-
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
@@ -313,6 +312,8 @@ public:
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+
+    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -451,6 +452,8 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
     V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
@@ -626,10 +629,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
@@ -752,10 +751,7 @@ public:
 
 } // namespace Zig
 
-// TODO: move this
 namespace Bun {
-
-String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

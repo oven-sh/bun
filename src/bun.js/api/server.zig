@@ -400,7 +400,7 @@ const ServePlugins = struct {
                         this.ref();
                         const promise_value = promise.asValue();
                         this.state.pending.promise.strong.set(global, promise_value);
-                        promise_value.then(global, this, onResolveImpl, onRejectImpl);
+                        try promise_value.then(global, this, onResolveImpl, onRejectImpl);
                         return;
                     },
                     .fulfilled => {
@@ -593,6 +593,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return p.getOrStartLoad(server.globalThis, callback) catch |err| switch (err) {
                     error.JSError => std.debug.panic("unhandled exception from ServePlugins.getStartOrLoad", .{}),
                     error.OutOfMemory => bun.outOfMemory(),
+                    error.JSTerminated => std.debug.panic("unhandled exception from ServePlugins.getStartOrLoad", .{}),
                 };
             }
             // no plugins
@@ -812,10 +813,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                                 sec_websocket_extensions = protocol;
                             }
-
-                            // we must write the status first so that 200 OK isn't written
-                            nodeHttpResponse.raw_response.writeStatus("101 Switching Protocols");
-                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.raw_response.socket());
+                            if (nodeHttpResponse.raw_response) |raw_response| {
+                                // we must write the status first so that 200 OK isn't written
+                                raw_response.writeStatus("101 Switching Protocols");
+                                fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, raw_response.socket());
+                            }
                         }
 
                         if (globalThis.hasException()) {
@@ -891,6 +893,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            var fetch_headers_to_use: ?*WebCore.FetchHeaders = null;
+
             if (optional) |opts| {
                 getter: {
                     if (opts.isEmptyOrUndefinedOrNull()) {
@@ -914,7 +918,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             break :getter;
                         }
 
-                        var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
+                        fetch_headers_to_use = headers_value.as(WebCore.FetchHeaders) orelse brk: {
                             if (headers_value.isObject()) {
                                 if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
@@ -933,22 +937,43 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
                         }
 
-                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                        if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
                             sec_websocket_extensions = protocol;
                         }
-
-                        // we must write the status first so that 200 OK isn't written
-                        resp.writeStatus("101 Switching Protocols");
-                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
                     }
 
                     if (globalThis.hasException()) {
                         return error.JSError;
                     }
+                }
+            }
+
+            var cookies_to_write: ?*WebCore.CookieMap = null;
+            if (upgrader.cookies) |cookies| {
+                upgrader.cookies = null;
+                cookies_to_write = cookies;
+            }
+            defer {
+                if (cookies_to_write) |cookies| {
+                    cookies.deref();
+                }
+            }
+
+            // Write status, custom headers, and cookies in one place
+            if (fetch_headers_to_use != null or cookies_to_write != null) {
+                // we must write the status first so that 200 OK isn't written
+                resp.writeStatus("101 Switching Protocols");
+
+                if (fetch_headers_to_use) |headers| {
+                    headers.toUWSResponse(comptime ssl_enabled, resp);
+                }
+
+                if (cookies_to_write) |cookies| {
+                    try cookies.write(globalThis, ssl_enabled, @ptrCast(resp));
                 }
             }
 
@@ -1186,7 +1211,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                existing_request = Request.init(
+                existing_request = Request.init2(
                     bun.String.cloneUTF8(url.href),
                     headers,
                     bun.handleOom(this.vm.initRequestBodyValue(body)),
@@ -1228,7 +1253,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (response_value.as(jsc.WebCore.Response)) |resp| {
-                resp.url = existing_request.url.clone();
+                resp.setUrl(existing_request.url.clone());
             }
             return jsc.JSPromise.resolvedPromiseValue(ctx, response_value);
         }
@@ -1457,21 +1482,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.all_closed_promise.strong.has())
             {
                 httplog("schedule other promise", .{});
-                const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
                 // again before the task has run.
                 this.flags.has_handled_all_closed_promise = true;
 
-                const task = ServerAllConnectionsClosedTask.new(.{
+                ServerAllConnectionsClosedTask.schedule(.{
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
                         .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
-                });
-                event_loop.enqueueTask(jsc.Task.init(task));
+                }, vm);
             }
             if (this.pending_requests == 0 and
                 this.listener == null and
@@ -1921,7 +1944,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                                 node_response.promise = strong_promise;
                                 strong_promise = .empty;
-                                result._then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
+                                result.then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject) catch {}; // TODO: properly propagate exception upwards
                                 is_async = true;
                             }
 
@@ -1938,12 +1961,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
 
                     if (node_http_response) |node_response| {
-                        if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
-                            if (node_response.raw_response.state().isHttpStatusCalled()) {
-                                node_response.raw_response.writeStatus("500 Internal Server Error");
-                                node_response.raw_response.endWithoutBody(true);
-                            } else {
-                                node_response.raw_response.endStream(true);
+                        if (!node_response.flags.upgraded and node_response.raw_response != null) {
+                            const raw_response = node_response.raw_response.?;
+                            if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
+                                if (raw_response.state().isHttpStatusCalled()) {
+                                    raw_response.writeStatus("500 Internal Server Error");
+                                    raw_response.endWithoutBody(true);
+                                } else {
+                                    raw_response.endStream(true);
+                                }
                             }
                         }
                         node_response.onRequestComplete();
@@ -1954,8 +1980,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (node_http_response) |node_response| {
-                if (!node_response.flags.upgraded) {
-                    if (!node_response.flags.request_has_completed and node_response.raw_response.state().isResponsePending()) {
+                if (!node_response.flags.upgraded and node_response.raw_response != null) {
+                    const raw_response = node_response.raw_response.?;
+                    if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
                         node_response.setOnAbortedHandler();
                     }
                     // If we ended the response without attaching an ondata handler, we discard the body read stream
@@ -2006,7 +2033,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const index = user_route.id;
 
             var should_deinit_context = false;
-            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, switch (user_route.route.method) {
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
                 .any => null,
                 .specific => |m| m,
             }) orelse return;
@@ -2048,7 +2075,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             var should_deinit_context = false;
-            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true, null) orelse return;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
 
             bun.assert(this.config.onRequest != .zero);
 
@@ -2063,9 +2090,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onRequestFromSaved(this: *ThisServer, req: SavedRequest.Union, resp: *App.Response, callback: JSValue, comptime arg_count: comptime_int, extra_args: [arg_count]JSValue) void {
+        pub fn onSavedRequest(
+            this: *ThisServer,
+            req: SavedRequest.Union,
+            resp: *App.Response,
+            callback: JSValue,
+            comptime arg_count: comptime_int,
+            extra_args: [arg_count]JSValue,
+        ) void {
             const prepared: PreparedRequest = switch (req) {
-                .stack => |r| this.prepareJsRequestContext(r, resp, null, true, null) orelse return,
+                .stack => |r| this.prepareJsRequestContext(r, resp, null, .bake, null) orelse return,
                 .saved => |data| .{
                     .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
                     .request_object = data.request,
@@ -2141,7 +2175,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         };
 
-        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, create_js_request: bool, method: ?bun.http.Method) ?PreparedRequest {
+        pub fn prepareJsRequestContext(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+            should_deinit_context: ?*bool,
+            create_js_request: enum { yes, no, bake },
+            method: ?bun.http.Method,
+        ) ?PreparedRequest {
             jsc.markBinding(@src());
 
             // We need to register the handler immediately since uSockets will not buffer.
@@ -2201,13 +2242,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.signal = signal;
             signal.pendingActivityRef();
 
-            const request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            const request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.request_weakref = .initRef(request_object);
 
             if (comptime debug_mode) {
@@ -2245,7 +2286,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             return .{
-                .js_request = if (create_js_request) request_object.toJS(this.globalThis) else .zero,
+                .js_request = switch (create_js_request) {
+                    .yes => request_object.toJS(this.globalThis),
+                    .bake => request_object.toJSForBake(this.globalThis) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        else => return null,
+                    },
+                    .no => .zero,
+                },
                 .request_object = request_object,
                 .ctx = ctx,
             };
@@ -2256,7 +2304,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const index = this.id;
 
             var should_deinit_context = false;
-            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, method) orelse return;
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
@@ -2295,13 +2343,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            var request_object = Request.new(.{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            });
+            var request_object = Request.new(Request.init(
+                ctx.method,
+                AnyRequestContext.init(ctx),
+                ssl_enabled,
+                signal.ref(),
+                body.ref(),
+            ));
             ctx.upgrade_context = upgrade_ctx;
             ctx.request_weakref = .initRef(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
@@ -2722,7 +2770,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // apply SNI routes if any
                 if (this.config.sni) |*sni| {
                     for (sni.slice()) |*sni_ssl_config| {
-                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name);
+                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {
@@ -2849,7 +2897,17 @@ pub const SavedRequest = struct {
     }
 
     pub const Union = union(enum) {
+        /// Direct pointer to a µWebSockets request that is still on the stack.
+        /// Used for synchronous request handling where the request can be processed
+        /// immediately within the current call frame. This avoids heap allocation
+        /// and is more efficient for simple, fast operations.
         stack: *uws.Request,
+
+        /// A heap-allocated copy of the request data that persists beyond the
+        /// initial request handler. Used when request processing needs to be
+        /// deferred (e.g., async operations, waiting for framework initialization).
+        /// Contains strong references to JavaScript objects and all context needed
+        /// to complete the request later.
         saved: bun.jsc.API.SavedRequest,
     };
 };
@@ -2861,7 +2919,12 @@ pub const ServerAllConnectionsClosedTask = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) void {
+    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: *VirtualMachine) void {
+        const ptr = new(this);
+        vm.eventLoop().enqueueTask(jsc.Task.init(ptr));
+    }
+
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) bun.JSTerminated!void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
 
         const globalObject = this.globalObject;
@@ -2874,7 +2937,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
-            promise.resolve(globalObject, .js_undefined);
+            try promise.resolve(globalObject, .js_undefined);
         }
     }
 };
@@ -3122,7 +3185,7 @@ pub const AnyServer = struct {
         };
     }
 
-    pub fn onRequestFromSaved(
+    pub fn onSavedRequest(
         this: AnyServer,
         req: SavedRequest.Union,
         resp: uws.AnyResponse,
@@ -3131,10 +3194,10 @@ pub const AnyServer = struct {
         extra_args: [extra_arg_count]JSValue,
     ) void {
         return switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequestFromSaved(req, resp.TCP, callback, extra_arg_count, extra_args),
-            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onRequestFromSaved(req, resp.SSL, callback, extra_arg_count, extra_args),
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequestFromSaved(req, resp.TCP, callback, extra_arg_count, extra_args),
-            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onRequestFromSaved(req, resp.SSL, callback, extra_arg_count, extra_args),
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onSavedRequest(req, resp.TCP, callback, extra_arg_count, extra_args),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onSavedRequest(req, resp.SSL, callback, extra_arg_count, extra_args),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onSavedRequest(req, resp.TCP, callback, extra_arg_count, extra_args),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onSavedRequest(req, resp.SSL, callback, extra_arg_count, extra_args),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
@@ -3145,12 +3208,12 @@ pub const AnyServer = struct {
         resp: uws.AnyResponse,
         global: *jsc.JSGlobalObject,
         method: ?bun.http.Method,
-    ) ?SavedRequest {
+    ) bun.JSError!?SavedRequest {
         return switch (server.ptr.tag()) {
-            Ptr.case(HTTPServer) => (server.ptr.as(HTTPServer).prepareJsRequestContext(req, resp.TCP, null, true, method) orelse return null).save(global, req, resp.TCP),
-            Ptr.case(HTTPSServer) => (server.ptr.as(HTTPSServer).prepareJsRequestContext(req, resp.SSL, null, true, method) orelse return null).save(global, req, resp.SSL),
-            Ptr.case(DebugHTTPServer) => (server.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp.TCP, null, true, method) orelse return null).save(global, req, resp.TCP),
-            Ptr.case(DebugHTTPSServer) => (server.ptr.as(DebugHTTPSServer).prepareJsRequestContext(req, resp.SSL, null, true, method) orelse return null).save(global, req, resp.SSL),
+            Ptr.case(HTTPServer) => (server.ptr.as(HTTPServer).prepareJsRequestContext(req, resp.TCP, null, .bake, method) orelse return null).save(global, req, resp.TCP),
+            Ptr.case(HTTPSServer) => (server.ptr.as(HTTPSServer).prepareJsRequestContext(req, resp.SSL, null, .bake, method) orelse return null).save(global, req, resp.SSL),
+            Ptr.case(DebugHTTPServer) => (server.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp.TCP, null, .bake, method) orelse return null).save(global, req, resp.TCP),
+            Ptr.case(DebugHTTPSServer) => (server.ptr.as(DebugHTTPSServer).prepareJsRequestContext(req, resp.SSL, null, .bake, method) orelse return null).save(global, req, resp.SSL),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
@@ -3183,6 +3246,7 @@ pub export fn Server__setIdleTimeout(server: jsc.JSValue, seconds: jsc.JSValue, 
         error.OutOfMemory => {
             _ = globalThis.throwOutOfMemoryValue();
         },
+        error.JSTerminated => {},
     };
 }
 

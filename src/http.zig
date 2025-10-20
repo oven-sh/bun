@@ -1683,6 +1683,89 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
     socket.setTimeoutMinutes(minutes);
 }
 
+pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+
+    // Find out if we should not send any update.
+    switch (this.state.stage) {
+        .done, .fail => return,
+        else => {},
+    }
+
+    if (this.state.fail != null) {
+        // If there's any error at all, do not drain.
+        return;
+    }
+
+    // If there's a pending redirect, then don't bother to send a response body
+    // as that wouldn't make sense and I want to defensively avoid edgecases
+    // from that.
+    if (this.state.flags.is_redirect_pending) {
+        return;
+    }
+
+    const body_out_str = this.state.body_out_str orelse return;
+    if (body_out_str.list.items.len == 0) {
+        // No update! Don't do anything.
+        return;
+    }
+
+    this.sendProgressUpdateWithoutStageCheck(is_ssl, http_thread.context(is_ssl), socket);
+}
+
+fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    const out_str = this.state.body_out_str.?;
+    const body = out_str.*;
+    const result = this.toResult();
+    const is_done = !result.has_more;
+
+    log("progressUpdate {}", .{is_done});
+
+    const callback = this.result_callback;
+
+    if (is_done) {
+        this.unregisterAbortTracker();
+        if (this.proxy_tunnel) |tunnel| {
+            log("close the tunnel", .{});
+            this.proxy_tunnel = null;
+            tunnel.shutdown();
+            tunnel.detachAndDeref();
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        } else {
+            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+                log("release socket", .{});
+                ctx.releaseSocket(
+                    socket,
+                    this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                    this.connected_url.hostname,
+                    this.connected_url.getPortAuto(),
+                );
+            } else {
+                NewHTTPContext(is_ssl).closeSocket(socket);
+            }
+        }
+
+        this.state.reset(this.allocator);
+        this.state.response_stage = .done;
+        this.state.request_stage = .done;
+        this.state.stage = .done;
+        this.flags.proxy_tunneling = false;
+        log("done", .{});
+    }
+
+    result.body.?.* = body;
+    callback.run(@fieldParentPtr("client", this), result);
+
+    if (comptime print_every > 0) {
+        print_every_i += 1;
+        if (print_every_i % print_every == 0) {
+            Output.prettyln("Heap stats for HTTP thread\n", .{});
+            Output.flush();
+            default_arena.dumpThreadStats();
+            print_every_i = 0;
+        }
+    }
+}
+
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
         if (this.state.flags.is_redirect_pending and this.state.fail == null) {
@@ -1691,57 +1774,8 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             }
             return;
         }
-        const out_str = this.state.body_out_str.?;
-        const body = out_str.*;
-        const result = this.toResult();
-        const is_done = !result.has_more;
 
-        log("progressUpdate {}", .{is_done});
-
-        const callback = this.result_callback;
-
-        if (is_done) {
-            this.unregisterAbortTracker();
-            if (this.proxy_tunnel) |tunnel| {
-                log("close the tunnel", .{});
-                this.proxy_tunnel = null;
-                tunnel.shutdown();
-                tunnel.detachAndDeref();
-                NewHTTPContext(is_ssl).closeSocket(socket);
-            } else {
-                if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-                    log("release socket", .{});
-                    ctx.releaseSocket(
-                        socket,
-                        this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                        this.connected_url.hostname,
-                        this.connected_url.getPortAuto(),
-                    );
-                } else {
-                    NewHTTPContext(is_ssl).closeSocket(socket);
-                }
-            }
-
-            this.state.reset(this.allocator);
-            this.state.response_stage = .done;
-            this.state.request_stage = .done;
-            this.state.stage = .done;
-            this.flags.proxy_tunneling = false;
-            log("done", .{});
-        }
-
-        result.body.?.* = body;
-        callback.run(@fieldParentPtr("client", this), result);
-
-        if (comptime print_every > 0) {
-            print_every_i += 1;
-            if (print_every_i % print_every == 0) {
-                Output.prettyln("Heap stats for HTTP thread\n", .{});
-                Output.flush();
-                default_arena.dumpThreadStats();
-                print_every_i = 0;
-            }
-        }
+        this.sendProgressUpdateWithoutStageCheck(is_ssl, ctx, socket);
     }
 }
 
@@ -1943,7 +1977,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
-    if (is_done or this.signals.get(.body_streaming) or content_length == null) {
+    if (is_done or this.signals.get(.response_body_streaming) or content_length == null) {
         const is_final_chunk = is_done;
         const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
 
@@ -2009,7 +2043,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 progress.context.maybeRefresh();
             }
             // streaming chunks
-            if (this.signals.get(.body_streaming)) {
+            if (this.signals.get(.response_body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
                 this.state.flags.is_libdeflate_fast_path_disabled = true;
                 return try this.state.processBodyBuffer(buffer, false);
@@ -2090,7 +2124,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             try body_buffer.appendSliceExact(buffer);
 
             // streaming chunks
-            if (this.signals.get(.body_streaming)) {
+            if (this.signals.get(.response_body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
                 this.state.flags.is_libdeflate_fast_path_disabled = true;
 

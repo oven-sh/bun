@@ -1,5 +1,6 @@
-import { YAML } from "bun";
+import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { join } from "path";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {
@@ -493,6 +494,58 @@ document: 2
       expect(YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
     });
 
+    test("document markers in quoted strings", () => {
+      const inputs = [
+        { expected: "hi ... hello", input: '"hi ... hello"' },
+        { expected: "hi ... hello", input: "'hi ... hello'" },
+        { expected: { foo: "hi ... hello" }, input: 'foo: "hi ... hello"' },
+        { expected: { foo: "hi ... hello" }, input: "foo: 'hi ... hello'" },
+        {
+          expected: "hi ... hello",
+          input: `"hi
+  ...
+  hello"`,
+        },
+        {
+          expected: "hi ... hello",
+          input: `'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: "hi
+  ...
+  hello"`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: 'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: "hi
+    ...
+    hello"`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: 'hi
+    ...
+    hello'`,
+        },
+      ];
+
+      for (const { input, expected } of inputs) {
+        expect(YAML.parse(input)).toEqual(expected);
+        expect(YAML.parse(YAML.stringify(YAML.parse(input)))).toEqual(expected);
+      }
+    });
+
     test("handles multiline strings", () => {
       const yaml = `
 literal: |
@@ -701,6 +754,64 @@ production:
           database: "prod_db",
         },
       });
+    });
+
+    test("issue 22659", () => {
+      const input1 = `- test2: next
+  test1: +`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+      const input2 = `- test1: +
+  test2: next`;
+      expect(YAML.parse(input2)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+    });
+
+    test("issue 22392", () => {
+      const input = `
+foo: "some
+  ...
+  string"
+`;
+      expect(YAML.parse(input)).toMatchInlineSnapshot(`
+        {
+          "foo": "some ... string",
+        }
+      `);
+    });
+
+    test("issue 22286", async () => {
+      const input1 = `
+my_anchor: &MyAnchor "MyAnchor"
+
+my_config:
+  *MyAnchor :
+    some_key: "some_value"
+`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        {
+          "my_anchor": "MyAnchor",
+          "my_config": {
+            "MyAnchor": {
+              "some_key": "some_value",
+            },
+          },
+        }
+      `);
+      const input2 = await file(join(import.meta.dir, "fixtures", "AHatInTime.yaml")).text();
+      expect(YAML.parse(input2)).toMatchSnapshot();
     });
   });
 
@@ -978,6 +1089,40 @@ production:
         expect(YAML.parse(YAML.stringify(config))).toEqual(config);
       });
     });
+
+    const indicatorQuotingTests = [
+      "-",
+      "?",
+      ":",
+      ",",
+      "[",
+      "]",
+      "{",
+      "}",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+      " ",
+      "\t",
+      "\n",
+      "\r",
+    ];
+
+    for (const indicatorOrWhitespace of indicatorQuotingTests) {
+      test(`round-trip string starting with '${indicatorOrWhitespace}'`, () => {
+        const array = [{ key: indicatorOrWhitespace }];
+        expect(YAML.parse(YAML.stringify(array))).toEqual(array);
+        expect(YAML.parse(YAML.stringify(array, null, 2))).toEqual(array);
+      });
+    }
 
     test("strings are properly referenced", () => {
       const config = {

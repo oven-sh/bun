@@ -58,6 +58,7 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
+#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -65,6 +66,7 @@
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
+#include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
 #include "ConsoleObject.h"
@@ -164,6 +166,7 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
+#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -188,6 +191,7 @@
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
 #include <exception>
+#include <mutex>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -230,9 +234,6 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
-
-constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
-
 // #include <iostream>
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
@@ -259,70 +260,71 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
-    static bool has_loaded_jsc = false;
+    static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    if (has_loaded_jsc)
-        return;
-    has_loaded_jsc = true;
-    JSC::Config::enableRestrictedOptions();
+    std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
+        JSC::Config::enableRestrictedOptions();
 
-    std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-    WTF::initializeMainThread();
+        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)
-    {
-        JSC::Options::AllowUnfinalizedAccessScope scope;
+        {
+            JSC::Options::AllowUnfinalizedAccessScope scope;
 
-        // ASAN interferes with JSC's signal handlers
-        JSC::Options::useWasmFaultSignalHandler() = false;
-        JSC::Options::useWasmFastMemory() = false;
-    }
+            // ASAN interferes with JSC's signal handlers
+            JSC::Options::useWasmFaultSignalHandler() = false;
+            JSC::Options::useWasmFastMemory() = false;
+        }
 #endif
 
-    JSC::initialize();
-    {
+        JSC::initialize();
+        {
 
-        JSC::Options::AllowUnfinalizedAccessScope scope;
+            JSC::Options::AllowUnfinalizedAccessScope scope;
 
-        JSC::Options::useConcurrentJIT() = true;
-        // JSC::Options::useSigillCrashAnalyzer() = true;
-        JSC::Options::useWasm() = true;
-        JSC::Options::useSourceProviderCache() = true;
-        // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-        JSC::Options::exposeInternalModuleLoader() = true;
-        JSC::Options::useSharedArrayBuffer() = true;
-        JSC::Options::useJIT() = true;
-        JSC::Options::useBBQJIT() = true;
-        JSC::Options::useJITCage() = false;
-        JSC::Options::useShadowRealm() = true;
-        JSC::Options::useV8DateParser() = true;
-        JSC::Options::useMathSumPreciseMethod() = true;
-        JSC::Options::evalMode() = evalMode;
-        JSC::Options::heapGrowthSteepnessFactor() = 1.0;
-        JSC::Options::heapGrowthMaxIncrease() = 2.0;
-        JSC::Options::useAsyncStackTrace() = true;
-        JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
+            JSC::Options::useConcurrentJIT() = true;
+            // JSC::Options::useSigillCrashAnalyzer() = true;
+            JSC::Options::useWasm() = true;
+            JSC::Options::useSourceProviderCache() = true;
+            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+            JSC::Options::exposeInternalModuleLoader() = true;
+            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::useJIT() = true;
+            JSC::Options::useBBQJIT() = true;
+            JSC::Options::useJITCage() = false;
+            JSC::Options::useShadowRealm() = true;
+            JSC::Options::useV8DateParser() = true;
+            JSC::Options::useMathSumPreciseMethod() = true;
+            JSC::Options::evalMode() = evalMode;
+            JSC::Options::heapGrowthSteepnessFactor() = 1.0;
+            JSC::Options::heapGrowthMaxIncrease() = 2.0;
+            JSC::Options::useAsyncStackTrace() = true;
+            JSC::Options::useExplicitResourceManagement() = true;
+            JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
-        JSC::Options::showPrivateScriptsInStackTraces() = true;
+            JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
 
-        if (envc > 0) [[likely]] {
-            while (envc--) {
-                const char* env = (const char*)envp[envc];
-                // need to check for \0 so we might as well make this single pass
-                // strlen would check the end of the string
-                if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
-                    continue;
-                }
+            if (envc > 0) [[likely]] {
+                auto envc_copy = envc;
+                while (envc_copy--) {
+                    const char* env = (const char*)envp[envc_copy];
+                    // need to check for \0 so we might as well make this single pass
+                    // strlen would check the end of the string
+                    if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
+                        continue;
+                    }
 
-                if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
-                    onCrash(env, strlen(env));
+                    if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
+                        onCrash(env, strlen(env));
+                    }
                 }
             }
+            JSC::Options::assertOptionsAreCoherent();
         }
-        JSC::Options::assertOptionsAreCoherent();
-    }
+    }); // end std::call_once lambda
 
     // NOLINTEND
 }
@@ -335,527 +337,6 @@ extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
-
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // default formatting
-    size_t framesCount = callSites->length();
-
-    WTF::StringBuilder sb;
-
-    auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
-        auto* str = errorMessage.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
-        }
-    } else {
-        sb.append("Error"_s);
-    }
-
-    for (size_t i = 0; i < framesCount; i++) {
-        sb.append("\n    at "_s);
-
-        JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue)) {
-            callSite->formatAsString(vm, lexicalGlobalObject, sb);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            // This matches Node.js / V8's behavior
-            // It can become "at [object Object]" if the object is not a CallSite
-            auto* str = callSiteValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto value = str->value(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append(value.data);
-        }
-    }
-
-    return jsString(vm, sb.toString());
-}
-
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (prepareStackTrace && prepareStackTrace.isObject()) {
-        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
-
-        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
-            // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
-            // it will display the stack as a formatted string, so we have to do the same.
-            errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, 0);
-
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(errorObject);
-            arguments.append(callSites);
-
-            JSC::JSValue result = profiledCall(
-                lexicalGlobalObject,
-                JSC::ProfilingReason::Other,
-                prepareStackTrace,
-                prepareStackTraceCallData,
-                lexicalGlobalObject->m_errorStructure.constructor(globalObject),
-                arguments);
-
-            RETURN_IF_EXCEPTION(scope, stackStringValue);
-
-            if (result.isUndefinedOrNull()) {
-                result = jsUndefined();
-            }
-
-            return result;
-        }
-    }
-
-    return stackStringValue;
-}
-
-static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
-{
-    JSValue prepareStackTrace = {};
-    if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
-        if (auto prepare = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            prepareStackTrace = prepare;
-        }
-    } else {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
-
-        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
-        prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        CLEAR_IF_EXCEPTION(scope);
-    }
-
-    return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
-}
-
-WTF::String Bun::formatStackTrace(
-    JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    const WTF::String& name,
-    const WTF::String& message,
-    OrdinalNumber& line,
-    OrdinalNumber& column,
-    WTF::String& sourceURL,
-    Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance)
-{
-    WTF::StringBuilder sb;
-
-    if (!name.isEmpty()) {
-        sb.append(name);
-        if (!message.isEmpty()) {
-            sb.append(": "_s);
-            sb.append(message);
-        }
-    } else if (!message.isEmpty()) {
-        sb.append(message);
-    }
-
-    // FIXME: why can size == 6 and capacity == 0?
-    // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
-    size_t framesCount = stackTrace.size();
-
-    bool hasSet = false;
-    void* bunVM = nullptr;
-    const auto getBunVM = [&]() -> void* {
-        if (!bunVM) {
-            bunVM = clientData(vm)->bunVM;
-        }
-        return bunVM;
-    };
-
-    if (errorInstance) {
-        if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-                // There appears to be an off-by-one error.
-                // The following reproduces the issue:
-                // /* empty comment */
-                // "".test(/[a-0]/);
-                auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
-
-                ZigStackFrame remappedFrame = {};
-                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
-
-                remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-                remappedFrame.position.column_zero_based = 0;
-
-                String sourceURLForFrame = err->sourceURL();
-
-                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
-
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
-                }
-
-                // there is always a newline before each stack frame line, ensuring that the name + message
-                // exist on the first line, even if both are empty
-                sb.append("\n"_s);
-
-                sb.append("    at <parse> ("_s);
-
-                sb.append(remappedFrame.source_url.toWTFString());
-
-                if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                    hasSet = true;
-                    line = remappedFrame.position.line();
-                }
-
-                if (remappedFrame.remapped) {
-                    sb.append(':');
-                    sb.append(remappedFrame.position.line().oneBasedInt());
-                } else {
-                    sb.append(':');
-                    sb.append(originalLine.oneBasedInt());
-                }
-
-                sb.append(')');
-            }
-        }
-    }
-
-    if (framesCount == 0) {
-        ASSERT(stackTrace.isEmpty());
-        return sb.toString();
-    }
-
-    sb.append("\n"_s);
-
-    for (size_t i = 0; i < framesCount; i++) {
-        StackFrame& frame = stackTrace.at(i);
-        unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
-
-        // -- get the data we need to render the text --
-        JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-        if (frame.hasLineAndColumnInfo()) {
-            auto* callee = frame.callee();
-            if (callee) {
-                if (auto* object = callee->getObject()) {
-                    globalObjectForFrame = object->globalObject();
-                }
-            }
-        }
-
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
-        OrdinalNumber originalLine = {};
-        OrdinalNumber originalColumn = {};
-        OrdinalNumber displayLine = {};
-        OrdinalNumber displayColumn = {};
-        WTF::String sourceURLForFrame;
-
-        if (frame.hasLineAndColumnInfo()) {
-            ZigStackFrame remappedFrame = {};
-            LineColumn lineColumn = frame.computeLineAndColumn();
-            originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-            originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
-            displayLine = originalLine;
-            displayColumn = originalColumn;
-
-            remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-            remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
-
-            sourceURLForFrame = Zig::sourceURL(vm, frame);
-
-            bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
-
-            bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
-            if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
-                // https://github.com/oven-sh/bun/issues/3595
-                if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-
-                    // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
-
-                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                }
-            }
-
-            displayLine = remappedFrame.position.line();
-            displayColumn = remappedFrame.position.column();
-
-            if (!hasSet) {
-                hasSet = true;
-                line = remappedFrame.position.line();
-                column = remappedFrame.position.column();
-                sourceURL = sourceURLForFrame;
-
-                if (remappedFrame.remapped) {
-                    if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                    }
-                }
-            }
-        }
-
-        if (functionName.isEmpty()) {
-            if (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function))) {
-                functionName = "<anonymous>"_s;
-            }
-        }
-
-        if (sourceURLForFrame.isEmpty()) {
-            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
-                sourceURLForFrame = "native"_s;
-            } else {
-                sourceURLForFrame = "unknown"_s;
-            }
-        }
-
-        // --- actually render the text ---
-
-        sb.append("    at "_s);
-
-        if (!functionName.isEmpty()) {
-            if (frame.isAsyncFrame()) {
-                sb.append("async "_s);
-            }
-            sb.append(functionName);
-            sb.append(" ("_s);
-        }
-
-        if (!sourceURLForFrame.isEmpty()) {
-            sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
-                sb.append(':');
-                sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
-            }
-        }
-
-        if (!functionName.isEmpty()) {
-            sb.append(')');
-        }
-
-        if (i != framesCount - 1) {
-            sb.append("\n"_s);
-        }
-    }
-
-    return sb.toString();
-}
-
-// error.stack calls this function
-static String computeErrorInfoWithoutPrepareStackTrace(
-    JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    Vector<StackFrame>& stackTrace,
-    OrdinalNumber& line,
-    OrdinalNumber& column,
-    String& sourceURL,
-    JSObject* errorInstance)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String name = "Error"_s;
-    WTF::String message;
-
-    if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    if (!globalObject) [[unlikely]] {
-        globalObject = defaultGlobalObject();
-    }
-
-    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
-}
-
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
-
-    // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
-    MarkedArgumentBuffer callSites;
-
-    // Create the call sites (one per frame)
-    GlobalObject::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
-
-    // We need to sourcemap it if it's a GlobalObject.
-
-    for (int i = 0; i < stackTrace.size(); i++) {
-        ZigStackFrame frame = {};
-        auto& stackFrame = stackFrames.at(i);
-        String sourceURLForFrame = Zig::sourceURL(vm, stackFrame);
-
-        // When you use node:vm, the global object can be different on a
-        // per-frame basis. We should sourcemap the frames which are in Bun's
-        // global object, and not sourcemap the frames which are in a different
-        // global object.
-        JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-
-        if (stackFrame.hasLineAndColumnInfo()) {
-            auto* callee = stackFrame.callee();
-            // https://github.com/oven-sh/bun/issues/17698
-            if (callee) {
-                if (auto* object = callee->getObject()) {
-                    globalObjectForFrame = object->globalObject();
-                }
-            }
-        }
-
-        if (globalObjectForFrame == globalObject) {
-            if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
-                frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
-            } else {
-                frame.position.line_zero_based = -1;
-                frame.position.column_zero_based = -1;
-            }
-
-            if (!sourceURLForFrame.isEmpty()) {
-                frame.source_url = Bun::toStringRef(sourceURLForFrame);
-
-                // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject->bunVM(), &frame, 1);
-
-                sourceURLForFrame = frame.source_url.toWTFString();
-            }
-        }
-
-        auto* callsite = jsCast<CallSite*>(callSites.at(i));
-
-        if (!sourceURLForFrame.isEmpty())
-            callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
-
-        if (frame.remapped) {
-            callsite->setLineNumber(frame.position.line());
-            callsite->setColumnNumber(frame.position.column());
-        }
-    }
-
-    JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
-}
-
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
-{
-
-    Zig::GlobalObject* globalObject = nullptr;
-    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
-
-    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
-}
-
-static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
-{
-    Zig::GlobalObject* globalObject = nullptr;
-    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
-    lexicalGlobalObject = errorInstance->globalObject();
-    globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
-        if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-            auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-            auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
-        }
-    } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
-        }
-    }
-
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
-    RETURN_IF_EXCEPTION(scope, {});
-    return jsString(vm, result);
-}
-
-static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
-{
-    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
-}
-
-static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
-{
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
-
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
-    if (scope.exception()) {
-        // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
-        // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
-        scope.clearException();
-        result = WTF::emptyString();
-    }
-
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
-
-    return result;
-}
-
-static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
-{
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
-
-    JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
-
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
-
-    return result;
-}
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
@@ -1233,6 +714,9 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
     }
 }
+
+void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
@@ -1250,7 +734,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
@@ -1280,7 +764,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
@@ -1613,7 +1097,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     // That means even though this looks like the wrong thing to do,
     // we should be converting to latin1, not utf8.
     if (!encodedString.is8Bit()) {
-        std::span<LChar> ptr;
+        std::span<Latin1Character> ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (dest.isNull()) [[unlikely]] {
@@ -2031,207 +1515,6 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     ASSERT(callFrame->argumentCount() == 1);
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
-static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGlobalObject* lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments)
-{
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSLockHolder lock(vm);
-
-    auto function = lexicalGlobalObject->get(lexicalGlobalObject, identifier);
-    scope.assertNoExceptionExceptTermination();
-    if (scope.exception()) [[unlikely]]
-        return {};
-    ASSERT(function.isCallable());
-
-    auto callData = JSC::getCallData(function);
-    auto result = JSC::call(lexicalGlobalObject, function, callData, thisValue, arguments);
-#if ASSERT_ENABLED
-    if (scope.exception()) [[unlikely]] {
-        Bun__reportError(lexicalGlobalObject, JSValue::encode(scope.exception()));
-    }
-#endif
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
-}
-extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
-{
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
-    if (!readableStream) [[unlikely]]
-        return false;
-
-    auto lexicalGlobalObject = globalObject;
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
-    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(readableStream);
-    arguments.append(JSC::jsBoolean(true));
-    ASSERT(!arguments.hasOverflowed());
-    auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!returnedValue) return false;
-
-    auto results = Detail::SequenceConverter<IDLAny>::convert(*lexicalGlobalObject, *returnedValue);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    ASSERT(results.size() == 2);
-    *possibleReadableStream1 = JSValue::encode(results[0]);
-    *possibleReadableStream2 = JSValue::encode(results[1]);
-    return true;
-}
-
-extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
-    if (!readableStream) [[unlikely]]
-        return;
-
-    if (!ReadableStream::isLocked(globalObject, readableStream)) {
-        return;
-    }
-
-    WebCore::Exception exception { AbortError };
-    ReadableStream::cancel(*globalObject, readableStream, exception);
-}
-
-extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    auto value = JSC::JSValue::decode(possibleReadableStream);
-    if (value.isEmpty() || !value.isCell())
-        return;
-
-    auto* readableStream = static_cast<JSReadableStream*>(value.asCell());
-    if (!readableStream) [[unlikely]]
-        return;
-    readableStream->setNativePtr(globalObject->vm(), jsNumber(-1));
-    readableStream->setNativeType(0);
-    readableStream->setDisturbed(true);
-}
-extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
-extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    ASSERT(globalObject);
-    return ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
-}
-
-extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
-extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    ASSERT(globalObject);
-    WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
-    return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
-}
-
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
-{
-    ASSERT(globalObject);
-    JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
-    if (!object) {
-        *ptr = nullptr;
-        return -1;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-
-    if (!object->inherits<JSReadableStream>()) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        JSValue target = object;
-        JSValue fn = JSValue();
-        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
-        if (function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
-            fn = object;
-            target = jsUndefined();
-        } else {
-            auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (iterable && iterable.isCallable()) {
-                fn = iterable;
-            }
-        }
-
-        if (throwScope.exception()) [[unlikely]] {
-            *ptr = nullptr;
-            return -1;
-        }
-
-        if (fn.isEmpty()) {
-            *ptr = nullptr;
-            return -1;
-        }
-
-        auto* createIterator = globalObject->builtinInternalFunctions().readableStreamInternals().m_readableStreamFromAsyncIteratorFunction.get();
-
-        JSC::MarkedArgumentBuffer arguments;
-        arguments.append(target);
-        arguments.append(fn);
-
-        JSC::JSValue result = profiledCall(globalObject, JSC::ProfilingReason::API, createIterator, JSC::getCallData(createIterator), JSC::jsUndefined(), arguments);
-
-        if (throwScope.exception()) [[unlikely]] {
-            return -1;
-        }
-
-        if (!result.isObject()) {
-            *ptr = nullptr;
-            return -1;
-        }
-
-        object = result.getObject();
-
-        ASSERT(object->inherits<JSReadableStream>());
-        *possibleReadableStream = JSValue::encode(object);
-        *ptr = nullptr;
-        ensureStillAliveHere(object);
-        return 0;
-    }
-
-    auto* readableStream = jsCast<JSReadableStream*>(object);
-
-    JSValue nativePtrHandle = readableStream->nativePtr();
-    if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
-        *ptr = nullptr;
-        return 0;
-    }
-
-    JSCell* cell = nativePtrHandle.asCell();
-
-    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 1;
-    }
-
-    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 2;
-    }
-
-    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
-        *ptr = casted->wrapped();
-        return 4;
-    }
-
-    return 0;
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativePtr));
-
-    auto callData = JSC::getCallData(function);
-    auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-    EXCEPTION_ASSERT(!!scope.exception() == !result);
-    return JSValue::encode(result);
-}
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
@@ -2239,203 +1522,9 @@ extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* gl
     return JSValue::encode(globalObject->lazyTestModuleObject());
 }
 
-static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto* function = globalObject->m_readableStreamToArrayBuffer.get();
-    if (!function) {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToArrayBufferCodeGenerator(vm)), globalObject);
-        globalObject->m_readableStreamToArrayBuffer.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-
-    auto callData = JSC::getCallData(function);
-    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-
-    JSC::JSObject* object = result.getObject();
-
-    if (!result || result.isUndefinedOrNull()) [[unlikely]]
-        return JSValue::encode(result);
-
-    if (!object) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected object"_s);
-        return {};
-    }
-
-    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
-    if (!promise) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected promise"_s);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    return ZigGlobalObject__readableStreamToArrayBufferBody(static_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto* function = globalObject->m_readableStreamToBytes.get();
-    if (!function) {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBytesCodeGenerator(vm)), globalObject);
-        globalObject->m_readableStreamToBytes.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-
-    auto callData = JSC::getCallData(function);
-    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-
-    JSC::JSObject* object = result.getObject();
-
-    if (!result || result.isUndefinedOrNull()) [[unlikely]]
-        return JSValue::encode(result);
-
-    if (!object) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected object"_s);
-        return {};
-    }
-
-    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
-    if (!promise) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected promise"_s);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSFunction* function = nullptr;
-    if (auto readableStreamToText = globalObject->m_readableStreamToText.get()) {
-        function = readableStreamToText;
-    } else {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToTextCodeGenerator(vm)), globalObject);
-
-        globalObject->m_readableStreamToText.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSFunction* function = nullptr;
-    if (auto readableStreamToFormData = globalObject->m_readableStreamToFormData.get()) {
-        function = readableStreamToFormData;
-    } else {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToFormDataCodeGenerator(vm)), globalObject);
-
-        globalObject->m_readableStreamToFormData.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-    arguments.append(JSValue::decode(contentTypeValue));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSFunction* function = nullptr;
-    if (auto readableStreamToJSON = globalObject->m_readableStreamToJSON.get()) {
-        function = readableStreamToJSON;
-    } else {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToJSONCodeGenerator(vm)), globalObject);
-
-        globalObject->m_readableStreamToJSON.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSFunction* function = nullptr;
-    if (auto readableStreamToBlob = globalObject->m_readableStreamToBlob.get()) {
-        function = readableStreamToBlob;
-    } else {
-        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBlobCodeGenerator(vm)), globalObject);
-
-        globalObject->m_readableStreamToBlob.set(vm, globalObject, function);
-    }
-
-    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(readableStreamValue));
-
-    auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-}
-
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
 {
     return globalObject->makeNapiEnvForFFI();
-}
-
-JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
-JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    if (callFrame->argumentCount() < 1) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
-        return {};
-    }
-
-    auto readableStreamValue = callFrame->uncheckedArgument(0);
-    return ZigGlobalObject__readableStreamToArrayBufferBody(static_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
-}
-
-JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToBytes);
-JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToBytes, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    if (callFrame->argumentCount() < 1) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
-        return {};
-    }
-
-    auto readableStreamValue = callFrame->uncheckedArgument(0);
-    return ZigGlobalObject__readableStreamToBytes(static_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -2547,164 +1636,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-void GlobalObject::createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
-{
-    /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
-     * "To maintain restrictions imposed on strict mode functions, frames that have a
-     * strict mode function and all frames below (its caller etc.) are not allow to access
-     * their receiver and function objects. For those frames, getFunction() and getThis()
-     * will return undefined."." */
-    bool encounteredStrictFrame = false;
-
-    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
-    JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
-    size_t framesCount = stackTrace.size();
-
-    for (size_t i = 0; i < framesCount; i++) {
-        CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
-
-        if (!encounteredStrictFrame) {
-            encounteredStrictFrame = callSite->isStrict();
-        }
-
-        callSites.append(callSite);
-    }
-}
-
-JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    GlobalObject* globalObject = static_cast<GlobalObject*>(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::ErrorInstance* source = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
-    JSC::ErrorInstance* destination = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(1));
-
-    if (!source || !destination) {
-        throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
-        return {};
-    }
-
-    if (!destination->stackTrace()) {
-        destination->captureStackTrace(vm, globalObject, 1);
-    }
-
-    if (source->stackTrace()) {
-        destination->stackTrace()->appendVector(*source->stackTrace());
-        source->stackTrace()->clear();
-    }
-
-    return JSC::JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    auto errorObject = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
-    auto callSites = jsDynamicCast<JSC::JSArray*>(callFrame->argument(1));
-    if (!errorObject) {
-        throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);
-        return {};
-    }
-    if (!callSites) {
-        callSites = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
-    }
-
-    JSValue result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, jsUndefined());
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSC::JSValue::encode(result);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* errorObject = jsDynamicCast<ErrorInstance*>(JSValue::decode(thisValue));
-
-    // This shouldn't be possible.
-    if (!errorObject) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    OrdinalNumber line;
-    OrdinalNumber column;
-    String sourceURL;
-    auto stackTrace = errorObject->stackTrace();
-    if (stackTrace == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject);
-    stackTrace->clear();
-    errorObject->setStackFrames(vm, {});
-    RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSValue decodedValue = JSValue::decode(thisValue);
-    if (auto* object = decodedValue.getObject()) {
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), 0);
-    }
-
-    return true;
-}
-
-JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    GlobalObject* globalObject = static_cast<GlobalObject*>(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
-        return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
-    }
-
-    JSC::JSObject* errorObject = objectArg.asCell()->getObject();
-    JSC::JSValue caller = callFrame->argument(1);
-
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
-    if (stackTraceLimit == 0) {
-        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    }
-
-    WTF::Vector<JSC::StackFrame> stackTrace;
-    JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
-
-    if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTFMove(stackTrace));
-        if (instance->hasMaterializedErrorInfo()) {
-            const auto& propertyName = vm.propertyNames->stack;
-            VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-            DeletePropertySlot slot;
-            JSObject::deleteProperty(instance, globalObject, propertyName, slot);
-            if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
-            } else {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter), JSC::PropertyAttribute::CustomAccessor | 0);
-            }
-        }
-    } else {
-        OrdinalNumber line;
-        OrdinalNumber column;
-        String sourceURL;
-        JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
-    }
-
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
@@ -2739,6 +1670,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
+    m_bakeAdditions.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
@@ -3455,19 +2387,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
-        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
-    });
-    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
-        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
-    });
-    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
-        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
-    });
-    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
-        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
-    });
-
     // Initialize LazyProperties for stdin/stderr/stdout
     m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
         init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
@@ -3630,7 +2549,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
 }
 extern "C" EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink)
 {
-    Zig::GlobalObject* globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* globalThis = static_cast<Zig::GlobalObject*>(globalObject);
     return globalThis->assignStreamToResumableSink(JSValue::decode(stream), JSValue::decode(sink));
 }
 EncodedJSValue GlobalObject::assignStreamToResumableSink(JSValue stream, JSValue sink)
@@ -4016,7 +2935,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueImmediateCppTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
 }
@@ -4132,12 +3051,14 @@ void GlobalObject::reload()
 {
     JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
-        this,
-        Identifier::fromString(vm, "registry"_s)));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
+    RETURN_IF_EXCEPTION(scope, );
 
     registry->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
     this->requireMap()->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.
@@ -4146,7 +3067,7 @@ void GlobalObject::reload()
     }
 }
 
-extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();

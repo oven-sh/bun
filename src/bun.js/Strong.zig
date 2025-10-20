@@ -114,15 +114,16 @@ pub const Optional = struct {
     }
 };
 
-const Impl = opaque {
+pub const Impl = opaque {
     pub fn init(global: *jsc.JSGlobalObject, value: jsc.JSValue) *Impl {
         jsc.markBinding(@src());
         return Bun__StrongRef__new(global, value);
     }
 
     pub fn get(this: *Impl) jsc.JSValue {
-        jsc.markBinding(@src());
-        return Bun__StrongRef__get(this);
+        // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
+        const js_value: *jsc.DecodedJSValue = @ptrCast(@alignCast(this));
+        return js_value.encode();
     }
 
     pub fn set(this: *Impl, global: *jsc.JSGlobalObject, value: jsc.JSValue) void {
@@ -142,7 +143,6 @@ const Impl = opaque {
 
     extern fn Bun__StrongRef__delete(this: *Impl) void;
     extern fn Bun__StrongRef__new(*jsc.JSGlobalObject, jsc.JSValue) *Impl;
-    extern fn Bun__StrongRef__get(this: *Impl) jsc.JSValue;
     extern fn Bun__StrongRef__set(this: *Impl, *jsc.JSGlobalObject, jsc.JSValue) void;
     extern fn Bun__StrongRef__clear(this: *Impl) void;
 };

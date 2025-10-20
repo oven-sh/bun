@@ -230,12 +230,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
-    extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
-    pub fn reload(this: *jsc.JSGlobalObject) void {
+    pub fn reload(this: *jsc.JSGlobalObject) !void {
         this.vm().drainMicrotasks();
         this.vm().collectAsync();
-
-        JSC__JSGlobalObject__reload(this);
+        try bun.cpp.JSC__JSGlobalObject__reload(this);
     }
 
     pub const BunPluginTarget = enum(u8) {
@@ -508,6 +506,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -519,6 +518,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return (this.tryTakeException() orelse {
@@ -901,6 +901,12 @@ pub const JSGlobalObject = opaque {
 
         // We're done validating. From now on, deal with extracting the body.
         body.toBlobIfPossible();
+
+        if (body.* == .Locked) {
+            if (response.getBodyReadableStream(this)) |stream| {
+                return stream.value;
+            }
+        }
 
         var any_blob = switch (body.*) {
             .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),

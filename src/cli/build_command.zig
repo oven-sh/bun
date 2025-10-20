@@ -96,12 +96,6 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.outdir.len > 0) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
                 Global.exit(1);
@@ -140,6 +134,17 @@ pub const BuildCommand = struct {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --no-bundle", .{});
                 Global.exit(1);
                 return;
+            }
+        }
+
+        if (ctx.bundler_options.transform_only) {
+            // Check if any entry point is an HTML file
+            for (this_transpiler.options.entry_points) |entry_point| {
+                if (strings.hasSuffixComptime(entry_point, ".html")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
+                    Global.exit(1);
+                    return;
+                }
             }
         }
 
@@ -441,7 +446,7 @@ pub const BuildCommand = struct {
                 };
 
                 if (result != .success) {
-                    Output.printErrorln("{s}", .{result.error_message});
+                    Output.printErrorln("{s}", .{result.err.slice()});
                     Global.exit(1);
                 }
 

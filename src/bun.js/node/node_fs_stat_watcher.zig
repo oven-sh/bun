@@ -1,6 +1,6 @@
 const log = bun.Output.scoped(.StatWatcher, .visible);
 
-fn statToJSStats(globalThis: *jsc.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!jsc.JSValue {
+fn statToJSStats(globalThis: *jsc.JSGlobalObject, stats: *const bun.sys.PosixStat, bigint: bool) bun.JSError!jsc.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -110,19 +110,17 @@ pub const StatWatcherScheduler = struct {
         this.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(&holder.task)));
     }
 
-    pub fn timerCallback(this: *StatWatcherScheduler) EventLoopTimer.Arm {
+    pub fn timerCallback(this: *StatWatcherScheduler) void {
         const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
         this.event_loop_timer.state = .FIRED;
         this.event_loop_timer.heap = .{};
 
         if (has_been_cleared) {
-            return .disarm;
+            return;
         }
 
         jsc.WorkPool.schedule(&this.task);
-
-        return .disarm;
     }
 
     pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {
@@ -192,7 +190,7 @@ pub const StatWatcher = struct {
 
     poll_ref: bun.Async.KeepAlive = .{},
 
-    last_stat: bun.Stat,
+    last_stat: bun.sys.PosixStat,
     last_jsvalue: jsc.Strong.Optional,
 
     scheduler: bun.ptr.RefPtr(StatWatcherScheduler),
@@ -352,7 +350,15 @@ pub const StatWatcher = struct {
                 return;
             }
 
-            const stat = bun.sys.stat(this.path);
+            const stat: bun.sys.Maybe(bun.sys.PosixStat) = if (bun.Environment.isLinux and bun.sys.supports_statx_on_linux.load(.monotonic))
+                bun.sys.statx(this.path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
+            else brk: {
+                const result = bun.sys.stat(this.path);
+                break :brk switch (result) {
+                    .result => |r| bun.sys.Maybe(bun.sys.PosixStat){ .result = bun.sys.PosixStat.init(&r) },
+                    .err => |e| bun.sys.Maybe(bun.sys.PosixStat){ .err = e },
+                };
+            };
             switch (stat) {
                 .result => |res| {
                     // we store the stat, but do not call the callback
@@ -362,7 +368,7 @@ pub const StatWatcher = struct {
                 .err => {
                     // on enoent, eperm, we call cb with two zeroed stat objects
                     // and store previous stat as a zeroed stat object, and then call the callback.
-                    this.last_stat = std.mem.zeroes(bun.Stat);
+                    this.last_stat = std.mem.zeroes(bun.sys.PosixStat);
                     this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, initialStatErrorOnMainThread));
                 },
             }
@@ -374,7 +380,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
@@ -385,7 +391,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         _ = js.listenerGetCached(this.js_this).?.call(
@@ -406,23 +412,39 @@ pub const StatWatcher = struct {
     /// Called from any thread
     pub fn restat(this: *StatWatcher) void {
         log("recalling stat", .{});
-        const stat = bun.sys.stat(this.path);
+        const stat: bun.sys.Maybe(bun.sys.PosixStat) = if (bun.Environment.isLinux and bun.sys.supports_statx_on_linux.load(.monotonic))
+            bun.sys.statx(this.path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
+        else brk: {
+            const result = bun.sys.stat(this.path);
+            break :brk switch (result) {
+                .result => |r| bun.sys.Maybe(bun.sys.PosixStat){ .result = bun.sys.PosixStat.init(&r) },
+                .err => |e| bun.sys.Maybe(bun.sys.PosixStat){ .err = e },
+            };
+        };
         const res = switch (stat) {
             .result => |res| res,
-            .err => std.mem.zeroes(bun.Stat),
+            .err => std.mem.zeroes(bun.sys.PosixStat),
         };
 
-        var compare = res;
-        const StatT = @TypeOf(compare);
-        if (@hasField(StatT, "st_atim")) {
-            compare.st_atim = this.last_stat.st_atim;
-        } else if (@hasField(StatT, "st_atimespec")) {
-            compare.st_atimespec = this.last_stat.st_atimespec;
-        } else if (@hasField(StatT, "atim")) {
-            compare.atim = this.last_stat.atim;
-        }
-
-        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
+        // Ignore atime changes when comparing stats
+        // Compare field-by-field to avoid false positives from padding bytes
+        if (res.dev == this.last_stat.dev and
+            res.ino == this.last_stat.ino and
+            res.mode == this.last_stat.mode and
+            res.nlink == this.last_stat.nlink and
+            res.uid == this.last_stat.uid and
+            res.gid == this.last_stat.gid and
+            res.rdev == this.last_stat.rdev and
+            res.size == this.last_stat.size and
+            res.blksize == this.last_stat.blksize and
+            res.blocks == this.last_stat.blocks and
+            res.mtim.sec == this.last_stat.mtim.sec and
+            res.mtim.nsec == this.last_stat.mtim.nsec and
+            res.ctim.sec == this.last_stat.ctim.sec and
+            res.ctim.nsec == this.last_stat.ctim.nsec and
+            res.birthtim.sec == this.last_stat.birthtim.sec and
+            res.birthtim.nsec == this.last_stat.birthtim.nsec)
+            return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
@@ -480,7 +502,7 @@ pub const StatWatcher = struct {
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
-            .last_stat = std.mem.zeroes(bun.Stat),
+            .last_stat = std.mem.zeroes(bun.sys.PosixStat),
             .last_jsvalue = .empty,
             .scheduler = vm.rareData().nodeFSStatWatcherScheduler(vm),
             .ref_count = .init(),

@@ -350,16 +350,15 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) void {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return;
     if (this.hasExited()) {
         this.event_loop_timer.state = .CANCELLED;
-        return .disarm;
+        return;
     }
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
-    return .disarm;
 }
 
 pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
@@ -697,9 +696,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 }
 
                 switch (status) {
-                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
-                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)) catch {}, // TODO: properly propagate exception upwards
+                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
                         if (comptime Environment.allow_assert)
@@ -1619,18 +1618,30 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdin == .buffer) {
-        subprocess.stdin.buffer.start().assert();
+        if (subprocess.stdin.buffer.start().asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
     }
 
     if (subprocess.stdout == .pipe) {
-        subprocess.stdout.pipe.start(subprocess, loop).assert();
+        if (subprocess.stdout.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
             subprocess.stdout.pipe.readAll();
         }
     }
 
     if (subprocess.stderr == .pipe) {
-        subprocess.stderr.pipe.start(subprocess, loop).assert();
+        if (subprocess.stderr.pipe.start(subprocess, loop).asErr()) |err| {
+            _ = subprocess.tryKill(subprocess.killSignal);
+            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            return error.JSError;
+        }
 
         if ((is_sync or !lazy) and subprocess.stderr == .pipe) {
             subprocess.stderr.pipe.readAll();

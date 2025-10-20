@@ -44,6 +44,14 @@ else()
   set(CONFIGURE_DEPENDS "")
 endif()
 
+set(LLVM_ZIG_CODEGEN_THREADS 0)
+# This makes the build slower, so we turn it off for now.
+# if (DEBUG)
+#   include(ProcessorCount)
+#   ProcessorCount(CPU_COUNT)
+#   set(LLVM_ZIG_CODEGEN_THREADS ${CPU_COUNT})
+# endif()
+
 # --- Dependencies ---
 
 set(BUN_DEPENDENCIES
@@ -387,6 +395,54 @@ register_command(
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
+set(BUN_BINDGENV2_SCRIPT ${CWD}/src/codegen/bindgenv2/script.ts)
+
+absolute_sources(BUN_BINDGENV2_SOURCES ${CWD}/cmake/sources/BindgenV2Sources.txt)
+# These sources include the script itself.
+absolute_sources(BUN_BINDGENV2_INTERNAL_SOURCES
+  ${CWD}/cmake/sources/BindgenV2InternalSources.txt)
+string(REPLACE ";" "," BUN_BINDGENV2_SOURCES_COMMA_SEPARATED
+  "${BUN_BINDGENV2_SOURCES}")
+
+execute_process(
+  COMMAND ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+    --command=list-outputs
+    --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+    --codegen-path=${CODEGEN_PATH}
+  RESULT_VARIABLE bindgen_result
+  OUTPUT_VARIABLE bindgen_outputs
+)
+if(${bindgen_result})
+  message(FATAL_ERROR "bindgenv2/script.ts exited with non-zero status")
+endif()
+foreach(output IN LISTS bindgen_outputs)
+  if(output MATCHES "\.cpp$")
+    list(APPEND BUN_BINDGENV2_CPP_OUTPUTS ${output})
+  elseif(output MATCHES "\.zig$")
+    list(APPEND BUN_BINDGENV2_ZIG_OUTPUTS ${output})
+  else()
+    message(FATAL_ERROR "unexpected bindgen output: [${output}]")
+  endif()
+endforeach()
+
+register_command(
+  TARGET
+    bun-bindgen-v2
+  COMMENT
+    "Generating bindings (v2)"
+  COMMAND
+    ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+      --command=generate
+      --codegen-path=${CODEGEN_PATH}
+      --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+  SOURCES
+    ${BUN_BINDGENV2_SOURCES}
+    ${BUN_BINDGENV2_INTERNAL_SOURCES}
+  OUTPUTS
+    ${BUN_BINDGENV2_CPP_OUTPUTS}
+    ${BUN_BINDGENV2_ZIG_OUTPUTS}
+)
+
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
 absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/sources/BindgenSources.txt)
@@ -565,6 +621,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_ZIG_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -578,7 +635,13 @@ if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
   set(ZIG_STEPS test)
 else()
-  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  if (LLVM_ZIG_CODEGEN_THREADS GREATER 1)
+    foreach(i RANGE ${LLVM_ZIG_CODEGEN_THREADS})
+      list(APPEND BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.${i}.o)
+    endforeach()
+  else()
+    set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  endif()
   set(ZIG_STEPS obj)
 endif()
 
@@ -622,6 +685,8 @@ register_command(
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
+      -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -697,6 +762,7 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
   ${BUN_BINDGEN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_CPP_OUTPUTS}
 )
 
 if(WIN32)
@@ -753,7 +819,7 @@ set_target_properties(${bun} PROPERTIES
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 17
+  C_STANDARD 23
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
@@ -832,6 +898,10 @@ if(WIN32)
     _CRT_SECURE_NO_WARNINGS
     BORINGSSL_NO_CXX=1 # lol
   )
+endif()
+
+if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
+  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE
@@ -975,7 +1045,6 @@ if(APPLE)
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    -Wl,-map,${bun}.linker-map
   )
 
   if(DEBUG)
@@ -995,6 +1064,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC
       -dead_strip
       -dead_strip_dylibs
+      -Wl,-map,${bun}.linker-map
     )
   endif()
 endif()
@@ -1028,6 +1098,17 @@ if(LINUX)
     )
   endif()
 
+  if (ENABLE_LTO)
+    # We are optimizing for size at a slight debug-ability cost
+    target_link_options(${bun} PUBLIC
+      -Wl,--no-eh-frame-hdr
+    )
+  else()
+    target_link_options(${bun} PUBLIC
+      -Wl,--eh-frame-hdr
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     --ld-path=${LLD_PROGRAM}
     -fno-pic
@@ -1042,11 +1123,9 @@ if(LINUX)
     # make debug info faster to load
     -Wl,--gdb-index
     -Wl,-z,combreloc
-    -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
     -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
-    -Wl,-Map=${bun}.linker-map
   )
 
   # don't strip in debug, this seems to be needed so that the Zig std library
@@ -1061,6 +1140,7 @@ if(LINUX)
   if (NOT DEBUG AND NOT ENABLE_ASAN AND NOT ENABLE_VALGRIND)
     target_link_options(${bun} PUBLIC
       -Wl,-icf=safe
+      -Wl,-Map=${bun}.linker-map
     )
   endif()
 
@@ -1382,7 +1462,7 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
 
-    if(APPLE OR LINUX)
+    if((APPLE OR LINUX) AND NOT ENABLE_ASAN)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
 

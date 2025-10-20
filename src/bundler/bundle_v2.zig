@@ -178,7 +178,9 @@ pub const BundleV2 = struct {
 
     fn ensureClientTranspiler(this: *BundleV2) void {
         if (this.client_transpiler == null) {
-            _ = bun.handleOom(this.initializeClientTranspiler());
+            _ = this.initializeClientTranspiler() catch |e| {
+                std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+            };
         }
     }
 
@@ -233,7 +235,9 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse bun.handleOom(this.initializeClientTranspiler());
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch |e| {
+                    std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+                };
             }
 
             return this.transpiler;
@@ -931,7 +935,7 @@ pub const BundleV2 = struct {
 
         const pool = try this.allocator().create(ThreadPool);
         if (cli_watch_flag) {
-            Watcher.enableHotModuleReloading(this);
+            Watcher.enableHotModuleReloading(this, null);
         }
         // errdefer pool.destroy();
         errdefer this.graph.heap.deinit();
@@ -1450,7 +1454,7 @@ pub const BundleV2 = struct {
                     if (path.len > 0 and
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !jsc.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
+                        !jsc.ModuleLoader.HardcodedModule.Alias.has(path, .node, .{}) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -1942,7 +1946,7 @@ pub const BundleV2 = struct {
                         break :brk i;
                     }
                 }
-                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+                return bun.StandaloneModuleGraph.CompileResult.fail(.no_entry_point);
             };
 
             const output_file = &output_files.items[entry_point_index];
@@ -1986,12 +1990,12 @@ pub const BundleV2 = struct {
             if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On POSIX, makeOpenPath and change root_dir
                 root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On Windows, ensure directories exist but don't change root_dir
                 _ = bun.makePath(root_dir, dirname) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) });
                 };
             }
 
@@ -2040,7 +2044,7 @@ pub const BundleV2 = struct {
                 else
                     null,
             ) catch |err| {
-                return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)})));
+                return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
 
             if (result == .success) {
@@ -2067,7 +2071,7 @@ pub const BundleV2 = struct {
             return value != .js_undefined;
         }
 
-        fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
+        fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) bun.JSTerminated!void {
             const throw_on_error = this.config.throw_on_error;
 
             const build_result = jsc.JSValue.createEmptyObject(globalThis, 3);
@@ -2090,14 +2094,12 @@ pub const BundleV2 = struct {
                     const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, aggregate_error) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     };
                 } else {
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, .js_undefined) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     };
                 }
             } else false;
@@ -2105,14 +2107,14 @@ pub const BundleV2 = struct {
             if (!didHandleCallbacks) {
                 if (throw_on_error) {
                     const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
-                    promise.reject(globalThis, aggregate_error);
+                    return promise.reject(globalThis, aggregate_error);
                 } else {
-                    promise.resolve(globalThis, build_result);
+                    return promise.resolve(globalThis, build_result);
                 }
             }
         }
 
-        pub fn onComplete(this: *JSBundleCompletionTask) void {
+        pub fn onComplete(this: *JSBundleCompletionTask) bun.JSTerminated!void {
             var globalThis = this.globalThis;
             defer this.deref();
 
@@ -2135,7 +2137,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.err.slice()))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }
@@ -2144,7 +2146,7 @@ pub const BundleV2 = struct {
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => this.toJSError(promise, globalThis),
+                .err => try this.toJSError(promise, globalThis),
                 .value => |*build| {
                     const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files = build.output_files.items;
@@ -2194,7 +2196,9 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch |err| {
+                            return promise.reject(globalThis, err);
+                        };
                     }
 
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
@@ -2209,12 +2213,11 @@ pub const BundleV2 = struct {
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     } else false;
 
                     if (!didHandleCallbacks) {
-                        promise.resolve(globalThis, build_output);
+                        return promise.resolve(globalThis, build_output);
                     }
                 },
             }
@@ -3139,7 +3142,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun, .{ .rewrite_jest_for_tests = this.transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
                     // into a non-node module resolver that doesn't support
@@ -3154,31 +3157,11 @@ pub const BundleV2 = struct {
                     continue;
                 }
 
-                if (this.transpiler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
-                        import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
-                        import_record.path.text = "test";
-                        import_record.is_external_without_side_effects = true;
-                        continue;
-                    }
-                }
-
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
 
                     // don't link bun
                     continue;

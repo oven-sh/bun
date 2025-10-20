@@ -8,6 +8,8 @@
 # Thread::initializePlatformThreading() in ThreadingPOSIX.cpp) to the JS thread to suspend or resume
 # it. So stopping the process would just create noise when debugging any long-running script.
 process handle -p true -s false -n false SIGPWR
+process handle -p true -s false -n false SIGUSR1
+process handle -p true -s false -n false SIGUSR2
 
 command script import -c lldb_pretty_printers.py
 type category enable zig.lang

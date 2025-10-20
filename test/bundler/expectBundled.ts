@@ -524,7 +524,15 @@ function expectBundled(
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
-  const useOutFile = generateOutput == false ? false : outfile ? true : outdir ? false : entryPoints.length === 1;
+  const useOutFile = compile
+    ? true
+    : generateOutput == false
+      ? false
+      : outfile
+        ? true
+        : outdir
+          ? false
+          : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");

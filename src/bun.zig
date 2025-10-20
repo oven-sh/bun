@@ -8,7 +8,7 @@ const bun = @This();
 
 pub const Environment = @import("./env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zero-sized type whose `allocator` method returns `default_allocator`.
 pub const DefaultAllocator = allocators.Default;
@@ -157,15 +157,17 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+    /// Similar to error.JSError but always represents a termination exception.
+    JSTerminated,
 };
 
-pub const JSExecutionTerminated = error{
+pub const JSTerminated = error{
     /// JavaScript execution has been terminated.
     /// This condition is indicated by throwing an exception, so most code should still handle it
     /// with JSError. If you expect that you will not throw any errors other than the termination
     /// exception, you can catch JSError, assert that the exception is the termination exception,
-    /// and return error.JSExecutionTerminated.
-    JSExecutionTerminated,
+    /// and return error.JSTerminated.
+    JSTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -286,7 +288,9 @@ pub const OSPathSlice = paths.OSPathSlice;
 pub const OSPathBuffer = paths.OSPathBuffer;
 pub const Path = paths.Path;
 pub const AbsPath = paths.AbsPath;
+pub const AutoAbsPath = paths.AutoAbsPath;
 pub const RelPath = paths.RelPath;
+pub const AutoRelPath = paths.AutoRelPath;
 pub const EnvPath = paths.EnvPath;
 pub const path_buffer_pool = paths.path_buffer_pool;
 pub const w_path_buffer_pool = paths.w_path_buffer_pool;
@@ -821,7 +825,11 @@ pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) boo
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
-            return switch (is_enabled.load(.seq_cst)) {
+            // .monotonic is okay because there are no side effects we need to observe from a thread that has
+            // written to this variable. This variable is simply a cache, and if its value is not ready yet, we
+            // compute it below. There are no correctness issues if multiple threads perform this computation
+            // simultaneously, as they will all store the same value.
+            return switch (is_enabled.load(.monotonic)) {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
@@ -829,7 +837,7 @@ pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) boo
                         strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
                     else
                         false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
+                    is_enabled.store(if (enabled) .enabled else .disabled, .monotonic);
                     return enabled;
                 },
             };
@@ -1309,7 +1317,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], wide_slice);
         return buf[0..res.written];
     }
 

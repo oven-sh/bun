@@ -100,6 +100,82 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             };
         }
 
+        const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
+
+        pub fn fromPnpmLockfile(res_str: []const u8, string_buf: *String.Buf) FromPnpmLockfileError!Resolution {
+            if (strings.withoutPrefixIfPossibleComptime(res_str, "https://codeload.github.com/")) |user_repo_tar_committish| {
+                const user_end = strings.indexOfChar(user_repo_tar_committish, '/') orelse {
+                    return error.InvalidPnpmLockfile;
+                };
+                const user = user_repo_tar_committish[0..user_end];
+                const repo_tar_committish = user_repo_tar_committish[user_end + 1 ..];
+
+                const repo_end = strings.indexOfChar(repo_tar_committish, '/') orelse {
+                    return error.InvalidPnpmLockfile;
+                };
+                const repo = repo_tar_committish[0..repo_end];
+                const tar_committish = repo_tar_committish[repo_end + 1 ..];
+
+                const tar_end = strings.indexOfChar(tar_committish, '/') orelse {
+                    return error.InvalidPnpmLockfile;
+                };
+                const committish = tar_committish[tar_end + 1 ..];
+
+                return This.init(.{
+                    .github = .{
+                        .owner = try string_buf.append(user),
+                        .repo = try string_buf.append(repo),
+                        .committish = try string_buf.append(committish),
+                    },
+                });
+            }
+
+            if (strings.withoutPrefixIfPossibleComptime(res_str, "file:")) |path| {
+                if (strings.endsWithComptime(res_str, ".tgz")) {
+                    return This.init(.{ .local_tarball = try string_buf.append(path) });
+                }
+                return This.init(.{ .folder = try string_buf.append(path) });
+            }
+
+            return switch (Dependency.Version.Tag.infer(res_str)) {
+                .git => This.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
+                .github => This.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
+                .tarball => {
+                    if (Dependency.isRemoteTarball(res_str)) {
+                        return This.init(.{ .remote_tarball = try string_buf.append(res_str) });
+                    }
+                    return This.init(.{ .local_tarball = try string_buf.append(res_str) });
+                },
+                .npm => {
+                    const version_literal = try string_buf.append(res_str);
+                    const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+
+                    if (!parsed.valid) {
+                        return error.InvalidPnpmLockfile;
+                    }
+
+                    if (parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                        return error.InvalidPnpmLockfile;
+                    }
+
+                    return This.init(.{
+                        .npm = .{
+                            .version = parsed.version.min(),
+                            // set afterwards
+                            .url = .{},
+                        },
+                    });
+                },
+
+                .workspace => error.InvalidPnpmLockfile,
+                .symlink => error.InvalidPnpmLockfile,
+                .folder => error.InvalidPnpmLockfile,
+                .catalog => error.InvalidPnpmLockfile,
+                .dist_tag => error.InvalidPnpmLockfile,
+                .uninitialized => error.InvalidPnpmLockfile,
+            };
+        }
+
         pub fn order(
             lhs: *const This,
             rhs: *const This,
@@ -169,6 +245,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                         .github = this.value.github.clone(buf, Builder, builder),
                     }),
                     .root => Value.init(.{ .root = {} }),
+                    .uninitialized => Value.init(.{ .uninitialized = {} }),
                     else => {
                         std.debug.panic("Internal error: unexpected resolution tag: {}", .{this.tag});
                     },

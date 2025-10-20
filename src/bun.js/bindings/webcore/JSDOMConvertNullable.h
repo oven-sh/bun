@@ -30,6 +30,7 @@
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
+#include "BunIDLConvertBase.h"
 
 namespace WebCore {
 
@@ -58,6 +59,10 @@ struct NullableConversionType<IDLAny> {
 template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNullable<T>> {
     using ReturnType = typename Detail::NullableConversionType<T>::Type;
 
+    static constexpr bool conversionHasSideEffects = WebCore::Converter<T>::conversionHasSideEffects;
+
+    static constexpr bool takesContext = true;
+
     // 1. If Type(V) is not Object, and the conversion to an IDL value is being performed
     // due to V being assigned to an attribute whose type is a nullable callback function
     // that is annotated with [LegacyTreatNonObjectAsNull], then return the IDL nullable
@@ -67,6 +72,25 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
     //
     // 2. Otherwise, if V is null or undefined, then return the IDL nullable type T? value null.
     // 3. Otherwise, return the result of converting V using the rules for the inner IDL type T.
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<ReturnType> tryConvert(
+        JSC::JSGlobalObject& lexicalGlobalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (value.isUndefinedOrNull())
+            return T::nullValue();
+        return Bun::tryConvertIDL<T>(lexicalGlobalObject, value, ctx);
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (value.isUndefinedOrNull())
+            return T::nullValue();
+        return Bun::convertIDL<T>(lexicalGlobalObject, value, ctx);
+    }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
@@ -87,6 +111,7 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
         return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
     }
     template<typename ExceptionThrower = DefaultExceptionThrower>
+        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
     {
         if (value.isUndefinedOrNull())

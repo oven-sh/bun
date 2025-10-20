@@ -454,7 +454,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         const tempdir = manager.getTemporaryDirectory();
         var path_buf: bun.PathBuffer = undefined;
-        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
+        const node_gyp_tempdir_name = try Fs.FileSystem.tmpname("node-gyp", &path_buf, 12345);
 
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
@@ -701,7 +701,7 @@ pub fn init(
                     const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                     defer ctx.allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);
-                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &package_json_cwd_buf);
+                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &root_package_json_path_buf);
                     const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                     initializeStore();
                     const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
@@ -771,9 +771,12 @@ pub fn init(
     bun.copy(u8, &cwd_buf, fs.top_level_dir);
     cwd_buf[fs.top_level_dir.len] = 0;
     fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
-    package_json_cwd = try bun.getFdPath(.fromStdFile(root_package_json_file), &package_json_cwd_buf);
+    root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
 
     const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+    if (entries_option.* == .err) {
+        return entries_option.err.canonical_error;
+    }
 
     var env: *DotEnv.Loader = brk: {
         const map = try ctx.allocator.create(DotEnv.Map);
@@ -875,6 +878,14 @@ pub fn init(
     };
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
+
+    {
+        // make sure folder packages can find the root package without creating a new one
+        var normalized: bun.AbsPath(.{ .sep = .posix }) = .from(root_package_json_path);
+        defer normalized.deinit();
+        try manager.folders.put(manager.allocator, FolderResolution.hash(normalized.slice()), .{ .package_id = 0 });
+    }
+
     jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
@@ -1108,8 +1119,8 @@ pub fn initWithRuntimeOnce(
     }
 }
 var cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd: string = "";
+var root_package_json_path_buf: bun.PathBuffer = undefined;
+pub var root_package_json_path: [:0]const u8 = "";
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -1242,6 +1253,8 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+
+pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
 
 const string = []const u8;
 const stringZ = [:0]const u8;

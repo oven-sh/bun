@@ -3685,7 +3685,6 @@ fn NewPrinter(
 
             switch (stmt.data) {
                 .s_comment => |s| {
-                    p.printIndent();
                     p.addSourceMapping(stmt.loc);
                     p.printIndentedComment(s.text);
                 },
@@ -5148,7 +5147,6 @@ fn NewPrinter(
             if (strings.startsWith(text, "/*")) {
                 // Re-indent multi-line comments
                 while (strings.indexOfChar(text, '\n')) |newline_index| {
-                    p.printIndent();
 
                     // Skip over \r if it precedes \n
                     if (newline_index > 0 and text[newline_index - 1] == '\r') {
@@ -5157,10 +5155,10 @@ fn NewPrinter(
                     } else {
                         p.print(text[0 .. newline_index + 1]);
                     }
+                    p.printIndent();
 
                     text = text[newline_index + 1 ..];
                 }
-                p.printIndent();
                 p.print(text);
                 p.printNewline();
             } else {

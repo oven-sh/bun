@@ -35,14 +35,14 @@
         },
         "request_header_capture": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic implementation; advanced filtering not yet implemented",
+          "bun": "✅",
+          "notes": "Via requestHeaders config array",
           "tests": ["packages/bun-otel/header-capture.test.ts"]
         },
         "response_header_capture": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic implementation; advanced filtering not yet implemented",
+          "bun": "✅",
+          "notes": "Via responseHeaders config array",
           "tests": ["packages/bun-otel/header-capture.test.ts"]
         },
         "error_tracking_with_stack_traces": {
@@ -65,13 +65,15 @@
         },
         "requesthook_callback": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic version working"
+          "bun": "❌",
+          "notes": "Hook config not exposed; use context.active() instead",
+          "priority": "medium"
         },
         "responsehook_callback": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic version working"
+          "bun": "❌",
+          "notes": "Hook config not exposed; use context.active() instead",
+          "priority": "medium"
         },
         "startincomingspanhook": {
           "nodejs": "✅",
@@ -82,12 +84,14 @@
         "requireparentforincomingspans": {
           "nodejs": "✅",
           "bun": "❌",
-          "notes": "Only create spans with parent context"
+          "notes": "Only create spans with parent context",
+          "priority": "medium"
         },
         "servername_configuration": {
           "nodejs": "✅",
           "bun": "❌",
-          "notes": "Virtual host name"
+          "notes": "Virtual host name",
+          "priority": "low"
         },
         "synthetic_source_detection": {
           "nodejs": "✅",
@@ -98,7 +102,7 @@
         "http_route_capture": {
           "nodejs": "✅",
           "bun": "⚠️",
-          "notes": "Requires framework integration; not automatically detected in plain Bun.serve()"
+          "notes": "Framework-dependent; requires manual http.route attribute setting in plain Bun.serve()"
         },
         "metrics": {
           "nodejs": "✅",
@@ -134,14 +138,14 @@
         },
         "request_header_capture": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Limited compared to Node",
+          "bun": "✅",
+          "notes": "Via requestHeaders config array",
           "tests": ["packages/bun-otel/header-capture.test.ts"]
         },
         "response_header_capture": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Limited compared to Node",
+          "bun": "✅",
+          "notes": "Via responseHeaders config array",
           "tests": ["packages/bun-otel/header-capture.test.ts"]
         },
         "error_tracking": {
@@ -158,13 +162,15 @@
         },
         "requesthook_callback": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic version working"
+          "bun": "❌",
+          "notes": "Hook config not exposed; use context.active() instead",
+          "priority": "medium"
         },
         "responsehook_callback": {
           "nodejs": "✅",
-          "bun": "⚠️",
-          "notes": "Basic version working"
+          "bun": "❌",
+          "notes": "Hook config not exposed; use context.active() instead",
+          "priority": "medium"
         },
         "startoutgoingspanhook": {
           "nodejs": "✅",
@@ -175,7 +181,8 @@
         "requireparentforoutgoingspans": {
           "nodejs": "✅",
           "bun": "❌",
-          "notes": "Only create spans with parent context"
+          "notes": "Only create spans with parent context",
+          "priority": "medium"
         },
         "disableoutgoingrequestinstrumentation": {
           "nodejs": "✅",
@@ -185,7 +192,8 @@
         "query_parameter_redaction": {
           "nodejs": "✅",
           "bun": "❌",
-          "notes": "Sensitive query string redaction"
+          "notes": "Sensitive query string redaction",
+          "priority": "low"
         }
       }
     },
@@ -261,7 +269,8 @@
       "client_address_attributes": {
         "nodejs": "✅",
         "bun": "❌",
-        "notes": "IP address extraction"
+        "notes": "IP address extraction",
+        "priority": "medium"
       },
       "user_agent_attributes": {
         "nodejs": "✅",

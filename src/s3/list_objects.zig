@@ -35,6 +35,7 @@ const ObjectRestoreStatus = struct {
 const S3ListObjectsContents = struct {
     key: []const u8,
     etag: ?[]const u8,
+    etag_allocated_len: usize,
     checksum_type: ?[]const u8,
     checksum_algorithme: ?[]const u8,
     last_modified: ?[]const u8,
@@ -42,6 +43,10 @@ const S3ListObjectsContents = struct {
     storage_class: ?[]const u8,
     owner: ?ObjectOwner,
     restore_status: ?ObjectRestoreStatus,
+
+    pub fn deinit(self: *S3ListObjectsContents) void {
+        if (self.etag_allocated_len > 0) bun.default_allocator.free(self.etag.?.ptr[0..self.etag_allocated_len]);
+    }
 };
 
 pub const S3ListObjectsV2Result = struct {
@@ -60,6 +65,7 @@ pub const S3ListObjectsV2Result = struct {
 
     pub fn deinit(this: @This()) void {
         if (this.contents) |contents| {
+            for (contents.items) |*item| item.deinit();
             contents.deinit();
         }
         if (this.common_prefixes) |common_prefixes| {
@@ -218,6 +224,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                     var object_size: ?i64 = null;
                     var storage_class: ?[]const u8 = null;
                     var etag: ?[]const u8 = null;
+                    var etag_allocated_len: usize = 0;
                     var checksum_type: ?[]const u8 = null;
                     var checksum_algorithme: ?[]const u8 = null;
                     var owner_id: ?[]const u8 = null;
@@ -281,7 +288,9 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
 
                                         if (len != 0) {
                                             etag = output[0 .. input.len - len * 5]; // 5 = "&quot;".len - 1 for replacement "
+                                            etag_allocated_len = size;
                                         } else {
+                                            bun.default_allocator.free(output);
                                             etag = input;
                                         }
 
@@ -374,6 +383,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                         try contents.append(.{
                             .key = object_key_val,
                             .etag = etag,
+                            .etag_allocated_len = etag_allocated_len,
                             .checksum_type = checksum_type,
                             .checksum_algorithme = checksum_algorithme,
                             .last_modified = last_modified,
@@ -477,6 +487,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         if (contents.items.len != 0) {
             result.contents = contents;
         } else {
+            for (contents.items) |*item| item.deinit();
             contents.deinit();
         }
 

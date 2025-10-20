@@ -411,7 +411,7 @@ pub fn AstMaybe(
                     }
 
                     // Inline import.meta properties for Bake
-                    if (p.options.framework != null) {
+                    if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
                             // Inline import.meta.dir
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);

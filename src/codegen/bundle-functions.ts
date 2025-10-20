@@ -288,7 +288,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      minify: { syntax: true, whitespace: false },
+      minify: { syntax: true, whitespace: false, keepNames: true },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {

@@ -230,7 +230,7 @@ fn onCloseJS(
     return .js_undefined;
 }
 
-pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
+pub fn onTimeout(this: *UpgradedDuplex) void {
     log("onTimeout", .{});
 
     const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
@@ -239,12 +239,10 @@ pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
     this.event_loop_timer.heap = .{};
 
     if (has_been_cleared) {
-        return .disarm;
+        return;
     }
 
     this.handlers.onTimeout(this.handlers.ctx);
-
-    return .disarm;
 }
 
 pub fn from(

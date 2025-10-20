@@ -172,3 +172,20 @@ struct WebCore::Converter<Bun::IDLFiniteDouble> : Bun::DefaultTryConverter<Bun::
         ctx.throwNotNumber(globalObject, scope);
     }
 };
+
+template<std::integral T>
+struct WebCore::Converter<Bun::IDLLooseInteger<T>>
+    : Bun::DefaultContextConverter<Bun::IDLLooseInteger<T>> {
+
+    template<Bun::IDLConversionContext Ctx>
+    static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto numeric = value.toNumeric(&globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(
+            scope,
+            Bun::convertIDL<Bun::IDLStrictInteger<T>>(globalObject, numeric, ctx));
+    }
+};

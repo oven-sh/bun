@@ -170,6 +170,38 @@ pub fn rebaseSlice(slice: []const u8, old_base: [*]const u8, new_base: [*]const 
     return new_base[offset..][0..slice.len];
 }
 
+/// Removes the sentinel from a sentinel-terminated slice or many-item pointer. The resulting
+/// non-sentinel-terminated slice can be freed with `allocator.free`.
+///
+/// `ptr` must be `[:x]T` or `[*:x]T`, or their const equivalents, and it must have been allocated
+/// by `allocator`.
+///
+/// Most allocators will perform this operation without allocating any memory, but unlike a simple
+/// cast, this function will not cause issues with allocators that need to know the exact size of
+/// the allocation to free it.
+pub fn dropSentinel(ptr: anytype, allocator: std.mem.Allocator) blk: {
+    var info = @typeInfo(@TypeOf(ptr));
+    info.pointer.size = .slice;
+    info.pointer.sentinel_ptr = null;
+    break :blk bun.OOM!@Type(info);
+} {
+    const info = @typeInfo(@TypeOf(ptr)).pointer;
+    const Child = info.child;
+    if (comptime info.sentinel_ptr == null) {
+        @compileError("pointer must have sentinel");
+    }
+
+    const slice = switch (comptime info.size) {
+        .many => std.mem.span(ptr),
+        .slice => ptr,
+        else => @compileError("only slices and many-item pointers are supported"),
+    };
+
+    if (allocator.remap(@constCast(slice), slice.len)) |new| return new;
+    defer allocator.free(slice);
+    return allocator.dupe(Child, slice);
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

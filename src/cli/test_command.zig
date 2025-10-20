@@ -579,6 +579,7 @@ pub const CommandLineReporter = struct {
 
     reporters: struct {
         dots: bool = false,
+        only_failures: bool = false,
         junit: ?*JunitReporter = null,
     } = .{},
 
@@ -874,8 +875,8 @@ pub const CommandLineReporter = struct {
                             },
                         }
                         buntest.reporter.?.last_printed_dot = true;
-                    } else if (Output.isAIAgent() and (comptime result.basicResult()) != .fail) {
-                        // when using AI agents, only print failures
+                    } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
+                        // when using --only-failures, only print failures
                     } else {
                         buntest.bun_test_root.onBeforePrint();
 
@@ -900,7 +901,7 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
-        if (!this.reporters.dots) switch (sequence.result.basicResult()) {
+        if (!this.reporters.dots and !this.reporters.only_failures) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
@@ -1361,6 +1362,11 @@ pub const TestCommand = struct {
         }
         if (ctx.test_options.reporters.dots) {
             reporter.reporters.dots = true;
+        }
+        if (ctx.test_options.reporters.only_failures) {
+            reporter.reporters.only_failures = true;
+        } else if (Output.isAIAgent()) {
+            reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
         js_ast.Expr.Data.Store.create();

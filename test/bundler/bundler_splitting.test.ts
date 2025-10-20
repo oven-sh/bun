@@ -1,6 +1,6 @@
 import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
 import { bunEnv } from "harness";
+import { itBundled } from "./expectBundled";
 
 const env = {
   ...bunEnv,

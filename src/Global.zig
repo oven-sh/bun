@@ -114,6 +114,9 @@ pub fn exit(code: u32) noreturn {
         bun.debug_allocator_data.backing = null;
     }
 
+    // Flush output before exiting to ensure all messages are visible
+    Output.flush();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {

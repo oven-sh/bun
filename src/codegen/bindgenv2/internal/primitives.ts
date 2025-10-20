@@ -3,6 +3,11 @@ import util from "node:util";
 import { CodeStyle, Type } from "./base";
 
 export const bool: Type = new (class extends Type {
+  /** Converts to a boolean, as if by calling `Boolean`. */
+  get loose() {
+    return LooseBool;
+  }
+
   get idlType() {
     return "::Bun::IDLStrictBoolean";
   }
@@ -18,17 +23,45 @@ export const bool: Type = new (class extends Type {
   }
 })();
 
-function makeUnsignedType(width: number): Type {
+export const LooseBool: Type = new (class extends Type {
+  get idlType() {
+    return "::WebCore::IDLBoolean";
+  }
+  get bindgenType() {
+    return bool.bindgenType;
+  }
+  zigType(style?: CodeStyle) {
+    return bool.zigType(style);
+  }
+  toCpp(value: boolean): string {
+    return bool.toCpp(value);
+  }
+})();
+
+export abstract class IntegerType extends Type {
+  abstract loose: LooseIntegerType;
+  abstract cppType: string;
+}
+
+function makeUnsignedType(width: number): IntegerType {
   assert(Number.isInteger(width) && width > 0);
-  return new (class extends Type {
+  return new (class extends IntegerType {
+    /** Converts to a number first. */
+    get loose() {
+      return looseUnsignedTypes[width];
+    }
+
     get idlType() {
-      return `::Bun::IDLStrictInteger<::std::uint${width}_t>`;
+      return `::Bun::IDLStrictInteger<${this.cppType}>`;
     }
     get bindgenType() {
       return `bindgen.BindgenU${width}`;
     }
     zigType(style?: CodeStyle) {
       return `u${width}`;
+    }
+    get cppType() {
+      return `::std::uint${width}_t`;
     }
     toCpp(value: number | bigint): string {
       assert(typeof value === "bigint" || Number.isSafeInteger(value));
@@ -41,17 +74,25 @@ function makeUnsignedType(width: number): Type {
   })();
 }
 
-function makeSignedType(width: number): Type {
+function makeSignedType(width: number): IntegerType {
   assert(Number.isInteger(width) && width > 0);
-  return new (class extends Type {
+  return new (class extends IntegerType {
+    /** Tries to convert to a number first. */
+    get loose() {
+      return looseSignedTypes[width];
+    }
+
     get idlType() {
-      return `::Bun::IDLStrictInteger<::std::int${width}_t>`;
+      return `::Bun::IDLStrictInteger<${this.cppType}>`;
     }
     get bindgenType() {
       return `bindgen.BindgenI${width}`;
     }
     zigType(style?: CodeStyle) {
       return `i${width}`;
+    }
+    get cppType() {
+      return `::std::int${width}_t`;
     }
     toCpp(value: number | bigint): string {
       assert(typeof value === "bigint" || Number.isSafeInteger(value));
@@ -69,19 +110,67 @@ function makeSignedType(width: number): Type {
   })();
 }
 
-export const u8: Type = makeUnsignedType(8);
-export const u16: Type = makeUnsignedType(16);
-export const u32: Type = makeUnsignedType(32);
-export const u64: Type = makeUnsignedType(64);
+export const u8: IntegerType = makeUnsignedType(8);
+export const u16: IntegerType = makeUnsignedType(16);
+export const u32: IntegerType = makeUnsignedType(32);
+export const u64: IntegerType = makeUnsignedType(64);
 
-export const i8: Type = makeSignedType(8);
-export const i16: Type = makeSignedType(16);
-export const i32: Type = makeSignedType(32);
-export const i64: Type = makeSignedType(64);
+export const i8: IntegerType = makeSignedType(8);
+export const i16: IntegerType = makeSignedType(16);
+export const i32: IntegerType = makeSignedType(32);
+export const i64: IntegerType = makeSignedType(64);
+
+export abstract class LooseIntegerType extends Type {}
+
+function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
+  return new (class extends LooseIntegerType {
+    get idlType() {
+      return `::Bun::IDLLooseInteger<${strict.cppType}>`;
+    }
+    get bindgenType() {
+      return strict.bindgenType;
+    }
+    zigType(style?: CodeStyle) {
+      return strict.zigType(style);
+    }
+    toCpp(value: number | bigint): string {
+      return strict.toCpp(value);
+    }
+  })();
+}
+
+export const LooseU8: LooseIntegerType = makeLooseIntegerType(u8);
+export const LooseU16: LooseIntegerType = makeLooseIntegerType(u16);
+export const LooseU32: LooseIntegerType = makeLooseIntegerType(u32);
+export const LooseU64: LooseIntegerType = makeLooseIntegerType(u64);
+
+export const LooseI8: LooseIntegerType = makeLooseIntegerType(i8);
+export const LooseI16: LooseIntegerType = makeLooseIntegerType(i16);
+export const LooseI32: LooseIntegerType = makeLooseIntegerType(i32);
+export const LooseI64: LooseIntegerType = makeLooseIntegerType(i64);
+
+const looseUnsignedTypes: { [width: number]: LooseIntegerType } = {
+  8: LooseU8,
+  16: LooseU16,
+  32: LooseU32,
+  64: LooseU64,
+};
+
+const looseSignedTypes: { [width: number]: LooseIntegerType } = {
+  8: LooseI8,
+  16: LooseI16,
+  32: LooseI32,
+  64: LooseI64,
+};
 
 export const f64: Type = new (class extends Type {
+  /** Does not allow NaN or infinities. */
   get finite() {
-    return finiteF64;
+    return FiniteF64;
+  }
+  /** Converts to a number, as if by calling `Number`. */
+  get loose() {
+    return LooseF64;
   }
 
   get idlType() {
@@ -107,7 +196,7 @@ export const f64: Type = new (class extends Type {
   }
 })();
 
-export const finiteF64: Type = new (class extends Type {
+export const FiniteF64: Type = new (class extends Type {
   get idlType() {
     return "::Bun::IDLFiniteDouble";
   }
@@ -121,5 +210,20 @@ export const finiteF64: Type = new (class extends Type {
     assert(typeof value === "number");
     if (!Number.isFinite(value)) throw RangeError("number must be finite");
     return util.inspect(value);
+  }
+})();
+
+export const LooseF64: Type = new (class extends Type {
+  get idlType() {
+    return "::WebCore::IDLUnrestrictedDouble";
+  }
+  get bindgenType() {
+    return f64.bindgenType;
+  }
+  zigType(style?: CodeStyle) {
+    return f64.zigType(style);
+  }
+  toCpp(value: number): string {
+    return f64.toCpp(value);
   }
 })();

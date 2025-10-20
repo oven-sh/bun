@@ -11,20 +11,35 @@ import {
 
 abstract class EnumType extends NamedType {}
 
-export function enumeration(name: string, values: string[]): EnumType {
-  if (values.length === 0) {
+/**
+ * If `values[x]` is an array, all elements of that array will map to the same underlying integral
+ * value (that is, `x`). Essentially, they become different spellings of the same enum value.
+ */
+export function enumeration(
+  name: string,
+  values: readonly (string | readonly string[])[],
+): EnumType {
+  const uniqueValues: string[] = values.map((v, i) => {
+    if (!Array.isArray(v)) return v;
+    if (v.length === 0) throw RangeError(`enum value cannot be empty (index ${i})`);
+    return v[0];
+  });
+  if (uniqueValues.length === 0) {
     throw RangeError("enum cannot be empty: " + name);
   }
-  if (values.length > 1n << 32n) {
-    throw RangeError("too many enum values: " + name);
+
+  const indexedValues = values
+    .map(v => (Array.isArray(v) ? v : [v]))
+    .flatMap((arr, i) => arr.map((v): [string, number] => [v, i]));
+  const valueMap = new Map<string, number>();
+  for (const [value, index] of indexedValues) {
+    if (valueMap.size === valueMap.set(value, index).size) {
+      throw RangeError(`duplicate enum value: ${util.inspect(value)}`);
+    }
   }
 
-  const valueSet = new Set<string>();
   const cppMemberSet = new Set<string>();
-  for (const value of values) {
-    if (valueSet.size === valueSet.add(value).size) {
-      throw RangeError(`duplicate enum value in ${name}: ${util.inspect(value)}`);
-    }
+  for (const value of uniqueValues) {
     let cppName = "k";
     cppName += value
       .split(/[^A-Za-z0-9]+/)
@@ -53,9 +68,9 @@ export function enumeration(name: string, values: string[]): EnumType {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
-      const index = values.indexOf(value);
-      if (index === -1) {
-        throw RangeError(`not a member of this enumeration: ${value}`);
+      const index = valueMap.get(value);
+      if (index == null) {
+        throw RangeError(`not a member of ${name}: ${util.inspect(value)}`);
       }
       return `::Bun::Bindgen::Generated::${name}::${cppMembers[index]}`;
     }
@@ -64,7 +79,7 @@ export function enumeration(name: string, values: string[]): EnumType {
       return true;
     }
     get cppHeader() {
-      const quotedValues = values.map(v => `"${v}"`);
+      const quotedValues = uniqueValues.map(v => `"${v}"`);
       let humanReadableName;
       if (quotedValues.length == 0) {
         assert(false); // unreachable
@@ -128,12 +143,11 @@ export function enumeration(name: string, values: string[]): EnumType {
         template<> std::optional<${qualifiedName}>
         WebCore::parseEnumerationFromString<${qualifiedName}>(const WTF::String& stringVal)
         {
-          static constexpr ::std::array<${pairType}, ${values.length}> mappings {
+          static constexpr ::std::array<${pairType}, ${valueMap.size}> mappings {
             ${joinIndented(
               12,
-              values
-                .map<[string, number]>((value, i) => [value, i])
-                .sort()
+              Array.from(valueMap.entries())
+                .sort(([v1], [v2]) => (v1 < v2 ? -1 : 1))
                 .map(([value, i]) => {
                   return `${pairType} {
                     ${toASCIILiteral(value)},
@@ -169,7 +183,7 @@ export function enumeration(name: string, values: string[]): EnumType {
         pub const ${name} = enum(u32) {
           ${joinIndented(
             10,
-            values.map(value => `@${toQuotedLiteral(value)},`),
+            uniqueValues.map(value => `@${toQuotedLiteral(value)},`),
           )}
         };
 

@@ -9,6 +9,14 @@ pub fn format(this: IO, comptime _: []const u8, _: std.fmt.FormatOptions, writer
     try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
 }
 
+pub fn memoryCost(this: *const IO) usize {
+    var size: usize = @sizeOf(IO);
+    size += this.stdin.memoryCost();
+    size += this.stdout.memoryCost();
+    size += this.stderr.memoryCost();
+    return size;
+}
+
 pub fn deinit(this: *IO) void {
     this.stdin.close();
     this.stdout.close();
@@ -76,6 +84,13 @@ pub const InKind = union(enum) {
             },
         }
     }
+
+    pub fn memoryCost(this: InKind) usize {
+        switch (this) {
+            .fd => return this.fd.memoryCost(),
+            .ignore => return 0,
+        }
+    }
 };
 
 pub const OutKind = union(enum) {
@@ -83,13 +98,31 @@ pub const OutKind = union(enum) {
     /// If `captured` is non-null, it will write to std{out,err} and also buffer it.
     /// The pointer points to the `buffered_stdout`/`buffered_stdin` fields
     /// in the Interpreter struct
-    fd: struct { writer: *Interpreter.IOWriter, captured: ?*bun.ByteList = null },
+    fd: struct {
+        writer: *Interpreter.IOWriter,
+        captured: ?*bun.ByteList = null,
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = this.writer.memoryCost();
+            if (this.captured) |captured| {
+                cost += captured.memoryCost();
+            }
+            return cost;
+        }
+    },
     /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
     ///
     /// This is set when the shell is called with `.quiet()`
     pipe,
     /// Discards output
     ignore,
+
+    pub fn memoryCost(this: *const OutKind) usize {
+        return switch (this.*) {
+            .fd => |*fd| fd.memoryCost(),
+            .pipe => 0,
+            .ignore => 0,
+        };
+    }
 
     // fn dupeForSubshell(this: *ShellExecEnv,
     pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

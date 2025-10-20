@@ -364,7 +364,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn memoryCost(this: Self) usize {
-            return this.cap;
+            return this.cap * @sizeOf(Type);
         }
 
         /// This method is available only for `BabyList(u8)`.

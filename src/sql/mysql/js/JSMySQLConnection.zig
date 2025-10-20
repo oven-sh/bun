@@ -106,18 +106,18 @@ pub fn resetConnectionTimeout(this: *@This()) void {
     this.#vm.timer.insert(&this.timer);
 }
 
-pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onConnectionTimeout(this: *@This()) void {
     this.timer.state = .FIRED;
 
     if (this.#connection.isProcessingData()) {
-        return .disarm;
+        return;
     }
 
-    if (this.#connection.status == .failed) return .disarm;
+    if (this.#connection.status == .failed) return;
 
     if (this.getTimeoutInterval() == 0) {
         this.resetConnectionTimeout();
-        return .disarm;
+        return;
     }
 
     switch (this.#connection.status) {
@@ -135,14 +135,12 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
         },
         .disconnected, .failed => {},
     }
-    return .disarm;
 }
 
-pub fn onMaxLifetimeTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
-    if (this.#connection.status == .failed) return .disarm;
+    if (this.#connection.status == .failed) return;
     this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
-    return .disarm;
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;

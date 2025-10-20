@@ -13,7 +13,8 @@
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
 /// Version 16: Added typeof undefined minification optimization.
-const expected_version = 16;
+/// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
+const expected_version = 17;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

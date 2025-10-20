@@ -154,7 +154,15 @@ describe("Bun.telemetry with servers", () => {
         process.exit(1);
       }
 
-      await Bun.sleep(50);
+      // Poll for all events instead of fixed sleep
+      const deadline = Date.now() + 500;
+      while (Date.now() < deadline) {
+        const hasStart = events.find(e => e.type === "start");
+        const hasError = events.find(e => e.type === "error");
+        const hasEnd = events.find(e => e.type === "end");
+        if (hasStart && hasError && hasEnd) break;
+        await Bun.sleep(5);
+      }
 
       const startEvent = events.find(e => e.type === "start");
       const errorEvent = events.find(e => e.type === "error");
@@ -228,9 +236,7 @@ describe("Bun.telemetry with servers", () => {
       onRequestEnd(id) {
         const metadata = requestMetadata.get(id);
         if (metadata) {
-          // Calculate duration
-          const duration = Date.now() - metadata.timestamp;
-          console.log(`Request ${id} (${metadata.method} ${metadata.path}) took ${duration}ms`);
+          // Duration available if needed for assertions
           // Clean up the metadata
           requestMetadata.delete(id);
         }
@@ -286,6 +292,12 @@ describe("Bun.telemetry with servers", () => {
       fetch(`http://localhost:${server.port}/3`),
     ]);
 
+    // Wait for all start callbacks to complete
+    const deadline = Date.now() + 500;
+    while (ids.size < 3 && Date.now() < deadline) {
+      await Bun.sleep(5);
+    }
+
     // All IDs should be unique
     expect(ids.size).toBe(3);
 
@@ -340,7 +352,7 @@ describe("Bun.telemetry with servers", () => {
 
     // Wait for response headers callback
     const startTime = Date.now();
-    while (responseData.length < 1 && Date.now() - startTime < 200) {
+    while (responseData.length < 1 && Date.now() - startTime < 500) {
       await Bun.sleep(5);
     }
     if (responseData.length < 1) {

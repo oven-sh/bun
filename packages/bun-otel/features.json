@@ -1,0 +1,588 @@
+{
+  "otel": {
+    "http": {
+      "server": {
+        "automatic_span_creation": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "Via native telemetry hooks",
+          "tests": [
+            "test/js/bun/telemetry.test.ts",
+            "test/js/bun/http/serve-telemetry.test.ts",
+            "test/js/bun/http/node-telemetry.test.ts",
+            "packages/bun-otel/distributed-tracing.test.ts",
+            "packages/bun-otel/distributed-tracing-node-http.test.ts"
+          ]
+        },
+        "w3c_tracecontext_extraction": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "traceparent/tracestate headers",
+          "tests": [
+            "packages/bun-otel/distributed-tracing.test.ts",
+            "packages/bun-otel/distributed-tracing-node-http.test.ts",
+            "packages/bun-otel/context-propagation.test.ts"
+          ]
+        },
+        "span_attributes": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "HTTP semantic conventions",
+          "tests": [
+            "packages/bun-otel/distributed-tracing.test.ts",
+            "packages/bun-otel/distributed-tracing-node-http.test.ts"
+          ]
+        },
+        "request_header_capture": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic implementation; advanced filtering not yet implemented",
+          "tests": ["packages/bun-otel/header-capture.test.ts"]
+        },
+        "response_header_capture": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic implementation; advanced filtering not yet implemented",
+          "tests": ["packages/bun-otel/header-capture.test.ts"]
+        },
+        "error_tracking_with_stack_traces": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "Automatic error recording",
+          "tests": ["packages/bun-otel/distributed-tracing.test.ts", "test/js/bun/telemetry-status.test.ts"]
+        },
+        "custom_span_attributes": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "Via hooks",
+          "tests": ["packages/bun-otel/distributed-tracing.test.ts"]
+        },
+        "ignoreincomingrequesthook": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Filter which requests to trace",
+          "priority": "medium"
+        },
+        "requesthook_callback": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic version working"
+        },
+        "responsehook_callback": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic version working"
+        },
+        "startincomingspanhook": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Add attributes before span starts",
+          "priority": "medium"
+        },
+        "requireparentforincomingspans": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Only create spans with parent context"
+        },
+        "servername_configuration": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Virtual host name"
+        },
+        "synthetic_source_detection": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "User-agent based classification",
+          "priority": "low"
+        },
+        "http_route_capture": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Requires framework integration; not automatically detected in plain Bun.serve()"
+        },
+        "metrics": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "See Metrics section",
+          "priority": "high"
+        }
+      },
+      "client": {
+        "automatic_span_creation": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "Via BunFetchInstrumentation",
+          "tests": [
+            "packages/bun-otel/BunFetchInstrumentation.test.ts",
+            "packages/bun-otel/distributed-tracing.test.ts"
+          ]
+        },
+        "w3c_tracecontext_injection": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "traceparent header injection",
+          "tests": [
+            "packages/bun-otel/BunFetchInstrumentation.test.ts",
+            "packages/bun-otel/distributed-tracing.test.ts"
+          ]
+        },
+        "span_attributes": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "HTTP semantic conventions",
+          "tests": ["packages/bun-otel/BunFetchInstrumentation.test.ts"]
+        },
+        "request_header_capture": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Limited compared to Node",
+          "tests": ["packages/bun-otel/header-capture.test.ts"]
+        },
+        "response_header_capture": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Limited compared to Node",
+          "tests": ["packages/bun-otel/header-capture.test.ts"]
+        },
+        "error_tracking": {
+          "nodejs": "✅",
+          "bun": "✅",
+          "notes": "Network errors recorded",
+          "tests": ["packages/bun-otel/BunFetchInstrumentation.test.ts"]
+        },
+        "ignoreoutgoingrequesthook": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Filter which requests to trace",
+          "priority": "medium"
+        },
+        "requesthook_callback": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic version working"
+        },
+        "responsehook_callback": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Basic version working"
+        },
+        "startoutgoingspanhook": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Add attributes before span starts",
+          "priority": "medium"
+        },
+        "requireparentforoutgoingspans": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Only create spans with parent context"
+        },
+        "disableoutgoingrequestinstrumentation": {
+          "nodejs": "✅",
+          "bun": "⚠️",
+          "notes": "Can be disabled but not configurable"
+        },
+        "query_parameter_redaction": {
+          "nodejs": "✅",
+          "bun": "❌",
+          "notes": "Sensitive query string redaction"
+        }
+      }
+    },
+    "context": {
+      "w3c_tracecontext_propagator": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard implementation",
+        "tests": ["packages/bun-otel/context-propagation.test.ts", "packages/bun-otel/distributed-tracing.test.ts"]
+      },
+      "baggage_propagator": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard implementation",
+        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+      },
+      "b3_propagator": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard OTel packages",
+        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+      },
+      "jaeger_propagator": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard OTel packages",
+        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+      },
+      "composite_propagator": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Multiple propagators",
+        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+      },
+      "asynclocalstorage_context_manager": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Custom spanStorage workaround; context.with() propagation limited",
+        "tests": ["packages/bun-otel/context-propagation.test.ts"]
+      },
+      "contextwith_async_propagation": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Limited in Bun runtime; context.with() doesn't propagate through async"
+      },
+      "zonejs_context_manager": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Browser-only"
+      }
+    },
+    "semconv": {
+      "http_v170_semconv": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Old semantic conventions"
+      },
+      "http_v1230_semconv": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Core attributes implemented"
+      },
+      "otel_semconv_stability_opt_in": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Dual emission mode"
+      },
+      "network_attributes": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Basic implementation"
+      },
+      "client_address_attributes": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "IP address extraction"
+      },
+      "user_agent_attributes": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Basic implementation"
+      },
+      "url_attributes": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard implementation"
+      },
+      "server_attributes": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "Basic implementation"
+      }
+    },
+    "resource": {
+      "service_nameversion": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via BunSDK config",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "host_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "process_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "os_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "container_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "cloud_provider_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "kubernetes_detection": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via standard detectors",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      },
+      "custom_resource_attributes": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via BunSDK config",
+        "tests": ["packages/bun-otel/resources.test.ts"]
+      }
+    },
+    "exporters": {
+      "otlpgrpc_exporter": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "otlphttp_exporter": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "jaeger_exporter": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "zipkin_exporter": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "console_exporter": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "prometheus_exporter": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Requires metrics support",
+        "priority": "high"
+      },
+      "custom_exporters": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard SpanExporter interface"
+      }
+    },
+    "sampling": {
+      "alwayson_sampler": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Default behavior"
+      },
+      "alwaysoff_sampler": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "parentbased_sampler": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "traceidratiobased_sampler": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "custom_samplers": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard Sampler interface"
+      }
+    },
+    "span_processing": {
+      "simplespanprocessor": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "batchspanprocessor": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard OTel package"
+      },
+      "multispanprocessor": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via BunSDK config"
+      },
+      "custom_span_processors": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard SpanProcessor interface"
+      }
+    },
+    "metrics": {
+      "meterprovider": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "counter_instrument": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "histogram_instrument": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "gauge_instrument": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "updowncounter_instrument": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "observable_instruments": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "http_server_metrics": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Duration, request count",
+        "priority": "high"
+      },
+      "http_client_metrics": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Duration, request count",
+        "priority": "high"
+      },
+      "views_and_aggregation": {
+        "nodejs": "✅",
+        "bun": "❌"
+      },
+      "metric_exporters": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "priority": "high"
+      }
+    },
+    "logs": {
+      "loggerprovider": {
+        "nodejs": "⚠️",
+        "bun": "❌",
+        "notes": "Experimental in Node.js",
+        "priority": "low"
+      },
+      "log_records": {
+        "nodejs": "⚠️",
+        "bun": "❌",
+        "notes": "Experimental in Node.js",
+        "priority": "low"
+      },
+      "log_appenders": {
+        "nodejs": "⚠️",
+        "bun": "❌",
+        "notes": "Experimental in Node.js",
+        "priority": "low"
+      },
+      "trace_context_correlation": {
+        "nodejs": "⚠️",
+        "bun": "❌",
+        "notes": "Experimental in Node.js",
+        "priority": "low"
+      },
+      "log_exporters": {
+        "nodejs": "⚠️",
+        "bun": "❌",
+        "notes": "Experimental in Node.js",
+        "priority": "low"
+      }
+    },
+    "advanced": {
+      "manual_instrumentation_api": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard @opentelemetry/api"
+      },
+      "custom_attributes_on_spans": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "span_events": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "span_links": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "span_status": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "span_kind": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "nested_spans": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard span API"
+      },
+      "multitracer_support": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard TracerProvider API"
+      },
+      "instrumentation_libraries": {
+        "nodejs": "✅",
+        "bun": "⚠️",
+        "notes": "HTTP only, no gRPC/DB/etc"
+      },
+      "diaglogger_for_debugging": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Standard diagnostics API"
+      }
+    },
+    "config": {
+      "otel_service_name_env_var": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via resource detectors"
+      },
+      "otel_resource_attributes_env_var": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via resource detectors"
+      },
+      "otel_traces_sampler_env_var": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via SDK config"
+      },
+      "otel_traces_exporter_env_var": {
+        "nodejs": "✅",
+        "bun": "❌",
+        "notes": "Not yet implemented; manual exporter setup required"
+      },
+      "otel_exporter_otlp_endpoint_env_var": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via OTLP exporter config"
+      },
+      "otel_log_level_env_var": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "Via DiagLogger"
+      },
+      "programmatic_configuration": {
+        "nodejs": "✅",
+        "bun": "✅",
+        "notes": "BunSDK constructor"
+      }
+    }
+  }
+}

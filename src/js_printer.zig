@@ -5149,7 +5149,15 @@ fn NewPrinter(
                 // Re-indent multi-line comments
                 while (strings.indexOfChar(text, '\n')) |newline_index| {
                     p.printIndent();
-                    p.print(text[0 .. newline_index + 1]);
+
+                    // Skip over \r if it precedes \n
+                    if (newline_index > 0 and text[newline_index - 1] == '\r') {
+                        p.print(text[0 .. newline_index - 1]);
+                        p.print("\n");
+                    } else {
+                        p.print(text[0..newline_index]);
+                    }
+
                     text = text[newline_index + 1 ..];
                 }
                 p.printIndent();
@@ -5158,7 +5166,16 @@ fn NewPrinter(
             } else {
                 // Print a mandatory newline after single-line comments
                 p.printIndent();
-                p.print(text);
+                if (strings.indexOfChar(text, '\n')) |newline_index| {
+                    if (newline_index > 0 and text[newline_index - 1] == '\r') {
+                        p.print(text[0 .. newline_index - 1]);
+                    } else {
+                        p.print(text[0..newline_index]);
+                    }
+                } else {
+                    p.print(text);
+                }
+
                 p.print("\n");
             }
         }

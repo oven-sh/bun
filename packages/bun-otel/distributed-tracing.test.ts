@@ -198,14 +198,8 @@ describe("Distributed tracing with fetch propagation", () => {
     const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
     expect(spans).toHaveLength(2);
 
-    // Sort spans by start time
-    spans.sort((a, b) => {
-      const aTime = a.startTime[0] * 1_000_000_000 + a.startTime[1];
-      const bTime = b.startTime[0] * 1_000_000_000 + b.startTime[1];
-      return aTime - bTime;
-    });
-
-    const [serverSpan, fetchClientSpan] = spans;
+    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
 
     // Both spans should share the same trace ID
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
@@ -267,13 +261,8 @@ describe("Distributed tracing with fetch propagation", () => {
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(2);
 
-    spans.sort((a, b) => {
-      const aTime = a.startTime[0] * 1_000_000_000 + a.startTime[1];
-      const bTime = b.startTime[0] * 1_000_000_000 + b.startTime[1];
-      return aTime - bTime;
-    });
-
-    const [serverSpan, fetchClientSpan] = spans;
+    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
@@ -322,13 +311,8 @@ describe("Distributed tracing with fetch propagation", () => {
     const spans = exporter.getFinishedSpans();
     expect(spans).toHaveLength(2);
 
-    spans.sort((a, b) => {
-      const aTime = a.startTime[0] * 1_000_000_000 + a.startTime[1];
-      const bTime = b.startTime[0] * 1_000_000_000 + b.startTime[1];
-      return aTime - bTime;
-    });
-
-    const [serverSpan, fetchClientSpan] = spans;
+    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);

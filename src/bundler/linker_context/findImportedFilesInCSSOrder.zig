@@ -63,7 +63,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                 }
             }
 
-            visitor.visited.push(
+            visitor.visited.append(
                 visitor.temp_allocator,
                 source_index,
             ) catch |err| bun.handleOom(err);
@@ -103,7 +103,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                             var nested_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
 
                             // Clone these import conditions and append them to the state
-                            bun.handleOom(nested_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &nested_import_records)));
+                            bun.handleOom(nested_conditions.append(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &nested_import_records)));
                             visitor.visit(record.source_index, &nested_conditions, wrapping_import_records);
                             continue;
                         }
@@ -121,8 +121,8 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                         // merged. When this happens we need to generate a nested imported
                         // CSS file using a data URL.
                         if (rule.import.hasConditions()) {
-                            bun.handleOom(all_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)));
-                            visitor.order.push(
+                            bun.handleOom(all_conditions.append(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)));
+                            visitor.order.append(
                                 visitor.allocator,
                                 Chunk.CssImportOrder{
                                     .kind = .{
@@ -133,7 +133,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                                 },
                             ) catch |err| bun.handleOom(err);
                         } else {
-                            visitor.order.push(
+                            visitor.order.append(
                                 visitor.allocator,
                                 Chunk.CssImportOrder{
                                     .kind = .{
@@ -169,7 +169,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                 );
             }
             // Accumulate imports in depth-first postorder
-            visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
+            visitor.order.append(visitor.allocator, Chunk.CssImportOrder{
                 .kind = .{ .source_index = source_index },
                 .conditions = wrapping_conditions.*,
             }) catch |err| bun.handleOom(err);
@@ -208,7 +208,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
         var is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
             if ((entry.kind == .layers and is_at_layer_prefix) or entry.kind == .external_path) {
-                bun.handleOom(wip_order.push(temp_allocator, entry.*));
+                bun.handleOom(wip_order.append(temp_allocator, entry.*));
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
@@ -219,7 +219,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
         is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
             if ((entry.kind != .layers or !is_at_layer_prefix) and entry.kind != .external_path) {
-                bun.handleOom(wip_order.push(temp_allocator, entry.*));
+                bun.handleOom(wip_order.append(temp_allocator, entry.*));
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
@@ -261,7 +261,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                             continue :next_backward;
                         }
                     }
-                    bun.handleOom(gop.value_ptr.push(temp_allocator, i));
+                    bun.handleOom(gop.value_ptr.append(temp_allocator, i));
                 },
                 .external_path => |p| {
                     const gop = bun.handleOom(external_path_duplicates.getOrPut(p.text));
@@ -279,7 +279,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                             continue :next_backward;
                         }
                     }
-                    bun.handleOom(gop.value_ptr.push(temp_allocator, i));
+                    bun.handleOom(gop.value_ptr.append(temp_allocator, i));
                 },
                 .layers => {},
             }
@@ -405,7 +405,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
             if (index == layer_duplicates.len) {
                 // This is the first time we've seen this combination of layer names.
                 // Allocate a new set of duplicate indices to track this combination.
-                layer_duplicates.push(temp_allocator, DuplicateEntry{
+                layer_duplicates.append(temp_allocator, DuplicateEntry{
                     .layers = layers_key,
                 }) catch |err| bun.handleOom(err);
             }
@@ -449,7 +449,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
 
                         // Non-layer entries still need to be present because they have
                         // other side effects beside inserting things in the layer order
-                        bun.handleOom(wip_order.push(temp_allocator, entry.*));
+                        bun.handleOom(wip_order.append(temp_allocator, entry.*));
                     }
 
                     // Don't add this to the duplicate list below because it's redundant
@@ -457,11 +457,11 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                 }
             }
 
-            layer_duplicates.mut(index).indices.push(
+            layer_duplicates.mut(index).indices.append(
                 temp_allocator,
                 wip_order.len,
             ) catch |err| bun.handleOom(err);
-            bun.handleOom(wip_order.push(temp_allocator, entry.*));
+            bun.handleOom(wip_order.append(temp_allocator, entry.*));
         }
 
         debugCssOrder(this, &wip_order, .WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES);
@@ -484,7 +484,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                         did_clone = @intCast(prev_index);
                     }
                     // need to clone the layers here as they could be references to css ast
-                    wip_order.mut(prev_index).kind.layers.toOwned(temp_allocator).append(
+                    wip_order.mut(prev_index).kind.layers.toOwned(temp_allocator).appendSlice(
                         temp_allocator,
                         entry.kind.layers.inner().sliceConst(),
                     ) catch |err| bun.handleOom(err);

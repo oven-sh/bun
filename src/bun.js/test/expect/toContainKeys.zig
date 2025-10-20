@@ -12,7 +12,7 @@ pub fn toContainKeys(
         return globalThis.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     expected.ensureStillAlive();
@@ -26,9 +26,9 @@ pub fn toContainKeys(
     var pass = brk: {
         const count = try expected.getLength(globalThis);
 
-        // jest-extended checks for truthiness before calling hasOwnProperty
+        // jest-extended checks for truthiness before calling hasOwnProperty, and we cannot call hasOwnPropertyValue with non-objects
         // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
-        if (!value.toBoolean()) break :brk count == 0;
+        if (!value.isObject()) break :brk count == 0;
 
         var i: u32 = 0;
 
@@ -70,7 +70,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

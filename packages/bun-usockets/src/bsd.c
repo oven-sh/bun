@@ -25,6 +25,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if BUN_DEBUG
+// Debug network traffic logging
+static FILE *debug_recv_file = NULL;
+static FILE *debug_send_file = NULL;
+static int debug_logging_initialized = 0;
+
+static void init_debug_logging() {
+    if (debug_logging_initialized) return;
+    debug_logging_initialized = 1;
+
+    const char *recv_path = getenv("BUN_RECV");
+    const char *send_path = getenv("BUN_SEND");
+    if (recv_path) if (!debug_recv_file) debug_recv_file = fopen(recv_path, "w");
+    if (send_path) if (!debug_send_file) debug_send_file = fopen(send_path, "w");
+}
+#endif
+
 #ifndef _WIN32
 // Necessary for the stdint include
 #ifndef _GNU_SOURCE
@@ -700,6 +717,25 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
             return LIBUS_SOCKET_ERROR;
         }
 
+#ifdef __APPLE__
+        /* A bug in XNU (the macOS kernel) can cause accept() to return a socket but addrlen=0.
+         * This happens when an IPv4 connection is made to an IPv6 dual-stack listener
+         * and the connection is immediately aborted (sends RST packet).
+         * However, there might be buffered data from connectx() before the abort. */
+        if (addr->len == 0) {
+            /* Check if there's any pending data before discarding the socket */
+            char peek_buf[1];
+            ssize_t has_data = recv(accepted_fd, peek_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+            
+            if (has_data <= 0) {
+                /* No data available, socket is truly dead - discard it */
+                bsd_close_socket(accepted_fd);
+                continue; /* Try to accept the next connection */
+            }
+            /* If has_data > 0, let the socket through - there's buffered data to read */
+        }
+#endif
+
         break;
     }
 
@@ -720,6 +756,17 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
         if (UNLIKELY(IS_EINTR(ret))) {
             continue;
         }
+
+#if BUN_DEBUG
+        // Debug logging for received data
+        if (ret > 0) {
+            init_debug_logging();
+            if (debug_recv_file) {
+                fwrite(buf, 1, ret, debug_recv_file);
+                fflush(debug_recv_file);
+            }
+        }
+#endif
 
         return ret;
     }
@@ -787,6 +834,17 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
         }
+
+#if BUN_DEBUG
+        // Debug logging for sent data
+        if (rc > 0) {
+            init_debug_logging();
+            if (debug_send_file) {
+                fwrite(buf, 1, rc, debug_send_file);
+                fflush(debug_send_file);
+            }
+        }
+#endif
 
         return rc;
     }

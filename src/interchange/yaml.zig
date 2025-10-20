@@ -19,13 +19,13 @@ pub const YAML = struct {
 
                 // multi-document yaml streams are converted into arrays
 
-                var items: std.ArrayList(Expr) = try .initCapacity(allocator, stream.docs.items.len);
+                var items: bun.BabyList(Expr) = try .initCapacity(allocator, stream.docs.items.len);
 
                 for (stream.docs.items) |doc| {
                     items.appendAssumeCapacity(doc.root);
                 }
 
-                return .init(E.Array, .{ .items = .fromList(items) }, .Empty);
+                return .init(E.Array, .{ .items = items }, .Empty);
             },
         };
     }
@@ -278,6 +278,8 @@ pub fn Parser(comptime enc: Encoding) type {
         context: Context.Stack,
         block_indents: Indent.Stack,
 
+        explicit_document_start_line: ?Line,
+
         // anchors: Anchors,
         anchors: bun.StringHashMap(Expr),
         // aliases: PendingAliases,
@@ -299,13 +301,12 @@ pub fn Parser(comptime enc: Encoding) type {
 
         stack_check: bun.StackCheck,
 
-        const Whitespace = struct {
-            pos: Pos,
-            unit: enc.unit(),
-
-            pub const space: Whitespace = .{ .unit = ' ', .pos = .zero };
-            pub const tab: Whitespace = .{ .unit = '\t', .pos = .zero };
-            pub const newline: Whitespace = .{ .unit = '\n', .pos = .zero };
+        const Whitespace = union(enum) {
+            source: struct {
+                pos: Pos,
+                unit: enc.unit(),
+            },
+            new: enc.unit(),
         };
 
         pub fn init(allocator: std.mem.Allocator, input: []const enc.unit()) @This() {
@@ -320,6 +321,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 // .literal = null,
                 .context = .init(allocator),
                 .block_indents = .init(allocator),
+                .explicit_document_start_line = null,
                 // .anchors = .{ .map = .init(allocator) },
                 .anchors = .init(allocator),
                 // .aliases = .{ .list = .init(allocator) },
@@ -407,10 +409,10 @@ pub fn Parser(comptime enc: Encoding) type {
                             try log.addError(source, e.pos.loc(), "Unexpected EOF");
                         },
                         .unexpected_token => |e| {
-                            try log.addError(source, e.pos.loc(), "Expected token");
+                            try log.addError(source, e.pos.loc(), "Unexpected token");
                         },
                         .unexpected_character => |e| {
-                            try log.addError(source, e.pos.loc(), "Expected character");
+                            try log.addError(source, e.pos.loc(), "Unexpected character");
                         },
                         .invalid_directive => |e| {
                             try log.addError(source, e.pos.loc(), "Invalid directive");
@@ -485,6 +487,10 @@ pub fn Parser(comptime enc: Encoding) type {
                 };
             }
         };
+
+        fn unexpectedToken() error{UnexpectedToken} {
+            return error.UnexpectedToken;
+        }
 
         pub fn parse(self: *@This()) ParseError!Stream {
             try self.scan(.{ .first_scan = true });
@@ -693,31 +699,39 @@ pub fn Parser(comptime enc: Encoding) type {
                 try self.scan(.{});
             }
 
+            self.explicit_document_start_line = null;
+
             if (self.token.data == .document_start) {
+                self.explicit_document_start_line = self.token.line;
                 try self.scan(.{});
             } else if (directives.items.len > 0) {
                 // if there's directives they must end with '---'
-                return error.UnexpectedToken;
+                return unexpectedToken();
             }
 
             const root = try self.parseNode(.{});
 
-            // If document_start or document_end follows, consume it
+            // If document_start it needs to create a new document.
+            // If document_end, consume as many as possible. They should
+            // not create new documents.
             switch (self.token.data) {
                 .eof => {},
-                .document_start => {
-                    try self.scan(.{});
-                },
+                .document_start => {},
                 .document_end => {
                     const document_end_line = self.token.line;
                     try self.scan(.{});
 
+                    // consume all bare documents
+                    while (self.token.data == .document_end) {
+                        try self.scan(.{});
+                    }
+
                     if (self.token.line == document_end_line) {
-                        return error.UnexpectedToken;
+                        return unexpectedToken();
                     }
                 },
                 else => {
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
             }
 
@@ -747,7 +761,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     if (self.token.data != .collect_entry) {
-                        return error.UnexpectedToken;
+                        return unexpectedToken();
                     }
 
                     try self.scan(.{});
@@ -756,7 +770,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+            return .init(E.Array, .{ .items = .moveFromList(&seq) }, sequence_start.loc());
         }
 
         fn parseFlowMapping(self: *@This()) ParseError!Expr {
@@ -803,7 +817,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
                         .mapping_value => {},
                         else => {
-                            return error.UnexpectedToken;
+                            return unexpectedToken();
                         },
                     }
 
@@ -866,16 +880,13 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
         }
 
         fn parseBlockSequence(self: *@This()) ParseError!Expr {
             const sequence_start = self.token.start;
             const sequence_indent = self.token.indent;
             // const sequence_line = self.token.line;
-
-            // try self.context.set(.block_in);
-            // defer self.context.unset(.block_in);
 
             try self.block_indents.push(sequence_indent);
             defer self.block_indents.pop();
@@ -934,6 +945,45 @@ pub fn Parser(comptime enc: Encoding) type {
 
                             break :item try self.parseNode(.{});
                         },
+                        .tag,
+                        .anchor,
+                        => item: {
+                            // consume anchor and/or tag, then decide if the next node
+                            // should be parsed.
+                            var has_tag: ?Token(enc) = null;
+                            var has_anchor: ?Token(enc) = null;
+
+                            next: switch (self.token.data) {
+                                .tag => {
+                                    if (has_tag != null) {
+                                        return unexpectedToken();
+                                    }
+                                    has_tag = self.token;
+
+                                    try self.scan(.{ .additional_parent_indent = entry_indent.add(1), .tag = self.token.data.tag });
+                                    continue :next self.token.data;
+                                },
+                                .anchor => |anchor| {
+                                    _ = anchor;
+                                    if (has_anchor != null) {
+                                        return unexpectedToken();
+                                    }
+                                    has_anchor = self.token;
+
+                                    const tag = if (has_tag) |tag| tag.data.tag else .none;
+                                    try self.scan(.{ .additional_parent_indent = entry_indent.add(1), .tag = tag });
+                                    continue :next self.token.data;
+                                },
+                                .sequence_entry => {
+                                    if (self.token.indent.isLessThanOrEqual(sequence_indent)) {
+                                        const tag = if (has_tag) |tag| tag.data.tag else .none;
+                                        break :item tag.resolveNull(entry_start.add(2).loc());
+                                    }
+                                    break :item try self.parseNode(.{ .scanned_tag = has_tag, .scanned_anchor = has_anchor });
+                                },
+                                else => break :item try self.parseNode(.{ .scanned_tag = has_tag, .scanned_anchor = has_anchor }),
+                            }
+                        },
                         else => try self.parseNode(.{}),
                     };
 
@@ -941,7 +991,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+            return .init(E.Array, .{ .items = .moveFromList(&seq) }, sequence_start.loc());
         }
 
         fn parseBlockMapping(
@@ -951,6 +1001,16 @@ pub fn Parser(comptime enc: Encoding) type {
             mapping_indent: Indent,
             mapping_line: Line,
         ) ParseError!Expr {
+            if (self.explicit_document_start_line) |explicit_document_start_line| {
+                if (mapping_line == explicit_document_start_line) {
+                    // TODO: more specific error
+                    return error.UnexpectedToken;
+                }
+            }
+
+            try self.block_indents.push(mapping_indent);
+            defer self.block_indents.pop();
+
             var props: std.ArrayList(G.Property) = .init(self.allocator);
 
             {
@@ -958,32 +1018,41 @@ pub fn Parser(comptime enc: Encoding) type {
                 // defer self.context.unset(.block_in);
 
                 // get the first value
-                try self.block_indents.push(mapping_indent);
-                defer self.block_indents.pop();
 
                 const mapping_value_start = self.token.start;
                 const mapping_value_line = self.token.line;
 
-                try self.scan(.{});
-
                 const value: Expr = switch (self.token.data) {
-                    .sequence_entry => value: {
-                        if (self.token.line == mapping_value_line) {
-                            return error.UnexpectedToken;
+                    // it's a !!set entry
+                    .mapping_key => value: {
+                        if (self.token.line == mapping_line) {
+                            return unexpectedToken();
                         }
-
-                        if (self.token.indent.isLessThan(mapping_indent)) {
-                            break :value .init(E.Null, .{}, mapping_value_start.loc());
-                        }
-
-                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                        break :value .init(E.Null, .{}, mapping_value_start.loc());
                     },
                     else => value: {
-                        if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
-                            break :value .init(E.Null, .{}, mapping_value_start.loc());
-                        }
+                        try self.scan(.{});
 
-                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                        switch (self.token.data) {
+                            .sequence_entry => {
+                                if (self.token.line == mapping_value_line) {
+                                    return unexpectedToken();
+                                }
+
+                                if (self.token.indent.isLessThan(mapping_indent)) {
+                                    break :value .init(E.Null, .{}, mapping_value_start.loc());
+                                }
+
+                                break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                            },
+                            else => {
+                                if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
+                                    break :value .init(E.Null, .{}, mapping_value_start.loc());
+                                }
+
+                                break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                            },
+                        }
                     },
                 };
 
@@ -1022,11 +1091,13 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             if (self.context.get() == .flow_in) {
-                return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+                return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
             }
 
             try self.context.set(.block_in);
             defer self.context.unset(.block_in);
+
+            var previous_line = mapping_line;
 
             while (switch (self.token.data) {
                 .eof,
@@ -1034,8 +1105,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 .document_end,
                 => false,
                 else => true,
-            } and self.token.indent == mapping_indent and self.token.line != mapping_line) {
+            } and self.token.indent == mapping_indent and self.token.line != previous_line) {
                 const key_line = self.token.line;
+                previous_line = key_line;
                 const explicit_key = self.token.data == .mapping_key;
 
                 const key = try self.parseNode(.{ .current_mapping_indent = mapping_indent });
@@ -1051,44 +1123,53 @@ pub fn Parser(comptime enc: Encoding) type {
                             });
                             continue;
                         }
-                        return error.UnexpectedToken;
+                        return unexpectedToken();
                     },
                     .mapping_value => {
                         if (key_line != self.token.line) {
                             return error.MultilineImplicitKey;
                         }
                     },
+                    .mapping_key => {},
                     else => {
-                        return error.UnexpectedToken;
+                        return unexpectedToken();
                     },
                 }
-
-                try self.block_indents.push(mapping_indent);
-                defer self.block_indents.pop();
 
                 const mapping_value_line = self.token.line;
                 const mapping_value_start = self.token.start;
 
-                try self.scan(.{});
-
                 const value: Expr = switch (self.token.data) {
-                    .sequence_entry => value: {
+                    // it's a !!set entry
+                    .mapping_key => value: {
                         if (self.token.line == key_line) {
-                            return error.UnexpectedToken;
+                            return unexpectedToken();
                         }
-
-                        if (self.token.indent.isLessThan(mapping_indent)) {
-                            break :value .init(E.Null, .{}, mapping_value_start.loc());
-                        }
-
-                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                        break :value .init(E.Null, .{}, mapping_value_start.loc());
                     },
                     else => value: {
-                        if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
-                            break :value .init(E.Null, .{}, mapping_value_start.loc());
-                        }
+                        try self.scan(.{});
 
-                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                        switch (self.token.data) {
+                            .sequence_entry => {
+                                if (self.token.line == key_line) {
+                                    return unexpectedToken();
+                                }
+
+                                if (self.token.indent.isLessThan(mapping_indent)) {
+                                    break :value .init(E.Null, .{}, mapping_value_start.loc());
+                                }
+
+                                break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                            },
+                            else => {
+                                if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
+                                    break :value .init(E.Null, .{}, mapping_value_start.loc());
+                                }
+
+                                break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                            },
+                        }
                     },
                 };
 
@@ -1126,7 +1207,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
         }
 
         const NodeProperties = struct {
@@ -1237,6 +1318,8 @@ pub fn Parser(comptime enc: Encoding) type {
         const ParseNodeOptions = struct {
             current_mapping_indent: ?Indent = null,
             explicit_mapping_key: bool = false,
+            scanned_tag: ?Token(enc) = null,
+            scanned_anchor: ?Token(enc) = null,
         };
 
         fn parseNode(self: *@This(), opts: ParseNodeOptions) ParseError!Expr {
@@ -1246,6 +1329,14 @@ pub fn Parser(comptime enc: Encoding) type {
 
             // c-ns-properties
             var node_props: NodeProperties = .{};
+
+            if (opts.scanned_tag) |tag| {
+                try node_props.setTag(tag);
+            }
+
+            if (opts.scanned_anchor) |anchor| {
+                try node_props.setAnchor(anchor);
+            }
 
             const node: Expr = node: switch (self.token.data) {
                 .eof,
@@ -1273,8 +1364,19 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 .alias => |alias| {
-                    if (node_props.hasAnchorOrTag()) {
-                        return error.UnexpectedToken;
+                    const alias_start = self.token.start;
+                    const alias_indent = self.token.indent;
+                    const alias_line = self.token.line;
+
+                    if (node_props.has_anchor) |anchor| {
+                        if (anchor.line == alias_line) {
+                            return unexpectedToken();
+                        }
+                    }
+                    if (node_props.has_tag) |tag| {
+                        if (tag.line == alias_line) {
+                            return unexpectedToken();
+                        }
                     }
 
                     var copy = self.anchors.get(alias.slice(self.input)) orelse {
@@ -1289,9 +1391,34 @@ pub fn Parser(comptime enc: Encoding) type {
                     };
 
                     // update position from the anchor node to the alias node.
-                    copy.loc = self.token.start.loc();
+                    copy.loc = alias_start.loc();
 
                     try self.scan(.{});
+
+                    if (self.token.data == .mapping_value) {
+                        if (alias_line != self.token.line and !opts.explicit_mapping_key) {
+                            return error.MultilineImplicitKey;
+                        }
+
+                        if (self.context.get() == .flow_key) {
+                            return copy;
+                        }
+
+                        if (opts.current_mapping_indent) |current_mapping_indent| {
+                            if (current_mapping_indent == alias_indent) {
+                                return copy;
+                            }
+                        }
+
+                        const map = try self.parseBlockMapping(
+                            copy,
+                            alias_start,
+                            alias_indent,
+                            alias_line,
+                        );
+
+                        return map;
+                    }
 
                     break :node copy;
                 },
@@ -1346,17 +1473,17 @@ pub fn Parser(comptime enc: Encoding) type {
                     if (node_props.hasAnchorOrTag()) {
                         break :node .init(E.Null, .{}, self.pos.loc());
                     }
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
                 .sequence_entry => {
                     if (node_props.anchorLine()) |anchor_line| {
                         if (anchor_line == self.token.line) {
-                            return error.UnexpectedToken;
+                            return unexpectedToken();
                         }
                     }
                     if (node_props.tagLine()) |tag_line| {
                         if (tag_line == self.token.line) {
-                            return error.UnexpectedToken;
+                            return unexpectedToken();
                         }
                     }
 
@@ -1400,6 +1527,8 @@ pub fn Parser(comptime enc: Encoding) type {
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
                             try self.anchors.put(mapping_anchor.slice(self.input), parent_map);
                         }
+
+                        break :node parent_map;
                     }
                     break :node map;
                 },
@@ -1411,7 +1540,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     // if (node_props.anchorLine()) |anchor_line| {
                     //     if (anchor_line == self.token.line) {
-                    //         return error.UnexpectedToken;
+                    //         return unexpectedToken();
                     //     }
                     // }
 
@@ -1441,11 +1570,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
                 .mapping_value => {
                     if (self.context.get() == .flow_key) {
-                        return .init(E.Null, .{}, self.token.start.loc());
+                        break :node .init(E.Null, .{}, self.token.start.loc());
                     }
                     if (opts.current_mapping_indent) |current_mapping_indent| {
                         if (current_mapping_indent == self.token.indent) {
-                            return .init(E.Null, .{}, self.token.start.loc());
+                            break :node .init(E.Null, .{}, self.token.start.loc());
                         }
                     }
                     const first_key: Expr = .init(E.Null, .{}, self.token.start.loc());
@@ -1461,7 +1590,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     const scalar_indent = self.token.indent;
                     const scalar_line = self.token.line;
 
-                    try self.scan(.{ .tag = node_props.tag() });
+                    try self.scan(.{ .tag = node_props.tag(), .outside_context = true });
 
                     if (self.token.data == .mapping_value) {
                         // this might be the start of a new object with an implicit key
@@ -1541,10 +1670,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     break :node scalar.data.toExpr(scalar_start, self.input);
                 },
                 .directive => {
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
                 .reserved => {
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
             };
 
@@ -1558,11 +1687,16 @@ pub fn Parser(comptime enc: Encoding) type {
                 return error.MultipleTags;
             }
 
+            const resolved = switch (node.data) {
+                .e_null => node_props.tag().resolveNull(node.loc),
+                else => node,
+            };
+
             if (node_props.anchor()) |anchor| {
-                try self.anchors.put(anchor.slice(self.input), node);
+                try self.anchors.put(anchor.slice(self.input), resolved);
             }
 
-            return node;
+            return resolved;
         }
 
         fn next(self: *const @This()) enc.unit() {
@@ -1688,9 +1822,34 @@ pub fn Parser(comptime enc: Encoding) type {
                     try ctx.str_builder.appendSourceSlice(off, end);
                 }
 
+                // may or may not contain whitespace
+                pub fn appendUnknownSourceSlice(ctx: *@This(), off: Pos, end: Pos) OOM!void {
+                    for (off.cast()..end.cast()) |_pos| {
+                        const pos: Pos = .from(_pos);
+                        const unit = ctx.parser.input[pos.cast()];
+                        switch (unit) {
+                            ' ',
+                            '\t',
+                            '\r',
+                            '\n',
+                            => {
+                                try ctx.str_builder.appendSourceWhitespace(unit, pos);
+                            },
+                            else => {
+                                ctx.checkAppend();
+                                try ctx.str_builder.appendSource(unit, pos);
+                            },
+                        }
+                    }
+                }
+
                 pub fn append(ctx: *@This(), unit: enc.unit()) OOM!void {
                     ctx.checkAppend();
                     try ctx.str_builder.append(unit);
+                }
+
+                pub fn appendWhitespace(ctx: *@This(), unit: enc.unit()) OOM!void {
+                    try ctx.str_builder.appendWhitespace(unit);
                 }
 
                 pub fn appendSlice(ctx: *@This(), str: []const enc.unit()) OOM!void {
@@ -1704,6 +1863,14 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
                     ctx.checkAppend();
                     try ctx.str_builder.appendNTimes(unit, n);
+                }
+
+                pub fn appendWhitespaceNTimes(ctx: *@This(), unit: enc.unit(), n: usize) OOM!void {
+                    if (n == 0) {
+                        return;
+                    }
+
+                    try ctx.str_builder.appendWhitespaceNTimes(unit, n);
                 }
 
                 const Keywords = enum {
@@ -1798,7 +1965,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 pub fn tryResolveNumber(
                     ctx: *@This(),
                     parser: *Parser(enc),
-                    first_char: enum { positive, negative, dot, none },
+                    first_char: enum { positive, negative, dot, other },
                 ) ResolveError!void {
                     const nan = std.math.nan(f64);
                     const inf = std.math.inf(f64);
@@ -1913,7 +2080,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 }
                             }
                         },
-                        .none => {},
+                        .other => {},
                     }
 
                     const start = parser.pos;
@@ -1926,7 +2093,9 @@ pub fn Parser(comptime enc: Encoding) type {
                     var @"-" = false;
                     var hex = false;
 
-                    parser.inc(1);
+                    if (first_char != .negative and first_char != .positive) {
+                        parser.inc(1);
+                    }
 
                     var first = true;
 
@@ -1945,7 +2114,12 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\n',
                         '\r',
                         ':',
-                        => break :end .{ parser.pos, true },
+                        => {
+                            if (first and (first_char == .positive or first_char == .negative)) {
+                                break :end .{ parser.pos, false };
+                            }
+                            break :end .{ parser.pos, true };
+                        },
 
                         ',',
                         ']',
@@ -1993,6 +2167,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         'e',
                         'E',
                         => {
+                            first = false;
                             if (e) {
                                 hex = true;
                             }
@@ -2008,12 +2183,12 @@ pub fn Parser(comptime enc: Encoding) type {
                         => |c| {
                             hex = true;
 
-                            defer first = false;
                             if (first) {
                                 if (c == 'b' or c == 'B') {
                                     break :end .{ parser.pos, false };
                                 }
                             }
+                            first = false;
 
                             parser.inc(1);
                             continue :end parser.next();
@@ -2076,7 +2251,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
                     };
 
-                    try ctx.appendSourceSlice(start, end);
+                    try ctx.appendUnknownSourceSlice(start, end);
 
                     if (!valid) {
                         return;
@@ -2165,7 +2340,7 @@ pub fn Parser(comptime enc: Encoding) type {
                             },
 
                             else => {
-                                try ctx.tryResolveNumber(self, .none);
+                                try ctx.tryResolveNumber(self, .other);
                                 continue :next self.next();
                             },
                         }
@@ -2181,13 +2356,41 @@ pub fn Parser(comptime enc: Encoding) type {
                         return ctx.done();
                     }
 
+                    switch (self.context.get()) {
+                        .block_out,
+                        .block_in,
+                        .flow_in,
+                        => {},
+                        .flow_key => {
+                            switch (self.peek(1)) {
+                                ',',
+                                '[',
+                                ']',
+                                '{',
+                                '}',
+                                => {
+                                    return ctx.done();
+                                },
+                                else => {},
+                            }
+                        },
+                    }
+
                     try ctx.appendSource(':', self.pos);
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '#' => {
-                    if (self.pos == .zero or self.input[self.pos.sub(1).cast()] == ' ') {
+                    const prev = self.input[self.pos.sub(1).cast()];
+                    if (self.pos == .zero or switch (prev) {
+                        ' ',
+                        '\t',
+                        '\r',
+                        '\n',
+                        => true,
+                        else => false,
+                    }) {
                         return ctx.done();
                     }
 
@@ -2253,11 +2456,14 @@ pub fn Parser(comptime enc: Encoding) type {
                         }
                     }
 
+                    // clear the leading whitespace before the newline.
+                    ctx.parser.whitespace_buf.clearRetainingCapacity();
+
                     if (lines == 0 and !self.isEof()) {
-                        try ctx.append(' ');
+                        try ctx.appendWhitespace(' ');
                     }
 
-                    try ctx.appendNTimes('\n', lines);
+                    try ctx.appendWhitespaceNTimes('\n', lines);
 
                     continue :next self.next();
                 },
@@ -2461,7 +2667,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         '0'...'9' => {
-                            try ctx.tryResolveNumber(self, .none);
+                            try ctx.tryResolveNumber(self, .other);
                             continue :next self.next();
                         },
 
@@ -2479,7 +2685,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 },
 
                                 else => {
-                                    try ctx.tryResolveNumber(self, .none);
+                                    try ctx.tryResolveNumber(self, .other);
                                     continue :next self.next();
                                 },
                             }
@@ -2507,6 +2713,12 @@ pub fn Parser(comptime enc: Encoding) type {
             var chomp: ?Chomp = null;
 
             next: switch (self.next()) {
+                0 => {
+                    return .{
+                        indent_indicator orelse .default,
+                        chomp orelse .default,
+                    };
+                },
                 '1'...'9' => |digit| {
                     if (indent_indicator != null) {
                         return error.UnexpectedCharacter;
@@ -2564,6 +2776,11 @@ pub fn Parser(comptime enc: Encoding) type {
                     // the first newline is always excluded from a literal
                     self.inc(1);
 
+                    if (self.next() == '\t') {
+                        // tab for indentation
+                        return error.UnexpectedCharacter;
+                    }
+
                     return .{
                         indent_indicator orelse .default,
                         chomp orelse .default,
@@ -2582,10 +2799,102 @@ pub fn Parser(comptime enc: Encoding) type {
         };
 
         fn scanAutoIndentedLiteralScalar(self: *@This(), chomp: Chomp, folded: bool, start: Pos, line: Line) ScanLiteralScalarError!Token(enc) {
-            var leading_newlines: usize = 0;
-            var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+            const LiteralScalarCtx = struct {
+                chomp: Chomp,
+                leading_newlines: usize,
+                text: std.ArrayList(enc.unit()),
+                start: Pos,
+                content_indent: Indent,
+                previous_indent: Indent,
+                max_leading_indent: Indent,
+                line: Line,
+                folded: bool,
 
-            const content_indent: Indent, const first = next: switch (self.next()) {
+                pub fn done(ctx: *@This(), was_eof: bool) OOM!Token(enc) {
+                    switch (ctx.chomp) {
+                        .keep => {
+                            if (was_eof) {
+                                try ctx.text.appendNTimes('\n', ctx.leading_newlines + 1);
+                            } else if (ctx.text.items.len != 0) {
+                                try ctx.text.appendNTimes('\n', ctx.leading_newlines);
+                            }
+                        },
+                        .clip => {
+                            if (was_eof or ctx.text.items.len != 0) {
+                                try ctx.text.append('\n');
+                            }
+                        },
+                        .strip => {
+                            // no trailing newlines
+                        },
+                    }
+
+                    return .scalar(.{
+                        .start = ctx.start,
+                        .indent = ctx.content_indent,
+                        .line = ctx.line,
+                        .resolved = .{
+                            .data = .{ .string = .{ .list = ctx.text } },
+                            .multiline = true,
+                        },
+                    });
+                }
+
+                const AppendError = OOM || error{UnexpectedCharacter};
+
+                pub fn append(ctx: *@This(), c: enc.unit()) AppendError!void {
+                    if (ctx.text.items.len == 0) {
+                        if (ctx.content_indent.isLessThan(ctx.max_leading_indent)) {
+                            return error.UnexpectedCharacter;
+                        }
+                    }
+                    switch (ctx.folded) {
+                        true => {
+                            switch (ctx.leading_newlines) {
+                                0 => {
+                                    try ctx.text.append(c);
+                                },
+                                1 => {
+                                    if (ctx.previous_indent == ctx.content_indent) {
+                                        try ctx.text.appendSlice(&.{ ' ', c });
+                                    } else {
+                                        try ctx.text.appendSlice(&.{ '\n', c });
+                                    }
+                                    ctx.leading_newlines = 0;
+                                },
+                                else => {
+                                    // leading_newlines because -1 for '\n\n' and +1 for c
+                                    try ctx.text.ensureUnusedCapacity(ctx.leading_newlines);
+                                    ctx.text.appendNTimesAssumeCapacity('\n', ctx.leading_newlines - 1);
+                                    ctx.text.appendAssumeCapacity(c);
+                                    ctx.leading_newlines = 0;
+                                },
+                            }
+                        },
+                        false => {
+                            try ctx.text.ensureUnusedCapacity(ctx.leading_newlines + 1);
+                            ctx.text.appendNTimesAssumeCapacity('\n', ctx.leading_newlines);
+                            ctx.text.appendAssumeCapacity(c);
+                            ctx.leading_newlines = 0;
+                        },
+                    }
+                }
+            };
+
+            var ctx: LiteralScalarCtx = .{
+                .chomp = chomp,
+                .text = .init(self.allocator),
+                .folded = folded,
+                .start = start,
+                .line = line,
+
+                .leading_newlines = 0,
+                .content_indent = .none,
+                .previous_indent = .none,
+                .max_leading_indent = .none,
+            };
+
+            ctx.content_indent, const first = next: switch (self.next()) {
                 0 => {
                     return .scalar(.{
                         .start = start,
@@ -2607,7 +2916,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 '\n' => {
                     self.newline();
                     self.inc(1);
-                    leading_newlines += 1;
+                    if (self.next() == '\t') {
+                        // tab for indentation
+                        return error.UnexpectedCharacter;
+                    }
+                    ctx.leading_newlines += 1;
                     continue :next self.next();
                 },
 
@@ -2617,6 +2930,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     while (self.next() == ' ') {
                         indent.inc(1);
                         self.inc(1);
+                    }
+
+                    if (ctx.max_leading_indent.isLessThan(indent)) {
+                        ctx.max_leading_indent = indent;
                     }
 
                     self.line_indent = indent;
@@ -2629,30 +2946,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
             };
 
-            var previous_indent = content_indent;
+            ctx.previous_indent = ctx.content_indent;
 
             next: switch (first) {
                 0 => {
-                    switch (chomp) {
-                        .keep => {
-                            try text.appendNTimes('\n', leading_newlines + 1);
-                        },
-                        .clip => {
-                            try text.append('\n');
-                        },
-                        .strip => {
-                            // no trailing newlines
-                        },
-                    }
-                    return .scalar(.{
-                        .start = start,
-                        .indent = content_indent,
-                        .line = line,
-                        .resolved = .{
-                            .data = .{ .string = .{ .list = text } },
-                            .multiline = true,
-                        },
-                    });
+                    return ctx.done(true);
                 },
 
                 '\r' => {
@@ -2662,7 +2960,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     continue :next '\n';
                 },
                 '\n' => {
-                    leading_newlines += 1;
+                    ctx.leading_newlines += 1;
                     self.newline();
                     self.inc(1);
                     newlines: switch (self.next()) {
@@ -2673,44 +2971,47 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue :newlines '\n';
                         },
                         '\n' => {
-                            leading_newlines += 1;
+                            ctx.leading_newlines += 1;
                             self.newline();
                             self.inc(1);
+                            if (self.next() == '\t') {
+                                // tab for indentation
+                                return error.UnexpectedCharacter;
+                            }
                             continue :newlines self.next();
                         },
                         ' ' => {
-                            var indent: Indent = .from(1);
-                            self.inc(1);
+                            var indent: Indent = .from(0);
                             while (self.next() == ' ') {
                                 indent.inc(1);
-                                if (content_indent.isLessThan(indent)) {
+                                if (ctx.content_indent.isLessThan(indent)) {
                                     switch (folded) {
                                         true => {
-                                            switch (leading_newlines) {
+                                            switch (ctx.leading_newlines) {
                                                 0 => {
-                                                    try text.append(' ');
+                                                    try ctx.text.append(' ');
                                                 },
                                                 else => {
-                                                    try text.ensureUnusedCapacity(leading_newlines + 1);
-                                                    text.appendNTimesAssumeCapacity('\n', leading_newlines);
-                                                    text.appendAssumeCapacity(' ');
-                                                    leading_newlines = 0;
+                                                    try ctx.text.ensureUnusedCapacity(ctx.leading_newlines + 1);
+                                                    ctx.text.appendNTimesAssumeCapacity('\n', ctx.leading_newlines);
+                                                    ctx.text.appendAssumeCapacity(' ');
+                                                    ctx.leading_newlines = 0;
                                                 },
                                             }
                                         },
                                         else => {
-                                            try text.ensureUnusedCapacity(leading_newlines + 1);
-                                            text.appendNTimesAssumeCapacity('\n', leading_newlines);
-                                            leading_newlines = 0;
-                                            text.appendAssumeCapacity(' ');
+                                            try ctx.text.ensureUnusedCapacity(ctx.leading_newlines + 1);
+                                            ctx.text.appendNTimesAssumeCapacity('\n', ctx.leading_newlines);
+                                            ctx.leading_newlines = 0;
+                                            ctx.text.appendAssumeCapacity(' ');
                                         },
                                     }
                                 }
                                 self.inc(1);
                             }
 
-                            if (content_indent.isLessThan(indent)) {
-                                previous_indent = self.line_indent;
+                            if (ctx.content_indent.isLessThan(indent)) {
+                                ctx.previous_indent = self.line_indent;
                             }
                             self.line_indent = indent;
 
@@ -2720,91 +3021,54 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
                 },
 
+                '-' => {
+                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                        return ctx.done(false);
+                    }
+
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                            return ctx.done(false);
+                        }
+                    } else if (self.line_indent.isLessThan(ctx.content_indent)) {
+                        return ctx.done(false);
+                    }
+
+                    try ctx.append('-');
+
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                '.' => {
+                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                        return ctx.done(false);
+                    }
+
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                            return ctx.done(false);
+                        }
+                    } else if (self.line_indent.isLessThan(ctx.content_indent)) {
+                        return ctx.done(false);
+                    }
+
+                    try ctx.append('.');
+
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
                 else => |c| {
                     if (self.block_indents.get()) |block_indent| {
                         if (self.line_indent.isLessThanOrEqual(block_indent)) {
-                            switch (chomp) {
-                                .keep => {
-                                    if (text.items.len != 0) {
-                                        try text.appendNTimes('\n', leading_newlines);
-                                    }
-                                },
-                                .clip => {
-                                    if (text.items.len != 0) {
-                                        try text.append('\n');
-                                    }
-                                },
-                                .strip => {
-                                    // no trailing newlines
-                                },
-                            }
-                            return .scalar(.{
-                                .start = start,
-                                .indent = content_indent,
-                                .line = line,
-                                .resolved = .{
-                                    .data = .{ .string = .{ .list = text } },
-                                    .multiline = true,
-                                },
-                            });
-                        } else if (self.line_indent.isLessThan(content_indent)) {
-                            switch (chomp) {
-                                .keep => {
-                                    if (text.items.len != 0) {
-                                        try text.appendNTimes('\n', leading_newlines);
-                                    }
-                                },
-                                .clip => {
-                                    if (text.items.len != 0) {
-                                        try text.append('\n');
-                                    }
-                                },
-                                .strip => {
-                                    // no trailing newlines
-                                },
-                            }
-                            return .scalar(.{
-                                .start = start,
-                                .indent = content_indent,
-                                .line = line,
-                                .resolved = .{
-                                    .data = .{ .string = .{ .list = text } },
-                                    .multiline = true,
-                                },
-                            });
+                            return ctx.done(false);
                         }
+                    } else if (self.line_indent.isLessThan(ctx.content_indent)) {
+                        return ctx.done(false);
                     }
 
-                    switch (folded) {
-                        true => {
-                            switch (leading_newlines) {
-                                0 => {
-                                    try text.append(c);
-                                },
-                                1 => {
-                                    if (previous_indent == content_indent) {
-                                        try text.appendSlice(&.{ ' ', c });
-                                    } else {
-                                        try text.appendSlice(&.{ '\n', c });
-                                    }
-                                    leading_newlines = 0;
-                                },
-                                else => {
-                                    // leading_newlines because -1 for '\n\n' and +1 for c
-                                    try text.ensureUnusedCapacity(leading_newlines);
-                                    text.appendNTimesAssumeCapacity('\n', leading_newlines - 1);
-                                    text.appendAssumeCapacity(c);
-                                    leading_newlines = 0;
-                                },
-                            }
-                        },
-                        false => {
-                            try text.ensureUnusedCapacity(leading_newlines + 1);
-                            text.appendNTimesAssumeCapacity('\n', leading_newlines);
-                            text.appendAssumeCapacity(c);
-                            leading_newlines = 0;
-                        },
-                    }
+                    try ctx.append(c);
 
                     self.inc(1);
                     continue :next self.next();
@@ -2948,26 +3212,22 @@ pub fn Parser(comptime enc: Encoding) type {
             const scalar_indent = self.line_indent;
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
 
-            var nl = false;
-
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentEnd;
                     }
-                    nl = false;
                     try text.append('.');
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '-' => {
-                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentStart;
                     }
-                    nl = false;
                     try text.append('-');
                     self.inc(1);
                     continue :next self.next();
@@ -2988,14 +3248,12 @@ pub fn Parser(comptime enc: Encoding) type {
                             return error.UnexpectedCharacter;
                         }
                     }
-                    nl = true;
                     continue :next self.next();
                 },
 
                 ' ',
                 '\t',
                 => {
-                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
@@ -3006,7 +3264,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '"' => {
-                    nl = false;
                     self.inc(1);
                     return .scalar(.{
                         .start = start,
@@ -3023,7 +3280,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '\\' => {
-                    nl = false;
                     self.inc(1);
                     switch (self.next()) {
                         '\r',
@@ -3094,7 +3350,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 else => |c| {
-                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();
@@ -3246,6 +3501,38 @@ pub fn Parser(comptime enc: Encoding) type {
                     self.inc(1);
                     var range = self.stringRange();
                     try self.trySkipNsTagChars();
+
+                    // s-separate
+                    switch (self.next()) {
+                        0,
+                        ' ',
+                        '\t',
+                        '\r',
+                        '\n',
+                        => {},
+
+                        ',',
+                        '[',
+                        ']',
+                        '{',
+                        '}',
+                        => {
+                            switch (self.context.get()) {
+                                .block_out,
+                                .block_in,
+                                => {
+                                    return error.UnexpectedCharacter;
+                                },
+                                .flow_in,
+                                .flow_key,
+                                => {},
+                            }
+                        },
+                        else => {
+                            return error.UnexpectedCharacter;
+                        },
+                    }
+
                     const shorthand = range.end();
 
                     const tag: NodeTag = tag: {
@@ -3367,6 +3654,8 @@ pub fn Parser(comptime enc: Encoding) type {
             /// (or in compact collections). First scan needs to
             /// count indentation.
             first_scan: bool = false,
+
+            outside_context: bool = false,
         };
 
         fn scan(self: *@This(), opts: ScanOptions) ScanError!void {
@@ -3477,7 +3766,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_key,
                                 => {
                                     self.token.start = start;
-                                    return error.UnexpectedToken;
+                                    return unexpectedToken();
                                 },
                             }
 
@@ -3507,7 +3796,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                         .line = self.line,
                                     });
 
-                                    return error.UnexpectedToken;
+                                    return unexpectedToken();
                                 },
                                 .block_in,
                                 .block_out,
@@ -3641,10 +3930,12 @@ pub fn Parser(comptime enc: Encoding) type {
                             switch (self.context.get()) {
                                 .block_in,
                                 .block_out,
+                                .flow_in,
                                 => {
                                     // scanPlainScalar
                                 },
-                                .flow_in, .flow_key => {
+                                .flow_key,
+                                => {
                                     self.inc(1);
                                     break :next .mappingValue(.{
                                         .start = start,
@@ -3653,7 +3944,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                     });
                                 },
                             }
-                            // scanPlainScalar
                         },
                     }
 
@@ -3861,7 +4151,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         => {},
                     }
                     self.token.start = start;
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
                 '>' => {
                     const start = self.pos;
@@ -3878,7 +4168,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         => {},
                     }
                     self.token.start = start;
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
                 '\'' => {
                     self.inc(1);
@@ -3907,7 +4197,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return error.UnexpectedToken;
+                    return unexpectedToken();
                 },
 
                 inline '\r',
@@ -3929,8 +4219,8 @@ pub fn Parser(comptime enc: Encoding) type {
                 .flow_key,
                 => {
                     if (self.block_indents.get()) |block_indent| {
-                        if (self.token.line != previous_token_line and self.token.indent.isLessThan(block_indent)) {
-                            return error.UnexpectedToken;
+                        if (!opts.outside_context and self.token.line != previous_token_line and self.token.indent.isLessThanOrEqual(block_indent)) {
+                            return unexpectedToken();
                         }
                     }
                 },
@@ -4025,9 +4315,17 @@ pub fn Parser(comptime enc: Encoding) type {
         ///
         /// positions `pos` on the next newline, or eof. Errors
         fn trySkipToNewLine(self: *@This()) error{UnexpectedCharacter}!void {
-            self.skipSWhite();
+            var whitespace = false;
+
+            if (self.isSWhite()) {
+                whitespace = true;
+                self.skipSWhite();
+            }
 
             if (self.isChar('#')) {
+                if (!whitespace) {
+                    return error.UnexpectedCharacter;
+                }
                 self.inc(1);
                 while (!self.isChar('\n') and !self.isChar('\r')) {
                     self.inc(1);
@@ -4285,34 +4583,60 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
 
                 fn drainWhitespace(self: *@This()) OOM!void {
-                    for (self.parser.whitespace_buf.items) |ws| {
-                        if (comptime Environment.ci_assert) {
-                            const actual = self.parser.input[ws.pos.cast()];
-                            bun.assert(actual == ws.unit);
-                        }
+                    const parser = self.parser;
+                    defer parser.whitespace_buf.clearRetainingCapacity();
 
-                        switch (self.str) {
-                            .range => |*range| {
-                                if (range.isEmpty()) {
-                                    range.off = ws.pos;
-                                    range.end = ws.pos;
+                    for (parser.whitespace_buf.items) |ws| {
+                        switch (ws) {
+                            .source => |source| {
+                                if (comptime Environment.ci_assert) {
+                                    const actual = self.parser.input[source.pos.cast()];
+                                    bun.assert(actual == source.unit);
                                 }
 
-                                bun.assert(range.end == ws.pos);
+                                switch (self.str) {
+                                    .range => |*range| {
+                                        if (range.isEmpty()) {
+                                            range.off = source.pos;
+                                            range.end = source.pos;
+                                        }
 
-                                range.end = ws.pos.add(1);
+                                        bun.assert(range.end == source.pos);
+
+                                        range.end = source.pos.add(1);
+                                    },
+                                    .list => |*list| {
+                                        try list.append(source.unit);
+                                    },
+                                }
                             },
-                            .list => |*list| {
-                                try list.append(ws.unit);
+                            .new => |unit| {
+                                switch (self.str) {
+                                    .range => |range| {
+                                        var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
+                                        list.appendSliceAssumeCapacity(range.slice(parser.input));
+                                        list.appendAssumeCapacity(unit);
+                                        self.str = .{ .list = list };
+                                    },
+                                    .list => |*list| {
+                                        try list.append(unit);
+                                    },
+                                }
                             },
                         }
                     }
-
-                    self.parser.whitespace_buf.clearRetainingCapacity();
                 }
 
                 pub fn appendSourceWhitespace(self: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
-                    try self.parser.whitespace_buf.append(.{ .unit = unit, .pos = pos });
+                    try self.parser.whitespace_buf.append(.{ .source = .{ .unit = unit, .pos = pos } });
+                }
+
+                pub fn appendWhitespace(self: *@This(), unit: enc.unit()) OOM!void {
+                    try self.parser.whitespace_buf.append(.{ .new = unit });
+                }
+
+                pub fn appendWhitespaceNTimes(self: *@This(), unit: enc.unit(), n: usize) OOM!void {
+                    try self.parser.whitespace_buf.appendNTimes(.{ .new = unit }, n);
                 }
 
                 pub fn appendSourceSlice(self: *@This(), off: Pos, end: Pos) OOM!void {
@@ -4484,6 +4808,24 @@ pub fn Parser(comptime enc: Encoding) type {
 
             /// '!!unknown'
             unknown: String.Range,
+
+            pub fn resolveNull(this: NodeTag, loc: logger.Loc) Expr {
+                return switch (this) {
+                    .none,
+                    .bool,
+                    .int,
+                    .float,
+                    .null,
+                    .verbatim,
+                    .unknown,
+                    => .init(E.Null, .{}, loc),
+
+                    // non-specific tags become seq, map, or str
+                    .non_specific,
+                    .str,
+                    => .init(E.String, .{}, loc),
+                };
+            }
         };
 
         pub const NodeScalar = union(enum) {

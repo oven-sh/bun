@@ -12,7 +12,9 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
-const expected_version = 15;
+/// Version 16: Added typeof undefined minification optimization.
+/// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
+const expected_version = 17;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -162,7 +164,7 @@ pub const RuntimeTranspilerCache = struct {
 
             // atomically write to a tmpfile and then move it to the final destination
             var tmpname_buf: bun.PathBuffer = undefined;
-            const tmpfilename = bun.sliceTo(try bun.fs.FileSystem.instance.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash), 0);
+            const tmpfilename = try bun.fs.FileSystem.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash);
 
             const output_bytes = output_code.byteSlice();
 

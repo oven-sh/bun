@@ -1,7 +1,7 @@
-import { define } from "../../codegen/class-definitions";
+import { ClassDefinition, define } from "../../codegen/class-definitions";
 
 const types = ["PostgresSQL", "MySQL"];
-const classes = [];
+const classes: ClassDefinition[] = [];
 for (const type of types) {
   classes.push(
     define({
@@ -9,7 +9,7 @@ for (const type of types) {
       construct: true,
       finalize: true,
       configurable: false,
-      hasPendingActivity: true,
+      hasPendingActivity: type === "PostgresSQL",
       klass: {
         //   escapeString: {
         //     fn: "escapeString",
@@ -60,7 +60,6 @@ for (const type of types) {
       construct: true,
       finalize: true,
       configurable: false,
-
       JSType: "0b11101110",
       klass: {},
       proto: {
@@ -77,11 +76,11 @@ for (const type of types) {
           length: 0,
         },
         setMode: {
-          fn: "setMode",
+          fn: "setModeFromJS",
           length: 1,
         },
         setPendingValue: {
-          fn: "setPendingValue",
+          fn: "setPendingValueFromJS",
           length: 1,
         },
       },

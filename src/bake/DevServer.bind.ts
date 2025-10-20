@@ -1,5 +1,5 @@
 // @ts-ignore
-import { fn, t } from "../codegen/bindgen-lib";
+import { fn, t } from "bindgen";
 export const getDeinitCountForTesting = fn({
   args: {},
   ret: t.usize,

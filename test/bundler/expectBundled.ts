@@ -186,6 +186,8 @@ export interface BundlerTestInput {
     importSource?: string; // for automatic
     factory?: string; // for classic
     fragment?: string; // for classic
+    sideEffects?: boolean; // whether jsx has side effects
+    development?: boolean; // whether to use development runtime
   };
   root?: string;
   /** Defaults to `/out.js` */
@@ -522,7 +524,15 @@ function expectBundled(
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
-  const useOutFile = generateOutput == false ? false : outfile ? true : outdir ? false : entryPoints.length === 1;
+  const useOutFile = compile
+    ? true
+    : generateOutput == false
+      ? false
+      : outfile
+        ? true
+        : outdir
+          ? false
+          : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");
@@ -539,9 +549,6 @@ function expectBundled(
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
-  }
-  if (!ESBUILD && keepNames) {
-    throw new Error("keepNames not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
@@ -575,7 +582,18 @@ function expectBundled(
 
   return (async () => {
     if (!backend) {
-      backend = plugins !== undefined ? "api" : "cli";
+      backend =
+        dotenv ||
+        typeof production !== "undefined" ||
+        bundling === false ||
+        (run && target === "node") ||
+        emitDCEAnnotations ||
+        bundleWarnings ||
+        env ||
+        run?.validate ||
+        define
+          ? "cli"
+          : "api";
     }
 
     let root = path.join(
@@ -735,7 +753,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
-              // keepNames && `--keep-names`,
+              keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
@@ -761,7 +779,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-              jsx.side_effects && `--jsx-side-effects`,
+              jsx.sideEffects && `--jsx-side-effects`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&
@@ -1046,11 +1064,17 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          banner,
+          format,
+          footer,
+          root: outbase,
           packages,
+          loader,
           minify: {
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,
             syntax: minifySyntax,
+            keepNames: keepNames,
           },
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,
@@ -1071,6 +1095,16 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          jsx: jsx
+            ? {
+                runtime: jsx.runtime,
+                importSource: jsx.importSource,
+                factory: jsx.factory,
+                fragment: jsx.fragment,
+                sideEffects: jsx.sideEffects,
+                development: jsx.development,
+              }
+            : undefined,
         } as BuildConfig;
 
         if (dotenv) {
@@ -1104,7 +1138,13 @@ for (const [key, blob] of build.outputs) {
         configRef = buildConfig;
         let build: BuildOutput;
         try {
-          build = await Bun.build(buildConfig);
+          const cwd = process.cwd();
+          process.chdir(root);
+          try {
+            build = await Bun.build(buildConfig);
+          } finally {
+            process.chdir(cwd);
+          }
         } catch (e) {
           if (e instanceof AggregateError) {
             build = {
@@ -1726,6 +1766,12 @@ export function itBundled(
   }
   return ref;
 }
+itBundled.concurrent = (id: string, opts: BundlerTestInput) => {
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+  it.concurrent(id, () => expectBundled(id, opts as any));
+  return testRef(id, opts);
+};
+
 itBundled.only = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
 

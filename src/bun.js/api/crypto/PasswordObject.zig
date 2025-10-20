@@ -324,26 +324,10 @@ pub const JSPasswordObject = struct {
 
     pub export fn JSPasswordObject__create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var object = JSValue.createEmptyObject(globalObject, 4);
-        object.put(
-            globalObject,
-            ZigString.static("hash"),
-            jsc.createCallback(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("hashSync"),
-            jsc.createCallback(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("verify"),
-            jsc.createCallback(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("verifySync"),
-            jsc.createCallback(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync),
-        );
+        object.put(globalObject, ZigString.static("hash"), jsc.createCallback(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash));
+        object.put(globalObject, ZigString.static("hashSync"), jsc.createCallback(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync));
+        object.put(globalObject, ZigString.static("verify"), jsc.createCallback(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify));
+        object.put(globalObject, ZigString.static("verifySync"), jsc.createCallback(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync));
         return object;
     }
 
@@ -381,7 +365,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -391,12 +375,12 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        try promise.reject(global, error_instance);
                     },
                     .hash => |value| {
                         const js_string = jsc.ZigString.init(value).toJS(global);
                         bun.destroy(this);
-                        promise.resolve(global, js_string);
+                        try promise.resolve(global, js_string);
                     },
                 }
             }
@@ -593,7 +577,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -603,11 +587,11 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        try promise.reject(global, error_instance);
                     },
                     .pass => |pass| {
                         bun.destroy(this);
-                        promise.resolve(global, jsc.JSValue.jsBoolean(pass));
+                        try promise.resolve(global, jsc.JSValue.jsBoolean(pass));
                     },
                 }
             }

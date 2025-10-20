@@ -31,6 +31,9 @@ pub const All = struct {
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
+    // Event loop delay monitoring (not exposed to JS)
+    event_loop_delay: EventLoopDelayMonitor = .{},
+
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
         setTimeout: TimeoutMap = .{},
@@ -237,7 +240,7 @@ pub const All = struct {
                     // Side-effect: potentially call the StopIfNecessary timer.
                     if (min.tag == .WTFTimer) {
                         _ = this.timers.deleteMin();
-                        _ = min.fire(&now, vm);
+                        min.fire(&now, vm);
                         continue;
                     }
 
@@ -294,10 +297,7 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(&now, vm)) {
-                .disarm => {},
-                .rearm => {},
-            }
+            t.fire(&now, vm);
         }
     }
 
@@ -596,6 +596,8 @@ pub const ID = extern struct {
 pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 
 pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
+
+pub const EventLoopDelayMonitor = @import("./Timer/EventLoopDelayMonitor.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

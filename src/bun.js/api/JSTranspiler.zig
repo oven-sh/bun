@@ -540,11 +540,11 @@ pub const TransformTask = struct {
         }
     }
 
-    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) void {
+    pub fn then(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
 
         if (this.log.hasAny() or this.err != null) {
-            const error_value: bun.OOM!JSValue = brk: {
+            const error_value: bun.JSError!JSValue = brk: {
                 if (this.err) |err| {
                     if (!this.log.hasAny()) {
                         break :brk bun.api.BuildMessage.create(
@@ -557,18 +557,18 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed") catch return; // TODO: properly propagate exception upwards
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            promise.reject(this.global, error_value);
+            try promise.reject(this.global, error_value);
             return;
         }
 
-        finish(this, promise);
+        try finish(this, promise);
     }
 
-    fn finish(this: *TransformTask, promise: *jsc.JSPromise) void {
-        promise.resolve(this.global, this.output_code.transferToJS(this.global));
+    fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
+        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
     }
 
     pub fn deinit(this: *TransformTask) void {
@@ -649,8 +649,12 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         .transpiler = undefined,
         .scan_pass_result = ScanPassResult.init(bun.default_allocator),
     });
-    errdefer bun.destroy(this);
-    errdefer this.arena.deinit();
+    errdefer {
+        this.config.log.deinit();
+        this.arena.deinit();
+        this.ref_count.clearWithoutDestructor();
+        bun.destroy(this);
+    }
 
     const config_arg = if (arguments.len > 0) arguments.ptr[0] else .js_undefined;
     const allocator = this.arena.allocator();
@@ -1010,7 +1014,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.cloneUTF8(entry.key_ptr.*);
+        names[i] = bun.String.fromBytes(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

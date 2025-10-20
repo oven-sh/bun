@@ -1,4 +1,6 @@
-pub fn scanImportsAndExports(this: *LinkerContext) !void {
+pub const ScanImportsAndExportsError = bun.OOM || error{ImportResolutionFailed};
+
+pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!void {
     const outer_trace = bun.perf.trace("Bundler.scanImportsAndExports");
     defer outer_trace.end();
     const reachable = this.graph.reachable_files;
@@ -278,7 +280,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                             .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
-                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator(), 32) catch unreachable,
+                            .source_index_stack = try std.ArrayList(u32).initCapacity(this.allocator(), 32),
                             .exports_kind = exports_kind,
                             .named_exports = this.graph.ast.items(.named_exports),
                         };
@@ -372,6 +374,10 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             LinkerContext.doStep5,
             this.graph.reachable_files,
         );
+
+        // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
+        // to the graph allocator.
+        this.graph.takeAstOwnership();
     }
 
     if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -439,7 +445,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 break :brk count;
             };
 
-            const string_buffer = this.allocator().alloc(u8, string_buffer_len) catch unreachable;
+            const string_buffer = try this.allocator().alloc(u8, string_buffer_len);
             var builder = bun.StringBuilder{
                 .len = 0,
                 .cap = string_buffer.len,
@@ -452,7 +458,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if (is_entry_point and output_format == .esm) {
-                const copies = this.allocator().alloc(Ref, aliases.len) catch unreachable;
+                const copies = try this.allocator().alloc(Ref, aliases.len);
 
                 for (aliases, copies) |alias, *copy| {
                     const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
@@ -510,13 +516,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                 bun.assert(runtime_export_symbol_ref.isValid());
 
-                this.graph.generateSymbolImportAndUse(
+                try this.graph.generateSymbolImportAndUse(
                     id,
                     js_ast.namespace_export_part_index,
                     runtime_export_symbol_ref,
                     1,
                     Index.runtime,
-                ) catch unreachable;
+                );
             }
             var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
             var parts_list: []Part.List = ast_fields.items(.parts);
@@ -537,10 +543,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                         const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                         if (part.dependencies.cap < total_len) {
-                            var list = std.ArrayList(Dependency).init(this.allocator());
-                            list.ensureUnusedCapacity(total_len) catch unreachable;
-                            list.appendSliceAssumeCapacity(part.dependencies.slice());
-                            part.dependencies.update(list);
+                            bun.handleOom(part.dependencies.ensureTotalCapacity(this.allocator(), total_len));
                         }
 
                         // Depend on the file containing the imported symbol
@@ -618,7 +621,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 const entry_point_part_index = this.graph.addPartToFile(
                     id,
                     .{
-                        .dependencies = js_ast.Dependency.List.fromList(dependencies),
+                        .dependencies = js_ast.Dependency.List.moveFromList(&dependencies),
                         .can_be_removed_if_unused = false,
                     },
                 ) catch |err| bun.handleOom(err);
@@ -628,12 +631,12 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if (force_include_exports and output_format != .internal_bake_dev) {
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(entry_point_part_index),
                         "__toCommonJS",
                         1,
-                    ) catch unreachable;
+                    );
                 }
             }
 
@@ -712,13 +715,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         // Depend on the automatically-generated require wrapper symbol
                         const wrapper_ref = wrapper_refs[other_id];
                         if (wrapper_ref.isValid()) {
-                            this.graph.generateSymbolImportAndUse(
+                            try this.graph.generateSymbolImportAndUse(
                                 source_index,
                                 @as(u32, @intCast(part_index)),
                                 wrapper_ref,
                                 1,
                                 Index.source(other_source_index),
-                            ) catch unreachable;
+                            );
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
@@ -734,13 +737,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         // but does not need to be done for "import" statements since
                         // those just cause us to reference the exports directly.
                         if (other_flags.wrap == .esm and kind != .stmt) {
-                            this.graph.generateSymbolImportAndUse(
+                            try this.graph.generateSymbolImportAndUse(
                                 source_index,
                                 @as(u32, @intCast(part_index)),
                                 this.graph.ast.items(.exports_ref)[other_id],
                                 1,
                                 Index.source(other_source_index),
-                            ) catch unreachable;
+                            );
 
                             // If this is a "require()" call, then we should add the
                             // "__esModule" marker to behave as if the module was converted
@@ -762,13 +765,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         // something ends up needing to use it later. This could potentially
                         // be omitted in some cases with more advanced analysis if this
                         // dynamic export fallback object doesn't end up being needed.
-                        this.graph.generateSymbolImportAndUse(
+                        try this.graph.generateSymbolImportAndUse(
                             source_index,
                             @as(u32, @intCast(part_index)),
                             this.graph.ast.items(.exports_ref)[other_id],
                             1,
                             Index.source(other_source_index),
-                        ) catch unreachable;
+                        );
                     }
                 }
 
@@ -794,25 +797,25 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                             // pull in the "exports_b" symbol into this export star. This matters
                             // in code splitting situations where the "export_b" symbol might live
                             // in a different chunk than this export star.
-                            this.graph.generateSymbolImportAndUse(
+                            try this.graph.generateSymbolImportAndUse(
                                 source_index,
                                 @as(u32, @intCast(part_index)),
                                 this.graph.ast.items(.exports_ref)[other_id],
                                 1,
                                 Index.source(other_source_index),
-                            ) catch unreachable;
+                            );
                         }
                     }
 
                     if (happens_at_runtime) {
                         // Depend on this file's "exports" object for the first argument to "__reExport"
-                        this.graph.generateSymbolImportAndUse(
+                        try this.graph.generateSymbolImportAndUse(
                             source_index,
                             @as(u32, @intCast(part_index)),
                             this.graph.ast.items(.exports_ref)[id],
                             1,
                             Index.source(source_index),
-                        ) catch unreachable;
+                        );
                         this.graph.ast.items(.flags)[id].uses_exports_ref = true;
                         record.calls_runtime_re_export_fn = true;
                         re_export_uses += 1;
@@ -822,37 +825,37 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 if (output_format != .internal_bake_dev) {
                     // If there's an ES6 import of a CommonJS module, then we're going to need the
                     // "__toESM" symbol from the runtime to wrap the result of "require()"
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
                         "__toESM",
                         to_esm_uses,
-                    ) catch unreachable;
+                    );
 
                     // If there's a CommonJS require of an ES6 module, then we're going to need the
                     // "__toCommonJS" symbol from the runtime to wrap the exports object
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
                         "__toCommonJS",
                         to_common_js_uses,
-                    ) catch unreachable;
+                    );
 
                     // If there are unbundled calls to "require()" and we're not generating
                     // code for node, then substitute a "__require" wrapper for "require".
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
                         "__require",
                         runtime_require_uses,
-                    ) catch unreachable;
+                    );
 
-                    this.graph.generateRuntimeSymbolImportAndUse(
+                    try this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
                         "__reExport",
                         re_export_uses,
-                    ) catch unreachable;
+                    );
                 }
             }
         }
@@ -1020,7 +1023,7 @@ const ExportStarContext = struct {
                     }) catch |err| bun.handleOom(err);
                 } else if (gop.value_ptr.data.source_index.get() != other_source_index) {
                     // Two different re-exports colliding makes it potentially ambiguous
-                    gop.value_ptr.potentially_ambiguous_export_star_refs.push(this.allocator, .{
+                    gop.value_ptr.potentially_ambiguous_export_star_refs.append(this.allocator, .{
                         .data = .{
                             .source_index = Index.source(other_source_index),
                             .import_ref = name.ref,

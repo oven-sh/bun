@@ -168,6 +168,9 @@ pub const Runtime = struct {
 
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        /// Preserve function/class names during minification (CLI: --keep-names)
+        minify_keep_names: bool = false,
+        minify_whitespace: bool = false,
         dead_code_elimination: bool = true,
 
         set_breakpoint_on_first_line: bool = false,
@@ -216,6 +219,7 @@ pub const Runtime = struct {
             .commonjs_named_exports,
             .minify_syntax,
             .minify_identifiers,
+            .minify_keep_names,
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
@@ -313,6 +317,7 @@ pub const Runtime = struct {
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
         __jsonParse: ?Ref = null,
+        __promiseAll: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -329,6 +334,7 @@ pub const Runtime = struct {
             "__using",
             "__callDispose",
             "__jsonParse",
+            "__promiseAll",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

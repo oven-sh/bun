@@ -207,8 +207,8 @@ pub const Result = union(Tag) {
 
     pub fn deinit(this: *Result) void {
         switch (this.*) {
-            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
-            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .owned => |*owned| owned.clearAndFree(bun.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(bun.default_allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -373,21 +373,17 @@ pub const Result = union(Tag) {
             };
         }
 
-        pub fn fulfillPromise(
-            result: Writable,
-            promise: *JSPromise,
-            globalThis: *JSGlobalObject,
-        ) void {
+        pub fn fulfillPromise(result: Writable, promise: *JSPromise, globalThis: *JSGlobalObject) void {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis));
+                    promise.reject(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
                 .done => {
-                    promise.resolve(globalThis, .false);
+                    promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
                 },
                 else => {
-                    promise.resolve(globalThis, result.toJS(globalThis));
+                    promise.resolve(globalThis, result.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
             }
         }
@@ -537,21 +533,21 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value);
+                promise.reject(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
             .done => {
-                promise.resolve(globalThis, .false);
+                promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
                     result.* = .{ .temporary = .{} };
-                    promise.reject(globalThis, err);
+                    promise.reject(globalThis, err) catch {}; // TODO: properly propagate exception upwards
                     return;
                 };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
-                promise.resolve(globalThis, value);
+                promise.resolve(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
         }
     }
@@ -826,7 +822,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.has_backpressure = false;
             if (this.aborted) {
                 this.signal.close(null);
-                this.flushPromise();
+                this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                 this.finalize();
                 return false;
             }
@@ -841,7 +837,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (chunk.len == 0) {
                 if (this.done) {
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
@@ -857,14 +853,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                         res.clearOnWritable();
                     }
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
             }
 
             // flush the javascript promise from calling .flush()
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
@@ -887,7 +883,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.wrote = 0;
             this.wrote_at_start_of_flush = 0;
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             if (this.buffer.cap == 0) {
                 bun.assert(this.pooled_buffer == null);
@@ -910,17 +906,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 else => {},
             }
 
-            var list = this.buffer.listManaged(this.allocator);
-            list.clearRetainingCapacity();
-            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = Syscall.Error.oom };
-            this.buffer.update(list);
+            this.buffer.clearRetainingCapacity();
+            this.buffer.ensureTotalCapacityPrecise(this.allocator, this.highWaterMark) catch
+                return .{ .err = Syscall.Error.oom };
 
             this.done = false;
-
             this.signal.start();
-
             log("start({d})", .{this.highWaterMark});
-
             return .success;
         }
 
@@ -1198,7 +1190,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.markDone();
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.signal.close(null);
             this.finalize();
 
@@ -1219,7 +1211,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.signal.close(null);
 
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.finalize();
         }
 
@@ -1260,12 +1252,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn destroy(this: *@This()) void {
             log("destroy()", .{});
-            var bytes = this.buffer.listManaged(this.allocator);
-            if (bytes.capacity > 0) {
-                this.buffer = bun.ByteList.init("");
-                bytes.deinit();
-            }
-
+            this.buffer.deinit(this.allocator);
             this.unregisterAutoFlusher();
             this.allocator.destroy(this);
         }
@@ -1298,19 +1285,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.pooled_buffer) |pooled| {
                 this.buffer.len = 0;
                 if (this.buffer.cap > 64 * 1024) {
-                    this.buffer.deinitWithAllocator(bun.default_allocator);
-                    this.buffer = bun.ByteList.init("");
+                    this.buffer.clearAndFree(bun.default_allocator);
                 }
                 pooled.data = this.buffer;
 
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 this.pooled_buffer = null;
                 pooled.release();
             } else if (this.buffer.cap == 0) {
                 //
             } else if (FeatureFlags.http_buffer_pooling and !WebCore.ByteListPool.full()) {
                 const buffer = this.buffer;
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 WebCore.ByteListPool.push(this.allocator, buffer);
             } else {
                 // Don't release this buffer until destroy() is called
@@ -1318,15 +1304,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
-        pub fn flushPromise(this: *@This()) void {
+        pub fn flushPromise(this: *@This()) bun.JSTerminated!void {
             if (this.pending_flush) |prom| {
                 log("flushPromise()", .{});
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
-                this.wrote_at_start_of_flush = this.wrote;
+                defer this.wrote_at_start_of_flush = this.wrote;
+                try prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
             }
         }
 
@@ -1404,10 +1390,10 @@ pub const NetworkSink = struct {
         }
     }
 
-    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
+    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) bun.JSTerminated!void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
+            try this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
         }
     }
 
@@ -1558,16 +1544,16 @@ pub const BufferAction = union(enum) {
 
     pub const Tag = @typeInfo(BufferAction).@"union".tag_type.?;
 
-    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) void {
-        blob.wrap(.{ .normal = this.swap() }, global, this.*);
+    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) bun.JSTerminated!void {
+        return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) void {
-        this.swap().reject(global, err.toJSWeak(global)[0]);
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
+        return this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
-    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) void {
-        this.swap().resolve(global, result);
+    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {
+        return this.swap().resolve(global, result);
     }
 
     pub fn value(this: *BufferAction) jsc.JSValue {
@@ -1621,9 +1607,9 @@ pub const ReadResult = union(enum) {
                 const done = is_done or (close_on_empty and slice.len == 0);
 
                 break :brk if (owned and done)
-                    Result{ .owned_and_done = bun.ByteList.init(slice) }
+                    Result{ .owned_and_done = bun.ByteList.fromOwnedSlice(slice) }
                 else if (owned)
-                    Result{ .owned = bun.ByteList.init(slice) }
+                    Result{ .owned = bun.ByteList.fromOwnedSlice(slice) }
                 else if (done)
                     Result{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
                 else
@@ -1632,28 +1618,6 @@ pub const ReadResult = union(enum) {
         };
     }
 };
-
-pub const AutoSizer = struct {
-    buffer: *bun.ByteList,
-    allocator: std.mem.Allocator,
-    max: usize,
-
-    pub fn resize(this: *AutoSizer, size: usize) ![]u8 {
-        const available = this.buffer.cap - this.buffer.len;
-        if (available >= size) return this.buffer.ptr[this.buffer.len..this.buffer.cap][0..size];
-        const to_grow = size -| available;
-        if (to_grow + @as(usize, this.buffer.cap) > this.max)
-            return this.buffer.ptr[this.buffer.len..this.buffer.cap];
-
-        var list = this.buffer.listManaged(this.allocator);
-        const prev_len = list.items.len;
-        try list.ensureTotalCapacity(to_grow + @as(usize, this.buffer.cap));
-        this.buffer.update(list);
-        return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
-    }
-};
-
-const string = []const u8;
 
 const std = @import("std");
 

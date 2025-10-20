@@ -126,7 +126,7 @@ pub fn VisitStmt(
                 const name = p.loadNameFromRef(data.namespace_ref);
 
                 data.namespace_ref = try p.newSymbol(.other, name);
-                try p.current_scope.generated.push(p.allocator, data.namespace_ref);
+                try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (p.options.features.replace_exports.count() > 0) {
@@ -146,7 +146,7 @@ pub fn VisitStmt(
                         const _name = p.loadNameFromRef(old_ref);
 
                         const ref = try p.newSymbol(.import, _name);
-                        try p.current_scope.generated.push(p.allocator, ref);
+                        try p.current_scope.generated.append(p.allocator, ref);
                         try p.recordDeclaredSymbol(ref);
                         data.items[j] = item;
                         data.items[j].name.ref = ref;
@@ -163,7 +163,7 @@ pub fn VisitStmt(
                     for (data.items) |*item| {
                         const _name = p.loadNameFromRef(item.name.ref.?);
                         const ref = try p.newSymbol(.import, _name);
-                        try p.current_scope.generated.push(p.allocator, ref);
+                        try p.current_scope.generated.append(p.allocator, ref);
                         try p.recordDeclaredSymbol(ref);
                         item.name.ref = ref;
                     }
@@ -176,7 +176,7 @@ pub fn VisitStmt(
                 // "export * from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
                 data.namespace_ref = try p.newSymbol(.other, name);
-                try p.current_scope.generated.push(p.allocator, data.namespace_ref);
+                try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 // "export * as ns from 'path'"
@@ -262,7 +262,7 @@ pub fn VisitStmt(
                         }) {
                             // declare a temporary ref for this
                             const temp_id = p.generateTempRef("default_export");
-                            try p.current_scope.generated.push(p.allocator, temp_id);
+                            try p.current_scope.generated.append(p.allocator, temp_id);
 
                             try stmts.append(Stmt.alloc(S.Local, .{
                                 .kind = .k_const,
@@ -293,7 +293,7 @@ pub fn VisitStmt(
                                 .value = data.value.expr,
                             };
                             stmts.appendAssumeCapacity(p.s(S.Local{
-                                .decls = G.Decl.List.init(decls),
+                                .decls = G.Decl.List.fromOwnedSlice(decls),
                             }, stmt.loc));
                             const items = bun.handleOom(p.allocator.alloc(js_ast.ClauseItem, 1));
                             items[0] = js_ast.ClauseItem{
@@ -390,7 +390,7 @@ pub fn VisitStmt(
                                         }
 
                                         const temp_id = p.generateTempRef("default_export");
-                                        try p.current_scope.generated.push(p.allocator, temp_id);
+                                        try p.current_scope.generated.append(p.allocator, temp_id);
                                         break :brk temp_id;
                                     };
 
@@ -865,7 +865,7 @@ pub fn VisitStmt(
                                                         .kind = .k_var,
                                                         .is_export = false,
                                                         .was_commonjs_export = true,
-                                                        .decls = G.Decl.List.init(decls),
+                                                        .decls = G.Decl.List.fromOwnedSlice(decls),
                                                     },
                                                     stmt.loc,
                                                 ),
@@ -1205,7 +1205,7 @@ pub fn VisitStmt(
                                     .binding = p.b(B.Identifier{ .ref = id.ref }, loc),
                                     .value = p.newExpr(E.Identifier{ .ref = temp_ref }, loc),
                                 };
-                                break :bindings G.Decl.List.init(decls);
+                                break :bindings G.Decl.List.fromOwnedSlice(decls);
                             },
                         }, loc);
 
@@ -1315,10 +1315,10 @@ pub fn VisitStmt(
                     try p.top_level_enums.append(p.allocator, data.name.ref.?);
                 }
 
-                bun.handleOom(p.recordDeclaredSymbol(data.name.ref.?));
-                bun.handleOom(p.pushScopeForVisitPass(.entry, stmt.loc));
+                try p.recordDeclaredSymbol(data.name.ref.?);
+                try p.pushScopeForVisitPass(.entry, stmt.loc);
                 defer p.popScope();
-                bun.handleOom(p.recordDeclaredSymbol(data.arg));
+                try p.recordDeclaredSymbol(data.arg);
 
                 const allocator = p.allocator;
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -1327,7 +1327,7 @@ pub fn VisitStmt(
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.values) |value| {
                     if (value.ref.isValid()) {
-                        bun.handleOom(p.is_exported_inside_namespace.put(allocator, value.ref, data.arg));
+                        try p.is_exported_inside_namespace.put(allocator, value.ref, data.arg);
                     }
                 }
 
@@ -1336,7 +1336,7 @@ pub fn VisitStmt(
                 // without initializers are initialized to undefined.
                 var next_numeric_value: ?f64 = 0.0;
 
-                var value_exprs = bun.handleOom(ListManaged(Expr).initCapacity(allocator, data.values.len));
+                var value_exprs = try ListManaged(Expr).initCapacity(allocator, data.values.len);
 
                 var all_values_are_pure = true;
 

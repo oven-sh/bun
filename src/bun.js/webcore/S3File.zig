@@ -343,9 +343,7 @@ fn constructS3FileInternal(
     path: jsc.Node.PathLike,
     options: ?jsc.JSValue,
 ) bun.JSError!*Blob {
-    var ptr = Blob.new(try constructS3FileInternalStore(globalObject, path, options));
-    ptr.allocator = bun.default_allocator;
-    return ptr;
+    return Blob.new(try constructS3FileInternalStore(globalObject, path, options));
 }
 
 pub const S3BlobStatTask = struct {
@@ -355,11 +353,11 @@ pub const S3BlobStatTask = struct {
 
     pub const new = bun.TrivialNew(S3BlobStatTask);
 
-    pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSTerminated!void {
         defer this.deinit();
         switch (result) {
             .not_found => {
-                this.promise.resolve(this.global, .false);
+                try this.promise.resolve(this.global, .false);
             },
             .success => |_| {
                 // calling .exists() should not prevent it to download a bigger file
@@ -367,47 +365,47 @@ pub const S3BlobStatTask = struct {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(this.global, .true);
+                try this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSTerminated!void {
         defer this.deinit();
 
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
+                try this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
             .not_found, .failure => |err| {
-                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSError!void {
         defer this.deinit();
         const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, (S3Stat.init(
+                try this.promise.resolve(globalThis, (try S3Stat.init(
                     stat_result.size,
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
                     globalThis,
-                ) catch return).toJS(globalThis)); // TODO: properly propagate exception upwards
+                )).toJS(globalThis));
             },
             .not_found, .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                try this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn exists(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn exists(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -419,10 +417,10 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
-    pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -434,10 +432,10 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
-    pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -449,7 +447,7 @@ pub const S3BlobStatTask = struct {
         const path = blob.store.?.data.s3.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
         return promise;
     }
 
@@ -539,7 +537,7 @@ pub fn getPresignUrl(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *j
 }
 
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) callconv(jsc.conv) JSValue {
-    return S3BlobStatTask.stat(globalThis, this);
+    return S3BlobStatTask.stat(globalThis, this) catch .zero;
 }
 
 pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -607,18 +605,17 @@ pub fn constructInternal(
     return constructS3FileInternal(globalObject, path, args.nextEat());
 }
 
-pub fn construct(
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) callconv(jsc.conv) ?*Blob {
+pub fn construct(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) ?*Blob {
     return constructInternal(globalObject, callframe) catch |err| switch (err) {
         error.JSError => null,
         error.OutOfMemory => {
             _ = globalObject.throwOutOfMemoryValue();
             return null;
         },
+        error.JSTerminated => null,
     };
 }
+
 pub fn hasInstance(_: jsc.JSValue, _: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(jsc.conv) bool {
     jsc.markBinding(@src());
     const blob = value.as(Blob) orelse return false;

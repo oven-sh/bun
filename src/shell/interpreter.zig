@@ -67,7 +67,7 @@ pub const WorkPool = jsc.WorkPool;
 pub const Pipe = [2]bun.FileDescriptor;
 pub const SmolList = shell.SmolList;
 
-pub const GlobWalker = Glob.BunGlobWalkerZ;
+pub const GlobWalker = bun.glob.BunGlobWalkerZ;
 
 pub const stdin_no = 0;
 pub const stdout_no = 1;
@@ -232,6 +232,10 @@ pub const ShellArgs = struct {
             .script_ast = undefined,
         });
     }
+
+    pub fn memoryCost(this: *const ShellArgs) usize {
+        return @sizeOf(ShellArgs) + this.script_ast.memoryCost();
+    }
 };
 
 pub const AssignCtx = Interpreter.Assigns.AssignCtx;
@@ -277,6 +281,7 @@ pub const Interpreter = struct {
     this_jsvalue: JSValue = .zero,
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
+    estimated_size_for_gc: usize = 0,
 
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
@@ -355,7 +360,16 @@ pub const Interpreter = struct {
 
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
-        const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
+        const Bufio = union(enum) {
+            owned: bun.ByteList,
+            borrowed: *bun.ByteList,
+            pub fn memoryCost(this: *const @This()) usize {
+                return switch (this.*) {
+                    .owned => |*owned| owned.memoryCost(),
+                    .borrowed => |borrowed| borrowed.memoryCost(),
+                };
+            }
+        };
 
         const Kind = enum {
             normal,
@@ -367,6 +381,19 @@ pub const Interpreter = struct {
         pub fn allocator(this: *ShellExecEnv) std.mem.Allocator {
             if (comptime bun.Environment.enableAllocScopes) return this.__alloc_scope.allocator();
             return bun.default_allocator;
+        }
+
+        pub fn memoryCost(this: *const ShellExecEnv) usize {
+            var size: usize = @sizeOf(ShellExecEnv);
+            size += this.shell_env.memoryCost();
+            size += this.cmd_local_env.memoryCost();
+            size += this.export_env.memoryCost();
+            size += this.__cwd.allocatedSlice().len;
+            size += this.__prev_cwd.allocatedSlice().len;
+            size += this._buffered_stderr.memoryCost();
+            size += this._buffered_stdout.memoryCost();
+            size += this.async_pids.memoryCost();
+            return size;
         }
 
         pub fn buffered_stdout(this: *ShellExecEnv) *bun.ByteList {
@@ -417,10 +444,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinit(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinit(bun.default_allocator);
                 }
             }
 
@@ -567,7 +594,7 @@ pub const Interpreter = struct {
             this.__cwd.clearRetainingCapacity();
             bun.handleOom(this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]));
 
-            if (comptime bun.Environment.allow_assert) {
+            if (comptime bun.Environment.isDebug) {
                 assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
                 assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
             }
@@ -642,6 +669,27 @@ pub const Interpreter = struct {
         }
     };
 
+    fn #computeEstimatedSizeForGC(this: *const ThisInterpreter) usize {
+        var size: usize = @sizeOf(ThisInterpreter);
+        size += this.args.memoryCost();
+        size += this.root_shell.memoryCost();
+        size += this.root_io.memoryCost();
+        size += this.jsobjs.len * @sizeOf(JSValue);
+        for (this.vm_args_utf8.items) |arg| {
+            size += arg.byteSlice().len;
+        }
+        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.ZigString.Slice);
+        return size;
+    }
+
+    pub fn memoryCost(this: *const ThisInterpreter) usize {
+        return this.#computeEstimatedSizeForGC();
+    }
+
+    pub fn estimatedSize(this: *const ThisInterpreter) usize {
+        return this.estimated_size_for_gc;
+    }
+
     pub fn createShellInterpreter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
@@ -707,15 +755,22 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
-        const js_value = jsc.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
+        interpreter.estimated_size_for_gc = interpreter.#computeEstimatedSizeForGC();
 
+        const js_value = Bun__createShellInterpreter(
+            globalThis,
+            interpreter,
+            parsed_shell_script_js,
+            resolve,
+            reject,
+        );
         interpreter.this_jsvalue = js_value;
-        jsc.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
-        jsc.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
         interpreter.keep_alive.ref(globalThis.bunVM());
         bun.analytics.Features.shell += 1;
         return js_value;
     }
+
+    extern fn Bun__createShellInterpreter(globalThis: *jsc.JSGlobalObject, ptr: *Interpreter, parsed_shell_script: JSValue, resolve: JSValue, reject: JSValue) callconv(jsc.conv) JSValue;
 
     pub fn parse(
         arena_allocator: std.mem.Allocator,
@@ -741,7 +796,7 @@ pub const Interpreter = struct {
             return shell.ParseError.Lex;
         }
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             const debug = bun.Output.scoped(.ShellTokens, .hidden);
             var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
@@ -817,7 +872,7 @@ pub const Interpreter = struct {
         var cwd_arr = bun.handleOom(std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
@@ -1170,9 +1225,6 @@ pub const Interpreter = struct {
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
@@ -1181,20 +1233,18 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.args.deinit();
         this.allocator.destroy(this);
     }
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
@@ -1957,7 +2007,6 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
     return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }
 
-const Glob = @import("../glob.zig");
 const builtin = @import("builtin");
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 

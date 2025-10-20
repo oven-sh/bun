@@ -377,6 +377,22 @@ const users = [
 await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
 ```
 
+### `sql.array` helper
+
+The `sql.array` helper creates PostgreSQL array literals from JavaScript arrays:
+
+```ts
+// Create array literals for PostgreSQL
+await sql`INSERT INTO tags (items) VALUES (${sql.array(["red", "blue", "green"])})`;
+// Generates: INSERT INTO tags (items) VALUES (ARRAY['red', 'blue', 'green'])
+
+// Works with numeric arrays too
+await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
+// Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
+```
+
+**Note**: `sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.
+
 ## `sql``.simple()`
 
 The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.
@@ -604,13 +620,12 @@ const db = new SQL({
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
-  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
-  // tls: {
-  //   rejectUnauthorized: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
-  // },
+  tls: {
+    rejectUnauthorized: true,
+    ca: "path/to/ca.pem",
+    key: "path/to/key.pem",
+    cert: "path/to/cert.pem",
+  },
 
   // Callbacks
   onconnect: client => {

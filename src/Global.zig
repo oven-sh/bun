@@ -114,6 +114,9 @@ pub fn exit(code: u32) noreturn {
         bun.debug_allocator_data.backing = null;
     }
 
+    // Flush output before exiting to ensure all messages are visible
+    Output.flush();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
@@ -121,6 +124,10 @@ pub fn exit(code: u32) noreturn {
             std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
+            if (Environment.enable_asan) {
+                std.c.exit(@bitCast(code));
+                std.c.abort(); // exit should be noreturn
+            }
             bun.c.quick_exit(@bitCast(code));
             std.c.abort(); // quick_exit should be noreturn
         },
@@ -159,7 +166,7 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-pub const versions = @import("./generated_versions_list.zig");
+// Versions are now handled by CMake-generated header (bun_dependency_versions.h)
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:

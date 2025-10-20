@@ -172,6 +172,53 @@ else if (isAarch64)
 else
     @compileError("Please add your architecture to the Architecture enum");
 
+pub const OsTypeSet = struct {
+    posix: ?type = null,
+    win: ?type = null,
+    macos: ?type = null,
+    linux: ?type = null,
+};
+
+/// Given a type set, which contains possible types for different platforms, selects the correct
+/// type for the current platform.
+pub fn OsTypeSelect(comptime opts: OsTypeSet) type {
+    const err_fmt = "You must specify a type for {} when compiling for {}";
+
+    switch (comptime bun.Environment.os) {
+        .windows => {
+            if (comptime opts.win) |w| {
+                return w;
+            }
+            @compileError(std.fmt.comptimePrint(err_fmt, .{ "win", "Windows" }));
+        },
+        .mac => {
+            if (comptime opts.macos) |m| {
+                return m;
+            }
+
+            if (comptime opts.posix) |p| {
+                return p;
+            }
+
+            @compileError(std.fmt.comptimePrint(err_fmt, .{ "macos", "macOS" }));
+        },
+        .linux => {
+            if (comptime opts.linux) |l| {
+                return l;
+            }
+
+            if (comptime opts.posix) |p| {
+                return p;
+            }
+
+            @compileError(std.fmt.comptimePrint(err_fmt, .{ "linux", "Linux" }));
+        },
+        .wasm => {
+            @compileError("OsTypeSelect is not supported for wasm targets. Please add support.");
+        },
+    }
+}
+
 const builtin = @import("builtin");
 const bun = @import("bun");
 const std = @import("std");

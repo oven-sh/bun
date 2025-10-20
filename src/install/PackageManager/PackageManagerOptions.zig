@@ -224,7 +224,10 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+    var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
+    defer if (maybe_home_dir.asValuePtr()) |h| h.deinit();
+    const hdir = if (maybe_home_dir.asValuePtr()) |h| h.slice() else null;
+    if (bun.getenvZ("XDG_CACHE_HOME") orelse hdir) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             ".bun",

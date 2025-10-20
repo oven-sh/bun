@@ -23,7 +23,9 @@
 #include "../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 
 #if POSIX
+#include <errno.h>
 #include <ifaddrs.h>
+#include <limits.h>
 #include <netdb.h>
 #include <pwd.h>
 #include <stdlib.h>

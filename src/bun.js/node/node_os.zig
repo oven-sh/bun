@@ -302,80 +302,15 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
 }
 
 pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
-    // In Node.js, this is a wrapper around uv_os_homedir.
-    if (Environment.isWindows) {
-        var out: bun.PathBuffer = undefined;
-        var size: usize = out.len;
-        if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
+    var home_res = bun.os.HomeDir.query(bun.default_allocator);
+    switch (home_res) {
+        .result => |*r| {
+            defer r.deinit();
+            return bun.String.cloneUTF8(r.slice());
+        },
+        .err => |err| {
             return global.throwValue(err.toJS(global));
-        }
-        return bun.String.cloneUTF8(out[0..size]);
-    } else {
-
-        // The posix implementation of uv_os_homedir first checks the HOME
-        // environment variable, then falls back to reading the passwd entry.
-        if (bun.getenvZ("HOME")) |home| {
-            if (home.len > 0)
-                return bun.String.init(home);
-        }
-
-        // From libuv:
-        // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-        // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-        // > will not usually be large.
-        // Instead of always using an allocation, first try a stack allocation
-        // of 4096, then fallback to heap.
-        var stack_string_bytes: [4096]u8 = undefined;
-        var string_bytes: []u8 = &stack_string_bytes;
-        defer if (string_bytes.ptr != &stack_string_bytes)
-            bun.default_allocator.free(string_bytes);
-
-        var pw: bun.c.passwd = undefined;
-        var result: ?*bun.c.passwd = null;
-
-        const ret = while (true) {
-            const ret = bun.c.getpwuid_r(
-                bun.c.geteuid(),
-                &pw,
-                string_bytes.ptr,
-                string_bytes.len,
-                &result,
-            );
-
-            if (ret == @intFromEnum(bun.sys.E.INTR))
-                continue;
-
-            // If the system call wants more memory, double it.
-            if (ret == @intFromEnum(bun.sys.E.RANGE)) {
-                const len = string_bytes.len;
-                bun.default_allocator.free(string_bytes);
-                string_bytes = "";
-                string_bytes = try bun.default_allocator.alloc(u8, len * 2);
-                continue;
-            }
-
-            break ret;
-        };
-
-        if (ret != 0) {
-            return global.throwValue(bun.sys.Error.fromCode(
-                @enumFromInt(ret),
-                .uv_os_homedir,
-            ).toJS(global));
-        }
-
-        if (result == null) {
-            // in uv__getpwuid_r, null result throws UV_ENOENT.
-            return global.throwValue(bun.sys.Error.fromCode(
-                .NOENT,
-                .uv_os_homedir,
-            ).toJS(global));
-        }
-
-        return if (pw.pw_dir) |dir|
-            bun.String.cloneUTF8(bun.span(dir))
-        else
-            bun.String.empty;
+        },
     }
 }
 

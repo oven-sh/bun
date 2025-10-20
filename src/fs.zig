@@ -530,43 +530,47 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var win_tempdir_cache: ?[]const u8 = undefined;
+        pub var sys_tempdir_cache: ?bun.os.SysTmpDir = null;
+        var sys_tempdir_mutex: Mutex = .{};
+
+        fn cleanupSysTempdirCache() callconv(.C) void {
+            if (sys_tempdir_cache) |*c| {
+                c.deinit();
+            }
+        }
 
         pub fn platformTempDir() []const u8 {
-            return switch (Environment.os) {
-                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
-                            break :brk std.fmt.allocPrint(
-                                bun.default_allocator,
-                                "{s}\\Temp",
-                                .{strings.withoutTrailingSlash(windir)},
-                            ) catch |err| bun.handleOom(err);
-                        }
+            if (sys_tempdir_cache) |w| {
+                return w.slice();
+            }
 
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
-                            var buf: bun.PathBuffer = undefined;
-                            var parts = [_]string{"AppData\\Local\\Temp"};
-                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
-                        }
+            var temp_dir = bun.os.SysTmpDir.query(bun.default_allocator);
+            switch (temp_dir) {
+                .result => |*s| {
+                    sys_tempdir_mutex.lock();
+                    defer sys_tempdir_mutex.unlock();
+                    // After acquiring the mutex, we need to check sys_tempdir_cache again. There
+                    // is a race condition -- another thread may have acquired the lock just prior
+                    // to this thread but this thread will enter the current scope since it there
+                    // is a race condition on sys_temp_dir_cache. Consequently, this thread has to
+                    // check sys_tempdir_cache again.
+                    if (sys_tempdir_cache) |w| {
+                        return w.slice();
+                    }
 
-                        var tmp_buf: bun.PathBuffer = undefined;
-                        const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
-                        const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}\\Windows\\Temp",
-                            .{strings.withoutTrailingSlash(root)},
-                        ) catch |err| bun.handleOom(err);
-                    };
-                    win_tempdir_cache = value;
-                    return value;
+                    defer s.deinit();
+
+                    sys_tempdir_cache = s.*;
+                    // TODO(markovejnovic): Using atexit for cleanup is pretty bad practice.
+                    // Ideally we would have a bun mechanism for cleanup that could register within
+                    // __fini, but my PR is not responsible to that right now.
+                    _ = bun.c.atexit(cleanupSysTempdirCache);
+                    return sys_tempdir_cache.?.slice();
                 },
-                .mac => "/private/tmp",
-                else => "/tmp",
-            };
+                .err => |e| {
+                    bun.Output.panic("Could not retrieve the system temporary directory: {}", .{e});
+                },
+            }
         }
 
         pub const Tmpfile = switch (Environment.os) {

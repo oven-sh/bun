@@ -5155,7 +5155,7 @@ fn NewPrinter(
                         p.print(text[0 .. newline_index - 1]);
                         p.print("\n");
                     } else {
-                        p.print(text[0..newline_index]);
+                        p.print(text[0 .. newline_index + 1]);
                     }
 
                     text = text[newline_index + 1 ..];
@@ -5166,16 +5166,7 @@ fn NewPrinter(
             } else {
                 // Print a mandatory newline after single-line comments
                 p.printIndent();
-                if (strings.indexOfChar(text, '\n')) |newline_index| {
-                    if (newline_index > 0 and text[newline_index - 1] == '\r') {
-                        p.print(text[0 .. newline_index - 1]);
-                    } else {
-                        p.print(text[0..newline_index]);
-                    }
-                } else {
-                    p.print(text);
-                }
-
+                p.print(text);
                 p.print("\n");
             }
         }

@@ -1,4 +1,4 @@
-import { context, ContextManager, diag, propagation, type Span, TextMapPropagator, trace } from "@opentelemetry/api";
+import { context, diag, propagation, type Span, TextMapPropagator, trace } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
@@ -86,10 +86,12 @@ export interface BunSDKConfiguration {
   serviceName?: string;
 
   /**
-   * Context manager to use for context propagation.
-   * If not provided, uses the global context manager.
+   * Enable context propagation using BunSDK's built-in BunAsyncLocalStorageContextManager.
+   * This manager shares storage with Bun.telemetry for distributed tracing support.
+   * Set to false to disable context propagation (e.g., for basic request telemetry only).
+   * @default true
    */
-  contextManager?: ContextManager;
+  enableContextManager?: boolean;
 
   /**
    * Text map propagator to use for context propagation.
@@ -240,9 +242,14 @@ export class BunSDK implements AsyncDisposable {
     // Following NodeSDK pattern - instrumentations need to be registered early
     // so they can hook into modules before they're loaded
     // Store cleanup function to disable instrumentations on shutdown
+    console.log(
+      "[BunSDK] Registering instrumentations:",
+      this._instrumentations.map(i => i.instrumentationName),
+    );
     this._instrumentationCleanup = registerInstrumentations({
       instrumentations: this._instrumentations,
     });
+    console.log("[BunSDK] Instrumentations registered, cleanup function:", typeof this._instrumentationCleanup);
 
     // 2. Setup propagator (default to W3C Trace Context + Baggage)
     if (this._config.textMapPropagator !== null) {
@@ -288,11 +295,12 @@ export class BunSDK implements AsyncDisposable {
     this._spans = spans;
     Bun.telemetry.configure(config);
 
-    // 3. Install shared context manager AFTER Bun.telemetry is configured
-    // This MUST override any user-provided context manager because Bun's telemetry
-    // requires a shared AsyncLocalStorage instance. The context manager returned from
-    // createBunTelemetryConfig uses the same storage that Bun.telemetry writes to.
-    context.setGlobalContextManager(contextManager);
+    // 3. Install shared context manager AFTER Bun.telemetry is configured (if enabled)
+    // This uses BunAsyncLocalStorageContextManager which shares storage with Bun.telemetry
+    // for distributed tracing support. Can be disabled via enableContextManager: false.
+    if (this._config.enableContextManager !== false) {
+      context.setGlobalContextManager(contextManager);
+    }
 
     // NodeSDK workaround: Update instrumentations with TracerProvider after it's created
     // See https://github.com/open-telemetry/opentelemetry-js/issues/3609
@@ -314,11 +322,24 @@ export class BunSDK implements AsyncDisposable {
    * Flushes any pending spans and cleans up resources.
    */
   async shutdown(): Promise<void> {
+    console.log("[BunSDK] shutdown() called, cleaning up instrumentations...");
     // 1. Disable instrumentations (unpatch fetch, http, etc.)
+    console.log(
+      "[BunSDK] Instrumentations before cleanup:",
+      this._instrumentations.map(i => `${i.instrumentationName} (patched: ${(i as any)._isPatched})`),
+    );
     if (this._instrumentationCleanup) {
+      console.log("[BunSDK] Calling _instrumentationCleanup()...");
       this._instrumentationCleanup();
       this._instrumentationCleanup = undefined;
+      console.log("[BunSDK] _instrumentationCleanup() complete");
+    } else {
+      console.log("[BunSDK] ⚠️ No _instrumentationCleanup function!");
     }
+    console.log(
+      "[BunSDK] Instrumentations after cleanup:",
+      this._instrumentations.map(i => `${i.instrumentationName} (patched: ${(i as any)._isPatched})`),
+    );
 
     // 2. Clear local span map; do not force-end in-flight spans
     if (this._spans) {
@@ -359,6 +380,8 @@ export class BunSDK implements AsyncDisposable {
    * ```
    */
   async [Symbol.asyncDispose](): Promise<void> {
+    console.log("[BunSDK] Symbol.asyncDispose called - shutting down...");
     await this.shutdown();
+    console.log("[BunSDK] Symbol.asyncDispose complete");
   }
 }

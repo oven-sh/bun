@@ -1226,8 +1226,9 @@ describe("bundler", () => {
     minifyInternalExports: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // namedExport should NOT be minified (re-exported)
-      expect(code).toContain("namedExport");
+      // namedExport should NOT be minified - check both export statement and variable
+      expect(code).toMatch(/export\s*\{[^}]*\bnamedExport\b[^}]*\}/);
+      expect(code).toContain("var namedExport =");
 
       // internalHelper and unused should be minified
       expect(code).not.toContain("internalHelper");

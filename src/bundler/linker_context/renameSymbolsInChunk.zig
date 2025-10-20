@@ -23,31 +23,25 @@ pub fn renameSymbolsInChunk(
     // but allow minification of internal exports from non-entry-point files
     if (c.options.minify_internal_exports and c.options.minify_identifiers and chunk.isEntryPoint()) {
         const entry_point_source_index = chunk.entry_point.source_index;
-        const named_exports = c.graph.ast.items(.named_exports)[entry_point_source_index];
+        const resolved_exports = c.graph.meta.items(.resolved_exports)[entry_point_source_index];
 
-        // Mark all symbols exported from this entry point as must_not_be_renamed
-        var iter = named_exports.iterator();
-        while (iter.next()) |entry| {
-            const export_ref = entry.value_ptr.*.ref;
-            if (c.graph.symbols.get(export_ref)) |symbol| {
-                symbol.must_not_be_renamed = true;
-            }
-        }
+        // For each source file in the chunk, check if any of its exports are re-exported
+        // by the entry point, and if so, mark them as must_not_be_renamed
+        for (files_in_order) |source_index| {
+            const named_exports = c.graph.ast.items(.named_exports)[source_index];
+            var named_iter = named_exports.iterator();
+            while (named_iter.next()) |export_entry| {
+                const export_name = export_entry.key_ptr.*;
+                const export_ref = export_entry.value_ptr.*.ref;
 
-        // Also need to track re-exports (export * from / export { x } from)
-        const export_star_import_records = c.graph.ast.items(.export_star_import_records)[entry_point_source_index];
-        const import_records = c.graph.ast.items(.import_records)[entry_point_source_index].slice();
+                // Check if this export from this file is re-exported by the entry point
+                if (resolved_exports.get(export_name)) |resolved_data| {
+                    // Follow the ref chain to get the actual symbol
+                    const final_ref = c.graph.symbols.follow(resolved_data.data.import_ref);
+                    const original_ref = c.graph.symbols.follow(export_ref);
 
-        // For export *, we need to mark all exports from the re-exported module
-        for (export_star_import_records) |import_record_index| {
-            const record = &import_records[import_record_index];
-            if (record.source_index.isValid()) {
-                const reexported_source = record.source_index.get();
-                if (reexported_source < c.graph.ast.len) {
-                    const reexported_exports = c.graph.ast.items(.named_exports)[reexported_source];
-                    var reexport_iter = reexported_exports.iterator();
-                    while (reexport_iter.next()) |entry| {
-                        const export_ref = entry.value_ptr.*.ref;
+                    // If they point to the same symbol, this export is re-exported
+                    if (final_ref.eql(original_ref)) {
                         if (c.graph.symbols.get(export_ref)) |symbol| {
                             symbol.must_not_be_renamed = true;
                         }

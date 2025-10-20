@@ -531,8 +531,9 @@ describe("bun prune", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).not.toContain("error:");
-    // Verbose output should contain some additional information
-    // The exact format will depend on implementation
+    
+    // Verify verbose output differs from non-verbose (shows at least package removal)
+    expect(stdout).toContain("removed");
   });
 
   it("should work with --silent flag", async () => {

@@ -2922,7 +2922,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
-    test("skipLifecycleScripts prevents scripts and excludes from blocked count", async () => {
+    test("skipScriptsFrom prevents scripts and excludes from blocked count", async () => {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
       await writeFile(
         packageJson,
@@ -2933,7 +2933,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             "all-lifecycle-scripts": "1.0.0",
             "uses-what-bin": "1.0.0",
           },
-          skipLifecycleScripts: ["all-lifecycle-scripts"],
+          skipScriptsFrom: ["all-lifecycle-scripts"],
         }),
       );
 
@@ -2980,7 +2980,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const whatBinDir = join(packageDir, "node_modules", "uses-what-bin");
       expect(await exists(join(whatBinDir, "what-bin.txt"))).toBeFalse();
 
-      // Verify skipLifecycleScripts has higher precedence than trustedDependencies
+      // Verify skipScriptsFrom has higher precedence than trustedDependencies
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -2990,7 +2990,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             "all-lifecycle-scripts": "1.0.0",
           },
           trustedDependencies: ["all-lifecycle-scripts"],
-          skipLifecycleScripts: ["all-lifecycle-scripts"],
+          skipScriptsFrom: ["all-lifecycle-scripts"],
         }),
       );
 
@@ -3007,7 +3007,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       out = await stdout.text();
       expect(err).not.toContain("error:");
 
-      // Should not show any blocked scripts message because the only package is in skipLifecycleScripts
+      // Should not show any blocked scripts message because the only package is in skipScriptsFrom
       const outLines = out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/);
       expect(outLines).not.toContain(expect.stringContaining("Blocked"));
       expect(await exited).toBe(0);

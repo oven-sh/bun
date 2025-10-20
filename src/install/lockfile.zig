@@ -25,7 +25,7 @@ workspace_versions: VersionHashMap = .{},
 /// empty list or it might not exist
 trusted_dependencies: ?TrustedDependenciesSet = null,
 /// Optional: packages whose lifecycle scripts should be skipped AND excluded from "blocked" count
-skip_lifecycle_scripts: ?TrustedDependenciesSet = null,
+skip_scripts_from: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
@@ -2173,8 +2173,8 @@ pub const default_skipped_lifecycle_scripts = brk: {
 };
 
 pub fn shouldSkipLifecycleScripts(this: *const Lockfile, name: []const u8) bool {
-    // Check user-specified skipLifecycleScripts first (higher precedence)
-    if (this.skip_lifecycle_scripts) |skip_scripts| {
+    // Check user-specified skipScriptsFrom first (higher precedence)
+    if (this.skip_scripts_from) |skip_scripts| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         if (skip_scripts.contains(hash)) return true;
     }

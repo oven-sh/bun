@@ -1572,28 +1572,28 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 }
 
-                if (json.asProperty("skipLifecycleScripts")) |q| {
+                if (json.asProperty("skipScriptsFrom")) |q| {
                     switch (q.expr.data) {
                         .e_array => |arr| {
-                            if (lockfile.skip_lifecycle_scripts == null) lockfile.skip_lifecycle_scripts = .{};
-                            try lockfile.skip_lifecycle_scripts.?.ensureUnusedCapacity(allocator, arr.items.len);
+                            if (lockfile.skip_scripts_from == null) lockfile.skip_scripts_from = .{};
+                            try lockfile.skip_scripts_from.?.ensureUnusedCapacity(allocator, arr.items.len);
                             for (arr.slice()) |item| {
                                 const name = item.asString(allocator) orelse {
                                     log.addErrorFmt(source, q.loc, allocator,
-                                        \\skipLifecycleScripts expects an array of strings, e.g.
-                                        \\  <r><green>"skipLifecycleScripts"<r>: [
+                                        \\skipScriptsFrom expects an array of strings, e.g.
+                                        \\  <r><green>"skipScriptsFrom"<r>: [
                                         \\    <green>"package_name"<r>
                                         \\  ]
                                     , .{}) catch {};
                                     return error.InvalidPackageJSON;
                                 };
-                                lockfile.skip_lifecycle_scripts.?.putAssumeCapacity(@as(TruncatedPackageNameHash, @truncate(String.Builder.stringHash(name))), {});
+                                lockfile.skip_scripts_from.?.putAssumeCapacity(@as(TruncatedPackageNameHash, @truncate(String.Builder.stringHash(name))), {});
                             }
                         },
                         else => {
                             log.addErrorFmt(source, q.loc, allocator,
-                                \\skipLifecycleScripts expects an array of strings, e.g.
-                                \\  <r><green>"skipLifecycleScripts"<r>: [
+                                \\skipScriptsFrom expects an array of strings, e.g.
+                                \\  <r><green>"skipScriptsFrom"<r>: [
                                 \\    <green>"package_name"<r>
                                 \\  ]
                             , .{}) catch {};

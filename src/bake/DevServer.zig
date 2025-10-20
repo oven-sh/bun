@@ -383,7 +383,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
         return global.throwError(err, "while initializing file watcher for development server");
 
-    errdefer dev.bun_watcher.deinit(false);
+    errdefer dev.bun_watcher.deinit(.{ .close_descriptors = false, .join_thread = false });
     dev.bun_watcher.start() catch |err|
         return global.throwError(err, "while initializing file watcher thread for development server");
 
@@ -604,7 +604,7 @@ pub fn deinit(dev: *DevServer) void {
         .memory_visualizer_timer = if (dev.memory_visualizer_timer.state == .ACTIVE)
             dev.vm.timer.remove(&dev.memory_visualizer_timer),
         .graph_safety_lock = dev.graph_safety_lock.lock(),
-        .bun_watcher = dev.bun_watcher.deinit(true),
+        .bun_watcher = dev.bun_watcher.deinit(.{ .close_descriptors = true, .join_thread = false }),
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
         .log = dev.log.deinit(),
         .server_fetch_function_callback = dev.server_fetch_function_callback.deinit(),

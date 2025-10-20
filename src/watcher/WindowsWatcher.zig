@@ -197,6 +197,15 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
+pub fn shutdown(this: *WindowsWatcher) void {
+    _ = w.kernel32.PostQueuedCompletionStatus(
+        this.iocp,
+        0,
+        0,
+        &this.watcher.overlapped,
+    );
+}
+
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;
@@ -205,7 +214,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     var timeout = WindowsWatcher.Timeout.infinite;
-    while (true) {
+    while (this.running) {
         var iter = switch (this.platform.next(timeout)) {
             .err => |err| return .{ .err = err },
             .result => |iter| iter orelse break,

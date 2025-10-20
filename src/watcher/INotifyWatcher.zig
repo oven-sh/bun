@@ -225,6 +225,11 @@ pub fn stop(this: *INotifyWatcher) void {
     }
 }
 
+pub fn shutdown(this: *INotifyWatcher) void {
+    this.stop();
+    Futex.wake(&this.watch_count, std.math.maxInt(u32));
+}
+
 /// Repeatedly called by the main watcher until the watcher is terminated.
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     defer Output.flush();

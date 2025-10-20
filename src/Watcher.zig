@@ -112,14 +112,29 @@ pub fn start(this: *Watcher) !void {
     this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
 }
 
-pub fn deinit(this: *Watcher, close_descriptors: bool) void {
+const DeinitOpts = struct {
+    close_descriptors: bool,
+    join_thread: bool,
+};
+
+pub fn deinit(this: *Watcher, opts: DeinitOpts) void {
     if (this.watchloop_handle != null) {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.close_descriptors = close_descriptors;
-        this.running = false;
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.close_descriptors = opts.close_descriptors;
+            this.running = false;
+
+            if (opts.join_thread) {
+                this.platform.shutdown();
+            }
+        }
+
+        if (opts.join_thread) {
+            this.thread.join();
+        }
     } else {
-        if (close_descriptors and this.running) {
+        if (opts.close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
             for (fds) |fd| {
                 fd.close();
@@ -241,7 +256,9 @@ fn threadMain(this: *Watcher) !void {
                 this.onError(this.ctx, err);
             }
         },
-        .result => {},
+        .result => {
+            this.watchloop_handle = null;
+        },
     }
 
     // deinit and close descriptors if needed

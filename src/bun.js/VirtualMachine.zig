@@ -852,6 +852,7 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
+    this.bun_watcher.deinitAndJoin();
     // FIXME: we should be doing this, but we're not, but unfortunately doing it
     //        causes like 50+ tests to break
     // this.eventLoop().tick();

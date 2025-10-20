@@ -193,7 +193,6 @@ describe("Distributed tracing with fetch propagation", () => {
 
   test("propagates trace context across setTimeout boundary", async () => {
     const exporter = new InMemorySpanExporter();
-    console.log(`[setTimeout test START] Exporter has ${exporter.getFinishedSpans().length} spans at start`);
 
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
@@ -234,10 +233,6 @@ describe("Distributed tracing with fetch propagation", () => {
     // Filter to only get spans from this test (by trace ID)
     const allSpans = exporter.getFinishedSpans();
     const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
-    console.log(
-      `[setTimeout test] Got ${spans.length} spans (${allSpans.length} total):`,
-      spans.map(s => `${s.name} (spanId: ${s.spanContext().spanId}, kind: ${s.kind})`),
-    );
     expect(spans).toHaveLength(2);
 
     // Sort spans by start time
@@ -261,8 +256,6 @@ describe("Distributed tracing with fetch propagation", () => {
     expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
 
     // Verify traceparent was injected into the fetch request (via echo server response)
-    console.log(`[setTimeout test] echoData.headers.traceparent:`, echoData.headers.traceparent);
-    console.log(`[setTimeout test] fetchClientSpan.spanContext().spanId:`, fetchClientSpan.spanContext().spanId);
     expect(echoData.headers.traceparent).toBeDefined();
     expect(echoData.headers.traceparent).toContain(upstreamTraceId);
     expect(echoData.headers.traceparent).toContain(fetchClientSpan.spanContext().spanId);

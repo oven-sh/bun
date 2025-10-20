@@ -165,6 +165,62 @@ describe("bun prune", () => {
     expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
   });
 
+  it("should preserve nested transitive dependencies in --production mode", async () => {
+    using dir = tempDir("prune-production-nested", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          // is-odd depends on is-number
+          "is-odd": "^3.0.1",
+        },
+        devDependencies: {
+          typescript: "^5.0.0",
+        },
+      }),
+    });
+
+    // Install all dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Verify all packages are installed (including nested transitive dep)
+    expect(existsSync(join(String(dir), "node_modules/is-odd"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(true);
+
+    // Run prune with --production
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--production"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify production dep and its transitive dep are preserved
+    expect(existsSync(join(String(dir), "node_modules/is-odd"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+    
+    // Verify devDependency was removed
+    expect(existsSync(join(String(dir), "node_modules/typescript"))).toBe(false);
+  });
+
   it("should show what would be removed with --dry-run", async () => {
     using dir = tempDir("prune-dry-run", {
       "package.json": JSON.stringify({

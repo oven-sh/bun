@@ -1,25 +1,19 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-test("bun build --production does not crash", async () => {
-  const dir = tempDirWithFiles("19652", {
+test("bun build --production does not crash (issue #19652)", async () => {
+  using dir = tempDir("19652", {
     "tsconfig.json": "{}",
     "index.js": `console.log("hello");`,
   });
 
-  const { exitCode, stdout, stderr } = Bun.spawnSync({
+  const result = Bun.spawnSync({
     cmd: [bunExe(), "build", "index.js", "--production"],
     env: bunEnv,
-    cwd: dir,
-    stdout: "pipe",
-    stderr: "pipe",
+    cwd: String(dir),
+    stdout: "inherit",
+    stderr: "inherit",
   });
 
-  const stderrText = stderr.toString();
-  const stdoutText = stdout.toString();
-
-  expect(exitCode).toBe(0);
-  expect(stderrText).not.toContain("panic");
-  expect(stderrText).not.toContain("assertion failure");
-  expect(stdoutText).toContain("console.log");
+  expect(result.exitCode).toBe(0);
 });

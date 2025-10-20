@@ -76,34 +76,41 @@ describe("BunFetchInstrumentation - Span Naming", () => {
 
 describe("BunFetchInstrumentation - Semconv Stability", () => {
   test("default (no config): emits BOTH old and stable (http/dup)", async () => {
-    const exporter = new InMemorySpanExporter();
+    const originalEnv = process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+    delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+    try {
+      const exporter = new InMemorySpanExporter();
 
-    // No semconvStabilityOptIn config and no env var = default to 'http/dup'
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-      serviceName: "semconv-default-test",
-      instrumentations: [new BunFetchInstrumentation()],
-    });
+      // No semconvStabilityOptIn config and no env var = default to 'http/dup'
+      await using sdk = new BunSDK({
+        spanProcessor: new SimpleSpanProcessor(exporter),
+        serviceName: "semconv-default-test",
+        instrumentations: [new BunFetchInstrumentation()],
+      });
 
-    sdk.start();
+      sdk.start();
 
-    const url = echoServer.getUrl("/");
-    await fetch(url);
-    await waitForSpans(exporter, 1);
+      const url = echoServer.getUrl("/");
+      await fetch(url);
+      await waitForSpans(exporter, 1);
 
-    const spans = exporter.getFinishedSpans();
-    expect(spans.length).toBeGreaterThanOrEqual(1);
+      const spans = exporter.getFinishedSpans();
+      expect(spans.length).toBeGreaterThanOrEqual(1);
 
-    const attrs = spans[0].attributes;
+      const attrs = spans[0].attributes;
 
-    // Both OLD and STABLE attributes should exist (http/dup is default)
-    expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
-    expect(attrs[SEMATTRS_HTTP_URL]).toBe(url);
-    expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
+      // Both OLD and STABLE attributes should exist (http/dup is default)
+      expect(attrs[SEMATTRS_HTTP_METHOD]).toBe("GET");
+      expect(attrs[SEMATTRS_HTTP_URL]).toBe(url);
+      expect(attrs[SEMATTRS_HTTP_STATUS_CODE]).toBe(200);
 
-    expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
-    expect(attrs[ATTR_URL_FULL]).toBe(url);
-    expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
+      expect(attrs[ATTR_HTTP_REQUEST_METHOD]).toBe("GET");
+      expect(attrs[ATTR_URL_FULL]).toBe(url);
+      expect(attrs[ATTR_HTTP_RESPONSE_STATUS_CODE]).toBe(200);
+    } finally {
+      if (originalEnv === undefined) delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+      else process.env.OTEL_SEMCONV_STABILITY_OPT_IN = originalEnv;
+    }
   });
 
   test("explicit config 'old': emits OLD attributes only", async () => {

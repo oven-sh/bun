@@ -11,6 +11,11 @@
       "require": "./index.ts",
       "types": "./index.ts"
     },
+    "./fetch-instrumentation": {
+      "import": "./BunFetchInstrumentation.ts",
+      "require": "./BunFetchInstrumentation.ts",
+      "types": "./BunFetchInstrumentation.ts"
+    },
     "./core": {
       "import": "./otel-core.ts",
       "require": "./otel-core.ts",
@@ -26,6 +31,7 @@
   "files": [
     "index.ts",
     "bun-sdk.ts",
+    "BunFetchInstrumentation.ts",
     "otel-core.ts",
     "otel-types.ts",
     "tsconfig.json",

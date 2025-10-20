@@ -30,8 +30,11 @@ describe("Distributed tracing with fetch propagation", () => {
       stderr: "inherit",
     });
 
-    // Read the port from stdout
+    // Read the port from stdout with timeout
     const decoder = new TextDecoder();
+    const startTime = Date.now();
+    const timeoutMs = 5000;
+
     for await (const chunk of echoServerProc.stdout) {
       const text = decoder.decode(chunk);
       const match = text.match(/listening on (\d+)/);
@@ -39,13 +42,24 @@ describe("Distributed tracing with fetch propagation", () => {
         echoServerPort = parseInt(match[1]);
         break;
       }
+
+      if (Date.now() - startTime > timeoutMs) {
+        echoServerProc.kill();
+        throw new Error("Echo server failed to start within 5 seconds");
+      }
+    }
+
+    if (!echoServerPort) {
+      echoServerProc.kill();
+      throw new Error("Echo server did not report listening port");
     }
   });
 
   // Shutdown echo server after all tests
   afterAll(async () => {
     if (echoServerPort) {
-      await fetch(`http://localhost:${echoServerPort}/shutdown`).catch(() => {});
+      // Use uninstrumented request to avoid polluting test spans
+      await makeUninstrumentedRequest(`http://localhost:${echoServerPort}/shutdown`).catch(() => {});
     }
     echoServerProc?.kill();
   });
@@ -179,6 +193,7 @@ describe("Distributed tracing with fetch propagation", () => {
 
   test("propagates trace context across setTimeout boundary", async () => {
     const exporter = new InMemorySpanExporter();
+    console.log(`[setTimeout test START] Exporter has ${exporter.getFinishedSpans().length} spans at start`);
 
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
@@ -213,10 +228,16 @@ describe("Distributed tracing with fetch propagation", () => {
     const output = await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
     const echoData = JSON.parse(output); // Parse the JSON response from our server (which contains echo server data)
 
-    // Wait for 2 spans: server (SERVER) + fetch (CLIENT)
-    await waitForSpans(exporter, 2);
+    // Wait for 2 spans with our specific trace ID
+    await waitForSpans(exporter, 2, 500, { traceId: upstreamTraceId });
 
-    const spans = exporter.getFinishedSpans();
+    // Filter to only get spans from this test (by trace ID)
+    const allSpans = exporter.getFinishedSpans();
+    const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
+    console.log(
+      `[setTimeout test] Got ${spans.length} spans (${allSpans.length} total):`,
+      spans.map(s => `${s.name} (spanId: ${s.spanContext().spanId}, kind: ${s.kind})`),
+    );
     expect(spans).toHaveLength(2);
 
     // Sort spans by start time
@@ -240,6 +261,8 @@ describe("Distributed tracing with fetch propagation", () => {
     expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
 
     // Verify traceparent was injected into the fetch request (via echo server response)
+    console.log(`[setTimeout test] echoData.headers.traceparent:`, echoData.headers.traceparent);
+    console.log(`[setTimeout test] fetchClientSpan.spanContext().spanId:`, fetchClientSpan.spanContext().spanId);
     expect(echoData.headers.traceparent).toBeDefined();
     expect(echoData.headers.traceparent).toContain(upstreamTraceId);
     expect(echoData.headers.traceparent).toContain(fetchClientSpan.spanContext().spanId);

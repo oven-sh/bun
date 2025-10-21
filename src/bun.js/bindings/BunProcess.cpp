@@ -3140,7 +3140,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), thread);
-        throwException(throwScope, globalObject, createError(globalObject, "Failed to get thread CPU usage"_s));
+        throwScope.throwException(globalObject, createError(globalObject, "Failed to get thread CPU usage"_s));
         return {};
     }
 

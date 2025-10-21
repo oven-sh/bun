@@ -105,10 +105,10 @@ async function closeIssueAsDuplicate(
   duplicateOfNumber: number,
   token: string,
 ): Promise<void> {
-  // Close the issue with state_reason "not_planned" (GitHub doesn't have a "duplicate" state_reason in the API)
+  // Close the issue as duplicate
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}`, token, "PATCH", {
     state: "closed",
-    state_reason: "not_planned",
+    state_reason: "duplicate",
   });
 
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, token, "POST", {

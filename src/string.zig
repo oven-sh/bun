@@ -749,8 +749,7 @@ pub const String = extern struct {
 
     /// use `byteSlice` to get a `[]const u8`.
     pub fn toSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
-        const duped = this.*;
-        this.* = .empty;
+        defer this.* = .empty;
         return SliceWithUnderlyingString{
             .utf8 = duped.toUTF8(allocator),
             .underlying = duped,

@@ -552,37 +552,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             const dependencies_lists = packages.items(.dependencies);
             const resolutions_lists = packages.items(.resolutions);
 
-            // Helper to collect direct production dependencies from package.json
-            var root_production_deps = std.ArrayList(PackageNameHash).init(manager.allocator);
-            defer root_production_deps.deinit();
-
-            // Collect dependencies
-            if (pkg_json_for_prune.?.asProperty("dependencies")) |deps_prop| {
-                if (deps_prop.expr.data == .e_object) {
-                    for (deps_prop.expr.data.e_object.properties.slice()) |prop| {
-                        if (prop.key) |key| {
-                            if (key.data == .e_string) {
-                                const dep_hash = String.Builder.stringHash(key.data.e_string.data);
-                                try root_production_deps.append(dep_hash);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Collect optionalDependencies
-            if (pkg_json_for_prune.?.asProperty("optionalDependencies")) |opt_deps_prop| {
-                if (opt_deps_prop.expr.data == .e_object) {
-                    for (opt_deps_prop.expr.data.e_object.properties.slice()) |prop| {
-                        if (prop.key) |key| {
-                            if (key.data == .e_string) {
-                                const dep_hash = String.Builder.stringHash(key.data.e_string.data);
-                                try root_production_deps.append(dep_hash);
-                            }
-                        }
-                    }
-                }
-            }
+            // No need to parse package.json - we can seed directly from lockfile's non-dev edges
 
             // BFS traversal to find all reachable packages from production dependencies
             var queue = std.ArrayList(PackageID).init(manager.allocator);
@@ -597,15 +567,9 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             const root_package_ids = root_res_list.get(manager.lockfile.buffers.resolutions.items);
 
             for (root_deps, root_package_ids) |dep, pkg_id| {
-                // Only include non-dev dependencies (dependencies and optionalDependencies)
-                const is_production_dep = blk: {
-                    for (root_production_deps.items) |prod_hash| {
-                        if (dep.name_hash == prod_hash) break :blk true;
-                    }
-                    break :blk false;
-                };
-
-                if (is_production_dep and pkg_id != invalid_package_id and !dep.behavior.dev) {
+                // Seed BFS from all non-dev dependencies (production + optional)
+                // The lockfile already tracks dep.behavior, so we don't need to parse package.json
+                if (pkg_id != invalid_package_id and !dep.behavior.dev) {
                     try queue.append(pkg_id);
                     try visited.put(pkg_id, {});
                     try reachable.put(name_hashes[pkg_id], {});

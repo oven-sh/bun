@@ -74,7 +74,7 @@ describe("Native types report their size correctly", () => {
     // Expected: < 9007199254740991
     // Received: 18446744073706270000
     expect(heapStats().extraMemorySize).toBeLessThan(Number.MAX_SAFE_INTEGER);
-  }, 10_000);
+  });
 
   it("URL", () => {
     const searchParams = new URLSearchParams();

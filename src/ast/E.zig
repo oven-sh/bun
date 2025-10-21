@@ -1100,11 +1100,30 @@ pub const String = struct {
     }
 
     pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
-        bun.assert(s.next == null);
-        return if (s.isUTF8())
-            strings.eqlComptime(s.data, value)
-        else
-            strings.eqlComptimeUTF16(s.slice16(), value);
+        if (!s.isUTF8()) {
+            bun.assertf(s.next == null, "transpiler: utf-16 string is a rope", .{}); // utf-16 strings are not ropes
+            return strings.eqlComptimeUTF16(s.slice16(), value);
+        }
+        if (s.next == null) {
+            // latin-1 or utf-8, non-rope
+            return strings.eqlComptime(s.data, value);
+        }
+
+        // latin-1 or utf-8, rope
+        return eql8Rope(s, value);
+    }
+    fn eql8Rope(s: *const String, value: []const u8) bool {
+        bun.assertf(s.next != null and s.isUTF8(), "transpiler: bad call to eql8Rope", .{});
+        if (s.rope_len != value.len) return false;
+        var i: usize = 0;
+        var next: ?*const String = s;
+        while (next) |current| : (next = current.next) {
+            if (!strings.eqlLong(current.data, value[i..][0..current.data.len], false)) return false;
+            i += current.data.len;
+        }
+        bun.assertf(i == value.len, "transpiler: rope string length mismatch 1", .{});
+        bun.assertf(i == s.rope_len, "transpiler: rope string length mismatch 2", .{});
+        return true;
     }
 
     pub fn hasPrefixComptime(s: *const String, comptime value: anytype) bool {

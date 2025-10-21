@@ -327,6 +327,7 @@ pub fn Tagged(comptime U: type, comptime T: type) type {
     var info: std.builtin.Type.Union = @typeInfo(U).@"union";
     info.tag_type = T;
     info.decls = &.{};
+    info.layout = .auto;
     return @Type(.{ .@"union" = info });
 }
 

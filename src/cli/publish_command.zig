@@ -861,7 +861,7 @@ pub const PublishCommand = struct {
                             break :nanoseconds 500 * std.time.ns_per_ms;
                         };
 
-                        std.time.sleep(nanoseconds);
+                        std.Thread.sleep(nanoseconds);
                         continue;
                     },
                     200 => {

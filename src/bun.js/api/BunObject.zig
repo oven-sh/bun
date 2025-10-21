@@ -760,7 +760,7 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }
 
-    std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
+    std.Thread.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
     return .js_undefined;
 }
 

@@ -566,7 +566,7 @@ pub const BuildCommand = struct {
 fn exitOrWatch(code: u8, watch: bool) noreturn {
     if (watch) {
         // the watcher thread will exit the process
-        std.time.sleep(std.math.maxInt(u64) - 1);
+        std.Thread.sleep(std.math.maxInt(u64) - 1);
     }
     Global.exit(code);
 }

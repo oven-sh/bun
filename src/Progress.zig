@@ -427,24 +427,24 @@ test "basic functionality" {
         next_sub_task = (next_sub_task + 1) % sub_task_names.len;
 
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
         node.completeOne();
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
         node.completeOne();
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
 
         node.end();
 
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
     }
     {
         var node = root_node.start("this is a really long name designed to activate the truncation code. let's find out if it works", 0);
         node.activate();
-        std.time.sleep(10 * speed_factor);
+        std.Thread.sleep(10 * speed_factor);
         progress.refresh();
-        std.time.sleep(10 * speed_factor);
+        std.Thread.sleep(10 * speed_factor);
         node.end();
     }
 }

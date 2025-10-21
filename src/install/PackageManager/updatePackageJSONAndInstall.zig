@@ -669,7 +669,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             var scoped_name_buf: bun.PathBuffer = undefined;
                             const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
 
-                            const should_remove = self.shouldRemovePackage(scoped_name);
+                            // Open package directory to check version
+                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
+                            defer scoped_pkg_dir.close();
+
+                            const should_remove = self.shouldRemovePackage(scoped_name, scoped_pkg_dir);
 
                             // Remove if marked for removal
                             if (should_remove) {
@@ -681,10 +685,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                 }
                             } else {
                                 // Package is kept, check for nested node_modules
-                                var pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
-                                defer pkg_dir.close();
-
-                                var nested_node_modules = pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
+                                var nested_node_modules = scoped_pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
                                 defer nested_node_modules.close();
 
                                 self.pruneNodeModulesRecursive(nested_node_modules, depth + 1);
@@ -694,7 +695,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     }
 
                     // Regular package
-                    const should_remove = self.shouldRemovePackage(entry.name);
+                    // Open package directory to check version
+                    var pkg_dir = dir.openDir(entry.name, .{}) catch continue;
+                    defer pkg_dir.close();
+
+                    const should_remove = self.shouldRemovePackage(entry.name, pkg_dir);
 
                     // Remove if marked for removal
                     if (should_remove) {
@@ -706,9 +711,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         }
                     } else {
                         // Package is kept, check for nested node_modules
-                        var pkg_dir = dir.openDir(entry.name, .{}) catch continue;
-                        defer pkg_dir.close();
-
                         var nested_node_modules = pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
                         defer nested_node_modules.close();
 
@@ -717,36 +719,106 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 }
             }
 
-            fn shouldRemovePackage(self: *const @This(), pkg_name: []const u8) bool {
+            fn shouldRemovePackage(self: *const @This(), pkg_name: []const u8, pkg_dir: std.fs.Dir) bool {
                 const pkg_hash = String.Builder.stringHash(pkg_name);
-
-                // Find package in lockfile
-                const pkg_index = std.mem.indexOfScalar(PackageNameHash, self.name_hashes, pkg_hash);
 
                 // Skip workspace packages (check workspace_paths)
                 if (self.workspace_paths.contains(pkg_hash)) {
                     return false;
                 }
 
-                if (pkg_index) |idx| {
-                    // Skip workspace packages (check resolution tag or origin)
-                    if (self.package_resolutions[idx].tag == .workspace or self.package_metas[idx].origin == .local) {
-                        return false;
+                // Count how many packages in lockfile have this name
+                var matching_packages = std.ArrayList(PackageID).init(self.manager.allocator);
+                defer matching_packages.deinit();
+                
+                for (self.name_hashes, 0..) |hash, idx| {
+                    if (hash != pkg_hash) continue;
+                    const pkg_id = @as(PackageID, @intCast(idx));
+                    
+                    // Skip workspace packages
+                    if (self.package_resolutions[pkg_id].tag == .workspace or 
+                        self.package_metas[pkg_id].origin == .local) {
+                        continue;
+                    }
+                    
+                    matching_packages.append(pkg_id) catch continue;
+                }
+
+                // If no matching packages in lockfile, remove it
+                if (matching_packages.items.len == 0) {
+                    return true;
+                }
+
+                // If only one matching package, use it (fast path - no version check needed)
+                var matched_pkg_id: ?PackageID = null;
+                if (matching_packages.items.len == 1) {
+                    matched_pkg_id = matching_packages.items[0];
+                } else {
+                    // Multiple versions exist - need to check actual version
+                    const installed_version = blk: {
+                        const pkg_json_bytes = pkg_dir.readFileAlloc(
+                            self.manager.allocator,
+                            "package.json",
+                            1024 * 1024, // 1MB max
+                        ) catch break :blk null;
+                        defer self.manager.allocator.free(pkg_json_bytes);
+
+                        const source = bun.logger.Source.initPathString("package.json", pkg_json_bytes);
+                        var log = bun.logger.Log.init(bun.default_allocator);
+                        defer log.deinit();
+                        const json = JSON.parsePackageJSONUTF8(&source, &log, self.manager.allocator) catch break :blk null;
+
+                        if (json.asProperty("version")) |version_prop| {
+                            if (version_prop.expr.asString(self.manager.allocator)) |version_str| {
+                                break :blk version_str;
+                            }
+                        }
+
+                        break :blk null;
+                    };
+                    defer if (installed_version) |v| self.manager.allocator.free(v);
+
+                    if (installed_version) |inst_ver| {
+                        // Find package with matching version
+                        for (matching_packages.items) |pkg_id| {
+                            if (self.package_resolutions[pkg_id].tag == .npm) {
+                                const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
+                                const string_buf = self.manager.lockfile.buffers.string_bytes.items;
+                                
+                                const lockfile_ver_str = std.fmt.allocPrint(
+                                    self.manager.allocator,
+                                    "{any}",
+                                    .{lockfile_version.fmt(string_buf)},
+                                ) catch continue;
+                                defer self.manager.allocator.free(lockfile_ver_str);
+                                
+                                if (strings.eql(inst_ver, lockfile_ver_str)) {
+                                    matched_pkg_id = pkg_id;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // If we couldn't match by version, fall back to first match
+                    if (matched_pkg_id == null) {
+                        matched_pkg_id = matching_packages.items[0];
                     }
                 }
 
-                // Determine if package should be removed
-                var should_remove = pkg_index == null;
-
-                // In production mode, also remove devDependencies
-                if (!should_remove and self.is_production and self.production_reachable_hashes != null) {
-                    // Package is in lockfile, but check if it's not reachable from production deps
-                    if (pkg_index != null and !self.production_reachable_hashes.?.contains(pkg_hash)) {
-                        should_remove = true;
+                // If we found a match, check if it should be kept
+                if (matched_pkg_id) |_| {
+                    // In production mode, check if package is reachable
+                    if (self.is_production and self.production_reachable_hashes != null) {
+                        if (!self.production_reachable_hashes.?.contains(pkg_hash)) {
+                            return true;
+                        }
                     }
+                    return false;
                 }
 
-                return should_remove;
+                // No match found, remove it
+                return true;
             }
         };
 

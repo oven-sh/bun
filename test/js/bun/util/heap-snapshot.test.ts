@@ -68,12 +68,15 @@ describe("Native types report their size correctly", () => {
   it("URL (heap size reporting bug)", () => {
     for (let i = 0; i < 500; i++) {
       // need to use String.repeat(4096) here to ensure lots of tiny strings get allocated and joined.
+      // need to assign it to a global to ensure JSC and Bun do not eliminate it.
       globalThis.url = new URL("Hello, 世界! 🌍".repeat(4096), "https://developer.mozilla.org");
     }
 
     // Expected: < 9007199254740991
     // Received: 18446744073706270000
     expect(heapStats().extraMemorySize).toBeLessThan(Number.MAX_SAFE_INTEGER);
+
+    delete globalThis.url;
   });
 
   it("URL", () => {

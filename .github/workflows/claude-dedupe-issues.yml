@@ -1,5 +1,4 @@
 name: Claude Issue Dedupe
-description: Automatically dedupe GitHub issues using Claude Code
 on:
   issues:
     types: [opened]
@@ -14,6 +13,9 @@ jobs:
   claude-dedupe-issues:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: claude-dedupe-issues-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       issues: write

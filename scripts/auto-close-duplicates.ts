@@ -11,13 +11,14 @@ interface GitHubIssue {
   title: string;
   user: { id: number };
   created_at: string;
+  pull_request?: object;
 }
 
 interface GitHubComment {
   id: number;
   body: string;
   created_at: string;
-  user: { type: string; id: number };
+  user: { type?: string; id: number };
 }
 
 interface GitHubReaction {
@@ -30,7 +31,7 @@ async function githubRequest<T>(endpoint: string, token: string, method: string 
     method,
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github.v3+json",
+      Accept: "application/vnd.github+json",
       "User-Agent": "auto-close-duplicates-script",
       ...(body && { "Content-Type": "application/json" }),
     },
@@ -44,15 +45,44 @@ async function githubRequest<T>(endpoint: string, token: string, method: string 
   return response.json();
 }
 
-function extractDuplicateIssueNumber(commentBody: string): number | null {
-  // Try to match #123 format first
-  let match = commentBody.match(/#(\d+)/);
+async function fetchAllComments(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  token: string,
+): Promise<GitHubComment[]> {
+  const allComments: GitHubComment[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (true) {
+    const comments: GitHubComment[] = await githubRequest(
+      `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=${perPage}&page=${page}`,
+      token,
+    );
+
+    if (comments.length === 0) break;
+
+    allComments.push(...comments);
+    page++;
+
+    // Safety limit
+    if (page > 20) break;
+  }
+
+  return allComments;
+}
+
+function extractDuplicateIssueNumber(commentBody: string, owner: string, repo: string): number | null {
+  // Try to match same-repo GitHub issue URL format first: https://github.com/owner/repo/issues/123
+  const repoUrlPattern = new RegExp(`github\\.com/${owner}/${repo}/issues/(\\d+)`);
+  let match = commentBody.match(repoUrlPattern);
   if (match) {
     return parseInt(match[1], 10);
   }
 
-  // Try to match GitHub issue URL format: https://github.com/owner/repo/issues/123
-  match = commentBody.match(/github\.com\/[^\/]+\/[^\/]+\/issues\/(\d+)/);
+  // Fallback to #123 format (assumes same repo)
+  match = commentBody.match(/#(\d+)/);
   if (match) {
     return parseInt(match[1], 10);
   }
@@ -91,8 +121,12 @@ async function autoCloseDuplicates(): Promise<void> {
   }
   console.log("[DEBUG] GitHub token found");
 
-  const owner = process.env.GITHUB_REPOSITORY_OWNER || "oven-sh";
-  const repo = process.env.GITHUB_REPOSITORY_NAME || "bun";
+  // Parse GITHUB_REPOSITORY (format: "owner/repo")
+  const repository = process.env.GITHUB_REPOSITORY || "oven-sh/bun";
+  const [owner, repo] = repository.split("/");
+  if (!owner || !repo) {
+    throw new Error(`Invalid GITHUB_REPOSITORY format: ${repository}`);
+  }
   console.log(`[DEBUG] Repository: ${owner}/${repo}`);
 
   const threeDaysAgo = new Date();
@@ -112,8 +146,10 @@ async function autoCloseDuplicates(): Promise<void> {
 
     if (pageIssues.length === 0) break;
 
-    // Filter for issues created more than 3 days ago
-    const oldEnoughIssues = pageIssues.filter(issue => new Date(issue.created_at) <= threeDaysAgo);
+    // Filter for issues created more than 3 days ago and exclude pull requests
+    const oldEnoughIssues = pageIssues.filter(
+      issue => !issue.pull_request && new Date(issue.created_at) <= threeDaysAgo,
+    );
 
     allIssues.push(...oldEnoughIssues);
     page++;
@@ -133,15 +169,15 @@ async function autoCloseDuplicates(): Promise<void> {
     console.log(`[DEBUG] Processing issue #${issue.number} (${processedCount}/${issues.length}): ${issue.title}`);
 
     console.log(`[DEBUG] Fetching comments for issue #${issue.number}...`);
-    const comments: GitHubComment[] = await githubRequest(
-      `/repos/${owner}/${repo}/issues/${issue.number}/comments`,
-      token,
-    );
+    const comments = await fetchAllComments(owner, repo, issue.number, token);
     console.log(`[DEBUG] Issue #${issue.number} has ${comments.length} comments`);
 
     const dupeComments = comments.filter(
       comment =>
-        comment.body.includes("Found") && comment.body.includes("possible duplicate") && comment.user.type === "Bot",
+        comment.body.includes("Found") &&
+        comment.body.includes("possible duplicate") &&
+        comment.user?.type === "Bot" &&
+        comment.body.includes("<!-- dedupe-bot:marker -->"),
     );
     console.log(`[DEBUG] Issue #${issue.number} has ${dupeComments.length} duplicate detection comments`);
 
@@ -166,11 +202,16 @@ async function autoCloseDuplicates(): Promise<void> {
       )} days)`,
     );
 
-    const commentsAfterDupe = comments.filter(comment => new Date(comment.created_at) > dupeCommentDate);
-    console.log(`[DEBUG] Issue #${issue.number} - ${commentsAfterDupe.length} comments after duplicate detection`);
+    // Filter for human comments (not bot comments) after the duplicate comment
+    const commentsAfterDupe = comments.filter(
+      comment => new Date(comment.created_at) > dupeCommentDate && comment.user?.type !== "Bot",
+    );
+    console.log(
+      `[DEBUG] Issue #${issue.number} - ${commentsAfterDupe.length} human comments after duplicate detection`,
+    );
 
     if (commentsAfterDupe.length > 0) {
-      console.log(`[DEBUG] Issue #${issue.number} - has activity after duplicate comment, skipping`);
+      console.log(`[DEBUG] Issue #${issue.number} - has human activity after duplicate comment, skipping`);
       continue;
     }
 
@@ -191,7 +232,7 @@ async function autoCloseDuplicates(): Promise<void> {
       continue;
     }
 
-    const duplicateIssueNumber = extractDuplicateIssueNumber(lastDupeComment.body);
+    const duplicateIssueNumber = extractDuplicateIssueNumber(lastDupeComment.body, owner, repo);
     if (!duplicateIssueNumber) {
       console.log(`[DEBUG] Issue #${issue.number} - could not extract duplicate issue number from comment, skipping`);
       continue;

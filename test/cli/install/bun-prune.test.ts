@@ -3,7 +3,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach } from "./dummy.registry";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  getPort,
+  setHandler,
+} from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -658,10 +666,23 @@ linkWorkspacePackages = true
     const lodashExistsAfter = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
     expect(lodashExistsAfter).toBe(true);
   });
+});
 
+// Isolated linker tests run sequentially (not concurrently) to avoid handler conflicts
+describe("bun prune - isolated linker", () => {
   // TODO: Prune logic doesn't correctly handle removing packages in isolated linker mode
   // The packages may be in nested locations (node_modules/pkg/node_modules) and aren't being removed
   it.skip("should prune nested node_modules in isolated linker mode", async () => {
+    // Set up dummy registry handler for is-number package
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "7.0.0": {
+          bin: {},
+        },
+      }),
+    );
+
     using dir = tempDir("prune-isolated", {
       "package.json": JSON.stringify({
         name: "test",
@@ -670,7 +691,13 @@ linkWorkspacePackages = true
           "is-number": "^7.0.0",
         },
       }),
-      "bunfig.toml": '[install]\nlinker = "isolated"',
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${getPort()}/"
+saveTextLockfile = false
+linker = "isolated"
+`,
     });
 
     // Install with isolated linker
@@ -715,6 +742,16 @@ linkWorkspacePackages = true
 
   // TODO(bun-39): Recursive traversal implemented but not working - debugging needed
   it("should handle isolated linker mode with nested node_modules", async () => {
+    // Set up dummy registry handler for is-number package
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "7.0.0": {
+          bin: {},
+        },
+      }),
+    );
+
     using dir = tempDir("prune-isolated-nested", {
       "package.json": JSON.stringify({
         name: "test",
@@ -727,6 +764,9 @@ linkWorkspacePackages = true
       }),
       "bunfig.toml": `
 [install]
+cache = false
+registry = "http://localhost:${getPort()}/"
+saveTextLockfile = false
 linker = "isolated"
 `,
     });
@@ -739,6 +779,7 @@ linker = "isolated"
       stdout: "pipe",
       stderr: "pipe",
     });
+
     expect(await installProc.exited).toBe(0);
 
     // Manually create a nested node_modules structure to simulate isolated mode
@@ -763,14 +804,14 @@ linker = "isolated"
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [pruneStdout, pruneStderr, pruneExitCode] = await Promise.all([
       pruneProc.stdout.text(),
       pruneProc.stderr.text(),
       pruneProc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
-    expect(stderr).not.toContain("error:");
+    expect(pruneExitCode).toBe(0);
+    expect(pruneStderr).not.toContain("error:");
 
     // Verify nested lodash was removed
     expect(existsSync(nestedPkgPath)).toBe(false);

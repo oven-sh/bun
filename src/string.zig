@@ -752,7 +752,7 @@ pub const String = extern struct {
         defer this.* = .empty;
         return SliceWithUnderlyingString{
             .utf8 = this.toUTF8(allocator),
-            .underlying = this,
+            .underlying = this.*,
         };
     }
 

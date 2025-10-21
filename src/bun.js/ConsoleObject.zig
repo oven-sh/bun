@@ -2717,7 +2717,7 @@ pub const Formatter = struct {
             },
             .Map => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2824,7 +2824,7 @@ pub const Formatter = struct {
             },
             .Set => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;

@@ -75,6 +75,15 @@ pub fn refSelf(this: *IOWriter) *IOWriter {
     return this;
 }
 
+pub fn memoryCost(this: *const IOWriter) usize {
+    var cost: usize = @sizeOf(IOWriter);
+    cost += this.buf.allocatedSlice().len;
+    cost += if (comptime bun.Environment.isWindows) this.winbuf.allocatedSlice().len else 0;
+    cost += this.writers.memoryCost();
+    cost += this.writer.memoryCost();
+    return cost;
+}
+
 pub const Flags = packed struct(u8) {
     pollable: bool = false,
     nonblocking: bool = false,
@@ -156,7 +165,9 @@ pub fn __start(this: *IOWriter) Maybe(void) {
             this.writer.getPoll().?.flags.insert(.nonblocking);
         }
 
-        if (this.flags.is_socket) {
+        const sendto_MSG_NOWAIT_blocks = bun.Environment.isMac;
+
+        if (this.flags.is_socket and (!sendto_MSG_NOWAIT_blocks or this.flags.nonblocking)) {
             this.writer.getPoll().?.flags.insert(.socket);
         } else if (this.flags.pollable) {
             this.writer.getPoll().?.flags.insert(.fifo);

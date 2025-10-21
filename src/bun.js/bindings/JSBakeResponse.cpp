@@ -43,7 +43,7 @@ extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
     auto& vm = JSC::getVM(globalObject);
 
     // React does this:
@@ -236,7 +236,7 @@ public:
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
     {
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -300,7 +300,7 @@ Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalO
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(init.global);
+    auto* zigGlobal = static_cast<Zig::GlobalObject*>(init.global);
     auto* prototype = JSC::constructEmptyObject(zigGlobal, zigGlobal->JSResponsePrototype());
 
     auto* constructorStructure = JSBakeResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());

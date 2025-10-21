@@ -86,10 +86,28 @@ pub const URL = opaque {
         jsc.markBinding(@src());
         return URL__search(url);
     }
+
+    /// Returns the host WITHOUT the port.
+    ///
+    /// Note that this does NOT match JS behavior, which returns the host with the port. See
+    /// `hostname` for the JS equivalent of `host`.
+    ///
+    /// ```
+    /// URL("http://example.com:8080").host() => "example.com"
+    /// ```
     pub fn host(url: *URL) String {
         jsc.markBinding(@src());
         return URL__host(url);
     }
+
+    /// Returns the host WITH the port.
+    ///
+    /// Note that this does NOT match JS behavior which returns the host without the port. See
+    /// `host` for the JS equivalent of `hostname`.
+    ///
+    /// ```
+    /// URL("http://example.com:8080").hostname() => "example.com:8080"
+    /// ```
     pub fn hostname(url: *URL) String {
         jsc.markBinding(@src());
         return URL__hostname(url);

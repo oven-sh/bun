@@ -644,7 +644,7 @@ pub const JestPrettyFormat = struct {
             var buf = [_]u8{' '} ** 64;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @min(32, total_remain);
+                const written: usize = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }

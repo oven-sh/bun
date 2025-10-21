@@ -556,9 +556,10 @@ pub const IniTestingAPIs = struct {
             return log.toJS(globalThis, allocator, "error");
         };
 
-        const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password = brk: {
+        const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password, const default_registry_email = brk: {
             const default_registry = install.default_registry orelse break :brk .{
                 bun.String.static(Registry.default_url[0..]),
+                bun.String.empty,
                 bun.String.empty,
                 bun.String.empty,
                 bun.String.empty,
@@ -569,6 +570,7 @@ pub const IniTestingAPIs = struct {
                 bun.String.fromBytes(default_registry.token),
                 bun.String.fromBytes(default_registry.username),
                 bun.String.fromBytes(default_registry.password),
+                bun.String.fromBytes(default_registry.email),
             };
         };
         defer {
@@ -576,6 +578,7 @@ pub const IniTestingAPIs = struct {
             default_registry_token.deref();
             default_registry_username.deref();
             default_registry_password.deref();
+            default_registry_email.deref();
         }
 
         return (try jsc.JSObject.create(.{
@@ -583,6 +586,7 @@ pub const IniTestingAPIs = struct {
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
+            .default_registry_email = default_registry_email,
         }, globalThis)).toJS();
     }
 
@@ -731,7 +735,7 @@ pub const ConfigIterator = struct {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
         }
 
-        pub fn deinit(self: *const Item, allocator: Allocator) void {
+        pub fn deinit(self: *Item, allocator: Allocator) void {
             allocator.free(self.registry_url);
             allocator.free(self.value);
         }
@@ -865,7 +869,7 @@ pub fn loadNpmrcConfig(
     // to be created at the end.
     var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
     defer {
-        for (configs.items) |item| {
+        for (configs.items) |*item| {
             item.deinit(allocator);
         }
         configs.deinit();
@@ -1181,7 +1185,7 @@ pub fn loadNpmrc(
                 // - @myorg:registry=https://somewhere-else.com/myorg
                 const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
                 switch (conf_item.optname) {
-                    .email, .certfile, .keyfile => {
+                    .certfile, .keyfile => {
                         try log.addWarningFmt(
                             source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
@@ -1212,6 +1216,7 @@ pub fn loadNpmrc(
                         .token = "",
                         .username = "",
                         .url = Registry.default_url,
+                        .email = "",
                     };
                     break :brk &install.default_registry.?;
                 };
@@ -1229,7 +1234,10 @@ pub fn loadNpmrc(
                     ._auth => {
                         try @"handle _auth"(allocator, v, &conf_item, log, source);
                     },
-                    .email, .certfile, .keyfile => unreachable,
+                    .email => {
+                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.email = x;
+                    },
+                    .certfile, .keyfile => unreachable,
                 }
             }
 
@@ -1256,7 +1264,10 @@ pub fn loadNpmrc(
                         ._auth => {
                             try @"handle _auth"(allocator, v, &conf_item, log, source);
                         },
-                        .email, .certfile, .keyfile => unreachable,
+                        .email => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.email = x;
+                        },
+                        .certfile, .keyfile => unreachable,
                     }
                     // We have to keep going as it could match multiple scopes
                     continue;

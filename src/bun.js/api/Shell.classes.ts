@@ -11,6 +11,8 @@ export default [
     klass: {},
     values: ["resolve", "reject"],
     valuesArray: true,
+    memoryCost: true,
+    estimatedSize: true,
     proto: {
       run: {
         fn: "runFromJS",

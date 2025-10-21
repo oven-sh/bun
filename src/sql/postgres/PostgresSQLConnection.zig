@@ -198,17 +198,17 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
-pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onConnectionTimeout(this: *PostgresSQLConnection) void {
     debug("onConnectionTimeout", .{});
 
     this.timer.state = .FIRED;
     if (this.flags.is_processing_data) {
-        return .disarm;
+        return;
     }
 
     if (this.getTimeoutInterval() == 0) {
         this.resetConnectionTimeout();
-        return .disarm;
+        return;
     }
 
     switch (this.status) {
@@ -222,15 +222,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoop
             this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
-    return .disarm;
 }
 
-pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
-    if (this.status == .failed) return .disarm;
+    if (this.status == .failed) return;
     this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
-    return .disarm;
 }
 
 fn start(this: *PostgresSQLConnection) void {

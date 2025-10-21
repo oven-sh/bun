@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import testHelpers from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 const { escapeRegExp, escapeRegExpForPackageNameMatching } = testHelpers;
 
 test("escapeRegExp", () => {

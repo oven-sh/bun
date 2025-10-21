@@ -361,7 +361,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return instance;
         }
 
-        pub fn deinit(self: *const Self) void {
+        pub fn deinit(self: *Self) void {
             _ = self;
             bun.default_allocator.destroy(instance);
             loaded = false;

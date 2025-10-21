@@ -58,7 +58,7 @@ pub const Entry = struct {
 
     pub const Queue = std.fifo.LinearFifo(Entry, .Dynamic);
 
-    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         allocator.free(self.serialized_data);
     }
 

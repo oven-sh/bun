@@ -16,11 +16,9 @@ const SloppyGlobalGitConfig = struct {
     }
 
     pub fn loadAndParse() void {
-        var home_dir = (bun.os.HomeDir.query(bun.default_allocator)).unwrap() catch return;
-        defer home_dir.deinit();
-
+        const home_dir = (bun.os.queryHomeDir()).unwrap() catch return;
         var config_file_path_buf: bun.PathBuffer = undefined;
-        const config_file_path = bun.path.joinAbsStringBufZ(home_dir.slice(), &config_file_path_buf, &.{".gitconfig"}, .auto);
+        const config_file_path = bun.path.joinAbsStringBufZ(home_dir, &config_file_path_buf, &.{".gitconfig"}, .auto);
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
         const allocator = stack_fallback.get();
         const source = File.toSource(config_file_path, allocator, .{ .convert_bom = true }).unwrap() catch {

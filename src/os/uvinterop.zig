@@ -23,12 +23,8 @@ pub export fn bunuv__os_homedir(buffer: ?[*]u8, size: ?*usize) callconv(.C) c_in
     // TODO(markovejnovic): This implementation could be slightly better. I don't know how to
     //                      return the total size needed (from os.HomeDir.query) if the buffer is
     //                      too small.
-    var homedir = bun.os.HomeDir.query(bun.default_allocator);
-    switch (homedir) {
-        .result => |*r| {
-            defer r.deinit();
-
-            const out = r.slice();
+    switch (bun.os.queryHomeDir()) {
+        .result => |out| {
             // +1 for null terminator
             if (out.len + 1 > size.?.*) {
                 size.?.* = out.len + 1;
@@ -37,7 +33,7 @@ pub export fn bunuv__os_homedir(buffer: ?[*]u8, size: ?*usize) callconv(.C) c_in
 
             @memcpy(buffer.?[0..out.len], out);
             buffer.?[out.len] = 0; // null terminator
-            size.?.* = out.len + 1;
+            size.?.* = out.len;
             return 0;
         },
         .err => |err| {

@@ -302,11 +302,9 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
 }
 
 pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
-    var home_res = bun.os.HomeDir.query(bun.default_allocator);
-    switch (home_res) {
-        .result => |*r| {
-            defer r.deinit();
-            return bun.String.cloneUTF8(r.slice());
+    switch (bun.os.queryHomeDir()) {
+        .result => |r| {
+            return bun.String.cloneUTF8(r);
         },
         .err => |err| {
             return global.throwValue(err.toJS(global));

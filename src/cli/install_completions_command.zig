@@ -25,10 +25,8 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.bun/bin
             outer: {
-                var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                if (maybe_home_dir.asValuePtr()) |home_dir| {
-                    defer home_dir.deinit();
-                    target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir.slice()}) catch unreachable;
+                if (bun.os.queryHomeDir().asValue()) |home_dir| {
+                    target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.posix.symlink(exe, target) catch break :outer;
                     return;
                 }
@@ -36,10 +34,8 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.local/bin
             outer: {
-                var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                if (maybe_home_dir.asValuePtr()) |home_dir| {
-                    defer home_dir.deinit();
-                    target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir.slice()}) catch unreachable;
+                if (bun.os.queryHomeDir().asValue()) |home_dir| {
+                    target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.posix.symlink(exe, target) catch break :outer;
                     return;
                 }
@@ -233,11 +229,9 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                    if (maybe_home_dir.asValuePtr()) |home_dir| {
-                        defer home_dir.deinit();
+                    if (bun.os.queryHomeDir().asValue()) |home_dir| {
                         outer: {
-                            var paths = [_]string{ home_dir.slice(), "./.config/fish/completions" };
+                            var paths = [_]string{ home_dir, "./.config/fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
                             break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
@@ -293,12 +287,10 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                    if (maybe_home_dir.asValuePtr()) |home_dir| {
-                        defer home_dir.deinit();
+                    if (bun.os.queryHomeDir().asValue()) |home_dir| {
                         {
                             outer: {
-                                var paths = [_]string{ home_dir.slice(), "./.oh-my-zsh/completions" };
+                                var paths = [_]string{ home_dir, "./.oh-my-zsh/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
                                 break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
@@ -307,7 +299,7 @@ pub const InstallCompletionsCommand = struct {
 
                         {
                             outer: {
-                                var paths = [_]string{ home_dir.slice(), "./.bun" };
+                                var paths = [_]string{ home_dir, "./.bun" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
                                 break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
@@ -347,12 +339,10 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                    if (maybe_home_dir.asValuePtr()) |home_dir| {
-                        defer home_dir.deinit();
+                    if (bun.os.queryHomeDir().asValue()) |home_dir| {
                         {
                             outer: {
-                                var paths = [_]string{ home_dir.slice(), "./.oh-my-bash/custom/completions" };
+                                var paths = [_]string{ home_dir, "./.oh-my-bash/custom/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
                                 break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
@@ -361,7 +351,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                         {
                             outer: {
-                                var paths = [_]string{ home_dir.slice(), "./.bash_completion.d" };
+                                var paths = [_]string{ home_dir, "./.bash_completion.d" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
                                 break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
@@ -459,25 +449,21 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     second: {
-                        var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                        if (maybe_home_dir.asValuePtr()) |zdot_dir| {
-                            defer zdot_dir.deinit();
-                            bun.copy(u8, &zshrc_filepath, zdot_dir.slice());
-                            bun.copy(u8, zshrc_filepath[zdot_dir.slice().len..], "/.zshrc");
-                            zshrc_filepath[zdot_dir.slice().len + "/.zshrc".len] = 0;
-                            const filepath = zshrc_filepath[0 .. zdot_dir.slice().len + "/.zshrc".len :0];
+                        if (bun.os.queryHomeDir().asValue()) |zdot_dir| {
+                            bun.copy(u8, &zshrc_filepath, zdot_dir);
+                            bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
+                            zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
+                            const filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
                         }
                     }
 
                     third: {
-                        var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-                        if (maybe_home_dir.asValuePtr()) |zdot_dir| {
-                            defer zdot_dir.deinit();
-                            bun.copy(u8, &zshrc_filepath, zdot_dir.slice());
-                            bun.copy(u8, zshrc_filepath[zdot_dir.slice().len..], "/.zshenv");
-                            zshrc_filepath[zdot_dir.slice().len + "/.zshenv".len] = 0;
-                            const filepath = zshrc_filepath[0 .. zdot_dir.slice().len + "/.zshenv".len :0];
+                        if (bun.os.queryHomeDir().asValue()) |zdot_dir| {
+                            bun.copy(u8, &zshrc_filepath, zdot_dir);
+                            bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
+                            zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
+                            const filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
                         }
                     }

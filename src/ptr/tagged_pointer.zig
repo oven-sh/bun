@@ -88,7 +88,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
     const TagType: type = result.tag_type;
 
-    return struct {
+    return packed struct {
         pub const Tag = TagType;
         pub const TagInt = TaggedPointer.Tag;
         pub const type_map: TypeMap(Types) = result.ty_map;
@@ -136,7 +136,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
 
         pub fn case(comptime Type: type) Tag {
-            return @field(Tag, bun.meta.typeBaseName(@typeName(Type)));
+            return @field(Tag, @typeName(Type));
         }
 
         /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
@@ -234,5 +234,4 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
     };
 }
 
-const bun = @import("bun");
 const std = @import("std");

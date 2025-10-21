@@ -530,42 +530,10 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var sys_tempdir_cache: ?bun.os.SysTmpDir = null;
-        var sys_tempdir_mutex: Mutex = .{};
-
-        fn cleanupSysTempdirCache() callconv(.C) void {
-            if (sys_tempdir_cache) |*c| {
-                c.deinit();
-            }
-        }
-
         pub fn platformTempDir() []const u8 {
-            if (sys_tempdir_cache) |w| {
-                return w.slice();
-            }
-
-            var temp_dir = bun.os.SysTmpDir.query(bun.default_allocator);
-            switch (temp_dir) {
-                .result => |*s| {
-                    sys_tempdir_mutex.lock();
-                    defer sys_tempdir_mutex.unlock();
-                    // After acquiring the mutex, we need to check sys_tempdir_cache again. There
-                    // is a race condition -- another thread may have acquired the lock just prior
-                    // to this thread but this thread will enter the current scope since it there
-                    // is a race condition on sys_temp_dir_cache. Consequently, this thread has to
-                    // check sys_tempdir_cache again.
-                    if (sys_tempdir_cache) |w| {
-                        return w.slice();
-                    }
-
-                    defer s.deinit();
-
-                    sys_tempdir_cache = s.*;
-                    // TODO(markovejnovic): Using atexit for cleanup is pretty bad practice.
-                    // Ideally we would have a bun mechanism for cleanup that could register within
-                    // __fini, but my PR is not responsible to that right now.
-                    _ = bun.c.atexit(cleanupSysTempdirCache);
-                    return sys_tempdir_cache.?.slice();
+            switch (bun.os.querySysTmpDir()) {
+                .result => |s| {
+                    return s;
                 },
                 .err => |e| {
                     bun.Output.panic("Could not retrieve the system temporary directory: {}", .{e});

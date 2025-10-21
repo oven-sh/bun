@@ -87,7 +87,7 @@ pub const HANDLE = win32.HANDLE;
 pub const HMODULE = win32.HMODULE;
 
 /// learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects
-pub const TOKEN_QUERY: DWORD = 0x0008;
+pub const TOKEN_READ: DWORD = 0x20008;
 
 /// learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken
 pub extern "advapi32" fn OpenProcessToken(

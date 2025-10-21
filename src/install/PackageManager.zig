@@ -792,10 +792,7 @@ pub fn init(
 
     initializeStore();
 
-    var maybe_home_dir = bun.os.HomeDir.query(bun.default_allocator);
-    defer if (maybe_home_dir.asValuePtr()) |h| h.deinit();
-    const home_dir = if (maybe_home_dir.asValuePtr()) |h| h.slice() else null;
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse home_dir) |data_dir| {
+    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.os.queryHomeDir().asValue()) |data_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "./.npmrc",

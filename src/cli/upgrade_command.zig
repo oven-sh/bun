@@ -572,15 +572,13 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                            var windir = switch (bun.os.win32.WinDir.query(ctx.allocator)) {
+                            const system_root = switch (bun.os.win32.queryWinDir()) {
                                 .err => {
                                     Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
                                     Global.exit(1);
                                 },
                                 .result => |v| v,
                             };
-                            defer windir.deinit();
-                            const system_root = windir.slice();
                             const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
                             if (bun.sys.exists(hardcoded_system_powershell)) {
                                 break :hardcoded_system_powershell hardcoded_system_powershell;

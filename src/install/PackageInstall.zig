@@ -1099,7 +1099,7 @@ pub const PackageInstall = struct {
 
     pub fn uninstallBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
         var rand_path_buf: [48]u8 = undefined;
-        const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
+        const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{X}", .{std.mem.asBytes(&bun.fastRandom())}) catch unreachable;
         switch (bun.sys.renameat(
             .fromStdDir(destination_dir),
             this.destination_dir_subpath,

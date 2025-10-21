@@ -112,7 +112,7 @@ pub fn putOrIncrementRefCount(assets: *Assets, content_hash: u64, ref_count: u32
 
 pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
     const index = assets.files.getIndex(content_hash) orelse
-        Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
+        Output.panic("Asset double unref: {x}", .{std.mem.asBytes(&content_hash)});
     assets.unrefByIndex(.init(@intCast(index)), dec_count);
 }
 

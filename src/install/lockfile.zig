@@ -819,12 +819,12 @@ pub const MetaHashFormatter = struct {
 
         try std.fmt.format(
             writer,
-            "{}-{}-{}-{}",
+            "{X}-{x}-{X}-{x}",
             .{
-                std.fmt.fmtSliceHexUpper(remain[0..8]),
-                std.fmt.fmtSliceHexLower(remain[8..16]),
-                std.fmt.fmtSliceHexUpper(remain[16..24]),
-                std.fmt.fmtSliceHexLower(remain[24..32]),
+                remain[0..8],
+                remain[8..16],
+                remain[16..24],
+                remain[24..32],
             },
         );
     }
@@ -1253,9 +1253,9 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     var base64_bytes: [8]u8 = undefined;
     bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{x}.tmp", .{&base64_bytes}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{x}.tmp", .{&base64_bytes}) catch unreachable;
 
     const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {

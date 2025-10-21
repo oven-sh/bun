@@ -697,7 +697,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     var base64_bytes: [64]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{x}", .{&base64_bytes}) catch unreachable;
     tmpname_buf[tmpname__.len + 8] = 0;
     const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
 

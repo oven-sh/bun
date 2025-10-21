@@ -363,9 +363,9 @@ pub const RuntimeTranspilerCache = struct {
         buf: []u8,
         input_hash: u64,
     ) !usize {
-        const fmt_name = if (comptime bun.Environment.allow_assert) "{any}.debug.pile" else "{any}.pile";
+        const fmt_name = if (comptime bun.Environment.allow_assert) "{x}.debug.pile" else "{x}.pile";
 
-        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
+        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.mem.asBytes(&input_hash)});
         return printed.len;
     }
 

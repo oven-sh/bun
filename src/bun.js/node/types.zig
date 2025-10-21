@@ -403,8 +403,8 @@ pub const Encoding = enum(u8) {
                 var buf: [size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
@@ -448,8 +448,8 @@ pub const Encoding = enum(u8) {
                 var buf: [max_size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };

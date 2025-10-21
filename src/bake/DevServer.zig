@@ -1384,9 +1384,9 @@ fn computeArgumentsForFrameworkRequest(
         .client_id = framework_bundle.cached_client_bundle_url.get() orelse str: {
             const bundle_index: u32 = route_bundle_index.get();
             const generation: u32 = route_bundle.client_script_generation;
-            const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
-                std.fmt.fmtSliceHexLower(std.mem.asBytes(&bundle_index)),
-                std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation)),
+            const str = bun.String.createFormat(client_prefix ++ "/route-{x}{x}.js", .{
+                std.mem.asBytes(&bundle_index),
+                std.mem.asBytes(&generation),
             }) catch |err| bun.handleOom(err);
             defer str.deref();
             const js = str.toJS(dev.vm.global);

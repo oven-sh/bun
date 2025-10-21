@@ -1681,14 +1681,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     first_hasher.update(this.password);
                     first_hasher.update(this.user);
                     first_hasher.final(&first_hash_buf);
-                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&first_hash_buf)}) catch unreachable;
+                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{&first_hash_buf}) catch unreachable;
 
                     // Second hash: md5(first_hash + salt)
                     var final_hasher = bun.sha.MD5.init();
                     final_hasher.update(first_hash_str_output);
                     final_hasher.update(&md5.salt);
                     final_hasher.final(&final_hash_buf);
-                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&final_hash_buf)}) catch unreachable;
+                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{&final_hash_buf}) catch unreachable;
 
                     // Format final password as "md5" + final_hash
                     const final_password = std.fmt.bufPrintZ(&final_password_buf, "md5{s}", .{final_hash_str_output}) catch unreachable;

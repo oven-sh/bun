@@ -1753,7 +1753,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
                         try w.writeAll(",\n  generation: \"");
                         const generation: u32 = @intCast(options.script_id.get() >> 32);
-                        try w.print("{s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation))});
+                        try w.print("{x}", .{std.mem.asBytes(&generation)});
                         try w.writeAll("\",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
 

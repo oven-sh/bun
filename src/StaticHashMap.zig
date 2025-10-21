@@ -358,7 +358,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
             pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 _ = layout;
                 _ = options;
-                try std.fmt.format(writer, "(hash: {}, value: {})", .{ std.fmt.fmtSliceHexLower(mem.asBytes(&self.hash)), self.value });
+                try std.fmt.format(writer, "(hash: {x}, value: {})", .{ mem.asBytes(&self.hash), self.value });
             }
         };
 

@@ -579,8 +579,7 @@ pub fn fromDOMFormData(
     var hex_buf: [70]u8 = undefined;
     const boundary = brk: {
         var random = globalThis.bunVM().rareData().nextUUID().bytes;
-        const formatter = std.fmt.fmtSliceHexLower(&random);
-        break :brk std.fmt.bufPrint(&hex_buf, "-WebkitFormBoundary{any}", .{formatter}) catch unreachable;
+        break :brk std.fmt.bufPrint(&hex_buf, "-WebkitFormBoundary{x}", .{&random}) catch unreachable;
     };
 
     var context = FormDataContext{

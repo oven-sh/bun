@@ -1872,6 +1872,7 @@ registry = "${registryUrl}"
         version: "1.0.0",
         dependencies: {
           "my-alias": "npm:no-deps@1.0.0",
+          "@my/alias": "npm:@types/no-deps@^1.0.0",
         },
       }),
     });
@@ -1902,6 +1903,7 @@ registry = "${registryUrl}"
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     expect(packageJson.dependencies["my-alias"]).toBe("npm:no-deps@2.0.0");
+    expect(packageJson.dependencies["@my/alias"]).toBe("npm:@types/no-deps@^2.0.0");
   });
 
   it("interactive update with mixed dependency types", async () => {

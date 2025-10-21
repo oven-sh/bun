@@ -1976,29 +1976,38 @@ fn updateNamedCatalog(
 }
 
 fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
-    if (original_version.len > 0) {
+    if (original_version.len > 1) brk: {
+        var orig_version = original_version;
+        var alias: ?string = null;
+
         // Preserve npm: prefix
         if (strings.withoutPrefixIfPossibleComptime(original_version, "npm:")) |after_npm| {
-            const actual_new_version = if (strings.lastIndexOfChar(after_npm, '@')) |last_at| after_npm[0..last_at] else after_npm;
-            const first_char = actual_new_version[0];
-            if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
-                const second_char = actual_new_version[1];
-                if ((first_char == '>' or first_char == '<') or second_char == '=') {
-                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ actual_new_version, first_char, new_version });
-                }
-                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ actual_new_version, first_char, new_version });
+            if (strings.lastIndexOfChar(after_npm, '@')) |i| {
+                if (i + 1 >= after_npm.len) break :brk;
+                alias = after_npm[0..i];
+                orig_version = after_npm[i + 1 ..];
+            } else {
+                alias = after_npm;
             }
-            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ actual_new_version, new_version });
         }
 
         // Preserve other version prefixes
-        const first_char = original_version[0];
+        const first_char = orig_version[0];
         if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
-            const second_char = original_version[1];
-            if ((first_char == '>' or first_char == '<') or second_char == '=') {
+            const second_char = orig_version[1];
+            if ((first_char == '>' or first_char == '<') and second_char == '=') {
+                if (alias) |a| {
+                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
+                }
                 return try std.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
             }
+            if (alias) |a| {
+                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
+            }
             return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+        }
+        if (alias) |a| {
+            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
         }
     }
     return try allocator.dupe(u8, new_version);

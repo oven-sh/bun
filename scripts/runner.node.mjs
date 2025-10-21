@@ -477,7 +477,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      if (attempt >= maxAttempts || isAlwaysFailure(error) || title.startsWith("vendor")) {
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);

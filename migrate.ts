@@ -22,7 +22,8 @@ function replacements(content: string): string {
     .replaceAll("std.zig.fmtEscapes", "std.zig.fmtString")
     .replaceAll("std.SinglyLinkedList", "bun.deprecated.SinglyLinkedList")
     .replaceAll("fmt.formatIntBuf", "fmt.printInt")
-    .replaceAll("ascii.isASCII", "ascii.isAscii");
+    .replaceAll("ascii.isASCII", "ascii.isAscii")
+    .replaceAll("std.time.sleep", "std.Thread.sleep");
   // consider: .replaceAll("writer: anytype", "writer: *std.Io.Writer") - looks like it has some false-positives
 }
 

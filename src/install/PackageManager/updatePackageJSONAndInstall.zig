@@ -669,7 +669,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                     // Regular package
                     // Open package directory to check version
-                    var pkg_dir = dir.openDir(entry.name, .{}) catch continue;
+                    // Note: openDir with iterate=false can fail on symlinks in isolated linker mode
+                    // so we retry with iterate=true if the first attempt fails
+                    var pkg_dir = dir.openDir(entry.name, .{}) catch blk: {
+                        // Retry with iterate=true for symlinks (isolated linker mode)
+                        break :blk dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+                    };
                     defer pkg_dir.close();
 
                     const should_remove = self.shouldRemovePackage(entry.name, pkg_dir);

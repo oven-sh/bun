@@ -182,9 +182,9 @@ pub const JunitReporter = struct {
 
         const properties: PropertiesList = .{
             .ci = brk: {
-                if (bun.getenvZ("GITHUB_RUN_ID")) |github_run_id| {
-                    if (bun.getenvZ("GITHUB_SERVER_URL")) |github_server_url| {
-                        if (bun.getenvZ("GITHUB_REPOSITORY")) |github_repository| {
+                if (bun.env_var.GITHUB_RUN_ID.get()) |github_run_id| {
+                    if (bun.env_var.GITHUB_SERVER_URL.get()) |github_server_url| {
+                        if (bun.env_var.GITHUB_REPOSITORY.get()) |github_repository| {
                             if (github_run_id.len > 0 and github_server_url.len > 0 and github_repository.len > 0) {
                                 break :brk try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}", .{ github_server_url, github_repository, github_run_id });
                             }
@@ -192,7 +192,7 @@ pub const JunitReporter = struct {
                     }
                 }
 
-                if (bun.getenvZ("CI_JOB_URL")) |ci_job_url| {
+                if (bun.env_var.CI_JOB_URL.get()) |ci_job_url| {
                     if (ci_job_url.len > 0) {
                         break :brk ci_job_url;
                     }
@@ -201,19 +201,19 @@ pub const JunitReporter = struct {
                 break :brk "";
             },
             .commit = brk: {
-                if (bun.getenvZ("GITHUB_SHA")) |github_sha| {
+                if (bun.env_var.GITHUB_SHA.get()) |github_sha| {
                     if (github_sha.len > 0) {
                         break :brk github_sha;
                     }
                 }
 
-                if (bun.getenvZ("CI_COMMIT_SHA")) |sha| {
+                if (bun.env_var.CI_COMMIT_SHA.get()) |sha| {
                     if (sha.len > 0) {
                         break :brk sha;
                     }
                 }
 
-                if (bun.getenvZ("GIT_SHA")) |git_sha| {
+                if (bun.env_var.GIT_SHA.get()) |git_sha| {
                     if (git_sha.len > 0) {
                         break :brk git_sha;
                     }

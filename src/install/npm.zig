@@ -1759,9 +1759,41 @@ pub const PackageManifest = struct {
         }
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+            const prereleases = this.pkg.prereleases.keys.get(this.versions);
+            const packages = this.pkg.prereleases.values.get(this.package_versions);
+
+            // First pass: prefer versions with the same pre-release tag structure
+            if (left.version.tag.hasPre()) {
+                const query_pre = left.version.tag.pre.slice(group_buf);
+
+                var i = prereleases.len;
+                while (i > 0) : (i -= 1) {
+                    const version = prereleases[i - 1];
+
+                    if (!group.satisfies(version, group_buf, this.string_buf)) continue;
+
+                    const candidate_pre = version.tag.pre.slice(this.string_buf);
+                    if (!hasSamePreTagStructure(query_pre, candidate_pre)) continue;
+
+                    const package = &packages[i - 1];
+                    if (isPackageVersionTooRecent(package, min_age_ms)) {
+                        if (newest_filtered == null) newest_filtered = version;
+                        continue;
+                    }
+
+                    return .{
+                        .found = .{
+                            .version = version,
+                            .package = package,
+                        },
+                    };
+                }
+            }
+
+            // Second pass: fall back to searchVersionList for any matching version
             if (this.searchVersionList(
-                this.pkg.prereleases.keys.get(this.versions),
-                this.pkg.prereleases.values.get(this.package_versions),
+                prereleases,
+                packages,
                 group,
                 group_buf,
                 min_age_ms,
@@ -1776,6 +1808,43 @@ pub const PackageManifest = struct {
         }
 
         return .{ .err = .not_found };
+    }
+
+    /// Checks if two pre-release tags have the same structure.
+    /// E.g., "beta.43" and "beta.44" have the same structure (both are "tag.number"),
+    /// but "beta.43" and "beta.9-commit.xyz" have different structures.
+    /// This helps prefer cleaner version tags when updating packages.
+    fn hasSamePreTagStructure(query_pre: []const u8, candidate_pre: []const u8) bool {
+        var query_iter = strings.split(query_pre, ".");
+        var candidate_iter = strings.split(candidate_pre, ".");
+
+        while (true) {
+            const query_part = query_iter.next();
+            const candidate_part = candidate_iter.next();
+
+            // Both exhausted at the same time = same structure
+            if (query_part == null and candidate_part == null) return true;
+
+            // One exhausted before the other = different structure
+            if (query_part == null or candidate_part == null) return false;
+
+            const query_is_num = std.fmt.parseUnsigned(u32, query_part.?, 10) catch null;
+            const candidate_is_num = std.fmt.parseUnsigned(u32, candidate_part.?, 10) catch null;
+
+            // Both are numbers or both are non-numbers = continue checking
+            if ((query_is_num != null) == (candidate_is_num != null)) {
+                // For non-numeric parts, they should match exactly (e.g., "beta" == "beta")
+                if (query_is_num == null and !strings.eql(query_part.?, candidate_part.?)) {
+                    return false;
+                }
+                continue;
+            }
+
+            // One is number, other is not = different structure
+            return false;
+        }
+
+        unreachable;
     }
 
     pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
@@ -1817,13 +1886,37 @@ pub const PackageManifest = struct {
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
             const prereleases = this.pkg.prereleases.keys.get(this.versions);
+            const packages = this.pkg.prereleases.values.get(this.package_versions);
+
+            // First pass: prefer versions with the same pre-release tag structure
+            // e.g., if looking for ^1.0.0-beta.43, prefer 1.0.0-beta.44 over 1.0.0-beta.9-commit.xyz
+            if (left.version.tag.hasPre()) {
+                const query_pre = left.version.tag.pre.slice(group_buf);
+
+                var i = prereleases.len;
+                while (i > 0) : (i -= 1) {
+                    const version = prereleases[i - 1];
+
+                    if (!group.satisfies(version, group_buf, this.string_buf)) continue;
+
+                    // Check if this version has the same pre-release tag structure
+                    const candidate_pre = version.tag.pre.slice(this.string_buf);
+                    if (hasSamePreTagStructure(query_pre, candidate_pre)) {
+                        return .{
+                            .version = version,
+                            .package = &packages[i - 1],
+                        };
+                    }
+                }
+            }
+
+            // Second pass: fall back to any matching pre-release version
             var i = prereleases.len;
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
                 if (group.satisfies(version, group_buf, this.string_buf)) {
-                    const packages = this.pkg.prereleases.values.get(this.package_versions);
                     return .{
                         .version = version,
                         .package = &packages[i - 1],

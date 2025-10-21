@@ -751,8 +751,8 @@ pub const String = extern struct {
     pub fn toSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         defer this.* = .empty;
         return SliceWithUnderlyingString{
-            .utf8 = duped.toUTF8(allocator),
-            .underlying = duped,
+            .utf8 = this.toUTF8(allocator),
+            .underlying = this,
         };
     }
 

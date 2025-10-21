@@ -545,7 +545,6 @@ pub const InstallCompletionsCommand = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../env_loader.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 const fs = @import("../fs.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");

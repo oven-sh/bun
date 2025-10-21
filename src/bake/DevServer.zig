@@ -1694,7 +1694,7 @@ pub const DeferredRequest = struct {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     const max_preallocated = 16;
 
-    pub const List = std.SinglyLinkedList(DeferredRequest);
+    pub const List = bun.deprecated.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
     const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;

@@ -961,7 +961,8 @@ pub const Expect = struct {
         pub fn format(this: CustomMatcherParamsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             // try to detect param names from matcher_fn (user function) source code
             if (jsc.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
-                var source_slice = source_str.toSlice(this.globalThis.allocator());
+                defer source_str.deref();
+                var source_slice = source_str.toUTF8WithoutRef(this.globalThis.allocator());
                 defer source_slice.deinit();
 
                 var source: string = source_slice.slice();

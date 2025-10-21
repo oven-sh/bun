@@ -748,14 +748,16 @@ pub const String = extern struct {
     }
 
     /// use `byteSlice` to get a `[]const u8`.
-    pub fn toSlice(this: String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+        const duped = this.*;
+        this.* = .empty;
         return SliceWithUnderlyingString{
-            .utf8 = this.toUTF8(allocator),
-            .underlying = this,
+            .utf8 = duped.toUTF8(allocator),
+            .underlying = duped,
         };
     }
 
-    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);

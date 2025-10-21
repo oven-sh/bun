@@ -3240,7 +3240,7 @@ pub const Resolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!c_int {
-        const str = try value.toBunString(globalThis);
+        var str = try value.toBunString(globalThis);
         defer str.deref();
 
         const slice = str.toSlice(bun.default_allocator).slice();

@@ -313,11 +313,10 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
     }
 
     if (description.isClass(globalThis)) {
-        const name_str = if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
+        return if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
             try description.getName(globalThis).toOwnedSlice(gpa)
         else
             try (try description.className(globalThis)).toOwnedSlice(gpa);
-        return try gpa.dupe(u8, name_str);
     }
     if (description.isFunction()) {
         return try description.getName(globalThis).toOwnedSlice(gpa);

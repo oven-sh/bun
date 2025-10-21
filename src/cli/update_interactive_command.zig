@@ -1985,7 +1985,7 @@ fn preserveVersionPrefix(original_version: string, new_version: string, allocato
             if (strings.lastIndexOfChar(after_npm, '@')) |i| {
                 alias = after_npm[0..i];
                 if (i + 2 < after_npm.len) {
-                  orig_version = after_npm[i + 1 ..];
+                    orig_version = after_npm[i + 1 ..];
                 }
             } else {
                 alias = after_npm;

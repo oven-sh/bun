@@ -7,7 +7,7 @@ function replacements(content: string): string {
   return content
     .replaceAll("std.fifo.LinearFifo", "bun.LinearFifo")
     .replaceAll("bun.LinearFifoBufferType.Dynamic", ".Dynamic")
-    .replaceAll(/\bstd\.ArrayList\b/g, "std.array_list.Managed") // these have already been applied, so applying them again would cause errors
+    .replaceAll(/\bstd\.ArrayList\b/g, "std.array_list.Managed")
     .replaceAll("std.io.Writer(", "std.Io.GenericWriter(")
     .replaceAll("std.io.Reader(", "std.Io.GenericReader(")
     .replaceAll("std.io.BufferedWriter(", "bun.deprecated.BufferedWriter(")
@@ -18,11 +18,12 @@ function replacements(content: string): string {
     .replaceAll("std.posix.empty_sigset", "std.posix.sigemptyset()")
     .replaceAll("std.io.getStdOut()", "std.fs.File.stdout()")
     .replaceAll("std.io.getStdErr()", "std.fs.File.stderr()")
-    .replaceAll("std.io.getStdIn()", "std.fs.File.stdin()")
-    .replaceAll("std.fmt.Formatter", "std.fmt.Alt")
+    .replaceAll("std.io.getStdIn()", "std.fs.File.stdin()") // .replaceAll("std.fmt.Formatter", "std.fmt.Alt") // hand-convert for searchability
     .replaceAll("std.zig.fmtEscapes", "std.zig.fmtString")
     .replaceAll("std.SinglyLinkedList", "bun.deprecated.SinglyLinkedList")
-    .replaceAll("fmt.formatIntBuf", "fmt.printInt");
+    .replaceAll("fmt.formatIntBuf", "fmt.printInt")
+    .replaceAll("ascii.isASCII", "ascii.isAscii");
+  // consider: .replaceAll("writer: anytype", "writer: *std.Io.Writer") - looks like it has some false-positives
 }
 
 // Check for local changes in git before proceeding

@@ -1515,7 +1515,7 @@ fn NewPrinter(
                         formatUnsignedIntegerBetween(10, buf, val);
                         p.writer.advance(10);
                     },
-                    else => std.fmt.formatInt(val, 10, .lower, .{}, p) catch unreachable,
+                    else => p.fmt("{d}", .{val}) catch unreachable,
                 }
 
                 return;
@@ -1937,7 +1937,7 @@ fn NewPrinter(
                             },
                             else => {
                                 p.print("\\u{");
-                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                p.fmt("{x}", .{cursor.c}) catch unreachable;
                                 p.print("}");
                             },
                         }
@@ -5021,7 +5021,7 @@ fn NewPrinter(
                         }
 
                         p.print("\\u{");
-                        std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                        p.fmt("{x}", .{cursor.c}) catch unreachable;
                         p.print("}");
                     },
                 }

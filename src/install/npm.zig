@@ -929,11 +929,11 @@ pub const PackageManifest = struct {
     }
 
     pub fn byteLength(this: *const PackageManifest, scope: *const Registry.Scope) usize {
-        var counter = std.io.countingWriter(std.io.null_writer);
-        const writer = counter.writer();
+        var counter = std.Io.Writer.Discarding.init(&.{});
+        const writer = &counter.writer;
 
         Serializer.write(this, scope, @TypeOf(writer), writer) catch return 0;
-        return counter.bytes_written;
+        return counter.count;
     }
 
     pub const Serializer = struct {

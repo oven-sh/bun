@@ -465,7 +465,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 
     auto callData = JSC::getCallData(function);
     auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 

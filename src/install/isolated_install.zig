@@ -85,9 +85,16 @@ pub fn installIsolatedPackages(
                             break :check_cycle;
                         }
 
+                        const curr_dep = dependencies[dep_id];
+                        const entry_dep = dependencies[entry.dep_id];
+
                         // ensure the dependency name is the same before skipping the cycle. if they aren't
                         // we lose dependency name information for the symlinks
-                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                        if (curr_dep.name_hash == entry_dep.name_hash and
+                            // also ensure workspace self deps are not skipped.
+                            // implicit workspace dep != explicit workspace dep
+                            curr_dep.behavior.workspace == entry_dep.behavior.workspace)
+                        {
                             node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
                             continue :next_node;
                         }

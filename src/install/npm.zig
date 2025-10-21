@@ -1734,15 +1734,8 @@ pub const PackageManifest = struct {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (isPackageVersionTooRecent(result.package, min_age_ms)) {
                     newest_filtered = result.version;
-                }
-                if (newest_filtered == null) {
-                    if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                        if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
-                            return .{ .found = result };
-                        }
-                    } else {
-                        return .{ .found = result };
-                    }
+                } else {
+                    return .{ .found = result };
                 }
             }
         }
@@ -1787,14 +1780,7 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
-                        // if prerelease, use latest if semver+tag match range exactly
-                        return result;
-                    }
-                } else {
-                    return result;
-                }
+                return result;
             }
         }
 

@@ -434,6 +434,10 @@ describe("bun prune", () => {
           lodash: "^4.17.0",
         },
       }),
+      "bunfig.toml": `
+[install]
+linkWorkspacePackages = true
+`,
     });
 
     // Install all dependencies

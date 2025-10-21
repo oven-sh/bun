@@ -84,8 +84,8 @@ struct IntTypeLimits<uint8_t> {
 
 template<>
 struct IntTypeLimits<int16_t> {
-    static const short minValue = -32768;
-    static const short maxValue = 32767;
+    static const signed short minValue = -32768;
+    static const signed short maxValue = 32767;
     static const unsigned numberOfValues = 65536; // 2^16
 };
 

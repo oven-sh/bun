@@ -645,6 +645,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             is_production: bool,
             production_reachable_hashes: ?*const std.AutoHashMap(PackageNameHash, void),
             is_dry_run: bool,
+            // Precomputed multimap for O(1) lookup of package IDs by name hash
+            name_to_ids: *const std.AutoHashMap(PackageNameHash, std.ArrayList(PackageID)),
 
             fn pruneNodeModulesRecursive(
                 self: *const @This(),
@@ -734,27 +736,15 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     return false;
                 }
 
-                // Count how many packages in lockfile have this name
-                var matching_packages = std.ArrayList(PackageID).init(self.manager.allocator);
-                defer matching_packages.deinit();
-                
-                for (self.name_hashes, 0..) |hash, idx| {
-                    if (hash != pkg_hash) continue;
-                    const pkg_id = @as(PackageID, @intCast(idx));
-                    
-                    // Skip workspace packages
-                    if (self.package_resolutions[pkg_id].tag == .workspace or 
-                        self.package_metas[pkg_id].origin == .local) {
-                        continue;
-                    }
-                    
-                    matching_packages.append(pkg_id) catch continue;
-                }
+                // Look up packages with this name hash using precomputed multimap (O(1) instead of O(n))
+                const matching_packages_ptr = self.name_to_ids.get(pkg_hash);
 
                 // If no matching packages in lockfile, remove it
-                if (matching_packages.items.len == 0) {
+                if (matching_packages_ptr == null) {
                     return true;
                 }
+                
+                const matching_packages = matching_packages_ptr.?;
 
                 // If only one matching package, use it (fast path - no version check needed)
                 var matched_pkg_id: ?PackageID = null;
@@ -829,6 +819,33 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         };
 
+        // Build multimap: name_hash → [PackageID] for O(1) lookups
+        var name_to_ids = std.AutoHashMap(PackageNameHash, std.ArrayList(PackageID)).init(manager.allocator);
+        defer {
+            var iter = name_to_ids.valueIterator();
+            while (iter.next()) |list| {
+                list.deinit();
+            }
+            name_to_ids.deinit();
+        }
+        
+        for (name_hashes, 0..) |hash, idx| {
+            const pkg_id = @as(PackageID, @intCast(idx));
+            
+            // Skip workspace packages in the multimap
+            if (package_resolutions[pkg_id].tag == .workspace or 
+                package_metas[pkg_id].origin == .local or
+                workspace_paths.contains(hash)) {
+                continue;
+            }
+            
+            const result = try name_to_ids.getOrPut(hash);
+            if (!result.found_existing) {
+                result.value_ptr.* = std.ArrayList(PackageID).init(manager.allocator);
+            }
+            try result.value_ptr.append(pkg_id);
+        }
+
         const prune_ctx = PruneContext{
             .manager = manager,
             .name_hashes = name_hashes,
@@ -838,6 +855,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             .is_production = is_production,
             .production_reachable_hashes = if (production_reachable_hashes) |*map| map else null,
             .is_dry_run = is_dry_run,
+            .name_to_ids = &name_to_ids,
         };
 
         prune_ctx.pruneNodeModulesRecursive(node_modules_dir, 0);

@@ -226,6 +226,7 @@ pub const InstrumentRecord = struct {
 ```zig
 /// Rebuild inject configuration for a specific kind
 /// Called after attach/detach to update cached header list
+/// NOTE: Allows duplicates - simpler implementation, defers merge to Headers API
 fn rebuildInjectConfig(self: *Telemetry, kind: InstrumentKind) !void {
     const kind_index = @intFromEnum(kind);
     var config = &self.inject_configs[kind_index];
@@ -233,15 +234,10 @@ fn rebuildInjectConfig(self: *Telemetry, kind: InstrumentKind) !void {
     // Clear existing configuration
     config.clear();
 
-    // Use a hash set to collect unique header names
-    var request_set = std.StringHashMap(void).init(self.allocator);
-    defer request_set.deinit();
-    var response_set = std.StringHashMap(void).init(self.allocator);
-    defer response_set.deinit();
-
-    // Collect headers from all instruments of this kind
+    // Linearly concatenate headers from all instruments
+    // DUPLICATES ALLOWED - edge case, will be handled by Headers.set()
     for (self.instrument_table[kind_index].items) |*record| {
-        // Process request headers
+        // Process request headers (for fetch client)
         if (record.inject_request_headers) |headers| {
             const len = headers.getLength(self.global);
             var i: u32 = 0;
@@ -250,11 +246,14 @@ fn rebuildInjectConfig(self: *Telemetry, kind: InstrumentKind) !void {
                 if (!header.isString()) continue;
 
                 const header_str = header.toString(self.global).toSlice(self.global);
-                try request_set.put(header_str, {});
+                const owned = try self.allocator.dupe(u8, header_str);
+
+                // APPEND even if duplicate exists
+                try config.request_headers.append(owned);
             }
         }
 
-        // Process response headers
+        // Process response headers (for HTTP server)
         if (record.inject_response_headers) |headers| {
             const len = headers.getLength(self.global);
             var i: u32 = 0;
@@ -263,23 +262,16 @@ fn rebuildInjectConfig(self: *Telemetry, kind: InstrumentKind) !void {
                 if (!header.isString()) continue;
 
                 const header_str = header.toString(self.global).toSlice(self.global);
-                try response_set.put(header_str, {});
+                const owned = try self.allocator.dupe(u8, header_str);
+
+                // APPEND even if duplicate exists
+                try config.response_headers.append(owned);
             }
         }
     }
 
-    // Convert sets to arrays (duplicate strings for config ownership)
-    var req_iter = request_set.keyIterator();
-    while (req_iter.next()) |key| {
-        const owned = try self.allocator.dupe(u8, key.*);
-        try config.request_headers.append(owned);
-    }
-
-    var resp_iter = response_set.keyIterator();
-    while (resp_iter.next()) |key| {
-        const owned = try self.allocator.dupe(u8, key.*);
-        try config.response_headers.append(owned);
-    }
+    // Result: Arrays may contain duplicate keys (e.g., ["traceparent", "x-custom", "traceparent"])
+    // This is OK - Headers.set() will be called multiple times, last call wins
 }
 ```
 

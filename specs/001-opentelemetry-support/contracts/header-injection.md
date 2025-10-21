@@ -30,92 +30,99 @@
 
 ---
 
-## Header Merge Behavior
+## Header Configuration: Linear Concatenation (Simplified)
 
-### Multiple Instruments Returning Same Header Key
+### Multiple Instruments Declaring Same Header Key
 
-**Problem**: When multiple instruments return values for the same header key (e.g., both return `traceparent`), we need a deterministic merge strategy.
+**Problem**: When multiple instruments declare the same header key in `injectHeaders` (e.g., both declare `["traceparent"]`), we need a simple strategy.
 
-**Policy**: **Last Wins (Registration Order)**
+**Policy**: **Linear Concatenation - Duplicates Allowed**
 
 **Implementation**:
 ```zig
-// In notifyInject()
+// In rebuildInjectConfig() - ALLOW duplicates
 for (self.instrument_table[kind_index].items) |*record| {
-    const injected = record.invokeInject(self.global, id, data);
-    if (injected.isObject()) {
-        // Iterate keys
-        for (keys) |key| {
-            const value = injected.get(self.global, key);
-            merged.put(self.global, key, value); // PUT = last wins
+    if (record.inject_response_headers) |headers| {
+        const len = headers.getLength(self.global);
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const header = headers.getIndex(self.global, i);
+            if (!header.isString()) continue;
+
+            const header_str = header.toString(self.global).toSlice(self.global);
+            const owned = try self.allocator.dupe(u8, header_str);
+
+            // APPEND even if duplicate exists
+            try config.response_headers.append(owned);
         }
     }
 }
 ```
 
-**Iteration Order**: Instruments iterate in **attachment order** (first attached → last attached)
+**Result**: Header name array may contain duplicates:
+```
+Keys: ["traceparent", "x-custom", "traceparent", "tracestate"]
+```
+
+**At Injection Time**:
+```zig
+// In server.zig or fetch.zig
+for (config.response_headers.items) |header_key| {
+    const header_value = injected.get(global, header_key) orelse continue;
+
+    // Call headers.set() or headers.append() for EACH key (even duplicates)
+    response.headers.set(header_key, header_value);
+}
+```
+
+**Behavior with Duplicates**:
+- If key appears twice: `headers.set()` called twice
+- HTTP Headers implementation decides:
+  - `set()`: Last call wins (overwrites previous)
+  - `append()`: Creates multiple header instances (HTTP spec allows for some headers)
 
 **Example**:
 ```typescript
-// First instrument attached
+// Instrument 1: declares ["traceparent", "x-custom"]
 const id1 = Bun.telemetry.attach({
   type: InstrumentKind.HTTP,
-  name: "instrument-1",
-  version: "1.0.0",
-  injectHeaders: { response: ["traceparent"] },
-  onOperationInject: () => ({ traceparent: "value-from-first" }),
+  injectHeaders: { response: ["traceparent", "x-custom"] },
+  onOperationInject: () => ({ traceparent: "trace-1", "x-custom": "value-1" }),
 });
 
-// Second instrument attached (later)
+// Instrument 2: declares ["traceparent", "tracestate"] (traceparent duplicated!)
 const id2 = Bun.telemetry.attach({
   type: InstrumentKind.HTTP,
-  name: "instrument-2",
-  version: "1.0.0",
-  injectHeaders: { response: ["traceparent"] },
-  onOperationInject: () => ({ traceparent: "value-from-second" }),
+  injectHeaders: { response: ["traceparent", "tracestate"] },
+  onOperationInject: () => ({ traceparent: "trace-2", tracestate: "state-2" }),
 });
 
-// Result: "value-from-second" wins (last registered instrument)
+// Config arrays after attach:
+// Keys: ["traceparent", "x-custom", "traceparent", "tracestate"]
+
+// At request time:
+// headers.set("traceparent", "trace-1")  // From instrument 1
+// headers.set("x-custom", "value-1")      // From instrument 1
+// headers.set("traceparent", "trace-2")  // From instrument 2 - OVERWRITES trace-1
+// headers.set("tracestate", "state-2")    // From instrument 2
+
+// Final result: traceparent="trace-2" (last set() wins)
 ```
 
 **Rationale**:
-1. **Simple**: No complex concatenation logic (which headers support multiple values?)
-2. **Predictable**: Deterministic based on registration order
-3. **Flexible**: Users can control priority via attach order
-4. **Safe**: Single authoritative value per header (no conflicts)
+1. **Simplest Implementation**: No deduplication logic needed at config build time
+2. **Defers Merge Logic**: Let Headers API handle duplicates per HTTP spec
+3. **Edge Case**: Multiple instruments declaring same header is rare in practice
+4. **Future Optimization**: Can add deduplication later if needed (profile first)
 
-**Limitation**: This means **only one instrument should inject a given header key**. For distributed tracing, this is typically the W3C trace context instrument.
+**Limitations**:
+- Config arrays may have duplicate keys (minor memory overhead)
+- Multiple `set()` calls at injection time (minor performance overhead)
+- Both overheads negligible for typical case (2-5 headers total)
 
-### Special Case: tracestate Header
-
-**W3C Specification**: `tracestate` is a comma-separated list of vendor-specific trace state, where **newer entries prepend**:
-```
-tracestate: vendor2=value2,vendor1=value1
-```
-
-**Current Behavior**: Last wins (same as other headers)
-
-**Future Consideration** (out of scope for MVP): Add special handling for `tracestate` concatenation:
-```zig
-// Future: Special case for tracestate
-if (std.mem.eql(u8, key, "tracestate")) {
-    // Prepend new value to existing
-    const existing = merged.get(self.global, "tracestate");
-    if (existing.isString()) {
-        const combined = std.fmt.allocPrint(
-            allocator,
-            "{s},{s}",
-            .{ value.toString(self.global), existing.toString(self.global) },
-        );
-        merged.put(self.global, "tracestate", JSValue.createString(self.global, combined));
-        allocator.free(combined);
-        continue;
-    }
-}
-merged.put(self.global, key, value); // Normal case
-```
-
-**MVP Decision**: Use "last wins" for all headers (including `tracestate`). Most deployments use a single tracing vendor, so conflicts are rare.
+**Future Enhancement** (if profiling shows it matters):
+- Deduplicate keys during `rebuildInjectConfig()` using a set
+- For now: YAGNI - duplicates are fine
 
 ---
 

@@ -73,9 +73,17 @@ async function fetchAllComments(
   return allComments;
 }
 
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function extractDuplicateIssueNumber(commentBody: string, owner: string, repo: string): number | null {
+  // Escape owner and repo to prevent ReDoS attacks
+  const escapedOwner = escapeRegExp(owner);
+  const escapedRepo = escapeRegExp(repo);
+
   // Try to match same-repo GitHub issue URL format first: https://github.com/owner/repo/issues/123
-  const repoUrlPattern = new RegExp(`github\\.com/${owner}/${repo}/issues/(\\d+)`);
+  const repoUrlPattern = new RegExp(`github\\.com/${escapedOwner}/${escapedRepo}/issues/(\\d+)`);
   let match = commentBody.match(repoUrlPattern);
   if (match) {
     return parseInt(match[1], 10);
@@ -97,10 +105,10 @@ async function closeIssueAsDuplicate(
   duplicateOfNumber: number,
   token: string,
 ): Promise<void> {
+  // Close the issue with state_reason "not_planned" (GitHub doesn't have a "duplicate" state_reason in the API)
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}`, token, "PATCH", {
     state: "closed",
-    state_reason: "duplicate",
-    labels: ["duplicate"],
+    state_reason: "not_planned",
   });
 
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, token, "POST", {

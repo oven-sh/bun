@@ -1578,8 +1578,36 @@ pub const BundleV2 = struct {
 
             return try this.linker.generateChunksInParallel(chunks, false);
         } else {
-            // All entrypoints are copy-only assets
-            return std.ArrayList(options.OutputFile).init(alloc);
+            // All entrypoints are copy-only assets - return the additional output files (copied assets)
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
+            var output_files = std.ArrayList(options.OutputFile).init(alloc);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
         }
     }
 
@@ -1634,8 +1662,36 @@ pub const BundleV2 = struct {
         defer bun.default_allocator.free(entry_points_for_chunking);
 
         if (entry_points_for_chunking.len == 0) {
-            // All entrypoints are copy-only assets
-            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            // All entrypoints are copy-only assets - return the additional output files (copied assets)
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
+            var output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
         }
 
         const chunks = try this.linker.link(
@@ -2716,6 +2772,29 @@ pub const BundleV2 = struct {
             if (this.transpiler.log.errors > 0) {
                 return error.BuildFailed;
             }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
             // Return the additional output files (copied assets)
             var output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
             try output_files.appendSlice(this.graph.additional_output_files.items);

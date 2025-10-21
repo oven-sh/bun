@@ -2,7 +2,7 @@
 
 **Date**: 2025-10-20
 **Context**: OpenTelemetry Support for Bun (Branch: `001-opentelemetry-support`)
-**Related**: `data-model.md`, `TELEMETRY_REFACTOR.md`
+**Related**: `data-model.md`, `contracts/bun-telemetry-api.md`
 
 ---
 

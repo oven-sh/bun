@@ -2,4 +2,4 @@
 
 - `BunSDK.startAndRegisterShutdownHooks()`
 - `BunSDK compat tests`
--
+- minimize existing code footprint

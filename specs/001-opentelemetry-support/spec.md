@@ -20,6 +20,14 @@
 - Q: Should runtime metrics instrumentation be enabled by default, or require explicit opt-in? → A: Follow NodeSDK configuration pattern - runtime metrics instrumentation enabled when BunSDK is configured with metricReaders (via explicit config or OTEL_METRICS_EXPORTER env var), using same reader configuration structure (periodic export interval, timeout, exporter settings) as NodeSDK
 - Q: Which OpenTelemetry semantic conventions should be used for runtime metric naming (memory, event loop, GC)? → A: Use runtime-detected namespace based on process.release.name - if set to 'bun' use process.runtime.bun.* namespace, otherwise use process.runtime.nodejs.* for Node.js compatibility mode, following OpenTelemetry process runtime semantic conventions pattern
 
+### Session 2025-10-21
+
+- Q: Where should the `Bun.telemetry._node_binding()` function be implemented to bridge Node.js http.createServer() compatibility layer to native telemetry hooks? → A: Internal TypeScript module in src/js/internal/ with singleton telemetry_node_binding using .once pattern, directly importable from _http_server.ts (avoids global configure dependency in refactored attach/detach model)
+- Q: How should the system determine resource attributes (service.name, service.version, deployment.environment) that are attached to every telemetry event? → A: Use standard OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES environment variables with fallback to package.json
+- Q: How should the system test Node.js http.createServer() telemetry hooks separately from Bun.serve() hooks? → A: Separate test files with telemetry- prefix (telemetry-http-hooks.test.ts for Bun.serve, telemetry-node-http-hooks.test.ts for http.createServer)
+- Q: When a TypeScript instrumentation hook (onOperationStart, onOperationEnd, etc.) throws an exception during execution, how should the system handle it? → A: Catch exception, log to stderr with rate limiting to prevent log flooding, clear exception state, continue request processing normally
+- Q: For validating SC-003 (<5% overhead when enabled) and SC-004 (<0.1% overhead when disabled), what benchmarking methodology should be used? → A: oha or bombardier for HTTP load testing (per Bun repo recommendations in bench/express/README.md, avoiding autocannon due to node:http client performance limitations)
+
 ## User Scenarios & Testing _(mandatory)_
 
 <!--
@@ -99,7 +107,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide automatic HTTP server span creation for both `Bun.serve()` and Node.js `http` module compatibility layer
+- **FR-001**: System MUST provide automatic HTTP server span creation for both `Bun.serve()` and Node.js `http` module compatibility layer (via internal TypeScript module src/js/internal/telemetry_node_binding with singleton pattern for bridging to native hooks)
 - **FR-002**: System MUST support W3C TraceContext propagation (traceparent and tracestate headers) for distributed tracing
 - **FR-003**: System MUST provide automatic HTTP client span creation for `fetch()` requests
 - **FR-004**: System MUST support standard OpenTelemetry semantic conventions for HTTP spans (method, URL, status code, user agent)
@@ -119,6 +127,8 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-018**: System MUST provide Bun-specific instrumentations via packages/bun-otel for Bun-native APIs (http, fetch, sql, redis, s3) and system metrics, with standard OpenTelemetry API compatibility for manual instrumentation
 - **FR-019**: System MUST default to AlwaysOn (100%) sampling strategy, supporting configuration via standard opentelemetry-js TracerProvider sampler mechanisms (AlwaysOff, AlwaysOn, ParentBased, Probabilistic)
 - **FR-020**: System MUST provide both high-level logger integration helpers (BunSDK formatters for pino/winston) and low-level trace context access API (Bun.telemetry.getActiveSpan()) for log correlation
+- **FR-021**: System MUST determine resource attributes (service.name, service.version, deployment.environment) using standard OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES environment variables, with fallback to package.json (name and version fields)
+- **FR-022**: System MUST implement defensive error handling for instrumentation hook exceptions - catch exceptions, log to stderr with rate limiting to prevent log flooding, clear exception state, and continue request processing normally without affecting application behavior
 
 ### Key Entities _(include if feature involves data)_
 
@@ -136,8 +146,8 @@ Developers can correlate application logs with traces by injecting trace context
 
 - **SC-001**: Developers can set up distributed tracing in under 10 lines of configuration code without loader hooks or monkey-patching
 - **SC-002**: HTTP server traces are successfully exported to standard OpenTelemetry backends (Jaeger, Zipkin, OTLP collectors) with 100 percent of critical HTTP attributes present
-- **SC-003**: Instrumentation overhead is less than 5 percent latency increase for HTTP request processing compared to uninstrumented baseline
-- **SC-004**: When telemetry is disabled, performance impact is unmeasurable (less than 0.1 percent overhead)
+- **SC-003**: Instrumentation overhead is less than 5 percent latency increase for HTTP request processing compared to uninstrumented baseline (measured using oha or bombardier load testing tools per Bun benchmarking standards)
+- **SC-004**: When telemetry is disabled, performance impact is unmeasurable (less than 0.1 percent overhead, measured using oha or bombardier)
 - **SC-005**: Applications using `@opentelemetry/sdk-node` can migrate to Bun with less than 20 lines of code changes to achieve equivalent tracing functionality by importing a `bun-otel` native/integrated package
 - **SC-006**: Trace context propagates correctly through at least 10 hops in a distributed system without data loss
 - **SC-007**: System maintains stability under sustained load of 10,000+ requests per second with tracing enabled
@@ -157,7 +167,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 ## Dependencies
 
-- Completion of native telemetry attach/detach API refactor (as documented in TELEMETRY_REFACTOR.md)
+- Completion of native telemetry attach/detach API refactor (as documented in contracts/bun-telemetry-api.md and data-model.md)
 - OpenTelemetry JavaScript packages must work correctly in Bun's Node.js compatibility mode
 - Any AsyncLocalStorage limitations in Bun must be documented with workarounds
 

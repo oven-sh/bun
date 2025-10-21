@@ -34,7 +34,7 @@
 
 ### Native Runtime Core (Zig)
 
-- [ ] T007 Refactor src/bun.js/telemetry.zig to replace configure() API with attach/detach model per TELEMETRY_REFACTOR.md
+- [ ] T007 Refactor src/bun.js/telemetry.zig to replace configure() API with attach/detach model per contracts/bun-telemetry-api.md and data-model.md
 - [ ] T008 [P] Implement InstrumentKind enum in src/bun.js/telemetry.zig (custom=0, http=1, fetch=2, sql=3, redis=4, s3=5)
 - [ ] T009 [P] Implement InstrumentRecord struct in src/bun.js/telemetry.zig (id, kind, protected JSValues, cached function pointers)
 - [ ] T010 Implement Telemetry singleton in src/bun.js/telemetry.zig (instrument_table array indexed by InstrumentKind, atomic ID generation)
@@ -352,7 +352,7 @@ Task: "Create packages/bun-otel/test/issue-3775.test.ts"
 ### MVP First (User Story 1 Only)
 
 1. Complete Phase 1: Setup (1-2 days)
-2. Complete Phase 2: Foundational (7-10 days - refactor to attach/detach per TELEMETRY_REFACTOR.md)
+2. Complete Phase 2: Foundational (7-10 days - refactor to attach/detach per contracts/bun-telemetry-api.md)
 3. Complete Phase 3: User Story 1 (5-7 days)
 4. **STOP and VALIDATE**: Test distributed tracing independently with Jaeger/Zipkin
 5. Deploy/demo if ready - addresses GitHub issue #3775

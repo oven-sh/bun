@@ -38,8 +38,8 @@ This document captures architectural decisions, best practices research, and tec
 
 **References**:
 
-- `/TELEMETRY_OVERVIEW.md` - Native telemetry architecture design
-- `/TELEMETRY_REFACTOR.md` - Refactor plan from configure() to attach/detach model
+- `contracts/bun-telemetry-api.md` - Native API specification (attach/detach)
+- `data-model.md` - Core data structures and lifecycle model
 
 ### Decision 2: Attach/Detach Instrumentation Model
 
@@ -68,13 +68,13 @@ Bun.telemetry.getActiveSpan(): { traceId: string, spanId: string } | null
 
 **References**:
 
-- `/TELEMETRY_OVERVIEW.md` sections 2-3 - Attach/Detach model design
-- `/TELEMETRY_REFACTOR.md` - Detailed 7-10 day refactor plan
+- `contracts/bun-telemetry-api.md` - Native API specification and contracts
+- `data-model.md` - Data structures and lifecycle model
 
 **Implementation Status**:
 
 - ✅ Native hooks implemented with `configure()` API (existing)
-- 🔄 Refactor to `attach/detach` planned (7-10 days, see TELEMETRY_REFACTOR.md)
+- 🔄 Refactor to `attach/detach` planned (7-10 days, see contracts/bun-telemetry-api.md)
 
 ### Decision 3: Package Structure (Bun Core vs npm Package)
 
@@ -388,7 +388,7 @@ autocannon -c 100 -d 30 http://localhost:3000
 
 - Constitution Principle I (Test-First Development)
 - Issue #3775 reproduction steps
-- `/TELEMETRY_REFACTOR.md` testing approach
+- `contracts/bun-telemetry-api.md` testing contracts
 
 ## Existing Implementation Lessons (from feat/opentelemetry-server-hooks)
 
@@ -559,7 +559,7 @@ All architectural decisions documented. Working implementation exists in `feat/o
 
 **Implementation Scope**:
 
-1. **Refactor** (7-10 days): Move from `configure()` to `attach/detach` model per TELEMETRY_REFACTOR.md
+1. **Refactor** (7-10 days): Move from `configure()` to `attach/detach` model per contracts/bun-telemetry-api.md
 2. **P3 Features** (2-3 days): Add Pino/Winston formatters to `packages/bun-otel/src/instruments/logging/`
 3. **Integration Tests** (1-2 days): Create standalone Docker Compose tests for Jaeger/Zipkin/OTLP
 

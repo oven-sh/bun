@@ -1861,6 +1861,49 @@ registry = "${registryUrl}"
     expect(packageJson.dependencies["dep-with-tags"]).toBe("1.0.0");
   });
 
+  it("should preserve npm: alias prefix when updating packages", async () => {
+    const dir = tempDirWithFiles("update-interactive-npm-alias", {
+      "bunfig.toml": `[install]
+cache = false
+registry = "${registryUrl}"
+`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "my-alias": "npm:no-deps@1.0.0",
+        },
+      }),
+    });
+
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await install.exited).toBe(0);
+
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "--latest"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    update.stdin.write("a\n");
+    update.stdin.end();
+
+    const exitCode = await update.exited;
+    expect(exitCode).toBe(0);
+
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.dependencies["my-alias"]).toBe("npm:no-deps@2.0.0");
+  });
+
   it("interactive update with mixed dependency types", async () => {
     const dir = tempDirWithFiles("update-interactive-mixed", {
       "bunfig.toml": `[install]
@@ -1891,7 +1934,7 @@ registry = "${registryUrl}"
         name: "@test/workspace1",
         dependencies: {
           "a-dep": "catalog:",
-          "@test/workspace2": "workspace:*", // Workspace dependency
+          "@test/workspace2": "workspace:*",
         },
         devDependencies: {
           "no-deps": "^1.0.0",

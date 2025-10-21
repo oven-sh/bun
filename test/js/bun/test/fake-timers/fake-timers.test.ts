@@ -287,3 +287,164 @@ describe("Date.now() mocking", () => {
     expect(Date.now()).toBe(start + 500);
   });
 });
+
+describe("async timer methods", () => {
+  test("advanceTimersToNextTimerAsync waits for async callbacks", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(async () => {
+      order.add("start async");
+      await Bun.sleep(5);
+      order.add("end async");
+    }, 100);
+
+    const result = await vi.advanceTimersToNextTimerAsync();
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["start async", "end async"]);
+  });
+
+  test("advanceTimersByTimeAsync waits for multiple async callbacks", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(async () => {
+      order.add("timeout 1 start");
+      await Bun.sleep(5);
+      order.add("timeout 1 end");
+    }, 10);
+
+    setTimeout(async () => {
+      order.add("timeout 2 start");
+      await Bun.sleep(5);
+      order.add("timeout 2 end");
+    }, 20);
+
+    const result = await vi.advanceTimersByTimeAsync(25);
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["timeout 1 start", "timeout 1 end", "timeout 2 start", "timeout 2 end"]);
+  });
+
+  test("runAllTimersAsync waits for async callbacks", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(async () => {
+      order.add("timeout 1 start");
+      await Bun.sleep(5);
+      order.add("timeout 1 end");
+    }, 10);
+
+    setTimeout(async () => {
+      order.add("timeout 2 start");
+      await Bun.sleep(5);
+      order.add("timeout 2 end");
+    }, 20);
+
+    const result = await vi.runAllTimersAsync();
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["timeout 1 start", "timeout 1 end", "timeout 2 start", "timeout 2 end"]);
+  });
+
+  test("runOnlyPendingTimersAsync waits for async callbacks from setInterval", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    let count = 0;
+
+    const interval = setInterval(async () => {
+      count++;
+      order.add(`interval ${count} start`);
+      await Bun.sleep(5);
+      order.add(`interval ${count} end`);
+      if (count >= 3) {
+        clearInterval(interval);
+      }
+    }, 100);
+
+    const result = await vi.runOnlyPendingTimersAsync();
+    expect(result).toBe(vi);
+    expect(count).toBe(3);
+    expect(order.takeOrderMessages()).toEqual([
+      "interval 1 start",
+      "interval 1 end",
+      "interval 2 start",
+      "interval 2 end",
+      "interval 3 start",
+      "interval 3 end",
+    ]);
+  });
+
+  test("async methods work with non-async callbacks", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(() => {
+      order.add("sync callback");
+    }, 100);
+
+    const result = await vi.advanceTimersToNextTimerAsync();
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["sync callback"]);
+  });
+
+  test("async methods handle Promise.resolve returns", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(() => {
+      order.add("before promise");
+      return Promise.resolve().then(() => {
+        order.add("in promise");
+      });
+    }, 100);
+
+    const result = await vi.advanceTimersToNextTimerAsync();
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["before promise", "in promise"]);
+  });
+
+  test("async methods handle mixed sync and async callbacks", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(() => {
+      order.add("sync 1");
+    }, 10);
+
+    setTimeout(async () => {
+      order.add("async 1 start");
+      await Bun.sleep(5);
+      order.add("async 1 end");
+    }, 20);
+
+    setTimeout(() => {
+      order.add("sync 2");
+    }, 30);
+
+    const result = await vi.advanceTimersByTimeAsync(35);
+    expect(result).toBe(vi);
+    expect(order.takeOrderMessages()).toEqual(["sync 1", "async 1 start", "async 1 end", "sync 2"]);
+  });
+
+  test("async methods allow chaining", async () => {
+    vi.useFakeTimers();
+    const order = new Order();
+
+    setTimeout(async () => {
+      order.add("step 1");
+      await Bun.sleep(5);
+    }, 10);
+
+    setTimeout(async () => {
+      order.add("step 2");
+      await Bun.sleep(5);
+    }, 20);
+
+    await vi.advanceTimersToNextTimerAsync().then(v => {
+      expect(v).toBe(vi);
+      return v.advanceTimersToNextTimerAsync();
+    });
+
+    expect(order.takeOrderMessages()).toEqual(["step 1", "step 2"]);
+  });
+});

@@ -4,6 +4,8 @@
 /// - peekLast (cannot be implemented efficiently with TimerHeap)
 /// - count (cannot be implemented efficiently with TimerHeap)
 timers: TimerHeap = .{ .context = {} },
+/// Promises returned from timer callbacks (for async methods)
+#tracked_promises: std.ArrayListUnmanaged(jsc.Strong) = .{},
 
 pub var current_time: struct {
     const PackedTime = packed struct(u128) {
@@ -63,6 +65,7 @@ fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     defer this.assertValid(.locked);
 
     this.clear();
+    this.clearTrackedPromises();
     current_time.set(globalObject, null);
     this.#active = false;
 }
@@ -286,6 +289,129 @@ fn isFakeTimers(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErro
     return jsc.JSValue.jsBoolean(is_active);
 }
 
+// ===
+// Promise Tracking for Async Methods
+// ===
+
+fn clearTrackedPromises(this: *FakeTimers) void {
+    for (this.#tracked_promises.items) |*strong| {
+        strong.deinit();
+    }
+    this.#tracked_promises.clearRetainingCapacity();
+}
+
+fn trackPromise(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
+    const strong = jsc.Strong.create(promise, globalObject);
+    this.#tracked_promises.append(bun.default_allocator, strong) catch bun.outOfMemory();
+}
+
+export fn Bun__FakeTimers__trackPromise(globalObject: *jsc.JSGlobalObject, promise_value: jsc.JSValue) callconv(.C) void {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+
+    const is_active = blk: {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        break :blk this.isActive();
+    };
+
+    if (!is_active) return;
+
+    this.trackPromise(globalObject, promise_value);
+}
+
+extern "c" fn Bun__FakeTimers__createPromiseAll(globalObject: *jsc.JSGlobalObject, promises_array: jsc.JSValue, vitest_obj: jsc.JSValue) jsc.JSValue;
+
+fn createPromiseAllForTrackedPromises(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, vitest_obj: jsc.JSValue) jsc.JSValue {
+    defer this.clearTrackedPromises();
+
+    if (this.#tracked_promises.items.len == 0) {
+        // No promises to wait for, return a resolved promise with vitest_obj
+        const promise = jsc.JSPromise.create(globalObject);
+        const value = promise.asValue(globalObject);
+        promise.resolve(globalObject, vitest_obj) catch {
+            // VM terminated, just return the promise
+        };
+        return value;
+    }
+
+    // Create an array of promises
+    const promises_array = jsc.JSValue.createEmptyArray(globalObject, this.#tracked_promises.items.len) catch {
+        // Failed to create array, return a resolved promise
+        const promise = jsc.JSPromise.create(globalObject);
+        const value = promise.asValue(globalObject);
+        promise.resolve(globalObject, vitest_obj) catch {};
+        return value;
+    };
+    for (this.#tracked_promises.items, 0..) |*strong, i| {
+        const promise_val = strong.get();
+        promises_array.putIndex(globalObject, @intCast(i), promise_val) catch {};
+    }
+
+    return Bun__FakeTimers__createPromiseAll(globalObject, promises_array, vitest_obj);
+}
+
+// ===
+// Async Timer Functions
+// ===
+
+fn advanceTimersToNextTimerAsync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    this.clearTrackedPromises();
+    _ = this.executeNext(globalObject);
+
+    return this.createPromiseAllForTrackedPromises(globalObject, callframe.this());
+}
+
+fn advanceTimersByTimeAsync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    const arg = callframe.argumentsAsArray(1)[0];
+    if (!arg.isNumber()) {
+        return globalObject.throwInvalidArguments("advanceTimersByTimeAsync() expects a number of milliseconds", .{});
+    }
+    const timeoutAdd = try globalObject.validateIntegerRange(arg, u32, 0, .{ .min = 0, .field_name = "ms" });
+    const target = bun.timespec.now().addMs(timeoutAdd);
+
+    this.clearTrackedPromises();
+    this.executeUntil(globalObject, target);
+    current_time.set(globalObject, .{ .timespec = &target, .js = null });
+
+    return this.createPromiseAllForTrackedPromises(globalObject, callframe.this());
+}
+
+fn runOnlyPendingTimersAsync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    this.clearTrackedPromises();
+    _ = this.executeOnlyPendingTimers(globalObject);
+
+    return this.createPromiseAllForTrackedPromises(globalObject, callframe.this());
+}
+
+fn runAllTimersAsync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const timers = &vm.timer;
+    const this = &timers.fake_timers;
+    try errorUnlessFakeTimers(globalObject);
+
+    this.clearTrackedPromises();
+    _ = this.executeAllTimers(globalObject);
+
+    return this.createPromiseAllForTrackedPromises(globalObject, callframe.this());
+}
+
 const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObject, *jsc.CallFrame) bun.JSError!jsc.JSValue) } = &.{
     .{ "useFakeTimers", 0, useFakeTimers },
     .{ "useRealTimers", 0, useRealTimers },
@@ -293,6 +419,10 @@ const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObj
     .{ "advanceTimersByTime", 1, advanceTimersByTime },
     .{ "runOnlyPendingTimers", 0, runOnlyPendingTimers },
     .{ "runAllTimers", 0, runAllTimers },
+    .{ "advanceTimersToNextTimerAsync", 0, advanceTimersToNextTimerAsync },
+    .{ "advanceTimersByTimeAsync", 1, advanceTimersByTimeAsync },
+    .{ "runOnlyPendingTimersAsync", 0, runOnlyPendingTimersAsync },
+    .{ "runAllTimersAsync", 0, runAllTimersAsync },
     .{ "getTimerCount", 0, getTimerCount },
     .{ "clearAllTimers", 0, clearAllTimers },
     .{ "isFakeTimers", 0, isFakeTimers },
@@ -313,3 +443,7 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const TimerHeap = bun.api.Timer.TimerHeap;
 const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;
+
+comptime {
+    _ = &Bun__FakeTimers__trackPromise;
+}

@@ -16,6 +16,8 @@
 namespace Bun {
 using namespace JSC;
 
+extern "C" void Bun__FakeTimers__trackPromise(JSGlobalObject*, EncodedJSValue);
+
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -30,6 +32,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
+
+    JSValue result = jsUndefined();
 
     if (auto* promise = jsDynamicCast<JSPromise*>(callbackValue)) {
         // This was a Bun.sleep() call
@@ -54,7 +58,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
             args.append(argumentsValue);
         }
 
-        JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
+        result = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
     bool hadException = false;
@@ -70,6 +74,18 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
+    // Track promise returns for fake timers async methods
+    if (!hadException && result && result.isObject()) {
+        auto* resultObject = result.getObject();
+        if (resultObject && (jsDynamicCast<JSPromise*>(resultObject) || resultObject->isCallable())) {
+            // Check if it has a 'then' method (thenable)
+            auto thenValue = resultObject->get(globalObject, vm.propertyNames->then);
+            if (thenValue.isCallable()) {
+                Bun__FakeTimers__trackPromise(globalObject, JSValue::encode(result));
+            }
+        }
+    }
+
     return hadException;
 }
 
@@ -82,6 +98,64 @@ extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValu
     }
 
     return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));
+}
+
+// Helper to create Promise.all() for fake timers async methods
+extern "C" EncodedJSValue Bun__FakeTimers__createPromiseAll(JSGlobalObject* globalObject, EncodedJSValue promisesArray, EncodedJSValue vitestObj)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue array = JSValue::decode(promisesArray);
+    JSValue vitest = JSValue::decode(vitestObj);
+
+    // Get Promise.all
+    JSValue promiseConstructor = globalObject->promiseConstructor();
+    JSValue promiseAll = promiseConstructor.get(globalObject, vm.propertyNames->all);
+
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Call Promise.all(promisesArray)
+    auto callData = JSC::getCallData(promiseAll);
+    if (callData.type == CallData::Type::None) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    MarkedArgumentBuffer args;
+    args.append(array);
+    JSValue allPromise = JSC::call(globalObject, promiseAll, callData, promiseConstructor, args);
+
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Chain .then(() => vitestObj)
+    JSValue thenMethod = allPromise.get(globalObject, vm.propertyNames->then);
+    if (scope.exception() || !thenMethod.isCallable()) [[unlikely]] {
+        scope.clearException();
+        return JSValue::encode(allPromise);
+    }
+
+    // Create a function that returns the vitest object
+    auto returnVitestFn = JSFunction::create(vm, globalObject, 0, String(), [vitest](JSGlobalObject*, CallFrame*) -> EncodedJSValue {
+        return JSValue::encode(vitest);
+    });
+
+    MarkedArgumentBuffer thenArgs;
+    thenArgs.append(returnVitestFn);
+    auto thenCallData = JSC::getCallData(thenMethod);
+    JSValue result = JSC::call(globalObject, thenMethod, thenCallData, allPromise, thenArgs);
+
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSValue::encode(allPromise);
+    }
+
+    return JSValue::encode(result);
 }
 
 }

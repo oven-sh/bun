@@ -2762,7 +2762,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECANCELED => bun.sys.E.CANCELED,
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
-        else => @enumFromInt(@as(u16, @intCast(@abs(code)))),
+        else => @enumFromInt(-code),
     };
 }
 

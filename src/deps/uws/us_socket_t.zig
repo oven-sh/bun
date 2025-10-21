@@ -291,7 +291,7 @@ pub const c = struct {
             buffer.wrote(total_written);
         }
 
-        var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+        var stack_fallback = bun.allocators.stackFallback(16 * 1024, bun.default_allocator);
         const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
             jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
         else

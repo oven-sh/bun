@@ -167,35 +167,35 @@ export fn Bun__getVerboseFetchValue() i32 {
 }
 
 export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = bun.allocators.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__addDevServerSourceProvider(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = bun.allocators.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putDevServerSourceProvider(@as(*DevServerSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__removeDevServerSourceProvider(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = bun.allocators.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.removeDevServerSourceProvider(@as(*DevServerSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = bun.allocators.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = bun.allocators.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());

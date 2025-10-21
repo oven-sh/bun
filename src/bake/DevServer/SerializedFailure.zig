@@ -110,7 +110,7 @@ pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFail
         @panic("TODO");
     }
     // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
+    var sfb = bun.allocators.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
@@ -137,7 +137,7 @@ pub fn initFromLog(
     assert(messages.len > 0);
 
     // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
+    var sfb = bun.allocators.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();

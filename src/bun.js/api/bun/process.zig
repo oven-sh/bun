@@ -1263,7 +1263,7 @@ pub fn spawnProcessPosix(
     var spawned = PosixSpawnResult{};
     var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
     errdefer extra_fds.deinit();
-    var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
     var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
     var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
@@ -1542,7 +1542,7 @@ pub fn spawnProcessWindows(
     uv_process_options.env = envp;
     uv_process_options.file = options.argv0 orelse argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
-    var stack_allocator = std.heap.stackFallback(8192, bun.default_allocator);
+    var stack_allocator = bun.allocators.stackFallback(8192, bun.default_allocator);
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 

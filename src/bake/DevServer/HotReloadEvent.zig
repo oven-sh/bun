@@ -187,7 +187,7 @@ pub fn run(first: *HotReloadEvent) void {
         return;
     }
 
-    var sfb = std.heap.stackFallback(4096, dev.allocator());
+    var sfb = bun.allocators.stackFallback(4096, dev.allocator());
     const temp_alloc = sfb.get();
     var entry_points: EntryPointList = .empty;
     defer entry_points.deinit(temp_alloc);

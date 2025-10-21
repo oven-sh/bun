@@ -783,7 +783,7 @@ pub const S3Credentials = struct {
 
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
-                    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+                    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
                     var query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
@@ -834,7 +834,7 @@ pub const S3Credentials = struct {
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
-                var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+                var url_stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
                 var url_query_parts: bun.BoundedArray([]const u8, 10) = .{};
 

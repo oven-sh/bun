@@ -104,7 +104,7 @@ pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
     try requireNotSubscriber(this, @src().fn_name);
 
     const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -279,7 +279,7 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throw("SREM requires at least a key and one member", .{});
     }
 
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -322,7 +322,7 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
     try requireNotSubscriber(this, @src().fn_name);
 
     const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -386,7 +386,7 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     try requireNotSubscriber(this, @src().fn_name);
 
     const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -431,7 +431,7 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throw("SADD requires at least a key and one member", .{});
     }
 
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -506,7 +506,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
         return globalObject.throw("HMGET requires at least a key and one field", .{});
     }
 
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -993,7 +993,7 @@ pub fn publish(
     try requireNotSubscriber(this, @src().fn_name);
 
     const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
@@ -1037,7 +1037,7 @@ pub fn subscribe(
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     const channel_or_many, const handler_callback = callframe.argumentsAsArray(2);
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {
@@ -1139,7 +1139,7 @@ pub fn unsubscribe(
 
     const args_view = callframe.arguments();
 
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(512, bun.default_allocator);
     var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {

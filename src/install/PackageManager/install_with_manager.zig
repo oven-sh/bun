@@ -11,7 +11,7 @@ pub fn installWithManager(
     if (!manager.env.hasHTTPProxy()) {
         // And don't try to resolve DNS if it's an IP address.
         if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+            var hostname_stack = bun.allocators.stackFallback(512, ctx.allocator);
             const allocator = hostname_stack.get();
             const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
             defer allocator.free(hostname);

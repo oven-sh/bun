@@ -4,7 +4,6 @@ const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
 const { validateInteger } = require("internal/validators");
-const { Interface } = require("node:readline");
 
 const constants = $processBindingConstants.fs;
 
@@ -24,6 +23,8 @@ const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
+
+let Interface; // lazy value for require("node:readline").Interface.
 
 function watch(
   filename: string | Buffer | URL,
@@ -415,6 +416,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     readLines(options = undefined) {
+      if (Interface === undefined) Interface = require("node:readline").Interface;
       return new Interface({
         input: this.createReadStream(options),
         crlfDelay: Infinity,

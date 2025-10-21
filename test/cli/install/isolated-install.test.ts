@@ -416,6 +416,55 @@ describe("isolated workspaces", () => {
       version: "1.0.0",
     });
   });
+
+  test("workspace self dependencies create symlinks", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-workspace-self-dep",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "workspace:*",
+            "pkg2": "workspace:*",
+          },
+        }),
+        "packages/pkg3/package.json": JSON.stringify({
+          name: "pkg3",
+          dependencies: {
+            "different-name": "workspace:.",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        file(join(packageDir, "packages", "pkg1", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg2", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg3", "node_modules", "different-name", "package.json")).json(),
+      ]),
+    ).toEqual([
+      [".bun"],
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
+      { name: "pkg3", dependencies: { "different-name": "workspace:." } },
+    ]);
+  });
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

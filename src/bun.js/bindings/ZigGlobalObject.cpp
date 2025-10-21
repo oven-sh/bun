@@ -2549,7 +2549,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
 }
 extern "C" EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink)
 {
-    Zig::GlobalObject* globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* globalThis = static_cast<Zig::GlobalObject*>(globalObject);
     return globalThis->assignStreamToResumableSink(JSValue::decode(stream), JSValue::decode(sink));
 }
 EncodedJSValue GlobalObject::assignStreamToResumableSink(JSValue stream, JSValue sink)
@@ -2934,7 +2934,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 
 extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
 }

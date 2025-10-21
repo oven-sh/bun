@@ -642,7 +642,7 @@ pub const Value = union(Tag) {
         new: *Value,
         global: *JSGlobalObject,
         headers: ?*FetchHeaders,
-    ) void {
+    ) bun.JSTerminated!void {
         log("resolve", .{});
         if (to_resolve.* == .Locked) {
             var locked = &to_resolve.Locked;
@@ -672,37 +672,37 @@ pub const Value = union(Tag) {
                             // .InlineBlob,
                             => {
                                 var blob = new.useAsAnyBlobAllowNonUTF8String();
-                                promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
+                                try promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
                             },
                             else => {
                                 var blob = new.use();
-                                promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
+                                try promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
                             },
                         }
                     },
                     .getJSON => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
-                        blob.detach();
+                        defer blob.detach();
+                        try promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
                     },
                     .getArrayBuffer => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
+                        try promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
                     },
                     .getBytes => {
                         var blob = new.useAsAnyBlobAllowNonUTF8String();
-                        promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
+                        try promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
                     },
 
                     .getFormData => inner: {
                         var blob = new.useAsAnyBlob();
                         defer blob.detach();
                         var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
-                            promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
+                            try promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                             break :inner;
                         };
                         defer async_form_data.deinit();
-                        async_form_data.toJS(global, blob.slice(), promise);
+                        try async_form_data.toJS(global, blob.slice(), promise);
                     },
                     .none, .getBlob => {
                         var blob = Blob.new(new.use());
@@ -726,7 +726,7 @@ pub const Value = union(Tag) {
                             blob.content_type_was_set = true;
                             blob.store.?.mime_type = MimeType.text;
                         }
-                        promise.resolve(global, blob.toJS(global));
+                        try promise.resolve(global, blob.toJS(global));
                     },
                 }
                 promise_.unprotect();
@@ -873,7 +873,7 @@ pub const Value = union(Tag) {
         return any_blob;
     }
 
-    pub fn toErrorInstance(this: *Value, err: ValueError, global: *JSGlobalObject) void {
+    pub fn toErrorInstance(this: *Value, err: ValueError, global: *JSGlobalObject) bun.JSTerminated!void {
         if (this.* == .Locked) {
             var locked = this.Locked;
             this.* = .{ .Error = err };
@@ -889,7 +889,7 @@ pub const Value = union(Tag) {
 
                 if (promise_value.asAnyPromise()) |promise| {
                     if (promise.status(global.vm()) == .pending) {
-                        promise.reject(global, this.Error.toJS(global));
+                        try promise.reject(global, this.Error.toJS(global));
                     }
                 }
             }
@@ -898,7 +898,7 @@ pub const Value = union(Tag) {
             // Avoid creating unnecessary duplicate JSValue.
             if (strong_readable.get(global)) |readable| {
                 if (readable.ptr == .Bytes) {
-                    readable.ptr.Bytes.onData(
+                    try readable.ptr.Bytes.onData(
                         .{ .err = this.Error.toStreamError(global) },
                         bun.default_allocator,
                     );
@@ -916,11 +916,8 @@ pub const Value = union(Tag) {
         this.* = .{ .Error = err };
     }
 
-    pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
-        return this.toErrorInstance(.{ .Message = bun.String.createFormat(
-            "Error reading file {s}",
-            .{@errorName(err)},
-        ) catch |e| bun.handleOom(e) }, global);
+    pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) bun.JSTerminated!void {
+        return this.toErrorInstance(.{ .Message = bun.handleOom(bun.String.createFormat("Error reading file {s}", .{@errorName(err)})) }, global);
     }
 
     pub fn deinit(this: *Value) void {

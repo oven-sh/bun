@@ -347,6 +347,23 @@ it("inspect", () => {
   expect(Bun.inspect(new Map())).toBe("Map {}");
   expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe('Map(1) {\n  "foo": "bar",\n}');
   expect(Bun.inspect(new Set(["bar"]))).toBe('Set(1) {\n  "bar",\n}');
+
+  // Regression test: Set/Map with overridden size property should not panic
+  const setWithOverriddenSize = new Set();
+  Object.defineProperty(setWithOverriddenSize, "size", {
+    writable: true,
+    enumerable: true,
+    value: Set,
+  });
+  expect(Bun.inspect(setWithOverriddenSize)).toBe("Set {}");
+
+  const mapWithOverriddenSize = new Map();
+  Object.defineProperty(mapWithOverriddenSize, "size", {
+    writable: true,
+    enumerable: true,
+    value: "not a number",
+  });
+  expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");

@@ -303,17 +303,9 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) OO
 }
 
 pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Allocator, utf16: []const u16) OOM![]u8 {
-    if (bun.FeatureFlags.use_simdutf) {
-        const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        // add 16 bytes of padding for SIMDUTF
-        var list = try std.ArrayList(u8).initCapacity(allocator, length + 16);
-        list = try convertUTF16ToUTF8(list, utf16);
-        return list.items;
-    }
-
-    var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
-    list = try toUTF8ListWithType(list, utf16);
-    return list.items;
+    // previously, this function was an exact copy of `toUTF8AllocWithType`.
+    // TODO: actually make this function behave differently?
+    return toUTF8AllocWithType(allocator, utf16);
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, utf16: []const u16) OOM![]u8 {
@@ -322,12 +314,12 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, utf16: []const u16) OOM
         // add 16 bytes of padding for SIMDUTF
         var list = try std.ArrayList(u8).initCapacity(allocator, length + 16);
         list = try convertUTF16ToUTF8(list, utf16);
-        return list.items;
+        return list.toOwnedSlice();
     }
 
     var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
     list = try toUTF8ListWithType(list, utf16);
-    return list.items;
+    return list.toOwnedSlice();
 }
 
 pub fn toUTF8ListWithType(list_: std.ArrayList(u8), utf16: []const u16) OOM!std.ArrayList(u8) {

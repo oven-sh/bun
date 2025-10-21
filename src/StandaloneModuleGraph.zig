@@ -999,7 +999,7 @@ pub const StandaloneModuleGraph = struct {
             }
         else blk: {
             var exe_path_buf: bun.PathBuffer = undefined;
-            const version_str = bun.handleOom(std.fmt.allocPrintZ(allocator, "{}", .{target}));
+            const version_str = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "{}", .{target}, 0));
             defer allocator.free(version_str);
 
             var needs_download: bool = true;

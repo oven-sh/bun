@@ -516,11 +516,11 @@ pub const PackCommand = struct {
         dir_subpath: string,
         entry_name: string,
     ) OOM!stringZ {
-        return std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+        return std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
             dir_subpath,
             if (dir_subpath.len == 0) "" else "/",
             entry_name,
-        });
+        }, 0);
     }
 
     fn entryNameZ(
@@ -721,10 +721,10 @@ pub const PackCommand = struct {
 
                                 const dep_name = dep.key.?.asString(ctx.allocator) orelse continue;
 
-                                const dep_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}/node_modules/{s}", .{
+                                const dep_subpath = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}/node_modules/{s}", .{
                                     dir_subpath,
                                     dep_name,
-                                });
+                                }, 0);
 
                                 // starting at `node_modules/is-even/node_modules/is-odd`
                                 var dep_dir_depth: usize = bundled_dir_info[2] + 2;

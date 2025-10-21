@@ -707,7 +707,7 @@ pub const ShellSubprocess = struct {
                 const key = entry.key_ptr.*.slice();
                 const value = entry.value_ptr.*.slice();
 
-                var line = bun.handleOom(std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }));
+                var line = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "{s}={s}", .{ key, value }, 0));
 
                 if (bun.strings.eqlComptime(key, "PATH")) {
                     this.PATH = bun.asByteSlice(line["PATH=".len..]);

@@ -1210,12 +1210,12 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                            const join = try std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
                                 strings.withoutTrailingSlash(name),
-                            });
+                            }, 0);
 
                             break :name_and_subpath .{ join[join.len - name.len ..][0..name.len :0], join };
                         };

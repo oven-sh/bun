@@ -3120,6 +3120,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
+template<typename Sec, typename Usec>
+double totalMicroseconds(Sec seconds, Usec microseconds)
+{
+    std::chrono::microseconds total = std::chrono::seconds(seconds) + std::chrono::microseconds(microseconds);
+    return total.count();
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3147,23 +3154,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
     Structure* cpuUsageStructure = process->cpuUsageStructure();
 
-    double user = std::chrono::microseconds::period::den * info.user_time.seconds + info.user_time.microseconds;
-    double system = std::chrono::microseconds::period::den * info.system_time.seconds + info.system_time.microseconds;
+    double user = totalMicroseconds(info.user_time.seconds, info.user_time.microseconds);
+    double system = totalMicroseconds(info.system_time.seconds, info.system_time.microseconds);
 
     mach_port_deallocate(mach_task_self(), thread);
 
 #elif OS(LINUX)
     struct rusage rusage;
-#if defined(RUSAGE_THREAD)
-    int err = getrusage(RUSAGE_THREAD, &rusage);
+#ifdef RUSAGE_THREAD
+    int status = getrusage(RUSAGE_THREAD, &rusage);
 #elif defined(RUSAGE_LWP)
-    int err = getrusage(RUSAGE_LWP, &rusage);
+    int status = getrusage(RUSAGE_LWP, &rusage);
 #else
     throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "getrusage"_s, ENOTSUP);
     return {};
 #endif
 
-    if (err != 0) {
+    if (status != 0) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);
         return {};
     }
@@ -3171,23 +3178,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
     Structure* cpuUsageStructure = process->cpuUsageStructure();
 
-    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+    double user = totalMicroseconds(rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec);
+    double system = totalMicroseconds(rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec);
 
 #elif OS(WINDOWS)
     // Windows: use libuv
     uv_rusage_t rusage;
-    int err = uv_getrusage_thread(&rusage);
-    if (err) {
-        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "uv_getrusage_thread"_s, err);
+    int status = uv_getrusage_thread(&rusage);
+    if (status) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "uv_getrusage_thread"_s, status);
         return {};
     }
 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
     Structure* cpuUsageStructure = process->cpuUsageStructure();
 
-    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+    double user = totalMicroseconds(rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec);
+    double system = totalMicroseconds(rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec);
 #else
     // Other platforms: not supported yet
     throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "threadCpuUsage"_s, ENOTSUP);

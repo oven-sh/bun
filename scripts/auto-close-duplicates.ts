@@ -26,7 +26,19 @@ interface GitHubReaction {
   content: string;
 }
 
-async function githubRequest<T>(endpoint: string, token: string, method: string = "GET", body?: any): Promise<T> {
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function githubRequest<T>(
+  endpoint: string,
+  token: string,
+  method: string = "GET",
+  body?: any,
+  retryCount: number = 0,
+): Promise<T> {
+  const maxRetries = 3;
+
   const response = await fetch(`https://api.github.com${endpoint}`, {
     method,
     headers: {
@@ -37,6 +49,38 @@ async function githubRequest<T>(endpoint: string, token: string, method: string 
     },
     ...(body && { body: JSON.stringify(body) }),
   });
+
+  // Check rate limit headers
+  const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
+  const rateLimitReset = response.headers.get("x-ratelimit-reset");
+
+  if (rateLimitRemaining && parseInt(rateLimitRemaining) < 100) {
+    console.warn(`[WARNING] GitHub API rate limit low: ${rateLimitRemaining} requests remaining`);
+
+    if (parseInt(rateLimitRemaining) < 10) {
+      const resetTime = rateLimitReset ? parseInt(rateLimitReset) * 1000 : Date.now() + 60000;
+      const waitTime = Math.max(0, resetTime - Date.now());
+      console.warn(`[WARNING] Rate limit critically low, waiting ${Math.ceil(waitTime / 1000)}s until reset`);
+      await sleep(waitTime + 1000); // Add 1s buffer
+    }
+  }
+
+  // Handle rate limit errors with retry
+  if (response.status === 429 || response.status === 403) {
+    if (retryCount >= maxRetries) {
+      throw new Error(`GitHub API rate limit exceeded after ${maxRetries} retries`);
+    }
+
+    const retryAfter = response.headers.get("retry-after");
+    const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : Math.min(1000 * Math.pow(2, retryCount), 32000);
+
+    console.warn(
+      `[WARNING] Rate limited (${response.status}), retry ${retryCount + 1}/${maxRetries} after ${waitTime}ms`,
+    );
+    await sleep(waitTime);
+
+    return githubRequest<T>(endpoint, token, method, body, retryCount + 1);
+  }
 
   if (!response.ok) {
     throw new Error(`GitHub API request failed: ${response.status} ${response.statusText}`);
@@ -71,6 +115,42 @@ async function fetchAllComments(
   }
 
   return allComments;
+}
+
+async function fetchAllReactions(
+  owner: string,
+  repo: string,
+  commentId: number,
+  token: string,
+  authorId?: number,
+): Promise<GitHubReaction[]> {
+  const allReactions: GitHubReaction[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (true) {
+    const reactions: GitHubReaction[] = await githubRequest(
+      `/repos/${owner}/${repo}/issues/comments/${commentId}/reactions?per_page=${perPage}&page=${page}`,
+      token,
+    );
+
+    if (reactions.length === 0) break;
+
+    allReactions.push(...reactions);
+
+    // Early exit if we're looking for a specific author and found their -1 reaction
+    if (authorId && reactions.some(r => r.user.id === authorId && r.content === "-1")) {
+      console.log(`[DEBUG] Found author thumbs down reaction, short-circuiting pagination`);
+      break;
+    }
+
+    page++;
+
+    // Safety limit
+    if (page > 20) break;
+  }
+
+  return allReactions;
 }
 
 function escapeRegExp(str: string): string {
@@ -225,10 +305,7 @@ async function autoCloseDuplicates(): Promise<void> {
     }
 
     console.log(`[DEBUG] Issue #${issue.number} - checking reactions on duplicate comment...`);
-    const reactions: GitHubReaction[] = await githubRequest(
-      `/repos/${owner}/${repo}/issues/comments/${lastDupeComment.id}/reactions`,
-      token,
-    );
+    const reactions = await fetchAllReactions(owner, repo, lastDupeComment.id, token, issue.user.id);
     console.log(`[DEBUG] Issue #${issue.number} - duplicate comment has ${reactions.length} reactions`);
 
     const authorThumbsDown = reactions.some(

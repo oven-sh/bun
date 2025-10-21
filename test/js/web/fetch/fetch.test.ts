@@ -1172,6 +1172,30 @@ describe("Response", () => {
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.status).toBe(408);
     });
+
+    it("throws TypeError for non-JSON serializable top-level values (Node.js compatibility)", () => {
+      // Symbol, Function, and undefined should throw "Value is not JSON serializable"
+      expect(() => Response.json(Symbol("test"))).toThrow("Value is not JSON serializable");
+      expect(() => Response.json(function () {})).toThrow("Value is not JSON serializable");
+      expect(() => Response.json(undefined)).toThrow("Value is not JSON serializable");
+
+      // These should not throw (valid values)
+      expect(() => Response.json(null)).not.toThrow();
+      expect(() => Response.json({})).not.toThrow();
+      expect(() => Response.json("string")).not.toThrow();
+      expect(() => Response.json(123)).not.toThrow();
+      expect(() => Response.json(true)).not.toThrow();
+      expect(() => Response.json([1, 2, 3])).not.toThrow();
+
+      // Objects containing non-serializable values should not throw at top-level
+      // (they get filtered out by JSON.stringify)
+      expect(() => Response.json({ symbol: Symbol("test") })).not.toThrow();
+      expect(() => Response.json({ func: function () {} })).not.toThrow();
+      expect(() => Response.json({ undef: undefined })).not.toThrow();
+
+      // BigInt should throw with Node.js compatible error message
+      expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
+    });
   });
   describe("Response.redirect", () => {
     it("works", () => {

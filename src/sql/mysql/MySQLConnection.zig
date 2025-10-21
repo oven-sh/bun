@@ -22,7 +22,7 @@ statements: PreparedStatementsMap = .{},
 #auth_plugin: ?AuthMethod = null,
 #auth_state: AuthState = .{ .pending = {} },
 
-#auth_data: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+#auth_data: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 #database: []const u8 = "",
 #user: []const u8 = "",
 #password: []const u8 = "",

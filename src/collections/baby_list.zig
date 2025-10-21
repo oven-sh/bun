@@ -190,7 +190,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.list();
         }
 
-        pub fn moveToListManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
+        pub fn moveToListManaged(this: *Self, allocator: std.mem.Allocator) std.array_list.Managed(Type) {
             this.assertOwned();
             defer this.* = .empty;
             return this.listManaged(allocator);
@@ -567,7 +567,7 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        fn listManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
+        fn listManaged(this: *Self, allocator: std.mem.Allocator) std.array_list.Managed(Type) {
             this.#allocator.set(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);

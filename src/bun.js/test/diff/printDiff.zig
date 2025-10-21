@@ -59,7 +59,7 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
     const charDiffs = try dmp.diff(arena, linesToChars.chars_1, linesToChars.chars_2, false);
     const diffs = try DMP.diffCharsToLines(arena, &charDiffs, linesToChars.line_array.items);
 
-    var diff_segments = std.ArrayList(DiffSegment).init(arena);
+    var diff_segments = std.array_list.Managed(DiffSegment).init(arena);
     for (diffs.items) |diff| {
         if (diff.operation == .delete) {
             try diff_segments.append(DiffSegment{
@@ -96,7 +96,7 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
     // Determine if the diff needs to be chunked
     if (expected_slice.len > config.min_bytes_before_chunking or received_slice.len > config.min_bytes_before_chunking) {
         // Split 'equal' segments into lines
-        var new_diff_segments = std.ArrayList(DiffSegment).init(arena);
+        var new_diff_segments = std.array_list.Managed(DiffSegment).init(arena);
 
         for (diff_segments.items) |diff_segment| {
             if (diff_segment.mode == .equal) {

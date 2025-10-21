@@ -963,7 +963,7 @@ pub const String = struct {
 
     pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
         if (this.next == null or !this.isUTF8()) return;
-        var bytes = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.rope_len));
+        var bytes = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, this.rope_len));
         bytes.appendSliceAssumeCapacity(this.data);
         var str = this.next;
         while (str) |part| {
@@ -1293,7 +1293,7 @@ pub const Template = struct {
             return Expr.init(E.String, this.head.cooked, loc);
         }
 
-        var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+        var parts = std.array_list.Managed(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
         var head = Expr.init(E.String, this.head.cooked, loc);
         for (this.parts) |part_src| {
             var part = part_src;

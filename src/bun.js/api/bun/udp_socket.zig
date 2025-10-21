@@ -8,7 +8,7 @@ extern fn htons(hshort: u16) u16;
 extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int) ?[*:0]const u8;
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 
-fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
+fn onClose(socket: *uws.udp.Socket) callconv(.c) void {
     jsc.markBinding(@src());
 
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
@@ -18,7 +18,7 @@ fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
     this.socket = null;
 }
 
-fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
+fn onDrain(socket: *uws.udp.Socket) callconv(.c) void {
     jsc.markBinding(@src());
 
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
@@ -35,7 +35,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     };
 }
 
-fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.C) void {
+fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.c) void {
     jsc.markBinding(@src());
 
     const udpSocket: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);

@@ -16,7 +16,7 @@ pub const CryptoHasher = union(enum) {
 
     // For using only CryptoHasherZig in c++
     pub const Extern = struct {
-        fn getByName(global: *JSGlobalObject, name_bytes: [*:0]const u8, name_len: usize) callconv(.C) ?*CryptoHasher {
+        fn getByName(global: *JSGlobalObject, name_bytes: [*:0]const u8, name_len: usize) callconv(.c) ?*CryptoHasher {
             const name = name_bytes[0..name_len];
 
             if (CryptoHasherZig.init(name)) |inner| {
@@ -50,7 +50,7 @@ pub const CryptoHasher = union(enum) {
             return null;
         }
 
-        fn getFromOther(global: *JSGlobalObject, other_handle: *CryptoHasher) callconv(.C) ?*CryptoHasher {
+        fn getFromOther(global: *JSGlobalObject, other_handle: *CryptoHasher) callconv(.c) ?*CryptoHasher {
             switch (other_handle.*) {
                 .zig => |other| {
                     const hasher = CryptoHasher.new(.{
@@ -71,11 +71,11 @@ pub const CryptoHasher = union(enum) {
             }
         }
 
-        fn destroy(handle: *CryptoHasher) callconv(.C) void {
+        fn destroy(handle: *CryptoHasher) callconv(.c) void {
             handle.finalize();
         }
 
-        fn update(handle: *CryptoHasher, input_bytes: [*]const u8, input_len: usize) callconv(.C) bool {
+        fn update(handle: *CryptoHasher, input_bytes: [*]const u8, input_len: usize) callconv(.c) bool {
             const input = input_bytes[0..input_len];
 
             switch (handle.*) {
@@ -93,7 +93,7 @@ pub const CryptoHasher = union(enum) {
             }
         }
 
-        fn digest(handle: *CryptoHasher, global: *JSGlobalObject, buf: [*]u8, buf_len: usize) callconv(.C) u32 {
+        fn digest(handle: *CryptoHasher, global: *JSGlobalObject, buf: [*]u8, buf_len: usize) callconv(.c) u32 {
             const digest_buf = buf[0..buf_len];
             switch (handle.*) {
                 .zig => {
@@ -110,7 +110,7 @@ pub const CryptoHasher = union(enum) {
             }
         }
 
-        fn getDigestSize(handle: *CryptoHasher) callconv(.C) u32 {
+        fn getDigestSize(handle: *CryptoHasher) callconv(.c) u32 {
             return switch (handle.*) {
                 .zig => |inner| inner.digest_length,
                 .evp => |inner| inner.size(),

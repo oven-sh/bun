@@ -158,7 +158,7 @@ pub const TestRunner = struct {
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
-    pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.c) JSValue {
         return createTestModule(globalObject) catch return .zero;
     }
 
@@ -346,7 +346,7 @@ fn consumeArg(
     should_write: bool,
     str_idx: *usize,
     args_idx: *usize,
-    array_list: *std.ArrayList(u8),
+    array_list: *std.array_list.Managed(u8),
     arg: *const JSValue,
     fallback: []const u8,
 ) !void {
@@ -365,7 +365,7 @@ fn consumeArg(
 pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []const jsc.JSValue, test_idx: usize, allocator: std.mem.Allocator) !string {
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, label.len));
+    var list = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, label.len));
     defer list.deinit();
 
     while (idx < label.len) {

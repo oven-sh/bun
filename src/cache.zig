@@ -25,7 +25,7 @@ pub const Fs = struct {
 
         pub const ExternalFreeFunction = struct {
             ctx: ?*anyopaque,
-            function: ?*const fn (?*anyopaque) callconv(.C) void,
+            function: ?*const fn (?*anyopaque) callconv(.c) void,
 
             pub const none: ExternalFreeFunction = .{ .ctx = null, .function = null };
 

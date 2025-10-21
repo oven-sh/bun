@@ -2184,7 +2184,7 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
 
 pub fn percentEncodeWrite(
     utf8_input: []const u8,
-    writer: *std.ArrayList(u8),
+    writer: *std.array_list.Managed(u8),
 ) error{ OutOfMemory, IncompleteUTF8 }!void {
     var remaining = utf8_input;
     while (indexOfNeedsURLEncode(remaining)) |j| {

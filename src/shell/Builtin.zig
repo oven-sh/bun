@@ -26,7 +26,7 @@ cwd: bun.FileDescriptor,
 /// `export`) don't have to duplicate arguments. However, it is tricky because
 /// modifications will invalidate any codepath which previously sliced the array
 /// list (e.g. turned it into a `[]const [:0]const u8`)
-args: *const std.ArrayList(?[*:0]const u8),
+args: *const std.array_list.Managed(?[*:0]const u8),
 /// Cached slice of `args`.
 ///
 /// This caches the result of calling `bun.span(this.args.items[i])` since the
@@ -134,7 +134,7 @@ pub const BuiltinIO = struct {
     /// in the case of blob, we write to the file descriptor
     pub const Output = union(enum) {
         fd: struct { writer: *IOWriter, captured: ?*bun.ByteList = null },
-        buf: std.ArrayList(u8),
+        buf: std.array_list.Managed(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
         ignore,
@@ -167,7 +167,7 @@ pub const BuiltinIO = struct {
                 .buf => {
                     const alloc = this.buf.allocator;
                     this.buf.deinit();
-                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                    this.* = .{ .buf = std.array_list.Managed(u8).init(alloc) };
                 },
                 .ignore => {},
             }
@@ -211,7 +211,7 @@ pub const BuiltinIO = struct {
     pub const Input = union(enum) {
         fd: *IOReader,
         /// array list not ownedby this type
-        buf: std.ArrayList(u8),
+        buf: std.array_list.Managed(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
         ignore,
@@ -236,7 +236,7 @@ pub const BuiltinIO = struct {
                 .buf => {
                     const alloc = this.buf.allocator;
                     this.buf.deinit();
-                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                    this.* = .{ .buf = std.array_list.Managed(u8).init(alloc) };
                 },
                 .arraybuf => this.arraybuf.buf.deinit(),
                 .ignore => {},
@@ -333,7 +333,7 @@ pub fn init(
     kind: Kind,
     arena: *bun.ArenaAllocator,
     node: *const ast.Cmd,
-    args: *const std.ArrayList(?[*:0]const u8),
+    args: *const std.array_list.Managed(?[*:0]const u8),
     export_env: *EnvMap,
     cmd_local_env: *EnvMap,
     cwd: bun.FileDescriptor,
@@ -345,12 +345,12 @@ pub fn init(
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
+        .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
+        .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
 
@@ -381,7 +381,7 @@ pub fn init(
         .echo => {
             cmd.exec.bltn.impl = .{
                 .echo = Echo{
-                    .output = std.ArrayList(u8).init(arena.allocator()),
+                    .output = std.array_list.Managed(u8).init(arena.allocator()),
                 },
             };
         },
@@ -699,7 +699,7 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
 
             const len = buf.len;
             if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len) {
-                // std.ArrayList(comptime T: type)
+                // std.array_list.Managed(comptime T: type)
             }
             const write_len = if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len)
                 io.arraybuf.buf.array_buffer.byte_len - io.arraybuf.i

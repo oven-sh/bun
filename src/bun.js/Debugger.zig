@@ -60,14 +60,14 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
-                fn call(handle: *uv.Timer) callconv(.C) void {
+                fn call(handle: *uv.Timer) callconv(.c) void {
                     const vm = VirtualMachine.get();
                     vm.debugger.?.poll_ref.unref(vm);
                     uv.uv_close(@ptrCast(handle), deinitTimer);
                 }
 
-                fn deinitTimer(handle: *anyopaque) callconv(.C) void {
-                    bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                fn deinitTimer(handle: *anyopaque) callconv(.c) void {
+                    bun.default_allocator.destroy(@as(*uv.Timer, @ptrCast(@alignCast(handle))));
                 }
             }.call;
             timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);

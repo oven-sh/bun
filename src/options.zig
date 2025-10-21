@@ -116,7 +116,7 @@ pub const ExternalModules = struct {
             return result;
         }
 
-        var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
+        var patterns = std.array_list.Managed(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
         patterns.appendSliceAssumeCapacity(default_wildcard_patterns[0..]);
 
         for (externals) |external| {
@@ -2187,8 +2187,8 @@ pub const TransformResult = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
     ) !TransformResult {
-        var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
-        var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
+        var errors = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.errors);
+        var warnings = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.warnings);
         for (log.msgs.items) |msg| {
             switch (msg.kind) {
                 logger.Kind.err => {

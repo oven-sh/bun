@@ -60,8 +60,8 @@ pub fn memoryCost(this: *const FileSink) usize {
     return this.writer.memoryCost();
 }
 
-fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.C) void {
-    var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
+fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.c) void {
+    var this: *FileSink = @ptrCast(@alignCast(JSSink.fromJS(jsvalue) orelse return));
 
     if (comptime !Environment.isWindows) {
         this.force_sync = true;

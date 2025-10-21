@@ -23,7 +23,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
         return globalObject.throw("Arguments must be an array", .{});
     }
     var iter = try args_array.arrayIterator(globalObject);
-    var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, iter.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(bun.default_allocator, iter.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -105,7 +105,7 @@ pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -280,7 +280,7 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     }
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -323,7 +323,7 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
 
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -387,7 +387,7 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -432,7 +432,7 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     }
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -507,7 +507,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     }
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -632,7 +632,7 @@ fn hsetImpl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
     const second_arg = callframe.argument(1);
 
-    var args = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator);
+    var args = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator);
     defer {
         for (args.items) |item| item.deinit();
         args.deinit();
@@ -994,7 +994,7 @@ pub fn publish(
 
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -1038,7 +1038,7 @@ pub fn subscribe(
 ) bun.JSError!JSValue {
     const channel_or_many, const handler_callback = callframe.argumentsAsArray(2);
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
+    var redis_channels = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {
             item.deinit();
@@ -1140,7 +1140,7 @@ pub fn unsubscribe(
     const args_view = callframe.arguments();
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
+    var redis_channels = try std.array_list.Managed(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {
             item.deinit();
@@ -1378,7 +1378,7 @@ const compile = struct {
                 }
 
                 const arguments = callframe.arguments();
-                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, arguments.len);
+                var args = try std.array_list.Managed(JSArgument).initCapacity(bun.default_allocator, arguments.len);
                 defer {
                     for (args.items) |*item| {
                         item.deinit();
@@ -1495,7 +1495,7 @@ const compile = struct {
             pub fn call(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
                 try testCorrectState(this, name, client_state_requirement);
 
-                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
+                var args = try std.array_list.Managed(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
                 defer {
                     for (args.items) |*item| {
                         item.deinit();
@@ -1534,7 +1534,7 @@ const compile = struct {
             pub fn call(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
                 try testCorrectState(this, name, client_state_requirement);
 
-                var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
+                var args = try std.array_list.Managed(JSArgument).initCapacity(bun.default_allocator, callframe.arguments().len);
                 defer {
                     for (args.items) |*item| {
                         item.deinit();

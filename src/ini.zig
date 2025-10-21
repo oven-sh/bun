@@ -263,7 +263,7 @@ pub const Parser = struct {
             var did_any_escape: bool = false;
             var esc = false;
             var sfb = std.heap.stackFallback(STACK_BUF_SIZE, arena_allocator);
-            var unesc = try std.ArrayList(u8).initCapacity(sfb.get(), STACK_BUF_SIZE);
+            var unesc = try std.array_list.Managed(u8).initCapacity(sfb.get(), STACK_BUF_SIZE);
 
             const RopeT = if (comptime usage == .section) *Rope else struct {};
             var rope: ?RopeT = if (comptime usage == .section) null else undefined;
@@ -393,7 +393,7 @@ pub const Parser = struct {
     /// - `i` must be an index into `val` that points to a '$' char
     ///
     /// npm/ini uses a regex pattern that will select the inner most ${...}
-    fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.ArrayList(u8)) OOM!?usize {
+    fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.array_list.Managed(u8)) OOM!?usize {
         bun.debugAssert(val[i] == '$');
         var esc = false;
         if (i + "{}".len < val.len and val[i + 1] == '{') {
@@ -441,7 +441,7 @@ pub const Parser = struct {
         return std.mem.indexOfScalar(u8, key, '.');
     }
 
-    fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) OOM!void {
+    fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.array_list.Managed(u8), existing_rope: *?*Rope) OOM!void {
         _ = this; // autofix
         const slice = try arena_allocator.dupe(u8, unesc.items[0..]);
         const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
@@ -550,7 +550,7 @@ pub const IniTestingAPIs = struct {
 
         const install = try allocator.create(bun.schema.api.BunInstall);
         install.* = std.mem.zeroes(bun.schema.api.BunInstall);
-        var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
+        var configs = std.array_list.Managed(ConfigIterator.Item).init(allocator);
         defer configs.deinit();
         loadNpmrc(allocator, install, env, ".npmrc", &log, source, &configs) catch {
             return log.toJS(globalThis, allocator, "error");
@@ -867,7 +867,7 @@ pub fn loadNpmrcConfig(
     // npmrc registry configurations are shared between all npmrc files
     // so we need to collect them as we go for the final registry map
     // to be created at the end.
-    var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
+    var configs = std.array_list.Managed(ConfigIterator.Item).init(allocator);
     defer {
         for (configs.items) |*item| {
             item.deinit(allocator);
@@ -906,7 +906,7 @@ pub fn loadNpmrc(
     npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
-    configs: *std.ArrayList(ConfigIterator.Item),
+    configs: *std.array_list.Managed(ConfigIterator.Item),
 ) OOM!void {
     var parser = bun.ini.Parser.init(allocator, npmrc_path, source.contents, env);
     defer parser.deinit();

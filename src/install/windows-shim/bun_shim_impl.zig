@@ -244,7 +244,7 @@ pub fn writeToHandle(handle: w.HANDLE, data: []const u8) error{}!usize {
     return io.Information;
 }
 
-const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
+const NtWriter = std.Io.GenericWriter(w.HANDLE, error{}, writeToHandle);
 
 var failure_reason_data: [512]u8 = undefined;
 var failure_reason_argument: ?[]const u8 = null;
@@ -605,7 +605,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //           ^ lpCommandLine                                               ^ null terminator
             @as(*align(1) u16, @ptrCast(argument_start_ptr + user_arguments_u8.len)).* = 0;
 
-            break :spawn_command_line @alignCast(@ptrCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
+            break :spawn_command_line @ptrCast(@alignCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
         },
         true => spawn_command_line: {
             // When the shebang flag is set, we expect two u32s containing byte lengths of the bin and arg components

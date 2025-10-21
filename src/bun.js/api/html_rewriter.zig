@@ -250,13 +250,13 @@ pub const HTMLRewriter = struct {
         failed: bool = false,
         output: jsc.WebCore.Sink,
         signal: jsc.WebCore.Signal = .{},
-        backpressure: std.fifo.LinearFifo(u8, .Dynamic) = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+        backpressure: bun.LinearFifo(u8, .Dynamic) = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
 
         pub fn finalize(this: *HTMLRewriterLoader) void {
             if (this.finalized) return;
             this.rewriter.deinit();
             this.backpressure.deinit();
-            this.backpressure = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator);
+            this.backpressure = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator);
             this.finalized = true;
         }
 

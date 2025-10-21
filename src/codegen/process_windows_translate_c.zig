@@ -28,7 +28,7 @@ pub fn main() !void {
     };
     defer gpa.free(in);
 
-    var out = try std.ArrayList(u8).initCapacity(gpa, in.len);
+    var out = try std.array_list.Managed(u8).initCapacity(gpa, in.len);
     defer out.deinit();
     const w = out.writer();
 

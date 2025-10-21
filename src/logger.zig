@@ -605,7 +605,7 @@ pub const Range = struct {
 pub const Log = struct {
     warnings: u32 = 0,
     errors: u32 = 0,
-    msgs: std.ArrayList(Msg),
+    msgs: std.array_list.Managed(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     clone_line_text: bool = false,
@@ -692,14 +692,14 @@ pub const Log = struct {
 
     pub fn init(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
             .level = default_log_level,
         };
     }
 
     pub fn initComptime(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
         };
     }
 

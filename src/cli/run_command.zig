@@ -84,7 +84,7 @@ pub const RunCommand = struct {
     // Replace them with "bun run"
 
     pub inline fn replacePackageManagerRun(
-        copy_script: *std.ArrayList(u8),
+        copy_script: *std.array_list.Managed(u8),
         script: string,
     ) OOM!void {
         var entry_i: usize = 0;
@@ -222,7 +222,7 @@ pub const RunCommand = struct {
 
         var copy_script_capacity: usize = original_script.len;
         for (passthrough) |part| copy_script_capacity += 1 + part.len;
-        var copy_script = try std.ArrayList(u8).initCapacity(allocator, copy_script_capacity);
+        var copy_script = try std.array_list.Managed(u8).initCapacity(allocator, copy_script_capacity);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
@@ -445,7 +445,7 @@ pub const RunCommand = struct {
         var argv: []const string = &argv_;
 
         if (passthrough.len > 0) {
-            var array_list = std.ArrayList(string).init(ctx.allocator);
+            var array_list = std.array_list.Managed(string).init(ctx.allocator);
             try array_list.append(executable);
             try array_list.appendSlice(passthrough);
             argv = try array_list.toOwnedSlice();
@@ -640,7 +640,7 @@ pub const RunCommand = struct {
     }
 
     pub fn createFakeTemporaryNodeExecutable(
-        PATH: *std.ArrayList(u8),
+        PATH: *std.array_list.Managed(u8),
         optional_bun_path: *string,
     ) (OOM || std.fs.SelfExePathError)!void {
         // If we are already running as "node", the path should exist
@@ -907,7 +907,7 @@ pub const RunCommand = struct {
             new_path_len += bun_node_dir_win.len + 1;
         }
 
-        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+        var new_path = try std.array_list.Managed(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(
@@ -1019,7 +1019,7 @@ pub const RunCommand = struct {
         }
 
         var results = ResultList.init(ctx.allocator);
-        var descriptions = std.ArrayList(string).init(ctx.allocator);
+        var descriptions = std.array_list.Managed(string).init(ctx.allocator);
 
         if (filter != .script_exclude) {
             if (default_completions) |defaults| {
@@ -1400,10 +1400,10 @@ pub const RunCommand = struct {
 
             // read from stdin
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.ArrayList(u8).init(stack_fallback.get());
+            var list = std.array_list.Managed(u8).init(stack_fallback.get());
             errdefer list.deinit();
 
-            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            std.fs.File.stdin().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
             ctx.runtime_options.eval.script = list.items;
 
             const trigger = bun.pathLiteral("/[stdin]");
@@ -1412,7 +1412,7 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
             passthrough_list.appendAssumeCapacity("-");
             passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
             ctx.passthrough = passthrough_list.items;

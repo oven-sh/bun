@@ -91,7 +91,7 @@ pub const Entry = struct {
         );
 
         // This buffer is temporary, holding the quoted source paths, joined with commas.
-        var source_map_strings = std.ArrayList(u8).init(arena);
+        var source_map_strings = std.array_list.Managed(u8).init(arena);
         defer source_map_strings.deinit();
 
         const buf = bun.path_buffer_pool.get();
@@ -203,7 +203,7 @@ pub const Entry = struct {
     fn encodeSourceMapPath(
         side: bake.Side,
         utf8_input: []const u8,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
     ) error{ OutOfMemory, IncompleteUTF8 }!void {
         // On the client, percent encode everything so it works in the browser
         if (side == .client) {

@@ -31,7 +31,7 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
-        var node_queue: std.fifo.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
+        var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
         defer node_queue.deinit();
 
         try node_queue.writeItem(.{
@@ -51,10 +51,10 @@ pub fn installIsolatedPackages(
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
-        var peer_dep_ids: std.ArrayList(DependencyID) = .init(lockfile.allocator);
+        var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
 
-        var visited_parent_node_ids: std.ArrayList(Store.Node.Id) = .init(lockfile.allocator);
+        var visited_parent_node_ids: std.array_list.Managed(Store.Node.Id) = .init(lockfile.allocator);
         defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
@@ -396,7 +396,7 @@ pub fn installIsolatedPackages(
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
-        var res_fmt_buf: std.ArrayList(u8) = .init(lockfile.allocator);
+        var res_fmt_buf: std.array_list.Managed(u8) = .init(lockfile.allocator);
         defer res_fmt_buf.deinit();
 
         const nodes_slice = nodes.slice();
@@ -411,7 +411,7 @@ pub fn installIsolatedPackages(
             node_id: Store.Node.Id,
             entry_parent_id: Store.Entry.Id,
         };
-        var entry_queue: std.fifo.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
+        var entry_queue: bun.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
         defer entry_queue.deinit();
 
         try entry_queue.writeItem(.{

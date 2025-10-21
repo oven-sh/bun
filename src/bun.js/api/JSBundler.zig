@@ -1489,7 +1489,7 @@ pub const BuildArtifact = struct {
         return jsc.JSValue.jsNull();
     }
 
-    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+    pub fn finalize(this: *BuildArtifact) callconv(.c) void {
         this.deinit();
 
         bun.default_allocator.destroy(this);

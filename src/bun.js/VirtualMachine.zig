@@ -205,7 +205,7 @@ pub const OnException = fn (*ZigException) void;
 pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
     return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
 }
-pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
+pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.c) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
@@ -793,7 +793,7 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
     }
 }
 
-pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) jsc.ScriptExecutionStatus {
+pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.c) jsc.ScriptExecutionStatus {
     if (this.is_shutting_down) {
         return .stopped;
     }
@@ -807,7 +807,7 @@ pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) jsc.Scrip
     return .running;
 }
 
-pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.c) bool {
     if (this.module_loader.eval_source) |eval_source| {
         var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
         defer specifier_str.deref();
@@ -817,14 +817,14 @@ pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) call
     return false;
 }
 
-pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.C) void {
+pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.c) void {
     // allow esm evaluate to set value multiple times
     if (!this.entry_point_result.cjs_set_value) {
         this.entry_point_result.value.set(this.global, result);
     }
 }
 
-pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.c) void {
     if (!this.entry_point_result.value.has()) {
         this.entry_point_result.value.set(this.global, value);
         this.entry_point_result.cjs_set_value = true;
@@ -1063,7 +1063,7 @@ pub fn initWithModuleGraph(
     return vm;
 }
 
-export fn Bun__isMainThreadVM() callconv(.C) bool {
+export fn Bun__isMainThreadVM() callconv(.c) bool {
     return get().is_main_thread;
 }
 
@@ -1502,7 +1502,7 @@ fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const
     return entry.value_ptr.*;
 }
 
-fn freeRefString(str: *jsc.RefString, _: *anyopaque, _: u32) callconv(.C) void {
+fn freeRefString(str: *jsc.RefString, _: *anyopaque, _: u32) callconv(.c) void {
     str.deinit();
 }
 
@@ -1950,7 +1950,7 @@ pub fn deinit(this: *VirtualMachine) void {
     this.has_terminated = true;
 }
 
-pub const ExceptionList = std.ArrayList(api.JsException);
+pub const ExceptionList = std.array_list.Managed(api.JsException);
 
 pub fn printException(
     this: *VirtualMachine,
@@ -1982,7 +1982,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
     defer this.had_errors = prev_had_errors;
 
     const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
+    var buffered_writer = bun.deprecated.bufferedWriter(error_writer);
     defer {
         buffered_writer.flush() catch {};
     }
@@ -2403,10 +2403,10 @@ pub fn printErrorlikeObject(
             current_exception_list: ?*ExceptionList = null,
             formatter: *ConsoleObject.Formatter,
 
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 iterator(vm, globalObject, nextValue, ctx.?, true);
             }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 iterator(vm, globalObject, nextValue, ctx.?, false);
             }
             fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
@@ -3101,7 +3101,7 @@ fn printErrorInstance(
     }
 
     // This is usually unsafe to do, but we are protecting them each time first
-    var errors_to_append = std.ArrayList(JSValue).init(this.allocator);
+    var errors_to_append = std.array_list.Managed(JSValue).init(this.allocator);
     defer {
         for (errors_to_append.items) |err| {
             err.unprotect();
@@ -3352,7 +3352,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
     const allocator = bun.default_allocator;
     Output.flush();
 
-    var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
+    var buffered_writer = bun.deprecated.bufferedWriter(Output.errorWriter());
     var writer = buffered_writer.writer();
     defer {
         buffered_writer.flush() catch {};

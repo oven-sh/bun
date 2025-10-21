@@ -201,7 +201,7 @@ pub fn crashHandler(
                 //
                 // Output.errorWriter() is not used here because it may not be configured
                 // if the program crashes immediately at startup.
-                const writer = std.io.getStdErr().writer();
+                const writer = std.fs.File.stderr().writer();
 
                 // The format of the panic trace is slightly different in debug
                 // builds. Mainly, we demangle the backtrace immediately instead
@@ -502,7 +502,7 @@ pub fn crashHandler(
             // A panic happened while trying to print a previous panic message,
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
-            const stderr = std.io.getStdErr().writer();
+            const stderr = std.fs.File.stderr().writer();
             stderr.print("\npanic: {s}\n", .{reason}) catch std.posix.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.posix.abort();
         },
@@ -830,7 +830,7 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
@@ -883,7 +883,7 @@ pub fn resetOnPosix() void {
     if (bun.Environment.enable_asan) return;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
     };
     updatePosixSegfaultHandler(&act) catch {};
@@ -917,7 +917,7 @@ pub fn resetSegfaultHandler() void {
 
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     // To avoid a double-panic, do nothing if an error happens here.
@@ -1555,7 +1555,7 @@ fn crash() noreturn {
         },
         else => {
             // Install default handler so that the tkill below will terminate.
-            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.empty_sigset, .flags = 0 };
+            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.sigemptyset(), .flags = 0 };
             inline for (.{
                 std.posix.SIG.SEGV,
                 std.posix.SIG.ILL,
@@ -1658,7 +1658,7 @@ extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
-    const stderr = std.io.getStdErr().writer();
+    const stderr = std.fs.File.stderr().writer();
     if (!bun.Environment.show_crash_trace) {
         // debug symbols aren't available, lets print a tracestring
         stderr.print("View Debug Trace: {}\n", .{TraceString{
@@ -1676,7 +1676,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch |err| {
+            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.fs.File.stderr()), limits) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
@@ -1696,7 +1696,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 return;
             };
-            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch |err| {
+            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.fs.File.stderr()), limits) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}", .{@errorName(err)}) catch return;
                 return;
             };
@@ -1723,7 +1723,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
 }
 
 fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *const std.builtin.StackTrace) !void {
-    var argv = std.ArrayList([]const u8).init(alloc);
+    var argv = std.array_list.Managed([]const u8).init(alloc);
     try argv.append(program);
     try argv.append("--exe");
     try argv.append(
@@ -1754,7 +1754,7 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
     child.expand_arg0 = .expand;
     child.progress_node = std.Progress.Node.none;
 
-    const stderr = std.io.getStdErr().writer();
+    const stderr = std.fs.File.stderr().writer();
     const result = child.spawnAndWait() catch |err| {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         if (bun.Environment.isWindows) {
@@ -2258,11 +2258,11 @@ fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, so
     try out_stream.writeByte('\n');
 }
 
-export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.c) void {
     inside_native_plugin = name;
 }
 
-export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
+export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.c) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
     if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {

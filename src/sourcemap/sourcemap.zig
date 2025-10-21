@@ -1003,7 +1003,7 @@ pub const ParsedSourceMap = struct {
         }
     }
 
-    pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
+    pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Alt(formatVLQsImpl) {
         return .{ .data = map };
     }
 
@@ -1448,15 +1448,15 @@ pub const SourceMapShifts = struct {
 };
 
 pub const SourceMapPieces = struct {
-    prefix: std.ArrayList(u8),
-    mappings: std.ArrayList(u8),
-    suffix: std.ArrayList(u8),
+    prefix: std.array_list.Managed(u8),
+    mappings: std.array_list.Managed(u8),
+    suffix: std.array_list.Managed(u8),
 
     pub fn init(allocator: std.mem.Allocator) SourceMapPieces {
         return .{
-            .prefix = std.ArrayList(u8).init(allocator),
-            .mappings = std.ArrayList(u8).init(allocator),
-            .suffix = std.ArrayList(u8).init(allocator),
+            .prefix = std.array_list.Managed(u8).init(allocator),
+            .mappings = std.array_list.Managed(u8).init(allocator),
+            .suffix = std.array_list.Managed(u8).init(allocator),
         };
     }
 

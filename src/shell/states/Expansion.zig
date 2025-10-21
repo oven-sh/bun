@@ -13,7 +13,7 @@ parent: ParentPtr,
 io: IO,
 
 word_idx: u32,
-current_out: std.ArrayList(u8),
+current_out: std.array_list.Managed(u8),
 state: union(enum) {
     normal,
     braces,
@@ -50,10 +50,10 @@ pub const ChildPtr = StatePtrUnion(.{
 });
 
 pub const Result = union(enum) {
-    array_of_slice: *std.ArrayList([:0]const u8),
-    array_of_ptr: *std.ArrayList(?[*:0]const u8),
+    array_of_slice: *std.array_list.Managed([:0]const u8),
+    array_of_ptr: *std.array_list.Managed(?[*:0]const u8),
     single: struct {
-        list: *std.ArrayList(u8),
+        list: *std.array_list.Managed(u8),
         done: bool = false,
     },
 
@@ -89,7 +89,7 @@ pub const Result = union(enum) {
         }
     }
 
-    pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) PushAction {
+    pub fn pushResult(this: *Result, buf: *std.array_list.Managed(u8)) PushAction {
         if (comptime bun.Environment.allow_assert) {
             assert(buf.items[buf.items.len - 1] == 0);
         }
@@ -143,7 +143,7 @@ pub fn init(
         .current_out = undefined,
         .io = io,
     };
-    expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
+    expansion.current_out = std.array_list.Managed(u8).init(expansion.base.allocator());
 }
 
 pub fn deinit(expansion: *Expansion) void {
@@ -233,14 +233,14 @@ pub fn next(this: *Expansion) Yield {
 
                 const stack_max = comptime 16;
                 comptime {
-                    assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                    assert(@sizeOf([]std.array_list.Managed(u8)) * stack_max <= 256);
                 }
-                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, arena_allocator);
+                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.array_list.Managed(u8)) * stack_max, arena_allocator);
                 const stack_alloc = maybe_stack_alloc.get();
-                const expanded_strings = bun.handleOom(stack_alloc.alloc(std.ArrayList(u8), expansion_count));
+                const expanded_strings = bun.handleOom(stack_alloc.alloc(std.array_list.Managed(u8), expansion_count));
 
                 for (0..expansion_count) |i| {
-                    expanded_strings[i] = std.ArrayList(u8).init(this.base.allocator());
+                    expanded_strings[i] = std.array_list.Managed(u8).init(this.base.allocator());
                 }
 
                 Braces.expand(
@@ -581,7 +581,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 }
 
 /// If the atom is actually a command substitution then does nothing and returns true
-pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8), comptime expand_tilde: bool) bool {
+pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.array_list.Managed(u8), comptime expand_tilde: bool) bool {
     switch (atom.*) {
         .Text => |txt| {
             bun.handleOom(str_list.appendSlice(txt));
@@ -624,7 +624,7 @@ pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list:
     return false;
 }
 
-pub fn appendSlice(this: *Expansion, buf: *std.ArrayList(u8), slice: []const u8) void {
+pub fn appendSlice(this: *Expansion, buf: *std.array_list.Managed(u8), slice: []const u8) void {
     _ = this;
     bun.handleOom(buf.appendSlice(slice));
 }
@@ -637,7 +637,7 @@ pub fn pushCurrentOut(this: *Expansion) void {
             this.current_out.clearRetainingCapacity();
         },
         .moved => {
-            this.current_out = std.ArrayList(u8).init(this.base.allocator());
+            this.current_out = std.array_list.Managed(u8).init(this.base.allocator());
         },
     }
 }
@@ -752,7 +752,7 @@ pub const ShellGlobTask = struct {
     /// Not owned by this struct
     walker: *GlobWalker,
 
-    result: std.ArrayList([:0]const u8),
+    result: std.array_list.Managed([:0]const u8),
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
     // This is a poll because we want it to enter the uSockets loop
@@ -784,7 +784,7 @@ pub const ShellGlobTask = struct {
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
             .walker = walker,
             .expansion = expansion,
-            .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
+            .result = std.array_list.Managed([:0]const u8).init(this.alloc_scope.allocator()),
         };
 
         this.ref.ref(this.event_loop);

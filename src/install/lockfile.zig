@@ -956,7 +956,7 @@ const PendingResolution = struct {
     parent: PackageID,
 };
 
-const PendingResolutions = std.ArrayList(PendingResolution);
+const PendingResolutions = std.array_list.Managed(PendingResolution);
 
 pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager, comptime update_os_cpu: bool) OOM!void {
     manager.populateManifestCache(.all) catch return;
@@ -1235,7 +1235,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             break :bytes writer_buf.list.items;
         }
 
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        var bytes = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
@@ -1539,7 +1539,7 @@ pub fn stringBuf(this: *Lockfile) String.Buf {
 
 pub const Scratch = struct {
     pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
-    pub const DependencyQueue = std.fifo.LinearFifo(DependencySlice, .Dynamic);
+    pub const DependencyQueue = bun.LinearFifo(DependencySlice, .Dynamic);
 
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,

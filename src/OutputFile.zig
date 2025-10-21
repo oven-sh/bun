@@ -133,7 +133,7 @@ pub const Value = union(Kind) {
                 const FreeContext = struct {
                     allocator: std.mem.Allocator,
 
-                    fn onFree(ctx: *@This(), buffer: *anyopaque, len: u32) callconv(.C) void {
+                    fn onFree(ctx: *@This(), buffer: *anyopaque, len: u32) callconv(.c) void {
                         ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
                         bun.destroy(ctx);
                     }

@@ -629,7 +629,7 @@ fn NewPrinter(
 
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
-        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+        binary_expression_stack: std.array_list.Managed(BinaryExpressionVisitor) = undefined,
 
         was_lazy_export: bool = false,
 
@@ -2706,7 +2706,7 @@ fn NewPrinter(
                 },
                 .e_template => |e| {
                     if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
-                        var replaced = std.ArrayList(E.TemplatePart).init(p.options.allocator);
+                        var replaced = std.array_list.Managed(E.TemplatePart).init(p.options.allocator);
                         for (e.parts, 0..) |_part, i| {
                             var part = _part;
                             const inlined_value: ?js_ast.Expr = switch (part.value.data) {
@@ -5367,7 +5367,7 @@ pub fn NewWriter(
             };
         }
 
-        pub fn stdWriter(self: *Self) std.io.Writer(*Self, error{}, stdWriterWrite) {
+        pub fn stdWriter(self: *Self) std.Io.GenericWriter(*Self, error{}, stdWriterWrite) {
             return .{ .context = self };
         }
         pub fn stdWriterWrite(self: *Self, bytes: []const u8) error{}!usize {
@@ -5774,7 +5774,7 @@ pub fn printAst(
     }
     printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
-    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
     if (!opts.bundling and
@@ -5862,7 +5862,7 @@ pub fn printJSON(
         undefined,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
-    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
@@ -5968,7 +5968,7 @@ pub fn printWithWriterAndPlatform(
     );
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
-    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
@@ -6050,7 +6050,7 @@ pub fn printCommonJS(
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
-    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
     for (tree.parts.slice()) |part| {

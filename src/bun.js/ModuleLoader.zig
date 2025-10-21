@@ -2093,7 +2093,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             ) catch "";
             defer bun.default_allocator.free(source_file);
 
-            var bufw = std.io.bufferedWriter(file.writer());
+            var bufw = bun.deprecated.bufferedWriter(file.writer());
             const w = bufw.writer();
             try w.print(
                 \\{{

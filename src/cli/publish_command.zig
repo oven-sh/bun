@@ -457,7 +457,7 @@ pub const PublishCommand = struct {
         version: string,
         registry: *const Npm.Registry.Scope,
     ) bool {
-        var url_buf = std.ArrayList(u8).init(allocator);
+        var url_buf = std.array_list.Managed(u8).init(allocator);
         defer url_buf.deinit();
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
@@ -473,7 +473,7 @@ pub const PublishCommand = struct {
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
 
-        var auth_buf = std.ArrayList(u8).init(allocator);
+        var auth_buf = std.array_list.Managed(u8).init(allocator);
         defer auth_buf.deinit();
 
         if (registry.token.len > 0) {
@@ -1052,7 +1052,7 @@ pub const PublishCommand = struct {
         if (json.asProperty("bin")) |bin_query| {
             switch (bin_query.expr.data) {
                 .e_string => |bin_str| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     const normalized = strings.withoutPrefixComptimeZ(
                         path.normalizeBufZ(
                             try bin_str.string(allocator),
@@ -1087,7 +1087,7 @@ pub const PublishCommand = struct {
                     );
                 },
                 .e_object => |bin_obj| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     for (bin_obj.properties.slice()) |bin_prop| {
                         const key = key: {
                             if (bin_prop.key) |key| {
@@ -1168,7 +1168,7 @@ pub const PublishCommand = struct {
                 const bin_dir_str = bin_query.expr.asString(allocator) orelse {
                     return;
                 };
-                var bin_props = std.ArrayList(G.Property).init(allocator);
+                var bin_props = std.array_list.Managed(G.Property).init(allocator);
                 const normalized_bin_dir = try allocator.dupeZ(
                     u8,
                     strings.withoutTrailingSlash(

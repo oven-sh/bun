@@ -3220,8 +3220,8 @@ pub const INPUT_RECORD = extern struct {
 fn Bun__UVSignalHandle__init(
     global: *bun.jsc.JSGlobalObject,
     signal_num: i32,
-    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
-) callconv(.C) ?*libuv.uv_signal_t {
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.c) void,
+) callconv(.c) ?*libuv.uv_signal_t {
     const signal = bun.new(libuv.uv_signal_t, undefined);
 
     var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
@@ -3241,11 +3241,11 @@ fn Bun__UVSignalHandle__init(
     return signal;
 }
 
-fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
-    bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
+fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.c) void {
+    bun.destroy(@as(*libuv.uv_signal_t, @ptrCast(@alignCast(signal))));
 }
 
-fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.c) void {
     _ = libuv.uv_signal_stop(signal);
     libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
 }
@@ -3922,9 +3922,9 @@ pub fn spawnWatcherChild(
             .wShowWindow = 0,
             .cbReserved2 = 0,
             .lpReserved2 = null,
-            .hStdInput = std.io.getStdIn().handle,
-            .hStdOutput = std.io.getStdOut().handle,
-            .hStdError = std.io.getStdErr().handle,
+            .hStdInput = std.fs.File.stdin().handle,
+            .hStdOutput = std.fs.File.stdout().handle,
+            .hStdError = std.fs.File.stderr().handle,
         },
         .lpAttributeList = p.ptr,
     };
@@ -3955,7 +3955,7 @@ pub fn spawnWatcherChild(
 ///
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
-fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
+fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
     if (comptime !bun.Environment.isWindows) {
         @compileError(unreachable);
     }

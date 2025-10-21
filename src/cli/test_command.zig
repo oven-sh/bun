@@ -96,7 +96,7 @@ pub const JunitReporter = struct {
                 return null;
             };
 
-            var arraylist_writer = std.ArrayList(u8).init(bun.default_allocator);
+            var arraylist_writer = std.array_list.Managed(u8).init(bun.default_allocator);
             escapeXml(hostname, arraylist_writer.writer()) catch {
                 this.hostname_value = "";
                 return null;
@@ -228,7 +228,7 @@ pub const JunitReporter = struct {
             return;
         }
 
-        var buffer = std.ArrayList(u8).init(bun.default_allocator);
+        var buffer = std.array_list.Managed(u8).init(bun.default_allocator);
         var writer = buffer.writer();
 
         try writer.writeAll(
@@ -751,7 +751,7 @@ pub const CommandLineReporter = struct {
 
                     // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
                     // This assumes that the scopes are in the correct order.
-                    var needed_suites = std.ArrayList(*bun_test.DescribeScope).init(bun.default_allocator);
+                    var needed_suites = std.array_list.Managed(*bun_test.DescribeScope).init(bun.default_allocator);
                     defer needed_suites.deinit();
 
                     for (scopes, 0..) |_, i| {
@@ -825,7 +825,7 @@ pub const CommandLineReporter = struct {
                     defer arena.deinit();
                     var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
                     const allocator = stack_fallback.get();
-                    var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
+                    var concatenated_describe_scopes = std.array_list.Managed(u8).init(allocator);
 
                     {
                         const initial_length = concatenated_describe_scopes.items.len;
@@ -960,7 +960,7 @@ pub const CommandLineReporter = struct {
 
         var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.array_list.Managed(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -1101,7 +1101,7 @@ pub const CommandLineReporter = struct {
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        const ptr = try bun.default_allocator.create(bun.deprecated.BufferedWriter(64 * 1024, bun.sys.File.Writer));
                         ptr.* = .{
                             .end = 0,
                             .unbuffered_writer = writer,
@@ -1236,7 +1236,7 @@ pub const CommandLineReporter = struct {
     }
 };
 
-export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
+export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.c) bool {
     var zig_slice: bun.jsc.ZigString.Slice = .{};
     defer zig_slice.deinit();
 
@@ -1318,10 +1318,10 @@ pub const TestCommand = struct {
         var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
         const random = if (random_instance) |*instance| instance.random() else null;
 
-        var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
+        var snapshot_file_buf = std.array_list.Managed(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
-        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
+        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -1832,7 +1832,7 @@ pub const TestCommand = struct {
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
 
-    fn timerNoop(_: *uws.Timer) callconv(.C) void {}
+    fn timerNoop(_: *uws.Timer) callconv(.c) void {}
 
     pub fn run(
         reporter: *CommandLineReporter,
@@ -1890,7 +1890,7 @@ pub const TestCommand = struct {
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
 
-            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtString(file_path)});
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();

@@ -560,7 +560,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 // this is probrably good enough for most cases
                 var stack_buffer = std.heap.stackFallback(1024, bun.default_allocator);
                 const allocator = stack_buffer.get();
-                var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                var numeric_buffer = std.array_list.Managed(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
                 numeric_buffer.items.len = 0;
                 defer numeric_buffer.deinit();
 
@@ -739,7 +739,7 @@ const PGNummericString = union(enum) {
     }
 };
 
-fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummericString {
+fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !PGNummericString {
     // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
     if (input.len < 8) return error.InvalidBuffer;
     var fixed_buffer = std.io.fixedBufferStream(input);

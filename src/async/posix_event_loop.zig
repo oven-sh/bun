@@ -480,7 +480,7 @@ pub const FilePoll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub const Formatter = std.fmt.Formatter(Flags.format);
+        pub const Formatter = std.fmt.Alt(Flags.format);
 
         pub fn format(this: Flags.Set, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var iter = this.iterator();
@@ -755,7 +755,7 @@ pub const FilePoll = struct {
         this.deactivate(event_loop_ctx.platformEventLoop());
     }
 
-    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
+    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.c) void {
         var tag = Pollable.from(tagged_pointer);
 
         if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))

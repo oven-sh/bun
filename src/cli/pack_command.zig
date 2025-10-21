@@ -1163,7 +1163,7 @@ pub const PackCommand = struct {
             };
     }
 
-    const BufferedFileReader = std.io.BufferedReader(1024 * 512, File.Reader);
+    const BufferedFileReader = bun.deprecated.BufferedReader(1024 * 512, File.Reader);
 
     pub fn pack(
         ctx: *Context,
@@ -1539,7 +1539,7 @@ pub const PackCommand = struct {
             return;
         }
 
-        var print_buf = std.ArrayList(u8).init(ctx.allocator);
+        var print_buf = std.array_list.Managed(u8).init(ctx.allocator);
         defer print_buf.deinit();
         const print_buf_writer = print_buf.writer();
 
@@ -2013,7 +2013,7 @@ pub const PackCommand = struct {
         file_reader: *BufferedFileReader,
         archive: *Archive,
         entry: *Archive.Entry,
-        print_buf: *std.ArrayList(u8),
+        print_buf: *std.array_list.Managed(u8),
         bins: []const BinInfo,
     ) OOM!*Archive.Entry {
         const print_buf_writer = print_buf.writer();
@@ -2610,7 +2610,7 @@ pub const bindings = struct {
             size: ?usize = null,
             contents: ?String = null,
         };
-        var entries_info = std.ArrayList(EntryInfo).init(bun.default_allocator);
+        var entries_info = std.array_list.Managed(EntryInfo).init(bun.default_allocator);
         defer entries_info.deinit();
 
         const archive = Archive.readNew();
@@ -2651,7 +2651,7 @@ pub const bindings = struct {
         var archive_entry: *Archive.Entry = undefined;
         var header_status = archive.readNextHeader(&archive_entry);
 
-        var read_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var read_buf = std.array_list.Managed(u8).init(bun.default_allocator);
         defer read_buf.deinit();
 
         while (header_status != .eof) : (header_status = archive.readNextHeader(&archive_entry)) {
@@ -2664,7 +2664,7 @@ pub const bindings = struct {
                 else => {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
                         const pathname_w = archive_entry.pathnameW();
-                        const list = std.ArrayList(u8).init(bun.default_allocator);
+                        const list = std.array_list.Managed(u8).init(bun.default_allocator);
                         var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, pathname_w));
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);

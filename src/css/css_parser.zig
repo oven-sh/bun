@@ -3138,7 +3138,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
 
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
             const result = this.toCssWithWriterImpl(allocator, W, &printer, options) catch {
                 bun.assert(printer.error_kind != null);
                 return .{
@@ -3494,7 +3494,7 @@ pub const StyleAttribute = struct {
         const writer = dest.writer(allocator);
         var printer = Printer(@TypeOf(writer)).new(
             allocator,
-            std.ArrayList(u8).init(allocator),
+            std.array_list.Managed(u8).init(allocator),
             writer,
             options,
             import_info,
@@ -6446,12 +6446,12 @@ const Dimension = struct {
 
 const CopyOnWriteStr = union(enum) {
     borrowed: []const u8,
-    owned: std.ArrayList(u8),
+    owned: std.array_list.Managed(u8),
 
     pub fn append(this: *@This(), allocator: Allocator, slice: []const u8) void {
         switch (this.*) {
             .borrowed => {
-                var list = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.borrowed.len + slice.len));
+                var list = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, this.borrowed.len + slice.len));
                 list.appendSliceAssumeCapacity(this.borrowed);
                 list.appendSliceAssumeCapacity(slice);
                 this.* = .{ .owned = list };
@@ -7005,7 +7005,7 @@ pub const to_css = struct {
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
+        var printer = Printer(W).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),

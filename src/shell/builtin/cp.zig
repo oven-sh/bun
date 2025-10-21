@@ -759,4 +759,4 @@ const Syscall = bun.sys;
 const Maybe = bun.sys.Maybe;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;

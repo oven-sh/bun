@@ -705,7 +705,7 @@ pub const serialize = struct {
                 if (dest.minify) {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
-                    var id = std.ArrayList(u8).init(dest.allocator);
+                    var id = std.array_list.Managed(u8).init(dest.allocator);
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 

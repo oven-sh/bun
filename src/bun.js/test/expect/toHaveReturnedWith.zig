@@ -19,7 +19,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
     var pass = false;
 
-    var successful_returns = std.ArrayList(JSValue).init(globalThis.bunVM().allocator);
+    var successful_returns = std.array_list.Managed(JSValue).init(globalThis.bunVM().allocator);
     defer successful_returns.deinit();
 
     var has_errors = false;

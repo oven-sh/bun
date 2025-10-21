@@ -49,7 +49,7 @@ pub const TransformList = struct {
             const base_writer = base.writer(dest.allocator);
             const WW = @TypeOf(base_writer);
 
-            var scratchbuf = std.ArrayList(u8).init(dest.allocator);
+            var scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
             defer scratchbuf.deinit();
             var p = Printer(WW).new(
                 dest.allocator,

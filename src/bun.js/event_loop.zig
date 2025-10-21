@@ -110,7 +110,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
     return this.virtual_machine.rareData().pipeReadBuffer();
 }
 
-pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+pub const Queue = bun.LinearFifo(Task, .Dynamic);
 const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
@@ -429,7 +429,7 @@ pub fn tickPossiblyForever(this: *EventLoop) void {
     this.tick();
 }
 
-fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
+fn noopForeverTimer(_: *uws.Timer) callconv(.c) void {
     // do nothing
 }
 

@@ -910,7 +910,7 @@ pub const PseudoClass = union(enum) {
         // PERF(alloc): I don't like making these little allocations
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
-        const scratchbuf = std.ArrayList(u8).init(dest.allocator);
+        const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
         var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
@@ -1633,7 +1633,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 defer arraylist.deinit(bun.default_allocator);
                 const symbols = bun.ast.Symbol.Map{};
                 const P = css.Printer(@TypeOf(w));
-                var printer = P.new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
+                var printer = P.new(bun.default_allocator, std.array_list.Managed(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
                 defer printer.deinit();
                 P.in_debug_fmt = true;
                 defer P.in_debug_fmt = false;
@@ -2517,7 +2517,7 @@ pub const PseudoElement = union(enum) {
         // PERF(alloc): I don't like making small allocations here for the string.
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
-        const scratchbuf = std.ArrayList(u8).init(dest.allocator);
+        const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
         var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
@@ -2743,7 +2743,7 @@ pub fn parse_one_simple_selector(
                                 var result = ArrayList(Impl.SelectorImpl.Identifier).initCapacity(
                                     self.parser.allocator,
                                     // TODO: source does this, should see if initializing to 1 is actually better
-                                    // when appending empty std.ArrayList(T), it will usually initially reserve 8 elements,
+                                    // when appending empty std.array_list.Managed(T), it will usually initially reserve 8 elements,
                                     // maybe that's unnecessary, or maybe smallvec is gud here
                                     1,
                                 ) catch unreachable;

@@ -102,7 +102,7 @@ pub const CallFrame = opaque {
             number: f64, // double
             integer: i64, // integer
         };
-        const registers: [*]const Register = @alignCast(@ptrCast(self));
+        const registers: [*]const Register = @ptrCast(@alignCast(self));
         // argumentCountIncludingThis takes the register at the defined offset, then
         // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'

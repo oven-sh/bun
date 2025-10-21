@@ -49,7 +49,7 @@ pub const DeclarationBlock = struct {
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
             var symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.array_list.Managed(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);

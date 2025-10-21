@@ -8,7 +8,7 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
-const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
+const BufferedWriter = bun.deprecated.BufferedWriter(4096, Output.WriterType);
 error_writer: BufferedWriter,
 writer: BufferedWriter,
 default_indent: u16 = 0,
@@ -295,7 +295,7 @@ pub const TablePrinter = struct {
 
         pub const WriteError = error{};
 
-        pub const Writer = std.io.Writer(
+        pub const Writer = std.Io.GenericWriter(
             VisibleCharacterCounter,
             VisibleCharacterCounter.WriteError,
             VisibleCharacterCounter.write,
@@ -335,7 +335,7 @@ pub const TablePrinter = struct {
     }
 
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
-    fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
+    fn updateColumnsForRow(this: *TablePrinter, columns: *std.array_list.Managed(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
             .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
@@ -416,7 +416,7 @@ pub const TablePrinter = struct {
         comptime Writer: type,
         writer: Writer,
         comptime enable_ansi_colors: bool,
-        columns: *std.ArrayList(Column),
+        columns: *std.array_list.Managed(Column),
         row_key: RowKey,
         row_value: JSValue,
     ) !void {
@@ -501,7 +501,7 @@ pub const TablePrinter = struct {
         const globalObject = this.globalObject;
 
         var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
-        var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
+        var columns = try std.array_list.Managed(Column).initCapacity(stack_fallback.get(), 16);
         defer {
             for (columns.items) |*col| {
                 col.name.deref();
@@ -537,7 +537,7 @@ pub const TablePrinter = struct {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns };
                 try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
-                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.c) void {
                         updateColumnsForRow(ctx.this, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
                         };
@@ -611,7 +611,7 @@ pub const TablePrinter = struct {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: Writer, idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = writer };
                 try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
-                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.c) void {
                         printRow(ctx.this, Writer, ctx.writer, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
                         };
@@ -1748,7 +1748,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             count: usize = 0,
-            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line and this.count > 0) {
@@ -1822,7 +1822,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             is_first: bool = true,
-            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line) {
@@ -1898,7 +1898,7 @@ pub const Formatter = struct {
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 if (key.eqlComptime("constructor")) return;
 
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);

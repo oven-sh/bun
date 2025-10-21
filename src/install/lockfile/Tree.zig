@@ -657,7 +657,7 @@ pub const FillItem = struct {
     hoist_root_id: Tree.Id,
 };
 
-pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
+pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
 
 const string = []const u8;
 const stringZ = [:0]const u8;

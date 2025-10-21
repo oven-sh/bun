@@ -959,16 +959,16 @@ pub const InsertionContext = struct {
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
             fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
             fn onRouterSyntaxError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterSyntaxError")) @panic("TODO: onRouterSyntaxError for " ++ @typeName(T));
                 return try cast_ctx.onRouterSyntaxError(rel_path, log);
             }
             fn onRouterCollisionError(opaque_ctx: *anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterCollisionError")) @panic("TODO: onRouterCollisionError for " ++ @typeName(T));
                 return try cast_ctx.onRouterCollisionError(rel_path, other_id, file_kind);
             }
@@ -1339,7 +1339,7 @@ pub const JSFrameworkRouter = struct {
         } orelse
             return .null;
 
-        var rendered = try std.ArrayList(u8).initCapacity(alloc, filepath.slice().len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(alloc, filepath.slice().len);
         for (parsed.parts) |part| try part.toStringForInternalUse(rendered.writer());
 
         var out = bun.String.init(rendered.items);
@@ -1350,7 +1350,7 @@ pub const JSFrameworkRouter = struct {
     }
 
     fn encodedPatternToJS(global: *JSGlobalObject, pattern: EncodedPattern, temp_allocator: Allocator) !JSValue {
-        var rendered = try std.ArrayList(u8).initCapacity(temp_allocator, pattern.data.len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(temp_allocator, pattern.data.len);
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
@@ -1359,7 +1359,7 @@ pub const JSFrameworkRouter = struct {
     }
 
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
-        var rendered = std.ArrayList(u8).init(temp_allocator);
+        var rendered = std.array_list.Managed(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);

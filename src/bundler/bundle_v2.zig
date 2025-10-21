@@ -87,7 +87,7 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
         path_clone.pretty = std.fmt.bufPrint(buf, "{s}{}:{s}", .{
             if (target == .bake_server_components_ssr) "ssr:" else "",
             // make sure that a namespace including a colon wont collide with anything
-            std.fmt.Formatter(fmtEscapedNamespace){ .data = path.namespace },
+            std.fmt.Alt(fmtEscapedNamespace){ .data = path.namespace },
             path.text,
         }) catch buf[0..];
         return path_clone.dupeAllocFixPretty(allocator);
@@ -125,7 +125,7 @@ pub const BundleV2 = struct {
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
     /// Allocations not tracked by a threadlocal heap
-    free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
+    free_list: std.array_list.Managed([]const u8) = std.array_list.Managed([]const u8).init(bun.default_allocator),
 
     /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
@@ -265,7 +265,7 @@ pub const BundleV2 = struct {
     }
 
     const ReachableFileVisitor = struct {
-        reachable: std.ArrayList(Index),
+        reachable: std.array_list.Managed(Index),
         visited: bun.bit_set.DynamicBitSet,
         all_import_records: []ImportRecord.List,
         all_loaders: []const Loader,
@@ -395,7 +395,7 @@ pub const BundleV2 = struct {
         const all_urls_for_css = this.graph.ast.items(.url_for_css);
 
         var visitor = ReachableFileVisitor{
-            .reachable = try std.ArrayList(Index).initCapacity(this.allocator(), this.graph.entry_points.items.len + 1),
+            .reachable = try std.array_list.Managed(Index).initCapacity(this.allocator(), this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.allocator(), this.graph.input_files.len),
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
@@ -1482,7 +1482,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1536,7 +1536,7 @@ pub const BundleV2 = struct {
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
             try this.getAllDependencies(reachable_files, fetch);
-            return std.ArrayList(options.OutputFile).init(alloc);
+            return std.array_list.Managed(options.OutputFile).init(alloc);
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);
@@ -1548,7 +1548,7 @@ pub const BundleV2 = struct {
         bake_options: BakeOptions,
         alloc: std.mem.Allocator,
         event_loop: EventLoop,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         var this = try BundleV2.init(
             server_transpiler,
             bake_options,
@@ -1596,7 +1596,7 @@ pub const BundleV2 = struct {
         );
 
         if (chunks.len == 0) {
-            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            return std.array_list.Managed(options.OutputFile).init(bun.default_allocator);
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);
@@ -1627,7 +1627,7 @@ pub const BundleV2 = struct {
             const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
             const sources: []const Logger.Source = this.graph.input_files.items(.source);
             const targets: []const options.Target = this.graph.ast.items(.target);
-            var additional_output_files = std.ArrayList(options.OutputFile).init(this.transpiler.allocator);
+            var additional_output_files = std.array_list.Managed(options.OutputFile).init(this.transpiler.allocator);
 
             const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
             const loaders = this.graph.input_files.items(.loader);
@@ -1750,7 +1750,7 @@ pub const BundleV2 = struct {
     }
 
     pub const BuildResult = struct {
-        output_files: std.ArrayList(options.OutputFile),
+        output_files: std.array_list.Managed(options.OutputFile),
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1937,7 +1937,7 @@ pub const BundleV2 = struct {
             bun.destroy(this);
         }
 
-        fn doCompilation(this: *JSBundleCompletionTask, output_files: *std.ArrayList(options.OutputFile)) bun.StandaloneModuleGraph.CompileResult {
+        fn doCompilation(this: *JSBundleCompletionTask, output_files: *std.array_list.Managed(options.OutputFile)) bun.StandaloneModuleGraph.CompileResult {
             const compile_options = &(this.config.compile orelse @panic("Unexpected: No compile options provided"));
 
             const entry_point_index: usize = brk: {
@@ -2353,7 +2353,7 @@ pub const BundleV2 = struct {
                         .clone_line_text = false,
                         .errors = @intFromBool(msg.kind == .err),
                         .warnings = @intFromBool(msg.kind == .warn),
-                        .msgs = std.ArrayList(Logger.Msg).fromOwnedSlice(this.allocator(), (&msg_mut)[0..1]),
+                        .msgs = std.array_list.Managed(Logger.Msg).fromOwnedSlice(this.allocator(), (&msg_mut)[0..1]),
                     };
                     dev.handleParseTaskFailure(
                         error.Plugin,
@@ -2599,7 +2599,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.errors > 0) {
@@ -4210,7 +4210,7 @@ pub const CrossChunkImport = struct {
         return std.math.order(a.chunk_index, b.chunk_index) == .lt;
     }
 
-    pub const List = std.ArrayList(CrossChunkImport);
+    pub const List = std.array_list.Managed(CrossChunkImport);
 
     pub fn sortedCrossChunkImports(
         list: *List,
@@ -4455,7 +4455,7 @@ pub fn generateUniqueKey() u64 {
 }
 
 const ExternalFreeFunctionAllocator = struct {
-    free_callback: *const fn (ctx: *anyopaque) callconv(.C) void,
+    free_callback: *const fn (ctx: *anyopaque) callconv(.c) void,
     context: *anyopaque,
 
     const vtable: std.mem.Allocator.VTable = .{
@@ -4465,7 +4465,7 @@ const ExternalFreeFunctionAllocator = struct {
         .remap = &std.mem.Allocator.noRemap,
     };
 
-    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
+    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.c) void, context: *anyopaque) std.mem.Allocator {
         return .{
             .ptr = bun.create(bun.default_allocator, ExternalFreeFunctionAllocator, .{
                 .free_callback = free_callback,
@@ -4480,7 +4480,7 @@ const ExternalFreeFunctionAllocator = struct {
     }
 
     fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
-        const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
+        const info: *ExternalFreeFunctionAllocator = @ptrCast(@alignCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);
     }

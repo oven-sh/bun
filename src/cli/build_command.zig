@@ -24,10 +24,10 @@ pub const BuildCommand = struct {
             const compile_define_values = compile_target.defineValues();
 
             if (ctx.args.define) |*define| {
-                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                var keys = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
-                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                var values = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
                 values.appendSliceAssumeCapacity(compile_define_values);
                 values.appendSliceAssumeCapacity(define.values);
 

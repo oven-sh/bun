@@ -86,7 +86,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 
 pub const ResourceUsage = @import("./subprocess/ResourceUsage.zig");
 
-pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
+pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.array_list.Managed(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
     var object_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
@@ -131,7 +131,7 @@ pub const StdioKind = enum {
     }
 };
 
-pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
+pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.c) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
     _ = this.tryKill(this.killSignal);
@@ -247,7 +247,7 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
     }
 }
 
-pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
+pub fn hasPendingActivity(this: *Subprocess) callconv(.c) bool {
     return this.has_pending_activity.load(.acquire);
 }
 
@@ -631,7 +631,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (existing_stdin_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
-                    stdin = @alignCast(@ptrCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
+                    stdin = @ptrCast(@alignCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
                 if (!this.flags.is_stdin_a_readable_stream) {
@@ -758,7 +758,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
+fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }
@@ -804,7 +804,7 @@ fn clearAbortSignal(this: *Subprocess) void {
     }
 }
 
-pub fn finalize(this: *Subprocess) callconv(.C) void {
+pub fn finalize(this: *Subprocess) callconv(.c) void {
     log("finalize", .{});
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which
@@ -941,7 +941,7 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
     };
 }
 
-fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
+fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.array_list.Managed(?[*:0]const u8)) bun.JSError!void {
     var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
@@ -1012,13 +1012,13 @@ pub fn spawnMaybeSync(
     var on_exit_callback = JSValue.zero;
     var on_disconnect_callback = JSValue.zero;
     var PATH = jsc_vm.transpiler.env.get("PATH") orelse "";
-    var argv = std.ArrayList(?[*:0]const u8).init(allocator);
+    var argv = std.array_list.Managed(?[*:0]const u8).init(allocator);
     var cmd_value = JSValue.zero;
     var detached = false;
     var args = args_;
     var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
     var ipc_callback: JSValue = .zero;
-    var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;

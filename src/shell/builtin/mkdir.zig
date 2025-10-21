@@ -398,4 +398,4 @@ const ExitCode = shell.ExitCode;
 const Yield = bun.shell.Yield;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;

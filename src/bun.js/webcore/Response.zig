@@ -92,7 +92,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
-pub fn estimatedSize(this: *Response) callconv(.C) usize {
+pub fn estimatedSize(this: *Response) callconv(.c) usize {
     return this.#reported_estimated_size;
 }
 
@@ -466,7 +466,7 @@ pub fn unref(this: *Response) void {
 
 pub fn finalize(
     this: *Response,
-) callconv(.C) void {
+) callconv(.c) void {
     this.#js_ref.finalize();
     this.unref();
 }
@@ -540,7 +540,7 @@ pub fn constructJSON(
                 defer str.deref();
                 response.#body.value = .{
                     .InternalBlob = InternalBlob{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                        .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
                         .was_string = true,
                     },
                 };

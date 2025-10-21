@@ -279,7 +279,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
     }
 }
 
-fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
+fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.array_list.Managed(OptionDefinition)) bun.JSError!void {
     try validators.validateObject(globalThis, options_obj, "options", .{}, .{});
 
     var iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
@@ -679,7 +679,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     // Phase 0.C: Parse the options definitions
 
     var options_defs_allocator = std.heap.stackFallback(2048, globalThis.allocator());
-    var option_defs = std.ArrayList(OptionDefinition).init(options_defs_allocator.get());
+    var option_defs = std.array_list.Managed(OptionDefinition).init(options_defs_allocator.get());
     defer option_defs.deinit();
 
     if (!config_options.isUndefinedOrNull()) {

@@ -25,11 +25,11 @@ parent: ParentPtr,
 spawn_arena: bun.ArenaAllocator,
 spawn_arena_freed: bool = false,
 
-args: std.ArrayList(?[*:0]const u8),
+args: std.array_list.Managed(?[*:0]const u8),
 
 /// If the cmd redirects to a file we have to expand that string.
 /// Allocated in `spawn_arena`
-redirection_file: std.ArrayList(u8),
+redirection_file: std.array_list.Managed(u8),
 redirection_fd: ?*CowFd = null,
 
 /// The underlying state to manage the command (builtin or subprocess)
@@ -246,8 +246,8 @@ pub fn init(
         .state = .idle,
     };
     cmd.spawn_arena = bun.ArenaAllocator.init(cmd.base.allocator());
-    cmd.args = bun.handleOom(std.ArrayList(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len));
-    cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
+    cmd.args = bun.handleOom(std.array_list.Managed(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len));
+    cmd.redirection_file = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
 
     return cmd;
 }
@@ -284,7 +284,7 @@ pub fn next(this: *Cmd) Yield {
                     continue;
                 };
 
-                this.redirection_file = std.ArrayList(u8).init(this.spawn_arena.allocator());
+                this.redirection_file = std.array_list.Managed(u8).init(this.spawn_arena.allocator());
 
                 Expansion.init(
                     this.base.interpreter,

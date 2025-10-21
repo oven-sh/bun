@@ -1291,12 +1291,12 @@ pub fn spawnOpts(
     };
 }
 
-pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
-    var stdout = std.ArrayList(u8).init(bun.default_allocator);
-    var stderr = std.ArrayList(u8).init(bun.default_allocator);
+pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.jsc.Node.Maybe(std.array_list.Managed(u8), std.array_list.Managed(u8)) {
+    var stdout = std.array_list.Managed(u8).init(bun.default_allocator);
+    var stderr = std.array_list.Managed(u8).init(bun.default_allocator);
 
-    std.mem.swap(std.ArrayList(u8), &stdout, &result.stdout);
-    std.mem.swap(std.ArrayList(u8), &stderr, &result.stderr);
+    std.mem.swap(std.array_list.Managed(u8), &stdout, &result.stdout);
+    std.mem.swap(std.array_list.Managed(u8), &stderr, &result.stderr);
 
     var deinit_stdout = true;
     var deinit_stderr = true;
@@ -1359,7 +1359,7 @@ pub fn gitDiffInternal(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,
-) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+) !bun.jsc.Node.Maybe(std.array_list.Managed(u8), std.array_list.Managed(u8)) {
     const paths = gitDiffPreprocessPaths(allocator, old_folder_, new_folder_, false);
     const old_folder = paths[0];
     const new_folder = paths[1];
@@ -1447,7 +1447,7 @@ pub fn gitDiffInternal(
 ///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
 ///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
 ///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
-fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_folder: []const u8) !void {
+fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u8, new_folder: []const u8) !void {
     const old_folder_trimmed = std.mem.trim(u8, old_folder, "/");
     const new_folder_trimmed = std.mem.trim(u8, new_folder, "/");
 

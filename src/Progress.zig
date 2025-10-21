@@ -177,7 +177,7 @@ pub const Node = struct {
 /// API to return Progress rather than accept it as a parameter.
 /// `estimated_total_items` value of 0 means unknown.
 pub fn start(self: *Progress, name: []const u8, estimated_total_items: usize) *Node {
-    const stderr = std.io.getStdErr();
+    const stderr = std.fs.File.stderr();
     self.terminal = null;
     if (stderr.supportsAnsiEscapeCodes()) {
         self.terminal = stderr;

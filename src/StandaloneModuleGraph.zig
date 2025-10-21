@@ -394,11 +394,11 @@ pub const StandaloneModuleGraph = struct {
 
         try string_builder.allocate(allocator);
 
-        var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
+        var modules = try std.array_list.Managed(CompiledModuleGraphFile).initCapacity(allocator, module_count);
 
-        var source_map_header_list = std.ArrayList(u8).init(allocator);
+        var source_map_header_list = std.array_list.Managed(u8).init(allocator);
         defer source_map_header_list.deinit();
-        var source_map_string_list = std.ArrayList(u8).init(allocator);
+        var source_map_string_list = std.array_list.Managed(u8).init(allocator);
         defer source_map_string_list.deinit();
         var source_map_arena = bun.ArenaAllocator.init(allocator);
         defer source_map_arena.deinit();
@@ -744,7 +744,7 @@ pub const StandaloneModuleGraph = struct {
 
                 var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
-                const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
+                const BufferedWriter = bun.deprecated.BufferedWriter(512 * 1024, @TypeOf(writer));
                 var buffered_writer = bun.handleOom(bun.default_allocator.create(BufferedWriter));
                 buffered_writer.* = .{
                     .unbuffered_writer = writer,
@@ -1448,8 +1448,8 @@ pub const StandaloneModuleGraph = struct {
     };
 
     pub fn serializeJsonSourceMapForStandalone(
-        header_list: *std.ArrayList(u8),
-        string_payload: *std.ArrayList(u8),
+        header_list: *std.array_list.Managed(u8),
+        string_payload: *std.array_list.Managed(u8),
         arena: std.mem.Allocator,
         json_source: []const u8,
     ) !void {

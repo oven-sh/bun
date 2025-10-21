@@ -209,7 +209,7 @@ pub fn shellEscape(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
-    var outbuf = std.ArrayList(u8).init(bun.default_allocator);
+    var outbuf = std.array_list.Managed(u8).init(bun.default_allocator);
     defer outbuf.deinit();
 
     if (bun.shell.needsEscapeBunstr(bunstr)) {
@@ -266,10 +266,10 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
         return bun.String.toJSArray(global, &.{brace_str});
     }
 
-    var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
+    var expanded_strings = try arena.allocator().alloc(std.array_list.Managed(u8), expansion_count);
 
     for (0..expansion_count) |i| {
-        expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
+        expanded_strings[i] = std.array_list.Managed(u8).init(arena.allocator());
     }
 
     Braces.expand(
@@ -767,7 +767,7 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 pub fn gc(vm: *jsc.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
-export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.C) usize {
+export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.c) usize {
     return @call(.always_inline, gc, .{ vm, sync });
 }
 
@@ -846,7 +846,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
     if (query_string.len > 0) {
         var stack = std.heap.stackFallback(1024, ctx.allocator());
         const allocator = stack.get();
-        var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+        var arraylist = std.array_list.Managed(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
         try arraylist.writer().print("{any}{any}", .{
             errorable.result.value,
@@ -1246,7 +1246,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     };
 
     const S = struct {
-        pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
+        pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.c) void {
             _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     };
@@ -1328,7 +1328,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = bun.handleOom(std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len));
+    var sort_indices = bun.handleOom(std.array_list.Managed(u32).initCapacity(bun.default_allocator, unsorted_files.len));
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -2005,7 +2005,7 @@ comptime {
 const string = []const u8;
 
 // LazyProperty initializers for stdin/stderr/stdout
-pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdin();
     store.ref();
@@ -2015,7 +2015,7 @@ pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue 
     return blob.toJS(globalThis);
 }
 
-pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stderr();
     store.ref();
@@ -2025,7 +2025,7 @@ pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     return blob.toJS(globalThis);
 }
 
-pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdout();
     store.ref();

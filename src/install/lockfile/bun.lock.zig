@@ -54,7 +54,7 @@ pub const Stringifier = struct {
         defer found_patched_dependencies.deinit(allocator);
         try found_patched_dependencies.ensureTotalCapacity(allocator, @truncate(lockfile.patched_dependencies.count()));
 
-        var optional_peers_buf = std.ArrayList(String).init(allocator);
+        var optional_peers_buf = std.array_list.Managed(String).init(allocator);
         defer optional_peers_buf.deinit();
 
         var pkg_map = PkgMap(void).init(allocator);
@@ -666,7 +666,7 @@ pub const Stringifier = struct {
         meta: *const Meta,
         bin: *const Install.Bin,
         buf: string,
-        optional_peers_buf: *std.ArrayList(String),
+        optional_peers_buf: *std.array_list.Managed(String),
         extern_strings: []const ExternalString,
         pkg_map: *const PkgMap(void),
         relative_path: string,
@@ -810,7 +810,7 @@ pub const Stringifier = struct {
         extern_strings: []const ExternalString,
         deps_buf: []const Dependency,
         workspace_versions: BinaryLockfile.VersionHashMap,
-        optional_peers_buf: *std.ArrayList(String),
+        optional_peers_buf: *std.array_list.Managed(String),
         pkg_map: *const PkgMap(void),
         relative_path: string,
         path_buf: []u8,

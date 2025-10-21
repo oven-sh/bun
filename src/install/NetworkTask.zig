@@ -204,7 +204,7 @@ pub fn forManifest(
             },
         );
         header_builder.header_count = 1;
-        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @constCast(@ptrCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
+        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrCast(@constCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
     }
 
     this.response_buffer = try MutableString.init(allocator, 0);

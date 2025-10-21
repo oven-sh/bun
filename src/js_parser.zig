@@ -1259,7 +1259,7 @@ pub const T = js_lexer.T;
 pub const std = @import("std");
 pub const AutoHashMap = std.AutoHashMap;
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;
 
 const _runtime = @import("./runtime.zig");

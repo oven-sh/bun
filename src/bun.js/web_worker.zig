@@ -216,7 +216,7 @@ pub fn create(
 
     const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-    var preloads = bun.handleOom(std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
+    var preloads = bun.handleOom(std.array_list.Managed([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
     for (preload_modules) |module| {
         const utf8_slice = module.toUTF8(bun.default_allocator);
         defer utf8_slice.deinit();
@@ -290,7 +290,7 @@ pub fn start(
     var transform_options = this.parent.transpiler.options.transform_options;
 
     if (this.execArgv) |exec_argv| parse_new_args: {
-        var new_args: std.ArrayList([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
+        var new_args: std.array_list.Managed([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
         defer {
             for (new_args.items) |arg| {
                 bun.default_allocator.free(arg);

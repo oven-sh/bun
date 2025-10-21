@@ -47,7 +47,7 @@ pub fn runTasks(
                         if (ptask.callback.apply.install_context) |*ctx| {
                             var installer: *PackageInstaller = extract_ctx;
                             const path = ctx.path;
-                            ctx.path = std.ArrayList(u8).init(bun.default_allocator);
+                            ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
                             const pkg_id = ptask.callback.apply.pkg_id;

@@ -211,7 +211,7 @@ pub fn deinit(this: *@This()) void {
     this.#requests.deinit();
 }
 
-const Queue = std.fifo.LinearFifo(*JSMySQLQuery, .Dynamic);
+const Queue = bun.LinearFifo(*JSMySQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.MySQLRequestQueue, .visible);
 

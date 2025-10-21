@@ -127,7 +127,7 @@ pub const InstallCompletionsCommand = struct {
 
         var cwd_buf: bun.PathBuffer = undefined;
 
-        var stdout = std.io.getStdOut();
+        var stdout = std.fs.File.stdout();
 
         var shell = ShellCompletions.Shell.unknown;
         if (bun.getenvZ("SHELL")) |shell_name| {

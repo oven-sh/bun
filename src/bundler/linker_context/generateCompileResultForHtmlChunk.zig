@@ -42,7 +42,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         chunk: *Chunk,
         chunks: []Chunk,
         minify_whitespace: bool,
-        output: std.ArrayList(u8),
+        output: std.array_list.Managed(u8),
         end_tag_indices: struct {
             head: ?u32 = 0,
             body: ?u32 = 0,
@@ -157,8 +157,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return array;
         }
 
-        fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -167,8 +167,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return .@"continue";
         }
 
-        fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -177,8 +177,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return .@"continue";
         }
 
-        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -201,7 +201,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .minify_whitespace = c.options.minify_whitespace,
         .chunk = chunk,
         .chunks = chunks,
-        .output = std.ArrayList(u8).init(output_allocator),
+        .output = std.array_list.Managed(u8).init(output_allocator),
         .current_import_record_index = 0,
         .end_tag_indices = .{
             .html = null,

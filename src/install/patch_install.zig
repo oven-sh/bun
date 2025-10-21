@@ -68,7 +68,7 @@ pub const PatchTask = struct {
         install_context: ?struct {
             dependency_id: DependencyID,
             tree_id: Lockfile.Tree.Id,
-            path: std.ArrayList(u8),
+            path: std.array_list.Managed(u8),
         } = null,
         // dependency_id: ?struct = null,
 
@@ -282,7 +282,7 @@ pub const PatchTask = struct {
         const pkg_name = this.callback.apply.pkgname;
 
         const dummy_node_modules: PackageManager.PackageInstaller.NodeModulesFolder = .{
-            .path = std.ArrayList(u8).init(this.manager.allocator),
+            .path = std.array_list.Managed(u8).init(this.manager.allocator),
             .tree_id = 0,
         };
 

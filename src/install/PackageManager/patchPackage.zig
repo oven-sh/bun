@@ -358,7 +358,7 @@ pub fn doPatchCommit(
             .err => |stderr| {
                 defer stderr.deinit();
                 const Truncate = struct {
-                    stderr: std.ArrayList(u8),
+                    stderr: std.array_list.Managed(u8),
 
                     pub fn format(
                         this: *const @This(),
@@ -803,7 +803,7 @@ fn pkgInfoForNameAndVersion(
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
     var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
-    var pairs = bun.handleOom(std.ArrayList(IdPair).initCapacity(sfb.get(), 8));
+    var pairs = bun.handleOom(std.array_list.Managed(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
 
     const name_hash = String.Builder.stringHash(name);

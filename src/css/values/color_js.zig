@@ -412,7 +412,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
             const symbols = bun.ast.Symbol.Map{};
             var printer = css.Printer(@TypeOf(writer)).new(
                 allocator,
-                std.ArrayList(u8).init(allocator),
+                std.array_list.Managed(u8).init(allocator),
                 writer,
                 css.PrinterOptions.default(),
                 null,

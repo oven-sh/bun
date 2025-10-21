@@ -790,7 +790,7 @@ pub const Valid = struct {
 
 pub const VectorArrayBuffer = struct {
     value: jsc.JSValue,
-    buffers: std.ArrayList(bun.PlatformIOVec),
+    buffers: std.array_list.Managed(bun.PlatformIOVec),
 
     pub fn toJS(this: VectorArrayBuffer, _: *jsc.JSGlobalObject) jsc.JSValue {
         return this.value;
@@ -801,7 +801,7 @@ pub const VectorArrayBuffer = struct {
             return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
         }
 
-        var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
+        var bufferlist = std.array_list.Managed(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
         bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));

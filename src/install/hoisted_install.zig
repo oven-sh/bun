@@ -154,7 +154,7 @@ pub fn installHoistedPackages(
                 .lockfile = this.lockfile,
                 .node = &install_node,
                 .node_modules = .{
-                    .path = std.ArrayList(u8).fromOwnedSlice(
+                    .path = std.array_list.Managed(u8).fromOwnedSlice(
                         this.allocator,
                         try this.allocator.dupe(
                             u8,

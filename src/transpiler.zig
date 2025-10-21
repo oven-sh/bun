@@ -286,7 +286,7 @@ pub const Transpiler = struct {
     result: options.TransformResult,
     resolver: Resolver,
     fs: *Fs.FileSystem,
-    output_files: std.ArrayList(options.OutputFile),
+    output_files: std.array_list.Managed(options.OutputFile),
     resolve_results: *ResolveResults,
     resolve_queue: ResolveQueue,
     elapsed: u64 = 0,
@@ -432,7 +432,7 @@ pub const Transpiler = struct {
             .result = options.TransformResult{ .outbase = bundle_options.output_dir },
             .resolve_results = resolve_results,
             .resolve_queue = ResolveQueue.init(allocator),
-            .output_files = std.ArrayList(options.OutputFile).init(allocator),
+            .output_files = std.array_list.Managed(options.OutputFile).init(allocator),
             .env = env_loader,
         };
     }
@@ -1452,7 +1452,7 @@ pub const Transpiler = struct {
         const did_start = false;
 
         if (transpiler.options.output_dir_handle == null) {
-            const outstream = bun.sys.File.from(std.io.getStdOut());
+            const outstream = bun.sys.File.from(std.fs.File.stdout());
 
             if (!did_start) {
                 try switch (transpiler.options.import_path_format) {
@@ -1562,9 +1562,9 @@ pub const ResolveResults = std.AutoHashMap(
     u64,
     void,
 );
-pub const ResolveQueue = std.fifo.LinearFifo(
+pub const ResolveQueue = bun.LinearFifo(
     _resolver.Result,
-    std.fifo.LinearFifoBufferType.Dynamic,
+    .Dynamic,
 );
 
 const string = []const u8;

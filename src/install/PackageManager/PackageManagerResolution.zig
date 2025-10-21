@@ -42,8 +42,8 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
     ) orelse &this.options.scope;
 }
 
-pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
-    var list = std.ArrayList(Semver.Version).init(allocator);
+pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.array_list.Managed(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(Semver.Version) {
+    var list = std.array_list.Managed(Semver.Version).init(allocator);
     var dir = this.getCacheDirectory().openDir(package_name, .{
         .iterate = true,
     }) catch |err| switch (err) {
@@ -89,7 +89,7 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
     const arena_alloc = arena.allocator();
     var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
     const allocator = stack_fallback.get();
-    var tags_buf = std.ArrayList(u8).init(allocator);
+    var tags_buf = std.array_list.Managed(u8).init(allocator);
     const installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
         Output.debug("error getting installed versions from disk cache: {s}", .{bun.span(@errorName(err))});
         return null;

@@ -43,7 +43,7 @@ pub fn allocator(self: *Self) std.mem.Allocator {
 
 pub fn from(allocator_: std.mem.Allocator) ?*Self {
     if (allocator_.vtable == AllocatorInterface.VTable) {
-        return @alignCast(@ptrCast(allocator_.ptr));
+        return @ptrCast(@alignCast(allocator_.ptr));
     }
 
     return null;
@@ -61,9 +61,9 @@ const AllocatorInterface = struct {
         _: std.mem.Alignment,
         _: usize,
     ) void {
-        var self: *Self = @alignCast(@ptrCast(ptr));
+        var self: *Self = @ptrCast(@alignCast(ptr));
         defer self.deref();
-        bun.sys.munmap(@alignCast(@ptrCast(buf))).unwrap() catch |err| {
+        bun.sys.munmap(@ptrCast(@alignCast(buf))).unwrap() catch |err| {
             bun.Output.debugWarn("Failed to munmap memfd: {}", .{err});
         };
     }

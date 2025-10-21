@@ -589,7 +589,7 @@ pub const CopyFileWindows = struct {
         destination_fd: bun.FileDescriptor = bun.invalid_fd,
         must_close_destination_fd: bool = false,
         written: usize = 0,
-        read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        read_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
         pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
@@ -625,7 +625,7 @@ pub const CopyFileWindows = struct {
             return .success;
         }
 
-        fn onRead(req: *libuv.fs_t) callconv(.C) void {
+        fn onRead(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 
@@ -673,7 +673,7 @@ pub const CopyFileWindows = struct {
             }
         }
 
-        fn onWrite(req: *libuv.fs_t) callconv(.C) void {
+        fn onWrite(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
             const buf = &this.read_write_loop.read_buf.items;
@@ -1006,7 +1006,7 @@ pub const CopyFileWindows = struct {
         promise.reject(globalThis, err_instance) catch {}; // TODO: properly propagate exception upwards
     }
 
-    fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
+    fn onCopyFile(req: *libuv.fs_t) callconv(.c) void {
         var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
         bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 

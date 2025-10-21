@@ -620,9 +620,9 @@ pub const ReadFileUV = struct {
         this.req.data = this;
     }
 
-    fn onFileInitialStat(req: *libuv.fs_t) callconv(.C) void {
+    fn onFileInitialStat(req: *libuv.fs_t) callconv(.c) void {
         log("ReadFileUV.onFileInitialStat", .{});
-        var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
+        var this: *ReadFileUV = @ptrCast(@alignCast(req.data));
 
         if (req.result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
@@ -762,8 +762,8 @@ pub const ReadFileUV = struct {
         }
     }
 
-    pub fn onRead(req: *libuv.fs_t) callconv(.C) void {
-        var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
+    pub fn onRead(req: *libuv.fs_t) callconv(.c) void {
+        var this: *ReadFileUV = @ptrCast(@alignCast(req.data));
 
         const result = req.result;
 

@@ -65,13 +65,13 @@ const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
     const wrapped = struct {
         fn onFileUpdateWrapped(ctx_opaque: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void {
-            T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
+            T.onFileUpdate(@ptrCast(@alignCast(ctx_opaque)), events, changed_files, watchlist);
         }
         fn onErrorWrapped(ctx_opaque: *anyopaque, err: bun.sys.Error) void {
             if (@hasDecl(T, "onWatchError")) {
-                T.onWatchError(@alignCast(@ptrCast(ctx_opaque)), err);
+                T.onWatchError(@ptrCast(@alignCast(ctx_opaque)), err);
             } else {
-                T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                T.onError(@ptrCast(@alignCast(ctx_opaque)), err);
             }
         }
     };

@@ -49,7 +49,7 @@ pub const PackageInstaller = struct {
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
-        path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 
         pub fn deinit(this: *NodeModulesFolder) void {
             this.path.clearAndFree();

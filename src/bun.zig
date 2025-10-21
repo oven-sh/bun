@@ -2053,7 +2053,7 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -2109,7 +2109,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
         }
 
         // Non-option arguments or standalone values
-        var buf = std.ArrayList(u8).init(allocator);
+        var buf = std.array_list.Managed(u8).init(allocator);
 
         var in_single = false;
         var in_double = false;
@@ -2224,7 +2224,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 
     if (bun.getenvZ("BUN_OPTIONS")) |opts| {
-        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;
     }

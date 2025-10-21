@@ -67,7 +67,7 @@ pub const FFI = struct {
     closed: bool = false,
     shared_state: ?*TCC.State = null,
 
-    pub fn finalize(_: *FFI) callconv(.C) void {}
+    pub fn finalize(_: *FFI) callconv(.c) void {}
 
     const CompileC = struct {
         source: Source = .{ .file = "" },
@@ -126,27 +126,27 @@ pub const FFI = struct {
         };
 
         const stdarg = struct {
-            extern "c" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_vprintf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_fprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_printf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_fscanf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_scanf([*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
-            extern "c" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.C) *anyopaque;
-            extern "c" fn ffi_fclose(*anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_fgetc(*anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_fputc(c: c_int, *anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_feof(*anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_fileno(*anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.C) c_int;
-            extern "c" fn ffi_ftell(*anyopaque) callconv(.C) c_long;
-            extern "c" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.C) c_int;
-            extern "c" fn ffi_fflush(*anyopaque) callconv(.C) c_int;
+            extern "c" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_vprintf([*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_fprintf(*anyopaque, [*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_printf([*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_fscanf(*anyopaque, [*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_scanf([*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.c) c_int;
+            extern "c" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.c) *anyopaque;
+            extern "c" fn ffi_fclose(*anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_fgetc(*anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_fputc(c: c_int, *anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_feof(*anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_fileno(*anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.c) c_int;
+            extern "c" fn ffi_ftell(*anyopaque) callconv(.c) c_long;
+            extern "c" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.c) c_int;
+            extern "c" fn ffi_fflush(*anyopaque) callconv(.c) c_int;
 
-            extern "c" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
-            extern "c" fn perror([*:0]const u8) callconv(.C) void;
+            extern "c" fn calloc(nmemb: usize, size: usize) callconv(.c) ?*anyopaque;
+            extern "c" fn perror([*:0]const u8) callconv(.c) void;
 
             const mac = if (Environment.isMac) struct {
                 var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
@@ -211,7 +211,7 @@ pub const FFI = struct {
             }
         };
 
-        pub fn handleCompilationError(this_: ?*CompileC, message: ?[*:0]const u8) callconv(.C) void {
+        pub fn handleCompilationError(this_: ?*CompileC, message: ?[*:0]const u8) callconv(.c) void {
             const this = this_ orelse return;
             var msg = std.mem.span(message orelse "");
             if (msg.len == 0) return;
@@ -541,7 +541,7 @@ pub const FFI = struct {
 
         pub fn fromJSArray(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, comptime property: []const u8) bun.JSError!StringArray {
             var iter = try value.arrayIterator(globalThis);
-            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
+            var items = std.array_list.Managed([:0]const u8).init(bun.default_allocator);
 
             while (try iter.next()) |val| {
                 if (!val.isString()) {
@@ -566,7 +566,7 @@ pub const FFI = struct {
             }
             const str = try value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
-            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
+            var items = std.array_list.Managed([:0]const u8).init(bun.default_allocator);
             bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
             return .{ .items = items.items };
         }
@@ -629,7 +629,7 @@ pub const FFI = struct {
             if (flags_value.isArray()) {
                 var iter = try flags_value.arrayIterator(globalThis);
 
-                var flags = std.ArrayList(u8).init(allocator);
+                var flags = std.array_list.Managed(u8).init(allocator);
                 defer flags.deinit();
                 bun.handleOom(flags.appendSlice(CompileC.default_tcc_options));
 
@@ -645,7 +645,7 @@ pub const FFI = struct {
                 }
                 bun.handleOom(flags.append(0));
                 compile_c.flags = flags.items[0 .. flags.items.len - 1 :0];
-                flags = std.ArrayList(u8).init(allocator);
+                flags = std.array_list.Managed(u8).init(allocator);
             } else {
                 if (!flags_value.isString()) {
                     return globalThis.throwInvalidArgumentTypeValue("flags", "string", flags_value);
@@ -726,7 +726,7 @@ pub const FFI = struct {
         var tcc_state: ?*TCC.State, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
             switch (err) {
                 error.DeferredErrors => {
-                    var combined = std.ArrayList(u8).init(bun.default_allocator);
+                    var combined = std.array_list.Managed(u8).init(bun.default_allocator);
                     defer combined.deinit();
                     var writer = combined.writer();
                     bun.handleOom(writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, if (compile_c.current_file_for_errors.len > 0) compile_c.current_file_for_errors else compile_c.source.first() }));
@@ -913,7 +913,7 @@ pub const FFI = struct {
             return val;
         }
 
-        var arraylist = std.ArrayList(u8).init(allocator);
+        var arraylist = std.array_list.Managed(u8).init(allocator);
         defer arraylist.deinit();
         var writer = arraylist.writer();
 
@@ -946,7 +946,7 @@ pub const FFI = struct {
             return val;
         }
         jsc.markBinding(@src());
-        var strs = bun.handleOom(std.ArrayList(bun.String).initCapacity(allocator, symbols.count()));
+        var strs = bun.handleOom(std.array_list.Managed(bun.String).initCapacity(allocator, symbols.count()));
         defer {
             for (strs.items) |str| {
                 str.deref();
@@ -954,7 +954,7 @@ pub const FFI = struct {
             strs.deinit();
         }
         for (symbols.values()) |*function| {
-            var arraylist = std.ArrayList(u8).init(allocator);
+            var arraylist = std.array_list.Managed(u8).init(allocator);
             var writer = arraylist.writer();
             function.printSourceCode(&writer) catch {
                 // an error while generating source code
@@ -1493,7 +1493,7 @@ pub const FFI = struct {
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
         }
 
-        pub fn handleTCCError(ctx: ?*Function, message: [*c]const u8) callconv(.C) void {
+        pub fn handleTCCError(ctx: ?*Function, message: [*c]const u8) callconv(.c) void {
             var this = ctx.?;
             var msg = std.mem.span(message);
             if (msg.len > 0) {
@@ -1512,7 +1512,7 @@ pub const FFI = struct {
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
         pub fn compile(this: *Function, napiEnv: ?*napi.NapiEnv) !void {
-            var source_code = std.ArrayList(u8).init(this.allocator);
+            var source_code = std.array_list.Managed(u8).init(this.allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
 
@@ -1587,7 +1587,7 @@ pub const FFI = struct {
             is_threadsafe: bool,
         ) !void {
             jsc.markBinding(@src());
-            var source_code = std.ArrayList(u8).init(this.allocator);
+            var source_code = std.array_list.Managed(u8).init(this.allocator);
             var source_code_writer = source_code.writer();
             const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
@@ -2354,10 +2354,10 @@ const CompilerRT = struct {
     }
 
     const MyFunctionSStructWorkAround = struct {
-        JSVALUE_TO_INT64: *const fn (JSValue0: jsc.JSValue) callconv(.C) i64,
-        JSVALUE_TO_UINT64: *const fn (JSValue0: jsc.JSValue) callconv(.C) u64,
-        INT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: i64) callconv(.C) jsc.JSValue,
-        UINT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: u64) callconv(.C) jsc.JSValue,
+        JSVALUE_TO_INT64: *const fn (JSValue0: jsc.JSValue) callconv(.c) i64,
+        JSVALUE_TO_UINT64: *const fn (JSValue0: jsc.JSValue) callconv(.c) u64,
+        INT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: i64) callconv(.c) jsc.JSValue,
+        UINT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: u64) callconv(.c) jsc.JSValue,
         bun_call: *const @TypeOf(jsc.C.JSObjectCallAsFunction),
     };
     const headers = JSValue.exposed_to_ffi;
@@ -2373,7 +2373,7 @@ const CompilerRT = struct {
         dest: [*]u8,
         c: u8,
         byte_count: usize,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         @memset(dest[0..byte_count], c);
     }
 
@@ -2381,7 +2381,7 @@ const CompilerRT = struct {
         noalias dest: [*]u8,
         noalias source: [*]const u8,
         byte_count: usize,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         @memcpy(dest[0..byte_count], source[0..byte_count]);
     }
 

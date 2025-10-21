@@ -10,7 +10,7 @@ pub const LinkerContext = struct {
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
-    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+    cycle_detector: std.array_list.Managed(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -207,7 +207,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+        this.cycle_detector = std.array_list.Managed(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -979,7 +979,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+                        var notes = std.array_list.Managed(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -1526,7 +1526,7 @@ pub const LinkerContext = struct {
     pub fn sortedCrossChunkExportItems(
         c: *LinkerContext,
         export_refs: ChunkMeta.Map,
-        list: *std.ArrayList(StableRef),
+        list: *std.array_list.Managed(StableRef),
     ) void {
         var result = list.*;
         defer list.* = result;
@@ -1824,13 +1824,13 @@ pub const LinkerContext = struct {
     pub fn matchImportWithExport(
         c: *LinkerContext,
         init_tracker: ImportTracker,
-        re_exports: *std.ArrayList(js_ast.Dependency),
+        re_exports: *std.array_list.Managed(js_ast.Dependency),
     ) MatchImport {
         const cycle_detector_top = c.cycle_detector.items.len;
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
+        var ambiguous_results = std.array_list.Managed(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -2448,7 +2448,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
+            var re_exports = std.array_list.Managed(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2569,7 +2569,7 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
+            break :brk try std.array_list.Managed(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
         const complete_output = try j.done(alloc);

@@ -599,7 +599,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                var all = std.array_list.Managed(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
                 if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
                 if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
                 if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);

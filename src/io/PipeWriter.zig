@@ -442,7 +442,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             this.is_done = true;
             this.outgoing.reset();
 
-            onError(@alignCast(@ptrCast(this.parent)), err);
+            onError(@ptrCast(@alignCast(this.parent)), err);
             this.close();
         }
 
@@ -773,7 +773,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 ///   parent: *Parent = undefined,
 ///   is_done: bool = false,
 ///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.sys.Maybe(void),
-///   fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void,
+///   fn onClosePipe(pipe: *uv.Pipe) callconv(.c) void,
 /// };
 fn BaseWindowsPipeWriter(
     comptime WindowsPipeWriter: type,
@@ -801,12 +801,12 @@ fn BaseWindowsPipeWriter(
             this.updateRef(event_loop, false);
         }
 
-        fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+        fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
             const this = bun.cast(*uv.Pipe, handle.data);
             bun.default_allocator.destroy(this);
         }
 
-        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
             const this = bun.cast(*uv.uv_tty_t, handle.data);
             bun.default_allocator.destroy(this);
         }
@@ -1007,7 +1007,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = Source.File.fromFS(fs);
             const result = fs.result;
             const was_canceled = result.int() == uv.UV_ECANCELED;
@@ -1095,9 +1095,9 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
     };
 }
 
-/// Basic std.ArrayList(u8) + usize cursor wrapper
+/// Basic std.array_list.Managed(u8) + usize cursor wrapper
 pub const StreamBuffer = struct {
-    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    list: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     cursor: usize = 0,
 
     pub fn reset(this: *StreamBuffer) void {
@@ -1333,7 +1333,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             }
         }
 
-        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = Source.File.fromFS(fs);
             const result = fs.result;
             const was_canceled = result.int() == uv.UV_ECANCELED;

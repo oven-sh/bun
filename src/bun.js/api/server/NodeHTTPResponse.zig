@@ -275,7 +275,7 @@ pub fn create(
     response_ptr: *anyopaque,
     upgrade_ctx: ?*anyopaque,
     node_response_ptr: *?*NodeHTTPResponse,
-) callconv(.C) jsc.JSValue {
+) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     const method = HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS;
     // GET in node.js can have a body

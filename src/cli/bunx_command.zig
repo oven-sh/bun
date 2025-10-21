@@ -477,7 +477,7 @@ pub const BunxCommand = struct {
             if (ignore_cwd.len == 0) break :brk PATH;
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var new_path = try std.array_list.Managed(u8).initCapacity(ctx.allocator, PATH.len);
             var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
             if (path_iter.next()) |segment| {
                 if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {

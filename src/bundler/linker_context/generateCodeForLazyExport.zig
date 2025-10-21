@@ -52,7 +52,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
             const Visitor = struct {
                 inner_visited: *BitSet,
                 composes_visited: *std.AutoArrayHashMap(bun.bundle_v2.Ref, void),
-                parts: *std.ArrayList(E.TemplatePart),
+                parts: *std.array_list.Managed(E.TemplatePart),
                 all_import_records: []const BabyList(bun.css.ImportRecord),
                 all_css_asts: []?*bun.css.BundlerStyleSheet,
                 all_sources: []const Logger.Source,
@@ -227,7 +227,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const ref = entry.ref;
                 bun.assert(ref.inner_index < symbols.len);
 
-                var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator());
+                var template_parts = std.array_list.Managed(E.TemplatePart).init(this.allocator());
                 var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef(source_index) }, stmt.loc);
 
                 visitor.parts = &template_parts;

@@ -111,7 +111,7 @@ pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFail
     }
     // Avoid small re-allocations without requesting so much from the heap
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
 
@@ -138,7 +138,7 @@ pub fn initFromLog(
 
     // Avoid small re-allocations without requesting so much from the heap
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
 
@@ -163,7 +163,7 @@ pub fn initFromLog(
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts
 
-const Writer = std.ArrayList(u8).Writer;
+const Writer = std.array_list.Managed(u8).Writer;
 
 fn writeLogMsg(msg: *const bun.logger.Msg, w: Writer) !void {
     try w.writeByte(switch (msg.kind) {

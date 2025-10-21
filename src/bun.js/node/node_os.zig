@@ -56,7 +56,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
-    var file_buf = std.ArrayList(u8).init(stack_fallback.get());
+    var file_buf = std.array_list.Managed(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 
     // Read /proc/stat to get number of CPUs and times
@@ -278,7 +278,7 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
 pub fn freemem() u64 {
     // OsBinding.cpp
-    return @extern(*const fn () callconv(.C) u64, .{
+    return @extern(*const fn () callconv(.c) u64, .{
         .name = "Bun__Os__getFreeMemory",
     })();
 }

@@ -34,7 +34,7 @@ pub const PathWatcherManager = struct {
         return true;
     }
 
-    fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
+    fn hasPendingTasks(this: *PathWatcherManager) callconv(.c) bool {
         return this.has_pending_tasks.load(.acquire);
     }
 
@@ -807,7 +807,7 @@ pub const PathWatcher = struct {
         return true;
     }
 
-    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
+    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.c) bool {
         return this.has_pending_directories.load(.acquire);
     }
 

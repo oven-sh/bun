@@ -244,7 +244,7 @@ pub const Expect = struct {
     }
 
     /// Called by C++ when matching with asymmetric matchers
-    fn readFlagsAndProcessPromise(instanceValue: JSValue, globalThis: *JSGlobalObject, outFlags: *Expect.Flags.FlagsCppType, value: *JSValue, any_constructor_type: *u8) callconv(.C) bool {
+    fn readFlagsAndProcessPromise(instanceValue: JSValue, globalThis: *JSGlobalObject, outFlags: *Expect.Flags.FlagsCppType, value: *JSValue, any_constructor_type: *u8) callconv(.c) bool {
         const flags: Expect.Flags = flags: {
             if (ExpectCustomAsymmetricMatcher.fromJS(instanceValue)) |instance| {
                 break :flags instance.flags;
@@ -326,7 +326,7 @@ pub const Expect = struct {
 
     pub fn finalize(
         this: *Expect,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         this.custom_label.deref();
         if (this.parent) |parent| parent.deref();
         VirtualMachine.get().allocator.destroy(this);
@@ -773,9 +773,9 @@ pub const Expect = struct {
                     \\  {s} called from file: <red>"{}"<r>
                     \\
                 , .{
-                    std.zig.fmtEscapes(fget.source.path.text),
+                    std.zig.fmtString(fget.source.path.text),
                     fn_name,
-                    std.zig.fmtEscapes(srcloc.str.toUTF8(runner.snapshots.allocator).slice()),
+                    std.zig.fmtString(srcloc.str.toUTF8(runner.snapshots.allocator).slice()),
                 });
             }
 
@@ -1148,7 +1148,7 @@ pub const Expect = struct {
         // prepare the args array
         const args = callFrame.arguments();
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args.len + 1);
+        var matcher_args = try std.array_list.Managed(JSValue).initCapacity(allocator.get(), args.len + 1);
         matcher_args.appendAssumeCapacity(value);
         for (args) |arg| matcher_args.appendAssumeCapacity(arg);
 
@@ -1262,7 +1262,7 @@ pub const ExpectStatic = struct {
 
     pub fn finalize(
         this: *ExpectStatic,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1356,7 +1356,7 @@ pub const ExpectAnything = struct {
 
     pub fn finalize(
         this: *ExpectAnything,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1384,7 +1384,7 @@ pub const ExpectStringMatching = struct {
 
     pub fn finalize(
         this: *ExpectStringMatching,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1420,7 +1420,7 @@ pub const ExpectCloseTo = struct {
 
     pub fn finalize(
         this: *ExpectCloseTo,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1465,7 +1465,7 @@ pub const ExpectObjectContaining = struct {
 
     pub fn finalize(
         this: *ExpectObjectContaining,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1501,7 +1501,7 @@ pub const ExpectStringContaining = struct {
 
     pub fn finalize(
         this: *ExpectStringContaining,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1535,7 +1535,7 @@ pub const ExpectAny = struct {
 
     flags: Expect.Flags = .{},
 
-    pub fn finalize(this: *ExpectAny) callconv(.C) void {
+    pub fn finalize(this: *ExpectAny) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1590,7 +1590,7 @@ pub const ExpectArrayContaining = struct {
 
     pub fn finalize(
         this: *ExpectArrayContaining,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1630,7 +1630,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
     pub fn finalize(
         this: *ExpectCustomAsymmetricMatcher,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1675,7 +1675,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
-    pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) callconv(.C) bool {
+    pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) callconv(.c) bool {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
         const matcher_fn: JSValue = js.matcherFnGetCached(thisValue) orelse {
             globalThis.throw("Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!", .{}) catch {};
@@ -1701,7 +1701,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         // prepare the args array as `[received, ...captured_args]`
         const args_count = captured_args.getLength(globalThis) catch return false;
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
+        var matcher_args = std.array_list.Managed(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
             globalThis.throwOutOfMemory() catch {};
             return false;
         };
@@ -1736,7 +1736,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                 const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse return false;
                 var stack_fallback = std.heap.stackFallback(256, globalThis.allocator());
                 const args_len = captured_args.getLength(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
-                var args = try std.ArrayList(JSValue).initCapacity(stack_fallback.get(), args_len);
+                var args = try std.array_list.Managed(JSValue).initCapacity(stack_fallback.get(), args_len);
                 var iter = captured_args.arrayIterator(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
                 while (iter.next() catch |e| return maybeClear(dontThrow, globalThis, e)) |arg| {
                     args.appendAssumeCapacity(arg);
@@ -1773,7 +1773,7 @@ pub const ExpectMatcherContext = struct {
 
     pub fn finalize(
         this: *ExpectMatcherContext,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1816,7 +1816,7 @@ pub const ExpectMatcherUtils = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    fn createSingleton(globalThis: *JSGlobalObject) callconv(.C) JSValue {
+    fn createSingleton(globalThis: *JSGlobalObject) callconv(.c) JSValue {
         var instance = globalThis.bunVM().allocator.create(ExpectMatcherUtils) catch {
             return globalThis.throwOutOfMemoryValue();
         };
@@ -1825,7 +1825,7 @@ pub const ExpectMatcherUtils = struct {
 
     pub fn finalize(
         this: *ExpectMatcherUtils,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -1949,7 +1949,7 @@ pub const ExpectTypeOf = struct {
 
     pub fn finalize(
         this: *ExpectTypeOf,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -2076,7 +2076,7 @@ pub const mock = struct {
 
     pub const SuccessfulReturnsFormatter = struct {
         globalThis: *JSGlobalObject,
-        successful_returns: *const std.ArrayList(JSValue),
+        successful_returns: *const std.array_list.Managed(JSValue),
         formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

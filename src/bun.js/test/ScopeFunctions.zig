@@ -107,7 +107,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var args_list: std.ArrayList(Strong) = .init(bunTest.gpa);
+            var args_list: std.array_list.Managed(Strong) = .init(bunTest.gpa);
             defer args_list.deinit();
             defer for (args_list.items) |*arg| arg.deinit();
 
@@ -124,7 +124,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
                 bun.handleOom(args_list.append(.init(bunTest.gpa, item)));
             }
 
-            var args_list_raw = bun.handleOom(std.ArrayList(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
+            var args_list_raw = bun.handleOom(std.array_list.Managed(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
             defer args_list_raw.deinit();
             for (args_list.items) |arg| bun.handleOom(args_list_raw.append(arg.get()));
 
@@ -235,7 +235,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
-                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtEscapes(bunTest.collection.filter_buffer.items)});
+                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 
@@ -422,7 +422,7 @@ pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOpt
 
 pub fn finalize(
     this: *ScopeFunctions,
-) callconv(.C) void {
+) callconv(.c) void {
     groupLog.begin(@src());
     defer groupLog.end();
 

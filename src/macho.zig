@@ -3,7 +3,7 @@ pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 
 pub const MachoFile = struct {
     header: macho.mach_header_64,
-    data: std.ArrayList(u8),
+    data: std.array_list.Managed(u8),
     segment: macho.segment_command_64,
     section: macho.section_64,
     allocator: Allocator,
@@ -15,10 +15,10 @@ pub const MachoFile = struct {
     };
 
     pub fn init(allocator: Allocator, obj_file: []const u8, blob_to_embed_length: usize) !*MachoFile {
-        var data = try std.ArrayList(u8).initCapacity(allocator, obj_file.len + blob_to_embed_length);
+        var data = try std.array_list.Managed(u8).initCapacity(allocator, obj_file.len + blob_to_embed_length);
         try data.appendSlice(obj_file);
 
-        const header: *const macho.mach_header_64 = @alignCast(@ptrCast(data.items.ptr));
+        const header: *const macho.mach_header_64 = @ptrCast(@alignCast(data.items.ptr));
 
         const self = try allocator.create(MachoFile);
         errdefer allocator.destroy(self);
@@ -140,12 +140,12 @@ pub const MachoFile = struct {
 
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
-                @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+                @as(*align(1) macho.linkedit_data_command, @ptrCast(@alignCast(@constCast(&self.data.items[idx]))))
             else
                 null;
         const linkedit_seg: *align(1) macho.segment_command_64 =
             if (linkedit_seg_idx) |idx|
-                @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+                @as(*align(1) macho.segment_command_64, @ptrCast(@alignCast(@constCast(&self.data.items[idx]))))
             else
                 return error.MissingLinkeditSegment;
 
@@ -342,7 +342,7 @@ pub const MachoFile = struct {
 
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
         if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
-            var data = std.ArrayList(u8).init(self.allocator);
+            var data = std.array_list.Managed(u8).init(self.allocator);
             defer data.deinit();
             try self.build(data.writer());
             var signer = try MachoSigner.init(self.allocator, data.items);
@@ -354,7 +354,7 @@ pub const MachoFile = struct {
     }
 
     const MachoSigner = struct {
-        data: std.ArrayList(u8),
+        data: std.array_list.Managed(u8),
         sig_off: usize,
         sig_sz: usize,
         cs_cmd_off: usize,
@@ -427,7 +427,7 @@ pub const MachoFile = struct {
             }
 
             self.* = .{
-                .data = try std.ArrayList(u8).initCapacity(allocator, obj.len),
+                .data = try std.array_list.Managed(u8).initCapacity(allocator, obj.len),
                 .sig_off = sig_off,
                 .sig_sz = sig_sz,
                 .cs_cmd_off = cs_cmd_off,

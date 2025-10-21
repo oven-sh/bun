@@ -22,7 +22,7 @@ pub const InitCommand = struct {
             }
         };
 
-        var input: std.ArrayList(u8) = .init(alloc);
+        var input: std.array_list.Managed(u8) = .init(alloc);
         try bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024);
 
         if (strings.endsWithChar(input.items, '\r')) {
@@ -117,7 +117,7 @@ pub const InitCommand = struct {
             Output.flush();
 
             // Read a single character
-            const byte = std.io.getStdIn().reader().readByte() catch return selected;
+            const byte = std.fs.File.stdin().reader().readByte() catch return selected;
 
             switch (byte) {
                 '\n', '\r' => {
@@ -146,11 +146,11 @@ pub const InitCommand = struct {
                 },
                 27 => { // ESC sequence
                     // Return immediately on plain ESC
-                    const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const next = std.fs.File.stdin().reader().readByte() catch return error.EndOfStream;
                     if (next != '[') return error.EndOfStream;
 
                     // Read arrow key
-                    const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const arrow = std.fs.File.stdin().reader().readByte() catch return error.EndOfStream;
                     switch (arrow) {
                         'A' => { // Up arrow
                             if (@intFromEnum(selected) == 0) {

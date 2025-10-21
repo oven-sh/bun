@@ -993,7 +993,7 @@ pub const FetchTasklet = struct {
         this.ignore_data = true;
     }
 
-    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
+    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
         log("onResponseFinalize", .{});
         if (this.native_response) |response| {
             const body = response.getBodyValue();
@@ -2562,7 +2562,7 @@ pub fn Bun__fetch_(
                                 .{
                                     .value = .{
                                         .InternalBlob = .{
-                                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
+                                            .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
                                             .was_string = true,
                                         },
                                     },

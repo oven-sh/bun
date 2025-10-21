@@ -354,7 +354,7 @@ pub const AST = struct {
         /// Note that commands in a pipeline cannot be async
         /// TODO: Extra indirection for essentially a boolean feels bad for performance
         /// could probably find a more efficient way to encode this information.
-        @"async": *Expr,
+        async: *Expr,
 
         pub fn memoryCost(this: *const @This()) usize {
             return switch (this.*) {
@@ -371,7 +371,7 @@ pub const AST = struct {
                 .subshell => |subshell| subshell.memoryCost(),
                 .@"if" => |@"if"| @"if".memoryCost(),
                 .condexpr => |condexpr| condexpr.memoryCost(),
-                .@"async" => |@"async"| @"async".memoryCost(),
+                .async => |async| async.memoryCost(),
             };
         }
 
@@ -394,7 +394,7 @@ pub const AST = struct {
             subshell,
             @"if",
             condexpr,
-            @"async",
+            async,
         };
     };
 
@@ -1089,7 +1089,7 @@ pub const Parser = struct {
     alloc: Allocator,
     jsobjs: []JSValue,
     current: u32 = 0,
-    errors: std.ArrayList(Error),
+    errors: std.array_list.Managed(Error),
     inside_subshell: ?SubshellKind = null,
 
     const SubshellKind = enum {
@@ -1116,7 +1116,7 @@ pub const Parser = struct {
             .tokens = lex_result.tokens,
             .alloc = allocator,
             .jsobjs = jsobjs,
-            .errors = std.ArrayList(Error).init(allocator),
+            .errors = std.array_list.Managed(Error).init(allocator),
         };
     }
 
@@ -1175,7 +1175,7 @@ pub const Parser = struct {
     }
 
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
-        var exprs = std.ArrayList(AST.Expr).init(self.alloc);
+        var exprs = std.array_list.Managed(AST.Expr).init(self.alloc);
 
         while (if (self.inside_subshell == null)
             !self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
@@ -1264,7 +1264,7 @@ pub const Parser = struct {
         var expr = try self.parse_compound_cmd();
 
         if (self.peek() == .Pipe) {
-            var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
+            var pipeline_items = std.array_list.Managed(AST.PipelineItem).init(self.alloc);
             try pipeline_items.append(expr.asPipelineItem() orelse {
                 try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
                 return ParseError.Expected;
@@ -1598,7 +1598,7 @@ pub const Parser = struct {
     }
 
     fn parse_simple_cmd(self: *Parser) !AST.CmdOrAssigns {
-        var assigns = std.ArrayList(AST.Assign).init(self.alloc);
+        var assigns = std.array_list.Managed(AST.Assign).init(self.alloc);
         while (if (self.inside_subshell == null)
             !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
         else
@@ -1631,7 +1631,7 @@ pub const Parser = struct {
             return .{ .assigns = assigns.items[0..] };
         };
 
-        var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
+        var name_and_args = std.array_list.Managed(AST.Atom).init(self.alloc);
         try name_and_args.append(name);
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
@@ -1750,7 +1750,7 @@ pub const Parser = struct {
 
     fn parse_atom(self: *Parser) !?AST.Atom {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
-        var atoms = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
+        var atoms = try std.array_list.Managed(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         var has_brace_open = false;
         var has_brace_close = false;
         var has_comma = false;
@@ -2328,7 +2328,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         tokens: ArrayList(Token),
         delimit_quote: bool = false,
         in_subshell: ?SubShellKind = null,
-        errors: std.ArrayList(LexError),
+        errors: std.array_list.Managed(LexError),
 
         /// Contains a list of strings we need to escape
         /// Not owned by this struct
@@ -3864,9 +3864,9 @@ pub fn shellCmdFromJS(
     globalThis: *jsc.JSGlobalObject,
     string_args: JSValue,
     template_args: *jsc.JSArrayIterator,
-    out_jsobjs: *std.ArrayList(JSValue),
-    jsstrings: *std.ArrayList(bun.String),
-    out_script: *std.ArrayList(u8),
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    jsstrings: *std.array_list.Managed(bun.String),
+    out_script: *std.array_list.Managed(u8),
     marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
@@ -3895,9 +3895,9 @@ pub fn shellCmdFromJS(
 pub fn handleTemplateValue(
     globalThis: *jsc.JSGlobalObject,
     template_value: JSValue,
-    out_jsobjs: *std.ArrayList(JSValue),
-    out_script: *std.ArrayList(u8),
-    jsstrings: *std.ArrayList(bun.String),
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    out_script: *std.array_list.Managed(u8),
+    jsstrings: *std.array_list.Managed(bun.String),
     jsobjref_buf: []u8,
     marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
@@ -4012,14 +4012,14 @@ pub fn handleTemplateValue(
 
 pub const ShellSrcBuilder = struct {
     globalThis: *jsc.JSGlobalObject,
-    outbuf: *std.ArrayList(u8),
-    jsstrs_to_escape: *std.ArrayList(bun.String),
+    outbuf: *std.array_list.Managed(u8),
+    jsstrs_to_escape: *std.array_list.Managed(bun.String),
     jsstr_ref_buf: [128]u8 = [_]u8{0} ** 128,
 
     pub fn init(
         globalThis: *jsc.JSGlobalObject,
-        outbuf: *std.ArrayList(u8),
-        jsstrs_to_escape: *std.ArrayList(bun.String),
+        outbuf: *std.array_list.Managed(u8),
+        jsstrs_to_escape: *std.array_list.Managed(bun.String),
     ) ShellSrcBuilder {
         return .{
             .globalThis = globalThis,
@@ -4122,7 +4122,7 @@ pub fn assertSpecialChar(comptime c: u8) void {
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
-pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) bun.OOM!bool {
+pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) bun.OOM!bool {
     if (bunstr.isUTF16()) {
         const res = try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
         return !res.is_invalid;
@@ -4133,7 +4133,7 @@ pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add
 }
 
 /// works for utf-8, latin-1, and ascii
-pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
+pub fn escape8Bit(str: []const u8, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
     if (add_quotes) try outbuf.append('\"');
@@ -4154,7 +4154,7 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
     if (add_quotes) try outbuf.append('\"');
 }
 
-pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
+pub fn escapeUtf16(str: []const u16, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
     const non_ascii = bun.strings.firstNonASCII16(str) orelse 0;
@@ -4519,17 +4519,17 @@ pub const TestingAPIs = struct {
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
         defer jsobjs.deinit();
 
-        var script = std.ArrayList(u8).init(arena.allocator());
+        var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         const lex_result = brk: {
@@ -4552,7 +4552,7 @@ pub const TestingAPIs = struct {
             return globalThis.throwPretty("{s}", .{str});
         }
 
-        var test_tokens = try std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
+        var test_tokens = try std.array_list.Managed(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
             try test_tokens.append(test_tok);
@@ -4586,16 +4586,16 @@ pub const TestingAPIs = struct {
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
         defer jsobjs.deinit();
-        var script = std.ArrayList(u8).init(arena.allocator());
+        var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         var out_parser: ?Parser = null;
@@ -4639,5 +4639,5 @@ const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const Allocator = std.mem.Allocator;

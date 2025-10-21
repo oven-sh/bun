@@ -14,7 +14,7 @@ state: union(enum) {
     wait_write_err,
     done,
 } = .idle,
-redirection_file: std.ArrayList(u8),
+redirection_file: std.array_list.Managed(u8),
 exit_code: ExitCode = 0,
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -47,7 +47,7 @@ pub fn init(
         .io = io,
         .redirection_file = undefined,
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return subshell;
 }
 
@@ -73,7 +73,7 @@ pub fn initDupeShellState(
             return .{ .err = e };
         },
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return .{ .result = subshell };
 }
 

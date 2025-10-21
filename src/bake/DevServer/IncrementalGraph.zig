@@ -1699,7 +1699,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             g: *Self,
             options: *const TakeJSBundleOptions,
         ) ![]u8 {
-            var chunk = std.ArrayList(u8).init(g.allocator());
+            var chunk = std.array_list.Managed(u8).init(g.allocator());
             try g.takeJSBundleToList(&chunk, options);
             bun.assert(chunk.items.len == chunk.capacity);
             return chunk.items;
@@ -1707,7 +1707,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
         pub fn takeJSBundleToList(
             g: *Self,
-            list: *std.ArrayList(u8),
+            list: *std.array_list.Managed(u8),
             options: *const TakeJSBundleOptions,
         ) !void {
             const kind = options.kind;
@@ -1729,7 +1729,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // exact upper bound of this can be calculated, but is not to
             // avoid worrying about windows paths.
             var end_sfa = std.heap.stackFallback(65536, g.allocator());
-            var end_list = std.ArrayList(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
+            var end_list = std.array_list.Managed(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
             defer end_list.deinit();
             const end = end: {
                 const w = end_list.writer();

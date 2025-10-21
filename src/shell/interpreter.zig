@@ -123,7 +123,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
-    @"async",
+    async,
     subshell,
 };
 
@@ -267,7 +267,7 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.ArrayList(jsc.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
     globalThis: *jsc.JSGlobalObject,
@@ -350,8 +350,8 @@ pub const Interpreter = struct {
         /// The current working directory of the shell.
         /// Use an array list so we don't have to keep reallocating
         /// Always has zero-sentinel
-        __prev_cwd: std.ArrayList(u8),
-        __cwd: std.ArrayList(u8),
+        __prev_cwd: std.array_list.Managed(u8),
+        __cwd: std.array_list.Managed(u8),
         cwd_fd: bun.FileDescriptor,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
@@ -704,7 +704,7 @@ pub const Interpreter = struct {
         const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
-        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var jsobjs: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(allocator);
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
@@ -798,7 +798,7 @@ pub const Interpreter = struct {
 
         if (comptime bun.Environment.isDebug) {
             const debug = bun.Output.scoped(.ShellTokens, .hidden);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
+            var test_tokens = std.array_list.Managed(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
@@ -869,7 +869,7 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = bun.handleOom(std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1));
+        var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
         if (comptime bun.Environment.isDebug) {
@@ -917,7 +917,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -1170,9 +1170,9 @@ pub const Interpreter = struct {
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
-        log("asyncCommandDone {}", .{@"async"});
-        @"async".actuallyDeinit();
+    pub fn asyncCmdDone(this: *ThisInterpreter, async: *Async) void {
+        log("asyncCommandDone {}", .{async});
+        async.actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
             this.finish(this.exit_code.?).run();
@@ -2029,6 +2029,6 @@ const windows = bun.windows;
 const uv = windows.libuv;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const posix = std.posix;
 const Allocator = std.mem.Allocator;

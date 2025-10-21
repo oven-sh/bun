@@ -708,7 +708,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
 
     var file = tmpfile.file();
     const file_writer = file.writer();
-    var buffered_writer = std.io.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer)){
+    var buffered_writer = bun.deprecated.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer)){
         .unbuffered_writer = file_writer,
     };
     const writer = buffered_writer.writer();

@@ -68,7 +68,7 @@ pub const FileSystemRouter = struct {
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
-        var extensions = std.ArrayList(string).init(allocator);
+        var extensions = std.array_list.Managed(string).init(allocator);
         if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
                 origin_str.deinit();
@@ -363,7 +363,7 @@ pub const FileSystemRouter = struct {
 
     pub fn finalize(
         this: *FileSystemRouter,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         if (this.asset_prefix) |prefix| {
             prefix.deref();
         }
@@ -472,7 +472,7 @@ pub const MatchedRoute = struct {
 
     pub fn finalize(
         this: *MatchedRoute,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         this.deinit();
     }
 

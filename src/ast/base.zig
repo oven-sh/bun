@@ -142,7 +142,7 @@ pub const Ref = packed struct(u64) {
         );
     }
 
-    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Alt(dumpImpl) {
         return .{ .data = .{
             .ref = ref,
             .symbol = ref.getSymbol(symbol_table),
@@ -219,8 +219,8 @@ pub const Ref = packed struct(u64) {
         // In the parser you only have one array, and .sourceIndex() is ignored.
         // In the bundler, you have a 2D array where both parts of the ref are used.
         const resolved_symbol_table = switch (@TypeOf(symbol_table)) {
-            *const std.ArrayList(ast.Symbol) => symbol_table.items,
-            *std.ArrayList(ast.Symbol) => symbol_table.items,
+            *const std.array_list.Managed(ast.Symbol) => symbol_table.items,
+            *std.array_list.Managed(ast.Symbol) => symbol_table.items,
             []ast.Symbol => symbol_table,
             *ast.Symbol.Map => return symbol_table.get(ref) orelse
                 unreachable, // ref must exist within symbol table

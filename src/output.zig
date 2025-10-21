@@ -23,8 +23,8 @@ pub const Source = struct {
             break :brk std.io.FixedBufferStream([]u8);
         } else {
             break :brk File;
-            // var stdout = std.io.getStdOut();
-            // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
+            // var stdout = std.fs.File.stdout();
+            // return @TypeOf(bun.deprecated.bufferedWriter(stdout.writer()));
         }
     };
     pub const BufferedStream: type = struct {
@@ -32,7 +32,7 @@ pub const Source = struct {
             if (comptime Environment.isWasm)
                 return StreamType;
 
-            return std.io.BufferedWriter(4096, @TypeOf(StreamType.quietWriter(undefined)));
+            return bun.deprecated.BufferedWriter(4096, @TypeOf(StreamType.quietWriter(undefined)));
         }
     }.getBufferedStream();
 
@@ -133,7 +133,7 @@ pub const Source = struct {
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
 
-        pub export fn Bun__restoreWindowsStdio() callconv(.C) void {
+        pub export fn Bun__restoreWindowsStdio() callconv(.c) void {
             restore();
         }
         comptime {
@@ -234,8 +234,8 @@ pub const Source = struct {
                 WindowsStdio.init();
             }
 
-            const stdout = bun.sys.File.from(std.io.getStdOut());
-            const stderr = bun.sys.File.from(std.io.getStdErr());
+            const stdout = bun.sys.File.from(std.fs.File.stdout());
+            const stderr = bun.sys.File.from(std.fs.File.stderr());
 
             Source.init(stdout, stderr)
                 .set();
@@ -812,7 +812,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
     }
 
     return struct {
-        const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
+        const BufferedWriter = bun.deprecated.BufferedWriter(4096, bun.sys.File.QuietWriter);
 
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
@@ -1310,7 +1310,7 @@ pub inline fn errFmt(formatter: anytype) void {
     return errGeneric("{}", .{formatter});
 }
 
-pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
+pub var buffered_stdin = bun.deprecated.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
 

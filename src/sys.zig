@@ -4066,7 +4066,7 @@ pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
 }
 
 pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}![][:0]u8 {
-    const List = std.ArrayList([:0]u8);
+    const List = std.array_list.Managed([:0]u8);
     switch (builtin.os.tag) {
         .linux,
         .freebsd,

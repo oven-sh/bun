@@ -1242,7 +1242,7 @@ pub const PipeReader = struct {
         @panic("We should be either stdout or stderr");
     }
 
-    pub fn takeBuffer(this: *PipeReader) std.ArrayList(u8) {
+    pub fn takeBuffer(this: *PipeReader) std.array_list.Managed(u8) {
         return this.reader.takeBuffer();
     }
 

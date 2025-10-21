@@ -10,7 +10,7 @@ pub export fn dumpBtjsTrace() [*:0]const u8 {
 }
 
 fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
-    var result_writer = std.ArrayList(u8).init(bun.default_allocator);
+    var result_writer = std.array_list.Managed(u8).init(bun.default_allocator);
     const w = result_writer.writer();
 
     const debug_info = std.debug.getSelfDebugInfo() catch |err| {
@@ -27,7 +27,7 @@ fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
     // std.log.info("jsc_llint_begin: {x}", .{@intFromPtr(&jsc_llint_begin)});
     // std.log.info("jsc_llint_end: {x}", .{@intFromPtr(&jsc_llint_end)});
 
-    const tty_config = std.io.tty.detectConfig(std.io.getStdOut());
+    const tty_config = std.io.tty.detectConfig(std.fs.File.stdout());
 
     var context: std.debug.ThreadContext = undefined;
     const has_context = std.debug.getContext(&context);

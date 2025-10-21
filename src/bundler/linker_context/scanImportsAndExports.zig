@@ -280,7 +280,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
 
                             .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
-                            .source_index_stack = try std.ArrayList(u32).initCapacity(this.allocator(), 32),
+                            .source_index_stack = try std.array_list.Managed(u32).initCapacity(this.allocator(), 32),
                             .exports_kind = exports_kind,
                             .named_exports = this.graph.ast.items(.named_exports),
                         };
@@ -571,7 +571,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const extra_count = @as(usize, @intFromBool(force_include_exports)) +
                     @as(usize, @intFromBool(add_wrapper));
 
-                var dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(this.allocator(), extra_count));
+                var dependencies = bun.handleOom(std.array_list.Managed(js_ast.Dependency).initCapacity(this.allocator(), extra_count));
 
                 var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                 for (aliases) |alias| {
@@ -944,7 +944,7 @@ const DependencyWrapper = struct {
 
 const ExportStarContext = struct {
     import_records_list: []const ImportRecord.List,
-    source_index_stack: std.ArrayList(Index.Int),
+    source_index_stack: std.array_list.Managed(Index.Int),
     exports_kind: []js_ast.ExportsKind,
     named_exports: []js_ast.Ast.NamedExports,
     resolved_exports: []ResolvedExports,

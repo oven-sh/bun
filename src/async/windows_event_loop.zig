@@ -395,9 +395,9 @@ pub const Closer = struct {
         }
     }
 
-    fn onClose(req: *uv.fs_t) callconv(.C) void {
+    fn onClose(req: *uv.fs_t) callconv(.c) void {
         var closer: *Closer = @fieldParentPtr("io_request", req);
-        bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(closer == @as(*Closer, @ptrCast(@alignCast(req.data.?))));
         bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.FD.fromUV(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {

@@ -146,7 +146,7 @@ pub const UpdateInteractiveCommand = struct {
         updates: []const PackageUpdate,
     ) !void {
         // Group updates by workspace
-        var workspace_groups = bun.StringHashMap(std.ArrayList(PackageUpdate)).init(bun.default_allocator);
+        var workspace_groups = bun.StringHashMap(std.array_list.Managed(PackageUpdate)).init(bun.default_allocator);
         defer {
             var it = workspace_groups.iterator();
             while (it.next()) |entry| {
@@ -159,7 +159,7 @@ pub const UpdateInteractiveCommand = struct {
         for (updates) |update| {
             const result = try workspace_groups.getOrPut(update.workspace_path);
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+                result.value_ptr.* = std.array_list.Managed(PackageUpdate).init(bun.default_allocator);
             }
             try result.value_ptr.append(update);
         }
@@ -238,7 +238,7 @@ pub const UpdateInteractiveCommand = struct {
     ) !void {
 
         // Group catalog updates by workspace path
-        var workspace_catalog_updates = bun.StringHashMap(std.ArrayList(CatalogUpdateRequest)).init(bun.default_allocator);
+        var workspace_catalog_updates = bun.StringHashMap(std.array_list.Managed(CatalogUpdateRequest)).init(bun.default_allocator);
         defer {
             var it = workspace_catalog_updates.iterator();
             while (it.next()) |entry| {
@@ -255,7 +255,7 @@ pub const UpdateInteractiveCommand = struct {
 
             const result = try workspace_catalog_updates.getOrPut(update.workspace_path);
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayList(CatalogUpdateRequest).init(bun.default_allocator);
+                result.value_ptr.* = std.array_list.Managed(CatalogUpdateRequest).init(bun.default_allocator);
             }
 
             // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
@@ -399,7 +399,7 @@ pub const UpdateInteractiveCommand = struct {
 
         // Create package specifier array from selected packages
         // Group selected packages by workspace
-        var workspace_updates = bun.StringHashMap(std.ArrayList([]const u8)).init(bun.default_allocator);
+        var workspace_updates = bun.StringHashMap(std.array_list.Managed([]const u8)).init(bun.default_allocator);
         defer {
             var it = workspace_updates.iterator();
             while (it.next()) |entry| {
@@ -421,7 +421,7 @@ pub const UpdateInteractiveCommand = struct {
         }
 
         // Collect all package updates with full information
-        var package_updates = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+        var package_updates = std.array_list.Managed(PackageUpdate).init(bun.default_allocator);
         defer package_updates.deinit();
 
         // Process selected packages
@@ -635,7 +635,7 @@ pub const UpdateInteractiveCommand = struct {
         packages: []OutdatedPackage,
     ) ![]OutdatedPackage {
         // Create a map to track catalog dependencies by name
-        var catalog_map = bun.StringHashMap(std.ArrayList(OutdatedPackage)).init(allocator);
+        var catalog_map = bun.StringHashMap(std.array_list.Managed(OutdatedPackage)).init(allocator);
         defer catalog_map.deinit();
         defer {
             var iter = catalog_map.iterator();
@@ -644,7 +644,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
 
-        var result = std.ArrayList(OutdatedPackage).init(allocator);
+        var result = std.array_list.Managed(OutdatedPackage).init(allocator);
         defer result.deinit();
 
         // Group catalog dependencies
@@ -652,7 +652,7 @@ pub const UpdateInteractiveCommand = struct {
             if (pkg.is_catalog) {
                 const entry = try catalog_map.getOrPut(pkg.name);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = std.ArrayList(OutdatedPackage).init(allocator);
+                    entry.value_ptr.* = std.array_list.Managed(OutdatedPackage).init(allocator);
                 }
                 try entry.value_ptr.append(pkg);
             } else {
@@ -669,7 +669,7 @@ pub const UpdateInteractiveCommand = struct {
                 var first = catalog_packages[0];
 
                 // Build combined workspace name
-                var workspace_names = std.ArrayList(u8).init(allocator);
+                var workspace_names = std.array_list.Managed(u8).init(allocator);
                 defer workspace_names.deinit();
 
                 if (catalog_packages.len > 0) {
@@ -721,10 +721,10 @@ pub const UpdateInteractiveCommand = struct {
         const pkg_resolutions = packages.items(.resolution);
         const pkg_dependencies = packages.items(.dependencies);
 
-        var outdated_packages = std.ArrayList(OutdatedPackage).init(allocator);
+        var outdated_packages = std.array_list.Managed(OutdatedPackage).init(allocator);
         defer outdated_packages.deinit();
 
-        var version_buf = std.ArrayList(u8).init(allocator);
+        var version_buf = std.array_list.Managed(u8).init(allocator);
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
@@ -1638,7 +1638,7 @@ pub const UpdateInteractiveCommand = struct {
             Output.flush();
 
             // Read input
-            const byte = std.io.getStdIn().reader().readByte() catch return state.selected;
+            const byte = std.fs.File.stdin().reader().readByte() catch return state.selected;
 
             switch (byte) {
                 '\n', '\r' => return state.selected,
@@ -1702,9 +1702,9 @@ pub const UpdateInteractiveCommand = struct {
                     state.toggle_all = false;
                 },
                 27 => { // escape sequence
-                    const seq = std.io.getStdIn().reader().readByte() catch continue;
+                    const seq = std.fs.File.stdin().reader().readByte() catch continue;
                     if (seq == '[') {
-                        const arrow = std.io.getStdIn().reader().readByte() catch continue;
+                        const arrow = std.fs.File.stdin().reader().readByte() catch continue;
                         switch (arrow) {
                             'A' => { // up arrow
                                 if (state.cursor > 0) {
@@ -1731,7 +1731,7 @@ pub const UpdateInteractiveCommand = struct {
                                 state.selected[state.cursor] = true;
                             },
                             '5' => { // Page Up
-                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                const tilde = std.fs.File.stdin().reader().readByte() catch continue;
                                 if (tilde == '~') {
                                     // Move up by viewport height
                                     if (state.cursor >= state.viewport_height) {
@@ -1743,7 +1743,7 @@ pub const UpdateInteractiveCommand = struct {
                                 }
                             },
                             '6' => { // Page Down
-                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                const tilde = std.fs.File.stdin().reader().readByte() catch continue;
                                 if (tilde == '~') {
                                     // Move down by viewport height
                                     if (state.cursor + state.viewport_height < state.packages.len) {
@@ -1759,7 +1759,7 @@ pub const UpdateInteractiveCommand = struct {
                                 var buffer: [32]u8 = undefined;
                                 var buf_idx: usize = 0;
                                 while (buf_idx < buffer.len) : (buf_idx += 1) {
-                                    const c = std.io.getStdIn().reader().readByte() catch break;
+                                    const c = std.fs.File.stdin().reader().readByte() catch break;
                                     if (c == 'M' or c == 'm') {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down

@@ -145,7 +145,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.len + 1);
+        var copy_script = try std.array_list.Managed(u8).initCapacity(manager.allocator, original_script.len + 1);
         defer copy_script.deinit();
         try bun.cli.RunCommand.replacePackageManagerRun(&copy_script, original_script);
         try copy_script.append(0);
@@ -298,7 +298,7 @@ pub const LifecycleScriptSubprocess = struct {
             // Reuse the memory
             if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
                 this.stderr.buffer().* = stdout.*;
-                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+                stdout.* = std.array_list.Managed(u8).init(bun.default_allocator);
             }
 
             var stderr = this.stderr.finalBuffer();

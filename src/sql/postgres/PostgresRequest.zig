@@ -322,7 +322,7 @@ pub fn onData(
     }
 }
 
-pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
+pub const Queue = bun.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 

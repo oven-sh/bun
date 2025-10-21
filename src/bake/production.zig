@@ -531,7 +531,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         try server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
 
-    var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);
+    var navigatable_routes = std.array_list.Managed(FrameworkRouter.Route.Index).init(allocator);
     for (router.routes.items, 0..) |route, i| {
         _ = route.file_page.unwrap() orelse continue;
         try navigatable_routes.append(FrameworkRouter.Route.Index.init(@intCast(i)));
@@ -744,7 +744,7 @@ extern fn BakeGetModuleNamespace(global: *jsc.JSGlobalObject, key: JSValue) JSVa
 extern fn BakeLoadModuleByKey(global: *jsc.JSGlobalObject, key: JSValue) JSValue;
 
 fn BakeGetOnModuleNamespace(global: *jsc.JSGlobalObject, module: JSValue, property: []const u8) ?JSValue {
-    const f = @extern(*const fn (*jsc.JSGlobalObject, JSValue, [*]const u8, usize) callconv(.C) JSValue, .{
+    const f = @extern(*const fn (*jsc.JSGlobalObject, JSValue, [*]const u8, usize) callconv(.c) JSValue, .{
         .name = "BakeGetOnModuleNamespace",
     });
     const result: JSValue = f(global, module, property.ptr, property.len);
@@ -782,7 +782,7 @@ extern fn BakeRenderRoutesForProdStatic(
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
 fn BakeRegisterProductionChunk(global: *jsc.JSGlobalObject, key: bun.String, source_code: bun.String) bun.JSError!JSValue {
-    const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.C) JSValue, .{
+    const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) JSValue, .{
         .name = "BakeRegisterProductionChunk",
     });
     const result: JSValue = f(global, key, source_code);
@@ -791,7 +791,7 @@ fn BakeRegisterProductionChunk(global: *jsc.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
+pub export fn BakeToWindowsPath(input: bun.String) callconv(.c) bun.String {
     if (comptime bun.Environment.isPosix) {
         @panic("This code should not be called on POSIX systems.");
     }
@@ -806,7 +806,7 @@ pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
     return bun.String.cloneUTF16(output_slice);
 }
 
-pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.c) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 

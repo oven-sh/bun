@@ -508,7 +508,7 @@ noinline fn dumpBuildError(vm: *jsc.VirtualMachine) void {
     Output.flush();
 
     const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
+    var buffered_writer = bun.deprecated.bufferedWriter(error_writer);
     defer {
         buffered_writer.flush() catch {};
     }

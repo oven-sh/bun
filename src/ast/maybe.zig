@@ -197,7 +197,7 @@ pub fn AstMaybe(
                                     return null;
                                 }
 
-                                var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
+                                var stmts = std.array_list.Managed(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
                                 var decls = p.allocator.alloc(Decl, props.len) catch unreachable;
                                 var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
 

@@ -28,7 +28,7 @@ pub fn init() void {
 pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_files: []?[:0]u8) void {
     const file = trace_file orelse return;
 
-    var buffered = std.io.bufferedWriter(file.writer());
+    var buffered = bun.deprecated.bufferedWriter(file.writer());
     defer buffered.flush() catch |err| {
         bun.Output.err(err, "Failed to flush watcher trace file", .{});
     };

@@ -10,12 +10,12 @@ pub const Snapshots = struct {
     passed: usize = 0,
     failed: usize = 0,
 
-    file_buf: *std.ArrayList(u8),
+    file_buf: *std.array_list.Managed(u8),
     values: *ValuesHashMap,
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
-    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(InlineSnapshotToWrite)),
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -206,7 +206,7 @@ pub const Snapshots = struct {
     pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) !void {
         const gpres = try self.inline_snapshots_to_write.getOrPut(file_id);
         if (!gpres.found_existing) {
-            gpres.value_ptr.* = std.ArrayList(InlineSnapshotToWrite).init(self.allocator);
+            gpres.value_ptr.* = std.array_list.Managed(InlineSnapshotToWrite).init(self.allocator);
         }
         try gpres.value_ptr.append(value);
     }
@@ -254,7 +254,7 @@ pub const Snapshots = struct {
 
             const source = &bun.logger.Source.initPathString(test_filename, file_text);
 
-            var result_text = std.ArrayList(u8).init(arena);
+            var result_text = std.array_list.Managed(u8).init(arena);
 
             // 3. start looping, finding bytes from line/col
 
@@ -411,7 +411,7 @@ pub const Snapshots = struct {
                     break :D source_until_final_start[line_start..][0..indent_count];
                 };
 
-                var re_indented_string = std.ArrayList(u8).init(arena);
+                var re_indented_string = std.array_list.Managed(u8).init(arena);
                 defer re_indented_string.deinit();
                 const re_indented = if (ils.value.len > 0 and ils.value[0] == '\n') blk: {
                     // append starting newline

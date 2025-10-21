@@ -6,7 +6,7 @@ child_allocator: std.mem.Allocator,
 memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 fn alloc(context: *anyopaque, n: usize, alignment: std.mem.Alignment, return_address: usize) ?[*]u8 {
-    const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+    const this: *MemoryReportingAllocator = @ptrCast(@alignCast(context));
     const result = this.child_allocator.rawAlloc(n, alignment, return_address) orelse return null;
     _ = this.memory_cost.fetchAdd(n, .monotonic);
     if (comptime Environment.allow_assert)
@@ -21,7 +21,7 @@ pub fn discard(this: *MemoryReportingAllocator, buf: []const u8) void {
 }
 
 fn resize(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-    const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+    const this: *MemoryReportingAllocator = @ptrCast(@alignCast(context));
     if (this.child_allocator.rawResize(buf, alignment, new_len, ret_addr)) {
         _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
         if (comptime Environment.allow_assert)
@@ -33,7 +33,7 @@ fn resize(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len:
 }
 
 fn free(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-    const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+    const this: *MemoryReportingAllocator = @ptrCast(@alignCast(context));
     this.child_allocator.rawFree(buf, alignment, ret_addr);
 
     if (comptime Environment.allow_assert) {

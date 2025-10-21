@@ -291,10 +291,10 @@ pub const Parser = struct {
                         return data.len;
                     }
                 };
-                const writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
+                const writer = std.Io.GenericWriter(fakeWriter, anyerror, fakeWriter.writeAll){
                     .context = fakeWriter{},
                 };
-                var buffered_writer = std.io.bufferedWriter(writer);
+                var buffered_writer = bun.deprecated.bufferedWriter(writer);
                 const actual = buffered_writer.writer();
                 for (self.log.msgs.items) |msg| {
                     var m: logger.Msg = msg;
@@ -343,14 +343,14 @@ pub const Parser = struct {
         defer p.lexer.deinit();
 
         var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
-        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
+        p.binary_expression_stack = std.array_list.Managed(ParserType.BinaryExpressionVisitor).initCapacity(
             binary_expression_stack_heap.get(),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
         var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
-        p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
+        p.binary_expression_simplify_stack = std.array_list.Managed(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
             binary_expression_simplify_stack_heap.get(),
             47,
         ) catch unreachable; // stack allocation cannot fail
@@ -1583,5 +1583,5 @@ const WrapMode = js_parser.WrapMode;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;

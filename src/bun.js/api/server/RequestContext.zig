@@ -428,7 +428,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             Output.flush();
 
             // Explicitly use `this.allocator` and *not* the arena
-            var bb = std.ArrayList(u8).init(this.allocator);
+            var bb = std.array_list.Managed(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
@@ -1741,7 +1741,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (comptime debug_mode) {
                 if (req.server) |server| {
                     if (!err.isEmptyOrUndefinedOrNull()) {
-                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
 
@@ -1776,7 +1776,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
 
-                            var bb = std.ArrayList(u8).init(allocator);
+                            var bb = std.array_list.Managed(u8).init(allocator);
                             defer bb.clearAndFree();
                             const bb_writer = bb.writer();
 
@@ -2077,7 +2077,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 var arena = std.heap.ArenaAllocator.init(this.allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
+                var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(allocator);
                 defer exception_list.deinit();
                 const prev_exception_list = vm.onUnhandledRejectionExceptionList;
                 vm.onUnhandledRejectionExceptionList = &exception_list;

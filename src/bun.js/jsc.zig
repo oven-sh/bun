@@ -226,10 +226,10 @@ pub const Ref = struct {
     }
 };
 
-pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
+pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.c) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
-        pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
+        pub fn callback(ctx: ?*anyopaque) callconv(.c) void {
             const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
             Function(context);
         }
@@ -250,8 +250,8 @@ pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
 pub const MAX_SAFE_INTEGER = 9007199254740991;
 pub const MIN_SAFE_INTEGER = -9007199254740991;
 
-extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void, eval_mode: bool) void;
-fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.c) void, eval_mode: bool) void;
+fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.c) void {
     bun.Output.errGeneric(
         \\invalid JSC environment variable
         \\

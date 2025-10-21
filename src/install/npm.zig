@@ -22,7 +22,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
     const ci_name = bun.detectCI();
 
-    var print_buf = std.ArrayList(u8).init(allocator);
+    var print_buf = std.array_list.Managed(u8).init(allocator);
     defer print_buf.deinit();
     var print_writer = print_buf.writer();
 
@@ -1057,7 +1057,7 @@ pub const PackageManifest = struct {
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
+            var buffer = try std.array_list.Managed(u8).initCapacity(allocator, this.byteLength(scope) + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, scope, @TypeOf(writer), writer);
@@ -1882,7 +1882,7 @@ pub const PackageManifest = struct {
         defer all_extern_strings_dedupe_map.deinit();
         var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
         defer version_extern_strings_dedupe_map.deinit();
-        var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
+        var optional_peer_dep_names = std.array_list.Managed(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
         var bundled_deps_set = bun.StringSet.init(allocator);

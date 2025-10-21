@@ -1,7 +1,7 @@
 /// Managed `ArrayList` using an arbitrary `std.mem.Allocator`.
 /// Prefer using a concrete type, like `ArrayListDefault` or `ArrayListIn(MimallocArena)`.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayList(comptime T: type) type {
     return ArrayListIn(T, std.mem.Allocator);
 }
@@ -9,7 +9,7 @@ pub fn ArrayList(comptime T: type) type {
 /// Managed `ArrayList` using the default allocator. No overhead compared to an unmanaged
 /// `ArrayList`.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayListDefault(comptime T: type) type {
     return ArrayListIn(T, bun.DefaultAllocator);
 }
@@ -17,7 +17,7 @@ pub fn ArrayListDefault(comptime T: type) type {
 /// Managed `ArrayList` using a specific kind of allocator. No overhead if `Allocator` is a
 /// zero-sized type.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayListIn(comptime T: type, comptime Allocator: type) type {
     return ArrayListAlignedIn(T, Allocator, null);
 }
@@ -26,7 +26,7 @@ pub fn ArrayListIn(comptime T: type, comptime Allocator: type) type {
 /// Prefer using a concrete type, like `ArrayListAlignedDefault` or
 /// `ArrayListAlignedIn(MimallocArena)`.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayListAligned(comptime T: type, comptime alignment: ?u29) type {
     return ArrayListAlignedIn(T, std.mem.Allocator, alignment);
 }
@@ -34,7 +34,7 @@ pub fn ArrayListAligned(comptime T: type, comptime alignment: ?u29) type {
 /// Managed `ArrayListAligned` using the default allocator. No overhead compared to an unmanaged
 /// `ArrayListAligned`.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayListAlignedDefault(comptime T: type, comptime alignment: ?u29) type {
     return ArrayListAlignedIn(T, bun.DefaultAllocator, alignment);
 }
@@ -42,7 +42,7 @@ pub fn ArrayListAlignedDefault(comptime T: type, comptime alignment: ?u29) type 
 /// Managed `ArrayListAligned` using a specific kind of allocator. No overhead if `Allocator` is a
 /// zero-sized type.
 ///
-/// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
+/// NOTE: Unlike `std.array_list.Managed`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayListAlignedIn(
     comptime T: type,
     comptime Allocator: type,
@@ -88,7 +88,7 @@ pub fn ArrayListAlignedIn(
             };
         }
 
-        /// NOTE: Unlike `std.ArrayList`, this method calls `deinit` on every item in the list,
+        /// NOTE: Unlike `std.array_list.Managed`, this method calls `deinit` on every item in the list,
         /// if such a method exists. If you don't want that behavior, use `deinitShallow`.
         pub fn deinit(self: *Self) void {
             bun.memory.deinit(self.items());

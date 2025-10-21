@@ -18,7 +18,7 @@ pub const Fallback = struct {
         msg: *const api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
         pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            var bb = std.ArrayList(u8).init(this.allocator);
+            var bb = std.array_list.Managed(u8).init(this.allocator);
             defer bb.deinit();
             const bb_writer = bb.writer();
             const Encoder = schema.Writer(@TypeOf(bb_writer));

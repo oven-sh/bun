@@ -186,7 +186,7 @@ pub const Chunk = struct {
                             .before = .{},
                         };
                     var shifts = if (enable_source_map_shifts)
-                        try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
+                        try std.array_list.Managed(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
 
                     if (enable_source_map_shifts)
                         shifts.appendAssumeCapacity(shift);

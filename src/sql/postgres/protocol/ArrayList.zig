@@ -1,6 +1,6 @@
 const ArrayList = @This();
 
-array: *std.ArrayList(u8),
+array: *std.array_list.Managed(u8),
 
 pub fn offset(this: @This()) usize {
     return this.array.items.len;

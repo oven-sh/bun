@@ -625,7 +625,7 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
                 var symbols = Symbol.Map{};
                 for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                     const condition: *const bun.css.ImportConditions = condition_;
-                    const scratchbuf = std.ArrayList(u8).init(arena.allocator());
+                    const scratchbuf = std.array_list.Managed(u8).init(arena.allocator());
                     var printer = bun.css.Printer(W).new(
                         arena.allocator(),
                         scratchbuf,

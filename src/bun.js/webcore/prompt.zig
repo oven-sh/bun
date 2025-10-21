@@ -46,7 +46,7 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     bun.Output.flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    var stdin = std.io.getStdIn();
+    var stdin = std.fs.File.stdin();
     var reader = stdin.reader();
     while (true) {
         const byte = reader.readByte() catch break;
@@ -94,9 +94,9 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     bun.Output.flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    var stdin = std.io.getStdIn();
+    var stdin = std.fs.File.stdin();
     const unbuffered_reader = stdin.reader();
-    var buffered = std.io.bufferedReader(unbuffered_reader);
+    var buffered = bun.deprecated.bufferedReader(unbuffered_reader);
     var reader = buffered.reader();
 
     const first_byte = reader.readByte() catch {
@@ -156,7 +156,7 @@ pub const prompt = struct {
     /// and assume capacity.
     pub fn readUntilDelimiterArrayListAppendAssumeCapacity(
         reader: anytype,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
         delimiter: u8,
         max_size: usize,
     ) !void {
@@ -179,7 +179,7 @@ pub const prompt = struct {
     /// and not resize.
     fn readUntilDelimiterArrayListInfinity(
         reader: anytype,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
         delimiter: u8,
     ) !void {
         while (true) {
@@ -278,7 +278,7 @@ pub const prompt = struct {
             if (second == '\n') return default;
         }
 
-        var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
+        var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return .null;

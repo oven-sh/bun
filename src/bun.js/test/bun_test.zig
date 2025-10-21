@@ -201,7 +201,7 @@ pub const BunTest = struct {
     /// Whether tests in this file should default to concurrent execution
     default_concurrent: bool,
     first_last: BunTestRoot.FirstLast,
-    extra_execution_entries: std.ArrayList(*ExecutionEntry),
+    extra_execution_entries: std.array_list.Managed(*ExecutionEntry),
     wants_wakeup: bool = false,
 
     phase: enum {
@@ -826,11 +826,11 @@ pub const BaseScope = struct {
 
 pub const DescribeScope = struct {
     base: BaseScope,
-    entries: std.ArrayList(TestScheduleEntry),
-    beforeAll: std.ArrayList(*ExecutionEntry),
-    beforeEach: std.ArrayList(*ExecutionEntry),
-    afterEach: std.ArrayList(*ExecutionEntry),
-    afterAll: std.ArrayList(*ExecutionEntry),
+    entries: std.array_list.Managed(TestScheduleEntry),
+    beforeAll: std.array_list.Managed(*ExecutionEntry),
+    beforeEach: std.array_list.Managed(*ExecutionEntry),
+    afterEach: std.array_list.Managed(*ExecutionEntry),
+    afterAll: std.array_list.Managed(*ExecutionEntry),
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     failed: bool = false,
@@ -890,7 +890,7 @@ pub const DescribeScope = struct {
         return entry;
     }
     pub const HookTag = enum { beforeAll, beforeEach, afterEach, afterAll };
-    pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.ArrayList(*ExecutionEntry) {
+    pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.array_list.Managed(*ExecutionEntry) {
         switch (tag) {
             .beforeAll => return &this.beforeAll,
             .beforeEach => return &this.beforeEach,

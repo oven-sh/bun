@@ -60,7 +60,7 @@ pub fn toContain(
                 _: *JSGlobalObject,
                 entry_: ?*anyopaque,
                 item: JSValue,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 const entry = bun.cast(*ExpectedEntry, entry_.?);
                 if (item.isSameValue(entry.expected, entry.globalThis) catch return) {
                     entry.pass.* = true;

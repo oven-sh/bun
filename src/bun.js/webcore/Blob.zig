@@ -350,7 +350,7 @@ pub fn onStructuredCloneSerialize(
 ) void {
     _ = globalThis;
 
-    const Writer = std.io.Writer(StructuredCloneWriter, StructuredCloneWriter.WriteError, StructuredCloneWriter.write);
+    const Writer = std.Io.GenericWriter(StructuredCloneWriter, StructuredCloneWriter.WriteError, StructuredCloneWriter.write);
     const writer = Writer{
         .context = .{
             .ctx = ctx,
@@ -365,7 +365,7 @@ pub fn onStructuredCloneTransfer(
     this: *Blob,
     globalThis: *jsc.JSGlobalObject,
     ctx: *anyopaque,
-    write: *const fn (*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void,
+    write: *const fn (*anyopaque, ptr: [*]const u8, len: usize) callconv(.c) void,
 ) void {
     _ = write;
     _ = ctx;
@@ -639,7 +639,7 @@ export fn Blob__dupe(this: *Blob) *Blob {
     return new(this.dupeWithContentType(true));
 }
 
-export fn Blob__getFileNameString(this: *Blob) callconv(.C) bun.String {
+export fn Blob__getFileNameString(this: *Blob) callconv(.c) bun.String {
     if (this.getFileName()) |filename| {
         return bun.String.fromBytes(filename);
     }
@@ -3027,24 +3027,24 @@ pub fn getSizeForBindings(this: *Blob) u64 {
     return this.size;
 }
 
-export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
+export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.c) u64 {
     return this.getSizeForBindings();
 }
 
-export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.C) ?*anyopaque {
+export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.c) ?*anyopaque {
     const blob = Blob.fromJS(value) orelse return null;
     const data = blob.sharedView();
     if (data.len == 0) return null;
     return @constCast(data.ptr);
 }
 
-export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
+export fn Blob__getSize(value: jsc.JSValue) callconv(.c) usize {
     const blob = Blob.fromJS(value) orelse return 0;
     const data = blob.sharedView();
     return data.len;
 }
 
-export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.C) *Blob {
+export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.c) *Blob {
     if (ptr == null or len == 0) {
         const blob = new(initEmpty(globalThis));
         return blob;
@@ -3880,7 +3880,7 @@ fn fromJSWithoutDeferGC(
 
     var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
     const stack_mem_all = stack_allocator.get();
-    var stack: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(stack_mem_all);
+    var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
     var joiner = StringJoiner{ .allocator = stack_mem_all };
     var could_have_non_ascii = false;
 
@@ -4032,7 +4032,7 @@ pub const Any = union(enum) {
         return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
     }
 
-    pub fn fromArrayList(list: std.ArrayList(u8)) Any {
+    pub fn fromArrayList(list: std.array_list.Managed(u8)) Any {
         return .{ .InternalBlob = .{ .bytes = list } };
     }
 
@@ -4384,7 +4384,7 @@ pub const Any = union(enum) {
 
 /// A single-use Blob backed by an allocation of memory.
 pub const Internal = struct {
-    bytes: std.ArrayList(u8),
+    bytes: std.array_list.Managed(u8),
     was_string: bool = false,
 
     pub fn memoryCost(this: *const @This()) usize {
@@ -4579,8 +4579,8 @@ pub fn FileOpener(comptime This: type) type {
 
             if (Environment.isWindows) {
                 const WrappedCallback = struct {
-                    pub fn callback(req: *libuv.fs_t) callconv(.C) void {
-                        var self: *This = @alignCast(@ptrCast(req.data.?));
+                    pub fn callback(req: *libuv.fs_t) callconv(.c) void {
+                        var self: *This = @ptrCast(@alignCast(req.data.?));
                         {
                             defer req.deinit();
                             if (req.result.errEnum()) |errEnum| {

@@ -104,7 +104,7 @@ pub const AnyRoute = union(enum) {
             }
         }
         const is_index_route = bun.strings.eql(path.path.slice(), index_path);
-        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        var builder = std.array_list.Managed(u8).init(bun.default_allocator);
         defer builder.deinit();
         if (!strings.hasPrefixComptime(relative_path, "/")) {
             try builder.append('/');
@@ -210,8 +210,8 @@ pub const AnyRoute = union(enum) {
         dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
         js_string_allocations: bun.bake.StringRefList,
         global: *jsc.JSGlobalObject,
-        framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
-        user_routes: *std.ArrayList(ServerConfig.StaticRouteEntry),
+        framework_router_list: std.array_list.Managed(bun.bake.Framework.FileSystemRouterType),
+        user_routes: *std.array_list.Managed(ServerConfig.StaticRouteEntry),
     };
 
     pub fn fromJS(

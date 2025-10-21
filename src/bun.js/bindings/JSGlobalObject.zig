@@ -383,7 +383,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(instance);
     }
 
-    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
+    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.c) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
         ctx_val: anytype,
@@ -393,7 +393,7 @@ pub const JSGlobalObject = opaque {
         const Fn = Function;
         const ContextType = @TypeOf(ctx_val);
         const Wrapper = struct {
-            pub fn call(p: *anyopaque) callconv(.C) void {
+            pub fn call(p: *anyopaque) callconv(.c) void {
                 Fn(bun.cast(ContextType, p));
             }
         };
@@ -842,14 +842,14 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
-    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.c) void {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);
         };
     }
 
-    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.C) JSValue {
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.c) JSValue {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.reportUncaughtException(global, exception);
     }
@@ -859,7 +859,7 @@ pub const JSGlobalObject = opaque {
         _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
     }
 
-    pub fn onCrash() callconv(.C) void {
+    pub fn onCrash() callconv(.c) void {
         jsc.markBinding(@src());
         bun.Output.flush();
         @panic("A C++ exception occurred");

@@ -737,8 +737,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     pub const Keyword = enum {
         abstract,
         as,
-        @"async",
-        @"await",
+        async,
+        await,
         case,
         @"catch",
         class,
@@ -802,8 +802,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             return switch (this) {
                 .abstract => .blue,
                 .as => .blue,
-                .@"async" => .magenta,
-                .@"await" => .magenta,
+                .async => .magenta,
+                .await => .magenta,
                 .case => .magenta,
                 .@"catch" => .magenta,
                 .class => .magenta,
@@ -1650,7 +1650,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
 
 /// Return a Formatter for number of nanoseconds according to its magnitude:
 /// [#y][#w][#d][#h][#m]#[.###][n|u|m]s
-pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
+pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Alt(formatDurationOneDecimal) {
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
 
@@ -1722,7 +1722,7 @@ pub fn NullableFallback(comptime T: type) type {
     };
 }
 
-pub fn escapePowershell(str: []const u8) std.fmt.Formatter(escapePowershellImpl) {
+pub fn escapePowershell(str: []const u8) std.fmt.Alt(escapePowershellImpl) {
     return .{ .data = str };
 }
 
@@ -1857,7 +1857,7 @@ pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatte
 ///
 /// this hash is used primarily for the hashes in bundler chunk file names. the
 /// output is all lowercase to avoid issues with case-insensitive filesystems.
-pub fn truncatedHash32(int: u64) std.fmt.Formatter(truncatedHash32Impl) {
+pub fn truncatedHash32(int: u64) std.fmt.Alt(truncatedHash32Impl) {
     return .{ .data = int };
 }
 

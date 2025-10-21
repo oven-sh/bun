@@ -103,7 +103,7 @@ pub fn writeOutputFilesToDisk(
 
                     const source_map_start = "//# sourceMappingURL=";
                     const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
-                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.array_list.Managed(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
                     buf.appendSliceAssumeCapacity(a);
@@ -164,7 +164,7 @@ pub fn writeOutputFilesToDisk(
 
                 const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                 const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                var buf = std.ArrayList(u8).initCapacity(code_with_inline_source_map_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                var buf = std.array_list.Managed(u8).initCapacity(code_with_inline_source_map_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                 buf.appendSliceAssumeCapacity(code_result.buffer);
                 buf.appendSliceAssumeCapacity(source_map_start);

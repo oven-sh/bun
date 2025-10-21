@@ -31,7 +31,7 @@ pub fn NewParser_(
         pub const is_typescript_enabled = js_parser_features.typescript;
         pub const is_jsx_enabled = js_parser_jsx != .none;
         pub const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
-        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
+        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.array_list.Managed(ImportRecord) else std.array_list.Managed(ImportRecord);
         const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
         const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
         pub const track_symbol_usage_during_parse_pass = only_scan_imports_and_do_not_visit and is_typescript_enabled;
@@ -202,7 +202,7 @@ pub fn NewParser_(
 
         has_called_runtime: bool = false,
 
-        legacy_cjs_import_stmts: std.ArrayList(Stmt),
+        legacy_cjs_import_stmts: std.array_list.Managed(Stmt),
 
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: SymbolUseMap = .{},
@@ -4889,7 +4889,7 @@ pub fn NewParser_(
                                 target = p.newExpr(E.Dot{ .target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
                             }
 
-                            var array: std.ArrayList(Expr) = .init(p.allocator);
+                            var array: std.array_list.Managed(Expr) = .init(p.allocator);
 
                             if (p.options.features.emit_decorator_metadata) {
                                 switch (prop.kind) {
@@ -6685,7 +6685,7 @@ pub fn NewParser_(
                 break :brk false;
             };
 
-            this.symbols = std.ArrayList(Symbol).init(allocator);
+            this.symbols = std.array_list.Managed(Symbol).init(allocator);
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
@@ -6822,6 +6822,6 @@ const statementCaresAboutScope = js_parser.statementCaresAboutScope;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;

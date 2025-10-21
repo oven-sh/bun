@@ -317,7 +317,7 @@ pub const GetAddrInfo = struct {
         address: std.net.Address,
         ttl: i32 = 0,
 
-        pub const List = std.ArrayList(Result);
+        pub const List = std.array_list.Managed(Result);
 
         pub const Any = union(enum) {
             addrinfo: ?*std.c.addrinfo,

@@ -80,9 +80,9 @@ pub const JSValue = enum(i64) {
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
-    ) callconv(.C) void;
+    ) callconv(.c) void;
 
-    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void) void;
 
     pub fn forEachPropertyNonIndexed(
         this: JSValue,
@@ -2113,12 +2113,12 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isAggregateError(this, globalObject);
     }
 
-    extern fn JSC__JSValue__forEach(this: JSValue, globalObject: *JSGlobalObject, ctx: ?*anyopaque, callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void) void;
+    extern fn JSC__JSValue__forEach(this: JSValue, globalObject: *JSGlobalObject, ctx: ?*anyopaque, callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void) void;
     pub fn forEach(
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void,
     ) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, callback });
     }
@@ -2128,9 +2128,9 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: anytype,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.c) void,
     ) bun.JSError!void {
-        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
+        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void, @ptrCast(callback));
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, func });
     }
 
@@ -2172,7 +2172,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {
-        return @alignCast(@ptrCast(value.asEncoded().asPtr));
+        return @ptrCast(@alignCast(value.asEncoded().asPtr));
     }
 
     /// For any callback JSValue created in JS that you will not call *immediately*, you must wrap it

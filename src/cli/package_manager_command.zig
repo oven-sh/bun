@@ -320,7 +320,7 @@ pub const PackageManagerCommand = struct {
 
             var max_depth: usize = 0;
 
-            var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
+            var directories = std.array_list.Managed(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
             while (iterator.next(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
@@ -451,7 +451,7 @@ fn printNodeModulesFolderStructure(
     directory: *const NodeModulesFolder,
     directory_package_id: ?PackageID,
     depth: usize,
-    directories: *std.ArrayList(NodeModulesFolder),
+    directories: *std.array_list.Managed(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
 ) !void {

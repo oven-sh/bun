@@ -1,6 +1,6 @@
 const dns = @This();
 
-const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
+const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.c) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
 
@@ -14,9 +14,9 @@ const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_handle_reply)(void*);
     // static void (*getaddrinfo_async_cancel)(mach_port_t);
     // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
-    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.C) i32;
-    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.C) void;
+    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.c) i32;
+    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.c) i32;
+    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.c) void;
 
     var handle: ?*anyopaque = null;
     var loaded = false;
@@ -168,9 +168,9 @@ const LibC = struct {
 const LibUVBackend = struct {
     const log = Output.scoped(.LibUVBackend, .visible);
 
-    fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
+    fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.c) void {
         //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        const this: *GetAddrInfoRequest = @ptrCast(@alignCast(uv_info.data));
         const Holder = struct {
             uv_info: *libuv.uv_getaddrinfo_t,
             task: jsc.AnyTask,
@@ -708,7 +708,7 @@ pub const GetAddrInfoRequest = struct {
         status: i32,
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         const this = @as(*GetAddrInfoRequest, @ptrCast(@alignCast(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
@@ -862,7 +862,7 @@ pub const GetAddrInfoRequest = struct {
 
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        const this: *GetAddrInfoRequest = @ptrCast(@alignCast(uv_info.data));
         bun.assert(uv_info == &this.backend.libc.uv);
         if (this.backend == .libinfo) {
             if (this.backend.libinfo.file_poll) |poll| poll.deinit();
@@ -1458,10 +1458,10 @@ pub const internal = struct {
             if (ai.addr) |addr| {
                 if (ai.family == std.c.AF.INET) {
                     const addr_in: *std.c.sockaddr.in = @ptrCast(&results[i].addr);
-                    addr_in.* = @as(*std.c.sockaddr.in, @alignCast(@ptrCast(addr))).*;
+                    addr_in.* = @as(*std.c.sockaddr.in, @ptrCast(@alignCast(addr))).*;
                 } else if (ai.family == std.c.AF.INET6) {
                     const addr_in: *std.c.sockaddr.in6 = @ptrCast(&results[i].addr);
-                    addr_in.* = @as(*std.c.sockaddr.in6, @alignCast(@ptrCast(addr))).*;
+                    addr_in.* = @as(*std.c.sockaddr.in6, @ptrCast(@alignCast(addr))).*;
                 }
             } else {
                 results[i].addr = std.mem.zeroes(std.c.sockaddr.storage);
@@ -1494,7 +1494,7 @@ pub const internal = struct {
                 entry.info.next = null;
             }
             if (entry.info.addr != null) {
-                entry.info.addr = @alignCast(@ptrCast(&entry.addr));
+                entry.info.addr = @ptrCast(@alignCast(&entry.addr));
             }
         }
 
@@ -1626,7 +1626,7 @@ pub const internal = struct {
         status: i32,
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         const req: *Request = bun.cast(*Request, arg);
         const status_int: c_int = @intCast(status);
         if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) {
@@ -1775,7 +1775,7 @@ pub const internal = struct {
         _ = getaddrinfo(loop, hostname, port, null);
     }
 
-    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.C) c_int {
+    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.c) c_int {
         const host: ?[:0]const u8 = std.mem.span(_host);
         var is_cache_hit: bool = false;
         const req = getaddrinfo(loop, host, port, &is_cache_hit).?;
@@ -1786,7 +1786,7 @@ pub const internal = struct {
     fn us_getaddrinfo_set(
         request: *Request,
         socket: *bun.uws.ConnectingSocket,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
         const query = DNSRequestOwner{
@@ -1800,7 +1800,7 @@ pub const internal = struct {
         bun.handleOom(request.notify.append(bun.default_allocator, .{ .socket = socket }));
     }
 
-    fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
+    fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
@@ -1816,7 +1816,7 @@ pub const internal = struct {
         }
     }
 
-    fn getRequestResult(req: *Request) callconv(.C) *Request.Result {
+    fn getRequestResult(req: *Request) callconv(.c) *Request.Result {
         return &req.result.?;
     }
 };
@@ -2401,7 +2401,7 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
+    pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.c) void {
         const poll = UvDnsPoll.fromPoll(watcher);
         const vm = poll.parent.vm;
         vm.eventLoop().enter();
@@ -2423,8 +2423,8 @@ pub const Resolver = struct {
         );
     }
 
-    pub fn onCloseUv(watcher: *anyopaque) callconv(.C) void {
-        const poll = UvDnsPoll.fromPoll(@alignCast(@ptrCast(watcher)));
+    pub fn onCloseUv(watcher: *anyopaque) callconv(.c) void {
+        const poll = UvDnsPoll.fromPoll(@ptrCast(@alignCast(watcher)));
         poll.destroy();
     }
 

@@ -1765,7 +1765,7 @@ pub const DeferredRequest = struct {
     };
 
     fn onAbortWrapper(this: *anyopaque) void {
-        const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        const self: *DeferredRequest = @ptrCast(@alignCast(this));
         if (!self.isAlive()) return;
         self.onAbortImpl();
     }
@@ -1838,7 +1838,7 @@ pub fn startAsyncBundle(
     if (dev.inspector()) |agent| {
         var sfa_state = std.heap.stackFallback(256, dev.allocator());
         const sfa = sfa_state.get();
-        var trigger_files = try std.ArrayList(bun.String).initCapacity(sfa, entry_points.set.count());
+        var trigger_files = try std.array_list.Managed(bun.String).initCapacity(sfa, entry_points.set.count());
         defer trigger_files.deinit();
         defer for (trigger_files.items) |*str| {
             str.deref();
@@ -1946,7 +1946,7 @@ fn indexFailures(dev: *DevServer) !void {
         var gts = try dev.initGraphTraceState(sfa, 0);
         defer gts.deinit(sfa);
 
-        var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
+        var payload = try std.array_list.Managed(u8).initCapacity(sfa, total_len);
         defer payload.deinit();
         payload.appendAssumeCapacity(MessageId.errors.char());
         const w = payload.writer();
@@ -1986,7 +1986,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         dev.publish(.errors, payload.items, .binary);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
-        var payload = try std.ArrayList(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
+        var payload = try std.array_list.Managed(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
         defer payload.deinit();
         payload.appendAssumeCapacity(MessageId.errors.char());
         const w = payload.writer();
@@ -2571,7 +2571,7 @@ pub fn finalizeBundle(
     var has_route_bits_set = false;
 
     var hot_update_payload_sfa = std.heap.stackFallback(65536, dev.allocator());
-    var hot_update_payload = std.ArrayList(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
+    var hot_update_payload = std.array_list.Managed(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
         unreachable; // enough space
     defer hot_update_payload.deinit();
     hot_update_payload.appendAssumeCapacity(MessageId.hot_update.char());
@@ -2841,7 +2841,7 @@ pub fn finalizeBundle(
             inspector_agent = null;
         }
         if (inspector_agent) |agent| {
-            var buf = std.ArrayList(u8).init(bun.default_allocator);
+            var buf = std.array_list.Managed(u8).init(bun.default_allocator);
             defer buf.deinit();
             try dev.encodeSerializedFailures(dev.bundling_failures.keys(), &buf, agent);
         }
@@ -3267,7 +3267,7 @@ const ErrorPageKind = enum {
 fn encodeSerializedFailures(
     dev: *const DevServer,
     failures: []const SerializedFailure,
-    buf: *std.ArrayList(u8),
+    buf: *std.array_list.Managed(u8),
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) bun.OOM!void {
     var all_failures_len: usize = 0;
@@ -3300,7 +3300,7 @@ fn sendSerializedFailures(
     kind: ErrorPageKind,
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) !void {
-    var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 2048);
+    var buf: std.array_list.Managed(u8) = try .initCapacity(dev.allocator(), 2048);
     errdefer buf.deinit();
 
     try buf.appendSlice(switch (kind) {
@@ -3567,7 +3567,7 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
     const file = try inner_dir.createFile(bun.path.basename(name), .{});
     defer file.close();
 
-    var bufw = std.io.bufferedWriter(file.writer());
+    var bufw = bun.deprecated.bufferedWriter(file.writer());
 
     if (!bun.strings.hasSuffixComptime(rel_path, ".map")) {
         try bufw.writer().print("// {s} bundled for {s}\n", .{
@@ -3616,7 +3616,7 @@ pub fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (dev.emit_incremental_visualizer_events == 0) return;
 
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
 
@@ -3645,7 +3645,7 @@ pub fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     bun.debugAssert(dev.emit_memory_visualizer_events > 0);
 
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
     payload.appendAssumeCapacity(MessageId.memory_visualizer.char());
@@ -3653,7 +3653,7 @@ pub fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     dev.publish(.memory_visualizer, payload.items, .binary);
 }
 
-pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
+pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.array_list.Managed(u8)) !void {
     const w = payload.writer();
     const Fields = extern struct {
         incremental_graph_client: u32,
@@ -3707,7 +3707,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
     }
 }
 
-pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
+pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.array_list.Managed(u8)) !void {
     payload.appendAssumeCapacity(MessageId.visualizer.char());
     const w = payload.writer();
 
@@ -4220,7 +4220,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll("\nlet inlinedData = Uint8Array.from(atob(\"");
 
     var sfb = std.heap.stackFallback(4096, dev.allocator());
-    var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 4096);
+    var payload = try std.array_list.Managed(u8).initCapacity(sfb.get(), 4096);
     defer payload.deinit();
     try dev.writeVisualizerMessage(&payload);
 

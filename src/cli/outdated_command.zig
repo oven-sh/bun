@@ -245,7 +245,7 @@ pub const OutdatedCommand = struct {
             catalog_name_hash: u64,
             behavior: Behavior,
         };
-        var catalog_map = std.AutoHashMap(CatalogKey, std.ArrayList(PackageID)).init(allocator);
+        var catalog_map = std.AutoHashMap(CatalogKey, std.array_list.Managed(PackageID)).init(allocator);
         defer catalog_map.deinit();
         defer {
             var iter = catalog_map.iterator();
@@ -263,7 +263,7 @@ pub const OutdatedCommand = struct {
 
                 const entry = try catalog_map.getOrPut(key);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = std.ArrayList(PackageID).init(allocator);
+                    entry.value_ptr.* = std.array_list.Managed(PackageID).init(allocator);
                 }
                 try entry.value_ptr.append(item.workspace_pkg_id);
             } else {
@@ -290,7 +290,7 @@ pub const OutdatedCommand = struct {
             const workspace_list = catalog_map.get(key) orelse continue;
 
             if (workspace_list.items[0] != item.workspace_pkg_id) continue;
-            var workspace_names = std.ArrayList(u8).init(allocator);
+            var workspace_names = std.array_list.Managed(u8).init(allocator);
             defer workspace_names.deinit();
 
             const cat_name = dep.version.value.catalog.slice(string_buf);
@@ -378,7 +378,7 @@ pub const OutdatedCommand = struct {
         const pkg_resolutions = packages.items(.resolution);
         const pkg_dependencies = packages.items(.dependencies);
 
-        var version_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var version_buf = std.array_list.Managed(u8).init(bun.default_allocator);
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 

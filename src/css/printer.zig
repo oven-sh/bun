@@ -117,9 +117,9 @@ pub fn Printer(comptime Writer: type) type {
         /// A mapping of pseudo classes to replace with class names that can be applied
         /// from JavaScript. Useful for polyfills, for example.
         pseudo_classes: ?PseudoClasses = null,
-        indentation_buf: std.ArrayList(u8),
+        indentation_buf: std.array_list.Managed(u8),
         ctx: ?*const css.StyleContext = null,
-        scratchbuf: std.ArrayList(u8),
+        scratchbuf: std.array_list.Managed(u8),
         error_kind: ?css.PrinterError = null,
         import_info: ?ImportInfo = null,
         public_path: []const u8,
@@ -236,7 +236,7 @@ pub fn Printer(comptime Writer: type) type {
         /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
         pub fn new(
             allocator: Allocator,
-            scratchbuf: std.ArrayList(u8),
+            scratchbuf: std.array_list.Managed(u8),
             dest: Writer,
             options: PrinterOptions,
             import_info: ?ImportInfo,

@@ -20,7 +20,7 @@ state: union(enum) {
     waiting_write_err,
     done,
 } = .idle,
-args: std.ArrayList([:0]const u8),
+args: std.array_list.Managed([:0]const u8),
 
 pub const ShellCondExprStatTask = struct {
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, log),
@@ -75,7 +75,7 @@ pub fn init(
         .io = io,
         .args = undefined,
     };
-    condexpr.args = std.ArrayList([:0]const u8).init(condexpr.base.allocator());
+    condexpr.args = std.array_list.Managed([:0]const u8).init(condexpr.base.allocator());
     return condexpr;
 }
 

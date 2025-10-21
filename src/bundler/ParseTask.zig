@@ -854,7 +854,7 @@ const OnBeforeParsePlugin = struct {
         pub fn logFn(
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const args = args_ orelse return;
             const log_options = log_options_ orelse return;
             log_options.append(args.context.log, args.context.file_path.namespace);
@@ -876,15 +876,15 @@ const OnBeforeParsePlugin = struct {
         source_len: usize = 0,
         loader: Loader,
 
-        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.c) i32 = &fetchSourceCode,
 
         user_context: ?*anyopaque = null,
-        free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        free_user_context: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
         log: *const fn (
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void = &BunLogOptions.logFn,
+        ) callconv(.c) void = &BunLogOptions.logFn,
 
         pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
             const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
@@ -893,7 +893,7 @@ const OnBeforeParsePlugin = struct {
         }
     };
 
-    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.c) i32 {
         debug("fetchSourceCode", .{});
         const this = args.context;
         if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {

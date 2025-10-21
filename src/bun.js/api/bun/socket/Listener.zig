@@ -457,7 +457,7 @@ fn doStop(this: *Listener, force_close: bool) void {
     }
 }
 
-pub fn finalize(this: *Listener) callconv(.C) void {
+pub fn finalize(this: *Listener) callconv(.c) void {
     log("finalize", .{});
     const listener = this.listener;
     this.listener = .none;
@@ -910,7 +910,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         }
     }
 
-    fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
+    fn onPipeClosed(pipe: *uv.Pipe) callconv(.c) void {
         const this: *WindowsNamedPipeListeningContext = @ptrCast(@alignCast(pipe.data));
         this.deinit();
     }

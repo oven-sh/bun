@@ -121,7 +121,7 @@ pub const Source = union(enum) {
             _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
         }
 
-        fn onCloseComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onCloseComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = File.fromFS(fs);
             bun.assert(file.state == .closing);
             fs.deinit();

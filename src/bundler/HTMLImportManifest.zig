@@ -98,7 +98,7 @@ fn writeEntryItem(
 pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
     var stack = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack.get();
-    var bytes = std.ArrayList(u8).init(allocator);
+    var bytes = std.array_list.Managed(u8).init(allocator);
     defer bytes.deinit();
     try write(index, graph, linker_graph, chunks, bytes.writer());
     try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
@@ -113,8 +113,8 @@ fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std
     };
 }
 
-pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Formatter(escapedJSONFormatter) {
-    return std.fmt.Formatter(escapedJSONFormatter){ .data = this };
+pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Alt(escapedJSONFormatter) {
+    return std.fmt.Alt(escapedJSONFormatter){ .data = this };
 }
 
 pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
@@ -132,7 +132,7 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     const inject_compiler_filesystem_prefix = bv2.transpiler.options.compile;
     // Use the server-side public path here.
     const public_path = bv2.transpiler.options.public_path;
-    var temp_buffer = std.ArrayList(u8).init(bun.default_allocator);
+    var temp_buffer = std.array_list.Managed(u8).init(bun.default_allocator);
     defer temp_buffer.deinit();
 
     for (chunks) |*ch| {

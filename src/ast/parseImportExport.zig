@@ -434,4 +434,4 @@ const isEvalOrArguments = js_parser.isEvalOrArguments;
 const options = js_parser.options;
 
 const std = @import("std");
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

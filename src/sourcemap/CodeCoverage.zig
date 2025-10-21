@@ -282,7 +282,7 @@ pub const Report = struct {
             usize,
             usize,
             bool,
-        ) callconv(.C) void,
+        ) callconv(.c) void,
     ) bool;
 
     const Generator = struct {
@@ -296,7 +296,7 @@ pub const Report = struct {
             blocks_len: usize,
             function_start_offset: usize,
             ignore_sourcemap: bool,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];
             var function_blocks: []const BasicBlockRange = blocks_ptr[function_start_offset..blocks_len];
             if (function_blocks.len > 1) {
@@ -371,7 +371,7 @@ pub const ByteRangeMapping = struct {
     }
 
     pub threadlocal var map: ?*HashMap = null;
-    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
+    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.c) void {
         var _map = map orelse brk: {
             map = bun.handleOom(bun.jsc.VirtualMachine.get().allocator.create(HashMap));
             map.?.* = HashMap.init(bun.jsc.VirtualMachine.get().allocator);
@@ -390,11 +390,11 @@ pub const ByteRangeMapping = struct {
         entry.value_ptr.* = compute(source_contents.slice(), source_id, slice);
     }
 
-    pub fn getSourceID(this: *ByteRangeMapping) callconv(.C) i32 {
+    pub fn getSourceID(this: *ByteRangeMapping) callconv(.c) i32 {
         return this.source_id;
     }
 
-    pub fn find(path: bun.String) callconv(.C) ?*ByteRangeMapping {
+    pub fn find(path: bun.String) callconv(.c) ?*ByteRangeMapping {
         var slice = path.toUTF8(bun.default_allocator);
         defer slice.deinit();
 
@@ -656,7 +656,7 @@ pub const ByteRangeMapping = struct {
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
-    ) callconv(.C) bun.jsc.JSValue {
+    ) callconv(.c) bun.jsc.JSValue {
         var this = ByteRangeMapping.find(source_url) orelse return bun.jsc.JSValue.null;
 
         const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];

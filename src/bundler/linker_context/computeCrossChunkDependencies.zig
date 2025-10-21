@@ -293,7 +293,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
         defer r.deinit();
         debug("Generating cross-chunk exports", .{});
 
-        var stable_ref_list = std.ArrayList(StableRef).init(c.allocator());
+        var stable_ref_list = std.array_list.Managed(StableRef).init(c.allocator());
         defer stable_ref_list.deinit();
 
         for (chunks, chunk_metas) |*chunk, *chunk_meta| {
@@ -373,7 +373,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     .esm => {
                         const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
 
-                        var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len) catch unreachable;
+                        var clauses = std.array_list.Managed(js_ast.ClauseItem).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len) catch unreachable;
                         for (cross_chunk_import.sorted_import_items.slice()) |item| {
                             clauses.appendAssumeCapacity(.{
                                 .name = .{

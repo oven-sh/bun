@@ -11,24 +11,24 @@ const PackageInfo = struct {
     package_id: u32,
     name: []const u8,
     version: []const u8,
-    vulnerabilities: std.ArrayList(VulnerabilityInfo),
-    dependents: std.ArrayList(DependencyPath),
+    vulnerabilities: std.array_list.Managed(VulnerabilityInfo),
+    dependents: std.array_list.Managed(DependencyPath),
 
     const DependencyPath = struct {
-        path: std.ArrayList([]const u8),
+        path: std.array_list.Managed([]const u8),
         is_direct: bool,
     };
 };
 
 const AuditResult = struct {
     vulnerable_packages: bun.StringHashMap(PackageInfo),
-    all_vulnerabilities: std.ArrayList(VulnerabilityInfo),
+    all_vulnerabilities: std.array_list.Managed(VulnerabilityInfo),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) AuditResult {
         return AuditResult{
             .vulnerable_packages = bun.StringHashMap(PackageInfo).init(allocator),
-            .all_vulnerabilities = std.ArrayList(VulnerabilityInfo).init(allocator),
+            .all_vulnerabilities = std.array_list.Managed(VulnerabilityInfo).init(allocator),
             .allocator = allocator,
         };
     }
@@ -134,7 +134,7 @@ pub const AuditCommand = struct {
     }
 };
 
-fn printSkippedPackages(skipped_packages: std.ArrayList([]const u8)) void {
+fn printSkippedPackages(skipped_packages: std.array_list.Managed([]const u8)) void {
     if (skipped_packages.items.len > 0) {
         Output.pretty("<d>Skipped<r> ", .{});
         for (skipped_packages.items, 0..) |package_name, i| {
@@ -152,8 +152,8 @@ fn printSkippedPackages(skipped_packages: std.ArrayList([]const u8)) void {
     }
 }
 
-fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!bun.StringHashMap(std.ArrayList([]const u8)) {
-    var dependency_tree = bun.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!bun.StringHashMap(std.array_list.Managed([]const u8)) {
+    var dependency_tree = bun.StringHashMap(std.array_list.Managed([]const u8)).init(allocator);
 
     const packages = pm.lockfile.packages.slice();
     const pkg_names = packages.items(.name);
@@ -179,7 +179,7 @@ fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OO
             const result = try dependency_tree.getOrPut(resolved_name);
             if (!result.found_existing) {
                 result.key_ptr.* = try allocator.dupe(u8, resolved_name);
-                result.value_ptr.* = std.ArrayList([]const u8).init(allocator);
+                result.value_ptr.* = std.array_list.Managed([]const u8).init(allocator);
             }
             try result.value_ptr.append(try allocator.dupe(u8, package_name));
         }
@@ -198,7 +198,7 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
     const resolutions = pm.lockfile.buffers.resolutions.items;
     const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
 
-    var queue = std.fifo.LinearFifo(u32, .Dynamic).init(allocator);
+    var queue = bun.LinearFifo(u32, .Dynamic).init(allocator);
     defer queue.deinit();
 
     const root_deps = pkg_dependencies[root_id];
@@ -232,16 +232,16 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
     }
 }
 
-fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, prod_only: bool) bun.OOM!struct { audit_body: []u8, skipped_packages: std.ArrayList([]const u8) } {
+fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, prod_only: bool) bun.OOM!struct { audit_body: []u8, skipped_packages: std.array_list.Managed([]const u8) } {
     const packages = pm.lockfile.packages.slice();
     const pkg_names = packages.items(.name);
     const pkg_resolutions = packages.items(.resolution);
     const buf = pm.lockfile.buffers.string_bytes.items;
     const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
 
-    var packages_list = std.ArrayList(struct {
+    var packages_list = std.array_list.Managed(struct {
         name: []const u8,
-        versions: std.ArrayList([]const u8),
+        versions: std.array_list.Managed([]const u8),
     }).init(allocator);
     defer {
         for (packages_list.items) |item| {
@@ -254,7 +254,7 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, pr
         packages_list.deinit();
     }
 
-    var skipped_packages = std.ArrayList([]const u8).init(allocator);
+    var skipped_packages = std.array_list.Managed([]const u8).init(allocator);
 
     var prod_packages: ?bun.StringHashMap(void) = null;
     defer if (prod_packages) |*map| map.deinit();
@@ -295,7 +295,7 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, pr
         if (found_package == null) {
             try packages_list.append(.{
                 .name = try allocator.dupe(u8, name_slice),
-                .versions = std.ArrayList([]const u8).init(allocator),
+                .versions = std.array_list.Managed([]const u8).init(allocator),
             });
             found_package = &packages_list.items[packages_list.items.len - 1];
         }
@@ -453,10 +453,10 @@ fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vu
 fn findDependencyPaths(
     allocator: std.mem.Allocator,
     target_package: []const u8,
-    dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
+    dependency_tree: *const bun.StringHashMap(std.array_list.Managed([]const u8)),
     pm: *PackageManager,
-) bun.OOM!std.ArrayList(PackageInfo.DependencyPath) {
-    var paths = std.ArrayList(PackageInfo.DependencyPath).init(allocator);
+) bun.OOM!std.array_list.Managed(PackageInfo.DependencyPath) {
+    var paths = std.array_list.Managed(PackageInfo.DependencyPath).init(allocator);
 
     const packages = pm.lockfile.packages.slice();
     const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
@@ -472,7 +472,7 @@ fn findDependencyPaths(
         const dep_name = dependency.name.slice(buf);
         if (std.mem.eql(u8, dep_name, target_package)) {
             var direct_path = PackageInfo.DependencyPath{
-                .path = std.ArrayList([]const u8).init(allocator),
+                .path = std.array_list.Managed([]const u8).init(allocator),
                 .is_direct = true,
             };
             try direct_path.path.append(try allocator.dupe(u8, target_package));
@@ -491,7 +491,7 @@ fn findDependencyPaths(
             const dep_name = dependency.name.slice(buf);
             if (std.mem.eql(u8, dep_name, target_package)) {
                 var workspace_path = PackageInfo.DependencyPath{
-                    .path = std.ArrayList([]const u8).init(allocator),
+                    .path = std.array_list.Managed([]const u8).init(allocator),
                     .is_direct = false,
                 };
 
@@ -504,7 +504,7 @@ fn findDependencyPaths(
         }
     }
 
-    var queue: std.fifo.LinearFifo([]const u8, .Dynamic) = std.fifo.LinearFifo([]const u8, .Dynamic).init(allocator);
+    var queue: bun.LinearFifo([]const u8, .Dynamic) = bun.LinearFifo([]const u8, .Dynamic).init(allocator);
     defer queue.deinit();
     var visited = bun.StringHashMap(void).init(allocator);
     defer visited.deinit();
@@ -548,7 +548,7 @@ fn findDependencyPaths(
 
         if (is_root_dep or workspace_name_for_dep != null) {
             var path = PackageInfo.DependencyPath{
-                .path = std.ArrayList([]const u8).init(allocator),
+                .path = std.array_list.Managed([]const u8).init(allocator),
                 .is_direct = false,
             };
 
@@ -600,7 +600,7 @@ fn printEnhancedAuditReport(
     allocator: std.mem.Allocator,
     response_text: []const u8,
     pm: *PackageManager,
-    dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
+    dependency_tree: *const bun.StringHashMap(std.array_list.Managed([]const u8)),
     audit_level: ?AuditLevel,
     ignore_list: []const []const u8,
 ) bun.OOM!u32 {
@@ -695,7 +695,7 @@ fn printEnhancedAuditReport(
                     .package_id = 0,
                     .name = vulnerability.package_name,
                     .version = vulnerability.vulnerable_versions,
-                    .vulnerabilities = std.ArrayList(VulnerabilityInfo).init(allocator),
+                    .vulnerabilities = std.array_list.Managed(VulnerabilityInfo).init(allocator),
                     .dependents = paths,
                 };
             }
@@ -735,7 +735,7 @@ fn printEnhancedAuditReport(
                         } else {
                             const vulnerable_pkg = path.path.items[0];
 
-                            var reversed_items = std.ArrayList([]const u8).init(allocator);
+                            var reversed_items = std.array_list.Managed([]const u8).init(allocator);
                             for (path.path.items[1..]) |item| try reversed_items.append(item);
                             std.mem.reverse([]const u8, reversed_items.items);
                             defer reversed_items.deinit();

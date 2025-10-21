@@ -107,18 +107,24 @@ describe("path.resolve", () => {
     // Regression test: buffer overflow with very long paths
     // This used to panic because the buffer didn't account for the null terminator
     for (const len of [4096, 10000, 50000, 98340, 100000]) {
-      const longPath = "/" + "a".repeat(len);
+      // Use platform-specific absolute path prefix
+      const prefix = isWindows ? "C:\\" : "/";
+      const longPath = prefix + "a".repeat(len);
       const result = path.resolve(longPath);
-      // Should return the absolute path
-      assert.ok(result.startsWith("/"));
+      // Should return an absolute path with the repeated 'a' characters
       assert.ok(result.includes("a"));
-      assert.strictEqual(result.length, len + 1); // +1 for the leading /
+      assert.ok(path.isAbsolute(result));
+      // Length should be prefix length + repeated characters
+      assert.strictEqual(result.length, prefix.length + len);
     }
 
     // Test with multiple paths that concatenate to a very long path
     const longSegment = "b".repeat(50000);
-    const result = path.resolve("/", longSegment, "c");
+    const pathPrefix = isWindows ? "C:\\" : "/";
+    const result = path.resolve(pathPrefix, longSegment, "c");
     assert.ok(result.includes("b"));
-    assert.ok(result.endsWith("/c"));
+    // On Windows, paths use backslash; on POSIX, forward slash
+    const expectedEnding = isWindows ? "\\c" : "/c";
+    assert.ok(result.endsWith(expectedEnding));
   });
 });

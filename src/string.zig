@@ -1160,7 +1160,9 @@ pub const SliceWithUnderlyingString = struct {
     }
 
     pub fn deinit(this: SliceWithUnderlyingString) void {
-        this.utf8.deinit();
+        if (!this.utf8.isWTFAllocated()) {
+            this.utf8.deinit();
+        }
         this.underlying.deref();
     }
 

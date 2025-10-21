@@ -2794,9 +2794,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
 
     // Get username
     if (userArg.isNumber()) {
-        uint32_t uid = userArg.toUInt32(globalObject);
+        uint32_t uid = 0;
+        Bun::V::validateInteger(scope, globalObject, userArg, "user"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &uid);
         RETURN_IF_EXCEPTION(scope, {});
-        userString = name_by_uid(uid);
+
+        userString = name_by_uid(static_cast<uid_t>(uid));
 
         if (userString.isNull()) {
             auto message = makeString("User identifier does not exist: "_s, uid);
@@ -2824,14 +2826,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     }
 
     // Get extra group
-    auto extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupArg);
-    if (scope.exception()) {
-        return {};
-    }
-
-    gid_t extra_group = extraGroupValue.toUInt32(globalObject);
-    if (scope.exception()) {
-        return {};
+    gid_t extra_group = 0;
+    if (extraGroupArg.isNumber()) {
+        uint32_t gid = 0;
+        Bun::V::validateInteger(scope, globalObject, extraGroupArg, "extraGroup"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &gid);
+        RETURN_IF_EXCEPTION(scope, {});
+        extra_group = static_cast<gid_t>(gid);
+    } else {
+        auto extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupArg);
+        RETURN_IF_EXCEPTION(scope, {});
+        extra_group = static_cast<gid_t>(extraGroupValue.toUInt32(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Call initgroups

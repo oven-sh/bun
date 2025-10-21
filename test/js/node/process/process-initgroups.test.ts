@@ -30,6 +30,21 @@ if (!isWindows) {
     }
   });
 
+  test("process.initgroups validates numeric arguments are integers", () => {
+    // Non-integer numeric values should be rejected
+    const invalidNumericValues = [1.5, -1, NaN, Infinity, -Infinity, 2 ** 31];
+
+    for (const val of invalidNumericValues) {
+      expect(() => {
+        process.initgroups(val, 1000);
+      }).toThrow();
+
+      expect(() => {
+        process.initgroups("root", val);
+      }).toThrow();
+    }
+  });
+
   test("process.initgroups throws for non-existent user", () => {
     expect(() => {
       process.initgroups("fhqwhgadshgnsdhjsdbkhsdabkfabkveyb", 1000);

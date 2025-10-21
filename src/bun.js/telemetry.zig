@@ -87,7 +87,7 @@ pub const InstrumentRecord = struct {
         if (!self.on_op_start_fn.isCallable()) return;
 
         const args = [_]JSValue{
-            JSValue.jsNumber(@as(f64, @floatFromInt(id))),
+            jsRequestId(id),
             info,
         };
 
@@ -102,7 +102,7 @@ pub const InstrumentRecord = struct {
         if (!self.on_op_end_fn.isCallable()) return;
 
         const args = [_]JSValue{
-            JSValue.jsNumber(@as(f64, @floatFromInt(id))),
+            jsRequestId(id),
             result,
         };
 
@@ -116,7 +116,7 @@ pub const InstrumentRecord = struct {
         if (!self.on_op_error_fn.isCallable()) return;
 
         const args = [_]JSValue{
-            JSValue.jsNumber(@as(f64, @floatFromInt(id))),
+            jsRequestId(id),
             error_info,
         };
 
@@ -130,7 +130,7 @@ pub const InstrumentRecord = struct {
         if (!self.on_op_inject_fn.isCallable()) return .js_undefined;
 
         const args = [_]JSValue{
-            JSValue.jsNumber(@as(f64, @floatFromInt(id))),
+            jsRequestId(id),
             data,
         };
 
@@ -145,7 +145,7 @@ pub const InstrumentRecord = struct {
         if (!self.on_op_progress_fn.isCallable()) return;
 
         const args = [_]JSValue{
-            JSValue.jsNumber(@as(f64, @floatFromInt(id))),
+            jsRequestId(id),
             attributes,
         };
 
@@ -443,6 +443,36 @@ pub const AttributeMap = struct {
         return self.value;
     }
 };
+
+// ============================================================================
+// Request ID Utilities
+// ============================================================================
+
+/// Convert a request ID (u64) to a JavaScript number value.
+/// Note: JavaScript numbers are IEEE 754 double precision (53-bit integer precision).
+/// Request IDs up to 2^53-1 (9007199254740991) are safe.
+pub inline fn jsRequestId(id: u64) JSValue {
+    return JSValue.jsNumber(@as(f64, @floatFromInt(id)));
+}
+
+/// Parse a request ID from a JavaScript value with validation.
+/// Ensures the value is a finite, positive, safe integer (1 to 2^53-1).
+/// Returns an error if the value is invalid.
+pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSError!u64 {
+    const id_num = try value.toNumber(globalObject);
+    if (!std.math.isFinite(id_num)) {
+        return globalObject.throwTypeError("Request ID must be a finite number", .{});
+    }
+    const id_u64: u64 = @intFromFloat(@floor(id_num));
+    if (@as(f64, @floatFromInt(id_u64)) != id_num or id_u64 == 0 or id_u64 > 9007199254740991) {
+        return globalObject.throwTypeError("Request ID must be a positive safe integer", .{});
+    }
+    return @intCast(id_u64);
+}
+
+// ============================================================================
+// Global Telemetry Instance
+// ============================================================================
 
 // Global telemetry instance (initialized in JSGlobalObject)
 var global_telemetry: ?*Telemetry = null;

@@ -118,6 +118,11 @@ pub const FetchTasklet = struct {
 
     tracker: jsc.Debugger.AsyncTaskTracker,
 
+    /// OpenTelemetry request ID (0 if telemetry disabled)
+    telemetry_request_id: u64 = 0,
+    /// Request start timestamp for duration calculation
+    telemetry_start_time_ns: u64 = 0,
+
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
     pub fn ref(this: *FetchTasklet) void {
@@ -852,6 +857,10 @@ pub const FetchTasklet = struct {
             .path = path,
         };
 
+        // OpenTelemetry: Notify operation error
+        bun.telemetry_fetch.notifyFetchError(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.fail, fetch_error.message, this.result.metadata);
+        this.telemetry_request_id = 0;
+
         return .{ .SystemError = fetch_error };
     }
 
@@ -1033,6 +1042,11 @@ pub const FetchTasklet = struct {
         response_js.ensureStillAlive();
         this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
         this.native_response = response.ref();
+
+        // OpenTelemetry: Notify operation end
+        bun.telemetry_fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.metadata, this.result.body);
+        this.telemetry_request_id = 0;
+
         return response_js;
     }
 
@@ -1315,6 +1329,12 @@ pub const FetchTasklet = struct {
             fetch_options,
             promise,
         );
+
+        // OpenTelemetry: Notify operation start
+        if (bun.telemetry_fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, null)) |request_id| {
+            node.telemetry_request_id = request_id;
+            node.telemetry_start_time_ns = @intCast(std.time.nanoTimestamp());
+        }
 
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);

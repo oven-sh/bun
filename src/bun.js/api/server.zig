@@ -2078,31 +2078,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
 
             // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
-            // Reference: specs/001-opentelemetry-support/plan.md lines 261-263
-            // CRITICAL: This placement was discovered through 102+ commits of the POC
-            if (bun.telemetry.getGlobalTelemetry()) |telemetry_instance| {
-                if (telemetry_instance.isEnabledFor(.http)) {
-                    // Generate unique request ID
-                    const request_id = telemetry_instance.generateRequestId();
-                    prepared.ctx.telemetry_request_id = request_id;
-                    prepared.ctx.request_start_time_ns = @intCast(std.time.nanoTimestamp());
-
-                    // Build start attributes
-                    const method_str = @tagName(prepared.ctx.method);
-                    const url_str = req.url();
-
-                    var start_attrs = bun.telemetry_http.buildHttpStartAttributes(
-                        this.globalThis,
-                        request_id,
-                        method_str,
-                        url_str,
-                        null, // TODO: capture request headers based on configuration
-                    );
-
-                    // Notify all registered HTTP instruments
-                    telemetry_instance.notifyOperationStart(.http, request_id, start_attrs.toJS());
-                }
-            }
+            bun.telemetry_http.notifyHttpRequestStart(&prepared.ctx.telemetry_ctx, this.globalThis, @tagName(prepared.ctx.method), req.url());
 
             bun.assert(this.config.onRequest != .zero);
 

@@ -3134,9 +3134,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     thread = mach_thread_self();
     count = THREAD_BASIC_INFO_COUNT;
     kr = thread_info(thread,
-                   THREAD_BASIC_INFO,
-                   (thread_info_t)&info,
-                   &count);
+        THREAD_BASIC_INFO,
+        (thread_info_t)&info,
+        &count);
 
     if (kr != KERN_SUCCESS) {
         mach_port_deallocate(mach_task_self(), thread);
@@ -3154,14 +3154,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 
 #elif OS(LINUX)
     struct rusage rusage;
-    #if defined(RUSAGE_THREAD)
-        int err = getrusage(RUSAGE_THREAD, &rusage);
-    #elif defined(RUSAGE_LWP)
-        int err = getrusage(RUSAGE_LWP, &rusage);
-    #else
-        throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "getrusage"_s, ENOTSUP);
-        return {};
-    #endif
+#if defined(RUSAGE_THREAD)
+    int err = getrusage(RUSAGE_THREAD, &rusage);
+#elif defined(RUSAGE_LWP)
+    int err = getrusage(RUSAGE_LWP, &rusage);
+#else
+    throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "getrusage"_s, ENOTSUP);
+    return {};
+#endif
 
     if (err != 0) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);

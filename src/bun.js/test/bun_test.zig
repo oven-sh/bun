@@ -583,10 +583,14 @@ pub const BunTest = struct {
                 defer order.deinit();
 
                 const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.bun_test_root.hook_scope.beforeAll.items) else .empty;
+                const before_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.bun_test_root.hook_scope.before.items) else .empty;
                 try order.generateOrderDescribe(this.collection.root_scope);
                 beforeall_order.setFailureSkipTo(&order);
+                before_order.setFailureSkipTo(&order);
                 const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.bun_test_root.hook_scope.afterAll.items) else .empty;
+                const after_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.bun_test_root.hook_scope.after.items) else .empty;
                 afterall_order.setFailureSkipTo(&order);
+                after_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);
                 try debug.dumpOrder(&this.execution);
@@ -828,9 +832,11 @@ pub const DescribeScope = struct {
     base: BaseScope,
     entries: std.ArrayList(TestScheduleEntry),
     beforeAll: std.ArrayList(*ExecutionEntry),
+    before: std.ArrayList(*ExecutionEntry),
     beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
     afterAll: std.ArrayList(*ExecutionEntry),
+    after: std.ArrayList(*ExecutionEntry),
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     failed: bool = false,
@@ -841,20 +847,26 @@ pub const DescribeScope = struct {
             .entries = .init(gpa),
             .beforeEach = .init(gpa),
             .beforeAll = .init(gpa),
+            .before = .init(gpa),
             .afterAll = .init(gpa),
+            .after = .init(gpa),
             .afterEach = .init(gpa),
         });
     }
     pub fn destroy(this: *DescribeScope, gpa: std.mem.Allocator) void {
         for (this.entries.items) |*entry| entry.deinit(gpa);
         for (this.beforeAll.items) |item| item.destroy(gpa);
+        for (this.before.items) |item| item.destroy(gpa);
         for (this.beforeEach.items) |item| item.destroy(gpa);
         for (this.afterAll.items) |item| item.destroy(gpa);
+        for (this.after.items) |item| item.destroy(gpa);
         for (this.afterEach.items) |item| item.destroy(gpa);
         this.entries.deinit();
         this.beforeAll.deinit();
+        this.before.deinit();
         this.beforeEach.deinit();
         this.afterAll.deinit();
+        this.after.deinit();
         this.afterEach.deinit();
         this.base.deinit(gpa);
         gpa.destroy(this);
@@ -889,13 +901,15 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
-    pub const HookTag = enum { beforeAll, beforeEach, afterEach, afterAll };
+    pub const HookTag = enum { beforeAll, before, beforeEach, afterEach, afterAll, after };
     pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.ArrayList(*ExecutionEntry) {
         switch (tag) {
             .beforeAll => return &this.beforeAll,
+            .before => return &this.before,
             .beforeEach => return &this.beforeEach,
             .afterEach => return &this.afterEach,
             .afterAll => return &this.afterAll,
+            .after => return &this.after,
         }
     }
     pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg, phase: ExecutionEntry.AddedInPhase) bun.JSError!*ExecutionEntry {

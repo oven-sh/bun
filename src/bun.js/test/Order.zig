@@ -62,6 +62,7 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
 
     // gather beforeAll
     const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items) else .empty;
+    const before_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.before.items) else .empty;
 
     // shuffle entries if randomize flag is set
     if (this.cfg.randomize) |random| {
@@ -76,12 +77,15 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
 
     // update skip_to values for beforeAll to skip to the first afterAll
     beforeall_order.setFailureSkipTo(this);
+    before_order.setFailureSkipTo(this);
 
     // gather afterAll
     const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items) else .empty;
+    const after_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.after.items) else .empty;
 
     // update skip_to values for afterAll to skip the remaining afterAll items
     afterall_order.setFailureSkipTo(this);
+    after_order.setFailureSkipTo(this);
 }
 
 const EntryList = struct {

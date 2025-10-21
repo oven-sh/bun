@@ -48,6 +48,7 @@ const http = require('http');
     });
 
     c.on('data', function(chunk) {
+      console.log(chunk);
       server_response += chunk;
     });
 

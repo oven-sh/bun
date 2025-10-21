@@ -1,4 +1,4 @@
-pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 3);
     const fields = comptime .{
         .gcAggressionLevel = gcAggressionLevel,
@@ -9,21 +9,21 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         object.put(
             globalThis,
             comptime ZigString.static(name),
-            JSC.createCallback(globalThis, comptime ZigString.static(name), 1, comptime @field(fields, name)),
+            jsc.createCallback(globalThis, comptime ZigString.static(name), 1, comptime @field(fields, name)),
         );
     }
     return object;
 }
 
 pub fn gcAggressionLevel(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
     const value = callframe.arguments_old(1).ptr[0];
 
     if (!value.isEmptyOrUndefinedOrNull()) {
-        switch (value.coerce(i32, globalThis)) {
+        switch (try value.coerce(i32, globalThis)) {
             1 => globalThis.bunVM().aggressive_garbage_collection = .mild,
             2 => globalThis.bunVM().aggressive_garbage_collection = .aggressive,
             0 => globalThis.bunVM().aggressive_garbage_collection = .none,
@@ -34,15 +34,15 @@ pub fn gcAggressionLevel(
 }
 
 pub fn arrayBufferToString(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(2).slice();
     if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArrayOrArrayBuffer()) {
         return globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
     }
 
-    const array_buffer = JSC.ArrayBuffer.fromTypedArray(globalThis, args[0]);
+    const array_buffer = jsc.ArrayBuffer.fromTypedArray(globalThis, args[0]);
     switch (array_buffer.typed_array_type) {
         .Uint16Array, .Int16Array => {
             var zig_str = ZigString.init("");
@@ -59,17 +59,18 @@ pub fn arrayBufferToString(
 
 extern fn dump_zone_malloc_stats() void;
 
-fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+fn dump_mimalloc(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
-    return .undefined;
+    return .js_undefined;
 }
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const std = @import("std");
 const bun = @import("bun");
-const ZigString = JSC.ZigString;
+const std = @import("std");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

@@ -1,10 +1,8 @@
+const UUID = @This();
+
 //https://github.com/dmgk/zig-uuid
-const std = @import("std");
-const fmt = std.fmt;
-const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
-const UUID = @This();
 
 bytes: [16]u8,
 
@@ -205,3 +203,86 @@ pub const UUID7 = struct {
         return self.toUUID().format(layout, options, writer);
     }
 };
+
+/// UUID v5 implementation using SHA-1 hashing
+/// This is a name-based UUID that uses SHA-1 for hashing
+pub const UUID5 = struct {
+    bytes: [16]u8,
+
+    pub const namespaces = struct {
+        pub const dns: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const url: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const oid: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const x500: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+
+        pub fn get(namespace: []const u8) ?*const [16]u8 {
+            if (bun.strings.eqlCaseInsensitiveASCII(namespace, "dns", true)) {
+                return dns;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "url", true)) {
+                return url;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "oid", true)) {
+                return oid;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "x500", true)) {
+                return x500;
+            }
+
+            return null;
+        }
+    };
+
+    /// Generate a UUID v5 from a namespace UUID and name data
+    pub fn init(namespace: *const [16]u8, name: []const u8) UUID5 {
+        const hash = brk: {
+            var sha1_hasher = bun.sha.SHA1.init();
+            defer sha1_hasher.deinit();
+
+            sha1_hasher.update(namespace);
+            sha1_hasher.update(name);
+
+            var hash: [20]u8 = undefined;
+            sha1_hasher.final(&hash);
+
+            break :brk hash;
+        };
+
+        // Take first 16 bytes of the hash
+        var bytes: [16]u8 = hash[0..16].*;
+
+        // Set version to 5 (bits 12-15 of time_hi_and_version)
+        bytes[6] = (bytes[6] & 0x0F) | 0x50;
+
+        // Set variant bits (bits 6-7 of clock_seq_hi_and_reserved)
+        bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
+        return UUID5{
+            .bytes = bytes,
+        };
+    }
+
+    pub fn toBytes(self: UUID5) [16]u8 {
+        return self.bytes;
+    }
+
+    pub fn print(self: UUID5, buf: *[36]u8) void {
+        return printBytes(&self.toBytes(), buf);
+    }
+
+    pub fn toUUID(self: UUID5) UUID {
+        const bytes: [16]u8 = self.toBytes();
+        return .{ .bytes = bytes };
+    }
+
+    pub fn format(
+        self: UUID5,
+        comptime layout: []const u8,
+        options: fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        return self.toUUID().format(layout, options, writer);
+    }
+};
+
+const bun = @import("bun");
+
+const std = @import("std");
+const fmt = std.fmt;

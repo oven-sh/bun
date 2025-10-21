@@ -14,7 +14,7 @@ describe("test.failing", () => {
   });
 
   it("requires a test function (unlike test.todo)", () => {
-    expect(() => test.failing("test name")).toThrow("test() expects second argument to be a function");
+    expect(() => test.failing("test name")).toThrow("test.failing expects a function as the second argument");
   });
 
   it("passes if an error is thrown or a promise rejects ", async () => {
@@ -24,13 +24,28 @@ describe("test.failing", () => {
   });
 
   it("fails if no error is thrown or promise resolves", async () => {
-    const result = await $.cwd(fixtureDir).nothrow()`${bunExe()} test ./failing-test-passes.fixture.ts`.quiet();
+    const result = await $.cwd(
+      fixtureDir,
+    ).nothrow()`FORCE_COLOR=0 ${bunExe()} test ./failing-test-passes.fixture.ts`.quiet();
     const stderr = result.stderr.toString();
     if (result.exitCode === 0) {
       fail("Expected exit code to be non-zero\n\n" + stderr);
     }
     expect(stderr).toContain(" 2 fail\n");
-    expect(stderr).toContain("this test is marked as failing but it passed");
+    expect(stderr.replaceAll(/ \[[\d.]+ms\]/g, "")).toMatchInlineSnapshot(`
+      "
+      failing-test-passes.fixture.ts:
+      (fail) This should fail but it doesnt
+        ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+      (fail) This should fail but it doesnt (async)
+        ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+
+       0 pass
+       2 fail
+       2 expect() calls
+      Ran 2 tests across 1 file.
+      "
+    `);
   });
 
   it("timeouts still count as failures", async () => {

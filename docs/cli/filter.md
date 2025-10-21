@@ -28,7 +28,7 @@ $ bun install --filter '!pkg-c'
 $ bun install --filter './packages/*'
 
 # Save as above, but exclude the root package.json
-$ bun install --filter --filter '!./' --filter './packages/*'
+$ bun install --filter '!./' --filter './packages/*'
 ```
 
 Similarly, `bun outdated` will display outdated dependencies for all packages in the monorepo, and `--filter` can be used to restrict the command to a subset of the packages:
@@ -41,7 +41,7 @@ $ bun outdated --filter 'pkg-*'
 $ bun outdated --filter './'
 ```
 
-For more information on both these commands, see [`bun install`](https://bun.sh/docs/cli/install) and [`bun outdated`](https://bun.sh/docs/cli/outdated).
+For more information on both these commands, see [`bun install`](https://bun.com/docs/cli/install) and [`bun outdated`](https://bun.com/docs/cli/outdated).
 
 ## Running scripts with `--filter`
 
@@ -73,7 +73,7 @@ Both commands will be run in parallel, and you will see a nice terminal UI showi
 
 ### Running scripts in workspaces
 
-Filters respect your [workspace configuration](https://bun.sh/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
+Filters respect your [workspace configuration](https://bun.com/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
 `--filter` will be restricted to only these packages. Also, in a workspace you can use `--filter` to run scripts in packages that are located anywhere in the workspace:
 
 ```bash

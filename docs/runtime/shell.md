@@ -532,6 +532,74 @@ Hello World! pwd=C:\Users\Demo
 
 Bun Shell is a small programming language in Bun that is implemented in Zig. It includes a handwritten lexer, parser, and interpreter. Unlike bash, zsh, and other shells, Bun Shell runs operations concurrently.
 
+## Security in the Bun shell
+
+By design, the Bun shell _does not invoke a system shell_ (like `/bin/sh`) and
+is instead a re-implementation of bash that runs in the same Bun process,
+designed with security in mind.
+
+When parsing command arguments, it treats all _interpolated variables_ as single, literal strings.
+
+This protects the Bun shell against **command injection**:
+
+```js
+import { $ } from "bun";
+
+const userInput = "my-file.txt; rm -rf /";
+
+// SAFE: `userInput` is treated as a single quoted string
+await $`ls ${userInput}`;
+```
+
+In the above example, `userInput` is treated as a single string. This causes
+the `ls` command to try to read the contents of a single directory named
+"my-file; rm -rf /".
+
+### Security considerations
+
+While command injection is prevented by default, developers are still
+responsible for security in certain scenarios.
+
+Similar to the `Bun.spawn` or `node:child_process.exec()` APIs, you can intentionally
+execute a command which spawns a new shell (e.g. `bash -c`) with arguments.
+
+When you do this, you hand off control, and Bun's built-in protections no
+longer apply to the string interpreted by that new shell.
+
+```js
+import { $ } from "bun";
+
+const userInput = "world; touch /tmp/pwned";
+
+// UNSAFE: You have explicitly started a new shell process with `bash -c`.
+// This new shell will execute the `touch` command. Any user input
+// passed this way must be rigorously sanitized.
+await $`bash -c "echo ${userInput}"`;
+```
+
+### Argument injection
+
+The Bun shell cannot know how an external command interprets its own
+command-line arguments. An attacker can supply input that the target program
+recognizes as one of its own options or flags, leading to unintended behavior.
+
+```js
+import { $ } from "bun";
+
+// Malicious input formatted as a Git command-line flag
+const branch = "--upload-pack=echo pwned";
+
+// UNSAFE: While Bun safely passes the string as a single argument,
+// the `git` program itself sees and acts upon the malicious flag.
+await $`git ls-remote origin ${branch}`;
+```
+
+{% callout %}
+**Recommendation** — As is best practice in every language, always sanitize
+user-provided input before passing it as an argument to an external command.
+The responsibility for validating arguments rests with your application code.
+{% /callout %}
+
 ## Credits
 
 Large parts of this API were inspired by [zx](https://github.com/google/zx), [dax](https://github.com/dsherret/dax), and [bnx](https://github.com/wobsoriano/bnx). Thank you to the authors of those projects.

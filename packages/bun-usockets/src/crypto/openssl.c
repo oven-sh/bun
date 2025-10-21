@@ -44,21 +44,14 @@ void *sni_find(void *sni, const char *hostname);
 #include <wolfssl/options.h>
 #endif
 
-#include "./root_certs.h"
-
-/* These are in root_certs.cpp */
-extern X509_STORE *us_get_default_ca_store();
-
+#include "./root_certs_header.h"
+#include "./default_ciphers.h"
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
   unsigned int ssl_read_input_length;
   unsigned int ssl_read_input_offset;
 
   struct us_socket_t *ssl_socket;
-
-  int last_write_was_msg_more;
-  int msg_more;
-
   BIO *shared_rbio;
   BIO *shared_wbio;
   BIO_METHOD *shared_biom;
@@ -142,10 +135,7 @@ int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)BIO_get_data(bio);
 
-  loop_ssl_data->last_write_was_msg_more =
-      loop_ssl_data->msg_more || length == 16413;
-  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length,
-                                loop_ssl_data->last_write_was_msg_more);
+  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -195,7 +185,6 @@ struct loop_ssl_data * us_internal_set_loop_ssl_data(struct us_internal_ssl_sock
   loop_ssl_data->ssl_read_input_length = 0;
   loop_ssl_data->ssl_read_input_offset = 0;
   loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = 0;
   return loop_ssl_data;
 }
 
@@ -357,6 +346,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
 
   // check if we are already closed
   if (us_internal_ssl_socket_is_closed(s)) return s;
+  us_internal_set_loop_ssl_data(s);
   us_internal_update_handshake(s);
 
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
@@ -668,8 +658,6 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
         us_calloc(1, sizeof(struct loop_ssl_data));
     loop_ssl_data->ssl_read_input_length = 0;
     loop_ssl_data->ssl_read_input_offset = 0;
-    loop_ssl_data->last_write_was_msg_more = 0;
-    loop_ssl_data->msg_more = 0;
 
     loop_ssl_data->ssl_read_output =
         us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
@@ -861,21 +849,24 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
-    if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
       free_ssl_context(ssl_context);
       return NULL;
     }
   }
 
   if (options.ssl_ciphers) {
-    if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+      unsigned long ssl_err = ERR_get_error(); 
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 
@@ -1301,21 +1292,27 @@ SSL_CTX *create_ssl_context_from_bun_options(
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
-    if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
       free_ssl_context(ssl_context);
       return NULL;
     }
   }
 
   if (options.ssl_ciphers) {
-    if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+      unsigned long ssl_err = ERR_get_error(); 
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        char error_msg[256];
+        ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 
@@ -1744,17 +1741,16 @@ us_internal_ssl_socket_get_native_handle(struct us_internal_ssl_socket_t *s) {
 }
 
 int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
-                                     const char *data, int length,
-                                     int msg_more) {
+                                     const char *data, int length) {
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return 0;
   }
-  return us_socket_write(0, &s->s, data, length, msg_more);
+  return us_socket_write(0, &s->s, data, length);
 }
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
-                                 const char *data, int length, int msg_more) {
+                                 const char *data, int length) {
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
     return 0;
@@ -1775,14 +1771,8 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_read_input_length = 0;
 
   loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = msg_more;
-  loop_ssl_data->last_write_was_msg_more = 0;
 
   int written = SSL_write(s->ssl, data, length);
-  loop_ssl_data->msg_more = 0;
-  if (loop_ssl_data->last_write_was_msg_more && !msg_more) {
-    us_socket_flush(0, &s->s);
-  }
 
   if (written > 0) {
     return written;
@@ -1839,7 +1829,6 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
     // on_data and checked in the BIO
     loop_ssl_data->ssl_socket = &s->s;
 
-    loop_ssl_data->msg_more = 0;
     // sets SSL_SENT_SHUTDOWN and waits for the other side to do the same
     int ret = SSL_shutdown(s->ssl);
 

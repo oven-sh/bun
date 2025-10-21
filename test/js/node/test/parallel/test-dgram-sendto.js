@@ -12,22 +12,26 @@ const errObj = {
 };
 assert.throws(() => socket.sendto(), errObj);
 
-errObj.message = /The "length" argument must be of type number\. Received type string \(["']offset["']\)$/;
+errObj.message = 'The "length" argument must be of type number. Received ' +
+                 "type string ('offset')";
 assert.throws(
   () => socket.sendto('buffer', 1, 'offset', 'port', 'address', 'cb'),
   errObj);
 
-errObj.message = /The "offset" argument must be of type number. Received type string \(["']offset["']\)$/;
+errObj.message = 'The "offset" argument must be of type number. Received ' +
+                 "type string ('offset')";
 assert.throws(
   () => socket.sendto('buffer', 'offset', 1, 'port', 'address', 'cb'),
   errObj);
 
-errObj.message = /The "address" argument must be of type string. Received (type boolean \(false\)|false)$/;
+errObj.message = 'The "address" argument must be of type string. Received ' +
+                 'type boolean (false)';
 assert.throws(
   () => socket.sendto('buffer', 1, 1, 10, false, 'cb'),
   errObj);
 
-errObj.message = /The "port" argument must be of type number. Received (type boolean \(false\)|false)$/;
+errObj.message = 'The "port" argument must be of type number. Received ' +
+                 'type boolean (false)';
 assert.throws(
   () => socket.sendto('buffer', 1, 1, false, 'address', 'cb'),
   errObj);

@@ -1,4 +1,4 @@
-import { file, readableStreamToText, spawn, version } from "bun";
+import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
 
 const bodyTypes = [
@@ -521,7 +521,7 @@ for (const { body, fn } of bodyTypes) {
           expect(actual instanceof ReadableStream).toBe(true);
           const stream = actual as ReadableStream;
           expect(stream.locked).toBe(false);
-          expect(await readableStreamToText(stream)).toBe("bun");
+          expect(await stream.text()).toBe("bun");
         });
       }
     });

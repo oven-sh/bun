@@ -7,10 +7,10 @@ require('../common');
 const assert = require('assert');
 const { test, describe, it } = require('node:test');
 
-const testOnly = test('only test', { only: true });
+const testOnly = typeof Bun === 'undefined' ? test('only test', { only: true }) : undefined; // disabled in bun because test.only is not allowed in CI environments and it will skip the describe/it
 const testTodo = test('todo test', { todo: true });
 const testSkip = test('skip test', { skip: true });
-const testOnlyShorthand = test.only('only test shorthand');
+const testOnlyShorthand = typeof Bun === 'undefined' ? test.only('only test shorthand') : undefined; // disabled in bun because test.only is not allowed in CI environments and it will skip the describe/it
 const testTodoShorthand = test.todo('todo test shorthand');
 const testSkipShorthand = test.skip('skip test shorthand');
 

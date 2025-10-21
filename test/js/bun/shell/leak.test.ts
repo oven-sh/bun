@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, isPosix, tempDirWithFiles } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "os";
 import { join } from "path";
@@ -113,6 +113,7 @@ describe("fd leak", () => {
                   prev = val;
                   prevprev = val;
                 } else {
+                  // console.error('Prev', prev, 'Val', val, 'Diff', Math.abs(prev - val), 'Threshold', threshold);
                   if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }
               }
@@ -125,7 +126,7 @@ describe("fd leak", () => {
       const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
         env: bunEnv,
       });
-      // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
+      // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
       if (exitCode != 0) {
         console.log("\n\nSTDERR:", stderr.toString());
       }
@@ -139,8 +140,8 @@ describe("fd leak", () => {
   });
 
   // Use text of this file so its big enough to cause a leak
-  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(1 << 20)}`, 100);
-  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(1 << 20)}`, 100);
+  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`, 100);
+  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`, 100);
   memLeakTest(
     "Blob_something",
     () =>
@@ -168,6 +169,209 @@ describe("fd leak", () => {
     100,
   );
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
+
+  function memLeakTestProtect(
+    name: string,
+    className: string,
+    constructStmt: string,
+    builder: string,
+    posixOnly: boolean = false,
+    runs: number = 5,
+  ) {
+    const runTheTest = !posixOnly ? true : isPosix;
+    test.if(runTheTest)(
+      `memleak_protect_${name}`,
+      async () => {
+        const tempfile = join(tmpdir(), "script.ts");
+
+        const filepath = import.meta.dirname;
+        const testcode = await Bun.file(join(filepath, "./test_builder.ts")).text();
+
+        writeFileSync(tempfile, testcode);
+
+        const impl = /* ts */ `
+              import { heapStats } from "bun:jsc";
+              const TestBuilder = createTestBuilder(import.meta.path);
+
+              Bun.gc(true);
+              const startValue = heapStats().protectedObjectTypeCounts.${className} ?? 0;
+              for (let i = 0; i < ${runs}; i++) {
+                await (async function() {
+                  let val = ${constructStmt}
+                  await ${builder}
+                })()
+                Bun.gc(true);
+
+                let value = heapStats().protectedObjectTypeCounts.${className} ?? 0;
+
+                if (value > startValue) {
+                  console.error('Leaked ${className} objects')
+                  process.exit(1);
+                }
+              }
+            `;
+
+        appendFileSync(tempfile, impl);
+
+        // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
+
+        const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+          env: bunEnv,
+        });
+        // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
+        if (exitCode != 0) {
+          console.log("\n\nSTDERR:", stderr.toString());
+        }
+        expect(exitCode).toBe(0);
+      },
+      100_000,
+    );
+  }
+
+  memLeakTestProtect(
+    "ArrayBuffer",
+    "ArrayBuffer",
+    "new ArrayBuffer(64)",
+    "TestBuilder.command`cat ${import.meta.filename} > ${val}`",
+  );
+  memLeakTestProtect(
+    "Buffer",
+    "Buffer",
+    "Buffer.alloc(64)",
+    "TestBuilder.command`cat ${import.meta.filename} > ${val}`",
+  );
+  memLeakTestProtect(
+    "ArrayBuffer_builtin",
+    "ArrayBuffer",
+    "new ArrayBuffer(64)",
+    "TestBuilder.command`echo ${import.meta.filename} > ${val}`",
+  );
+  memLeakTestProtect(
+    "Buffer_builtin",
+    "Buffer",
+    "Buffer.alloc(64)",
+    "TestBuilder.command`echo ${import.meta.filename} > ${val}`",
+  );
+
+  memLeakTestProtect(
+    "Uint8Array",
+    "Uint8Array",
+    "new Uint8Array(64)",
+    "TestBuilder.command`cat ${import.meta.filename} > ${val}`",
+  );
+  memLeakTestProtect(
+    "Uint8Array_builtin",
+    "Uint8Array",
+    "new Uint8Array(64)",
+    "TestBuilder.command`echo ${import.meta.filename} > ${val}`",
+  );
+
+  memLeakTestProtect(
+    "DataView",
+    "DataView",
+    "new DataView(new ArrayBuffer(64))",
+    "TestBuilder.command`cat ${import.meta.filename} > ${val}`",
+  );
+  memLeakTestProtect(
+    "DataView_builtin",
+    "DataView",
+    "new DataView(new ArrayBuffer(64))",
+    "TestBuilder.command`echo ${import.meta.filename} > ${val}`",
+  );
+
+  memLeakTestProtect(
+    "String_large_input",
+    "String",
+    "Array(4096).fill('test').join('')",
+    "TestBuilder.command`echo ${val}`",
+  );
+  memLeakTestProtect(
+    "String_pipeline",
+    "String",
+    "Array(1024).fill('data').join('')",
+    "TestBuilder.command`echo ${val} | cat`",
+  );
+
+  // Complex nested pipelines
+  memLeakTestProtect(
+    "ArrayBuffer_nested_pipeline",
+    "ArrayBuffer",
+    "new ArrayBuffer(256)",
+    "TestBuilder.command`echo ${val} | head -n 10 | tail -n 5 | wc -l`",
+    true,
+  );
+  memLeakTestProtect(
+    "Buffer_triple_pipeline",
+    "Buffer",
+    "Buffer.alloc(256)",
+    "TestBuilder.command`echo ${val} | cat | grep -v nonexistent | wc -c`",
+    true,
+  );
+  memLeakTestProtect(
+    "String_complex_pipeline",
+    "String",
+    "Array(512).fill('pipeline').join('\\n')",
+    "TestBuilder.command`echo ${val} | sort | uniq | head -n 3`",
+    true,
+  );
+
+  // Subshells with JS objects
+  memLeakTestProtect(
+    "ArrayBuffer_subshell",
+    "ArrayBuffer",
+    "new ArrayBuffer(128)",
+    "TestBuilder.command`echo $(echo ${val} | wc -c)`",
+    true,
+  );
+  memLeakTestProtect(
+    "Buffer_nested_subshell",
+    "Buffer",
+    "Buffer.alloc(128)",
+    "TestBuilder.command`echo $(echo ${val} | head -c 10) done`",
+    true,
+  );
+  memLeakTestProtect(
+    "String_subshell_pipeline",
+    "String",
+    "Array(256).fill('sub').join('')",
+    "TestBuilder.command`echo start $(echo ${val} | wc -c | cat) end`",
+    true,
+  );
+
+  // Mixed builtin and subprocess commands
+  memLeakTestProtect(
+    "ArrayBuffer_mixed_commands",
+    "ArrayBuffer",
+    "new ArrayBuffer(192)",
+    "TestBuilder.command`mkdir -p tmp && echo ${val} > tmp/test.txt && cat tmp/test.txt && rm -rf tmp`",
+  );
+  memLeakTestProtect(
+    "Buffer_builtin_external_mix",
+    "Buffer",
+    "Buffer.alloc(192)",
+    "TestBuilder.command`echo ${val} | ${bunExe()} -e 'process.stdin.on(\"data\", d => process.stdout.write(d))' | head -c 50`",
+  );
+  memLeakTestProtect(
+    "String_cd_operations",
+    "String",
+    "Array(128).fill('dir').join('')",
+    "TestBuilder.command`mkdir -p testdir && cd testdir && echo ${val} > file.txt && cd .. && cat testdir/file.txt && rm -rf testdir`",
+  );
+
+  // Conditional execution
+  memLeakTestProtect(
+    "ArrayBuffer_conditional",
+    "ArrayBuffer",
+    "new ArrayBuffer(64)",
+    "TestBuilder.command`echo ${val} && echo success || echo failure`",
+  );
+  memLeakTestProtect(
+    "Buffer_test_conditional",
+    "Buffer",
+    "Buffer.alloc(64)",
+    "TestBuilder.command`test -n ${val} && echo 'has content' || echo 'empty'`",
+    true,
+  );
 
   describe("#11816", async () => {
     function doit(builtin: boolean) {

@@ -93,7 +93,7 @@ Here's a cheat sheet explaining the functions of the control flow buttons.
 
 ### Visual Studio Code Debugger
 
-Experimental support for debugging Bun scripts is available in Visual Studio Code. To use it, you'll need to install the [Bun VSCode extension](https://bun.sh/guides/runtime/vscode-debugger).
+Experimental support for debugging Bun scripts is available in Visual Studio Code. To use it, you'll need to install the [Bun VSCode extension](https://bun.com/guides/runtime/vscode-debugger).
 
 ## Debugging Network Requests
 

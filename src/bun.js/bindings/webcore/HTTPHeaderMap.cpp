@@ -145,7 +145,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound) {
-        std::span<LChar> ptr;
+        std::span<Latin1Character> ptr;
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });

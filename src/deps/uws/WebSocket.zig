@@ -1,7 +1,6 @@
 pub fn NewWebSocket(comptime ssl_flag: c_int) type {
-    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
-    return struct {
-        const WebSocket = @This();
+    return opaque {
+        const WebSocket = NewWebSocket(ssl_flag);
 
         pub fn raw(this: *WebSocket) *RawWebSocket {
             return @as(*RawWebSocket, @ptrCast(this));
@@ -72,6 +71,15 @@ pub fn NewWebSocket(comptime ssl_flag: c_int) type {
 pub const RawWebSocket = opaque {
     pub fn memoryCost(this: *RawWebSocket, ssl_flag: i32) usize {
         return c.uws_ws_memory_cost(ssl_flag, this);
+    }
+
+    /// They're the same memory address.
+    ///
+    /// Equivalent to:
+    ///
+    ///   (struct us_socket_t *)socket
+    pub fn asSocket(this: *RawWebSocket) *uws.Socket {
+        return @as(*uws.Socket, @ptrCast(this));
     }
 };
 
@@ -340,12 +348,13 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
-const uws = bun.uws;
-const Opcode = uws.Opcode;
-const SendStatus = uws.SendStatus;
-const uws_app_t = @import("./App.zig").uws_app_t;
 const std = @import("std");
+const uws_app_t = @import("./App.zig").uws_app_t;
+
+const uws = bun.uws;
 const NewApp = uws.NewApp;
+const Opcode = uws.Opcode;
 const Request = uws.Request;
-const uws_res = uws.uws_res;
+const SendStatus = uws.SendStatus;
 const SocketContext = uws.SocketContext;
+const uws_res = uws.uws_res;

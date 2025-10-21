@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`should write plaintext lockfiles 1`] = `
 "{
@@ -291,18 +291,6 @@ exports[`should not deduplicate bundled packages with un-bundled packages 2`] = 
 ]
 `;
 
-exports[`should not change formatting unexpectedly 1`] = `
-[
-  "preinstall",
-  "",
-  "+ optional-native@1.0.0",
-  "+ optional-peer-deps@1.0.0 (v1.0.1 available)",
-  "+ uses-what-bin@1.0.0 (v1.5.0 available)",
-  "",
-  "13 packages installed",
-]
-`;
-
 exports[`should not change formatting unexpectedly 2`] = `
 "{
   "lockfileVersion": 1,
@@ -400,16 +388,6 @@ exports[`should not change formatting unexpectedly 2`] = `
   }
 }
 "
-`;
-
-exports[`should not change formatting unexpectedly 3`] = `
-[
-  "preinstall",
-  "",
-  "+ bundled-1@1.0.0",
-  "",
-  "13 packages installed",
-]
 `;
 
 exports[`should sort overrides before comparing 1`] = `

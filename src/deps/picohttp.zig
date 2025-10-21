@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const c = @import("picohttpparser.zig");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const StringBuilder = bun.StringBuilder;
-const string = bun.string;
-const strings = bun.strings;
-
-const fmt = std.fmt;
-
-const assert = bun.assert;
-
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -110,6 +97,15 @@ pub const Request = struct {
         ignore_insecure: bool = false,
         body: []const u8 = "",
 
+        fn isPrintableBody(content_type: []const u8) bool {
+            if (content_type.len == 0) return false;
+
+            return bun.strings.hasPrefixComptime(content_type, "text/") or
+                bun.strings.hasPrefixComptime(content_type, "application/json") or
+                bun.strings.containsComptime(content_type, "json") or
+                bun.strings.hasPrefixComptime(content_type, "application/x-www-form-urlencoded");
+        }
+
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             const request = self.request;
             if (Output.enable_ansi_colors_stderr) {
@@ -145,7 +141,7 @@ pub const Request = struct {
                 }
             }
 
-            if (self.body.len > 0 and (content_type.len > 0 and bun.strings.hasPrefixComptime(content_type, "application/json") or bun.strings.hasPrefixComptime(content_type, "text/") or bun.strings.containsComptime(content_type, "json"))) {
+            if (self.body.len > 0 and isPrintableBody(content_type)) {
                 _ = try writer.writeAll(" --data-raw ");
                 try bun.js_printer.writeJSONString(self.body, @TypeOf(writer), writer, .utf8);
             }
@@ -377,3 +373,17 @@ pub const phr_parse_response = c.phr_parse_response;
 pub const phr_parse_headers = c.phr_parse_headers;
 pub const phr_decode_chunked = c.phr_decode_chunked;
 pub const phr_decode_chunked_is_in_data = c.phr_decode_chunked_is_in_data;
+
+const string = []const u8;
+
+const c = @import("./picohttpparser.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const strings = bun.strings;
+
+const std = @import("std");
+const fmt = std.fmt;

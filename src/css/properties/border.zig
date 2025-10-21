@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -12,8 +8,6 @@ const CssColor = css.css_values.color.CssColor;
 const Length = css.css_values.length.Length;
 
 const PropertyCategory = css.PropertyCategory;
-const BorderImageHandler = @import("./border_image.zig").BorderImageHandler;
-const BorderRadiusHandler = @import("./border_radius.zig").BorderRadiusHandler;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
@@ -868,7 +862,7 @@ pub const BorderHandler = struct {
 
         inline fn push(f: *FlushContext, comptime p: []const u8, val: anytype) void {
             bun.bits.insert(BorderProperty, &f.self.flushed_properties, @field(BorderProperty, p));
-            f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))) catch bun.outOfMemory();
+            bun.handleOom(f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))));
         }
 
         inline fn fallbacks(f: *FlushContext, comptime p: []const u8, _val: anytype) void {
@@ -876,7 +870,7 @@ pub const BorderHandler = struct {
             if (!bun.bits.contains(BorderProperty, f.self.flushed_properties, @field(BorderProperty, p))) {
                 const fbs = val.getFallbacks(f.ctx.allocator, f.ctx.targets);
                 for (css.generic.slice(@TypeOf(fbs), &fbs)) |fallback| {
-                    f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)) catch bun.outOfMemory();
+                    bun.handleOom(f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)));
                 }
             }
             push(f, p, val);
@@ -1413,7 +1407,7 @@ pub const BorderHandler = struct {
             var up = unparsed.deepClone(context.allocator);
             context.addUnparsedFallbacks(&up);
             bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
-            dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, .{ .unparsed = up }));
             return;
         }
 
@@ -1472,7 +1466,7 @@ pub const BorderHandler = struct {
                 var up = unparsed.deepClone(context.allocator);
                 context.addUnparsedFallbacks(&up);
                 bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
-                dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .unparsed = up }));
             },
         }
     }
@@ -1484,3 +1478,9 @@ fn isBorderProperty(property_id: css.PropertyIdTag) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const BorderImageHandler = @import("./border_image.zig").BorderImageHandler;
+const BorderRadiusHandler = @import("./border_radius.zig").BorderRadiusHandler;
+const Allocator = std.mem.Allocator;

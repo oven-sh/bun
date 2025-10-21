@@ -1,12 +1,5 @@
-const std = @import("std");
-const mem = std.mem;
-const macho = std.macho;
-const Allocator = mem.Allocator;
-const bun = @import("bun");
-
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
-const strings = bun.strings;
 
 pub const MachoFile = struct {
     header: macho.mach_header_64,
@@ -169,7 +162,7 @@ pub const MachoFile = struct {
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         const after_bun_slice = self.data.items[original_data_end + @as(usize, @intCast(size_diff)) ..];
         const prev_after_bun_slice = prev_data_slice[original_segsize..];
-        bun.move(after_bun_slice, prev_after_bun_slice);
+        bun.memmove(after_bun_slice, prev_after_bun_slice);
 
         // Now we copy the u32 size header
         std.mem.writeInt(u32, self.data.items[original_fileoff..][0..4], @intCast(data.len), .little);
@@ -582,6 +575,15 @@ const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
-const SuperBlob = std.macho.SuperBlob;
-const CodeDirectory = std.macho.CodeDirectory;
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const macho = std.macho;
 const BlobIndex = std.macho.BlobIndex;
+const CodeDirectory = std.macho.CodeDirectory;
+const SuperBlob = std.macho.SuperBlob;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

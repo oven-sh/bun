@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const String = bun.String;
-const JSValue = bun.JSC.JSValue;
-
 pub const OptionValueType = enum { boolean, string };
 
 /// Metadata of an option known to the args parser,
@@ -90,3 +86,7 @@ pub fn findOptionByShortName(short_name: String, options: []const OptionDefiniti
     }
     return long_option_index;
 }
+
+const bun = @import("bun");
+const String = bun.String;
+const JSValue = bun.jsc.JSValue;

@@ -5,10 +5,6 @@
 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/config/lib/definitions/definitions.js#L2129
 // `name.toLowerCase().split(' ').join('-')`
 
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-
 var ci_name: ?[]const u8 = null;
 
 pub fn detectCI() ?[]const u8 {
@@ -419,3 +415,8 @@ const CI = enum {
         },
     });
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;

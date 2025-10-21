@@ -14,7 +14,7 @@ if (typeof Bun !== "undefined") {
 
 ---
 
-In TypeScript environments, the previous approach will result in a type error unless `bun-types` is globally installed. To avoid this, you can check `process.versions` instead.
+In TypeScript environments, the previous approach will result in a type error unless `@types/bun` is installed. To avoid this, you can check `process.versions` instead.
 
 ```ts
 if (process.versions.bun) {

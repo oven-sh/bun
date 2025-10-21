@@ -65,6 +65,7 @@ private:
     bool m_isWasmFrame = false;
 
     bool m_isFunctionOrEval = false;
+    bool m_isAsync = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -89,6 +90,7 @@ public:
     JSC::JSString* typeName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
+    bool isAsync() const { return m_isAsync; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
@@ -132,7 +134,7 @@ public:
     }
     bool isConstructor() const
     {
-        return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind());
+        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
 private:

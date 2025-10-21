@@ -4440,6 +4440,24 @@ describe("css tests", () => {
       ".foo { background: linear-gradient(0.5turn, yellow, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
+    // Test case for the crash fix with 0.25turn
+    minify_test(
+      ".foo { background: linear-gradient(0.25turn, rgb(2, 0, 36) 0%, rgb(1, 53, 164) 100%); }",
+      ".foo{background:linear-gradient(.25turn,#020024 0%,#0135a4 100%)}",
+    );
+    // Additional angle unit tests to ensure the fix works for various cases
+    minify_test(
+      ".foo { background: linear-gradient(0.25turn, yellow, blue); }",
+      ".foo{background:linear-gradient(.25turn,#ff0,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(0.75turn, yellow, blue); }",
+      ".foo{background:linear-gradient(.75turn,#ff0,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(1turn, yellow, blue); }",
+      ".foo{background:linear-gradient(1turn,#ff0,#00f)}",
+    );
     minify_test(
       ".foo { background: linear-gradient(yellow 10%, blue 20%) }",
       ".foo{background:linear-gradient(#ff0 10%,#00f 20%)}",

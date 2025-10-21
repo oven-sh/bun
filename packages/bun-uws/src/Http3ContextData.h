@@ -17,5 +17,5 @@ namespace uWS {
             //printf("Constructing http3contextdata: %p\n", this);
         }
     };
-    
+
 }

@@ -1,13 +1,7 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 pub const Error = css.Error;
 const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const CssModule = struct {
     config: *const Config,
@@ -25,7 +19,7 @@ pub const CssModule = struct {
     ) CssModule {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         const hashes = hashes: {
-            var hashes = ArrayList([]const u8).initCapacity(allocator, sources.items.len) catch bun.outOfMemory();
+            var hashes = bun.handleOom(ArrayList([]const u8).initCapacity(allocator, sources.items.len));
             for (sources.items) |path| {
                 var alloced = false;
                 const source = source: {
@@ -33,7 +27,7 @@ pub const CssModule = struct {
                     if (project_root) |root| {
                         if (bun.path.Platform.auto.isAbsolute(root)) {
                             alloced = true;
-                            break :source allocator.dupe(u8, bun.path.relative(root, path)) catch bun.outOfMemory();
+                            break :source bun.handleOom(allocator.dupe(u8, bun.path.relative(root, path)));
                         }
                     }
                     break :source path;
@@ -49,7 +43,7 @@ pub const CssModule = struct {
             break :hashes hashes;
         };
         const exports_by_source_index = exports_by_source_index: {
-            var exports_by_source_index = ArrayList(CssModuleExports).initCapacity(allocator, sources.items.len) catch bun.outOfMemory();
+            var exports_by_source_index = bun.handleOom(ArrayList(CssModuleExports).initCapacity(allocator, sources.items.len));
             exports_by_source_index.appendNTimesAssumeCapacity(CssModuleExports{}, sources.items.len);
             break :exports_by_source_index exports_by_source_index;
         };
@@ -68,7 +62,7 @@ pub const CssModule = struct {
     }
 
     pub fn getReference(this: *CssModule, allocator: Allocator, name: []const u8, source_index: u32) void {
-        const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+        const gop = bun.handleOom(this.exports_by_source_index.items[source_index].getOrPut(allocator, name));
         if (gop.found_existing) {
             gop.value_ptr.is_referenced = true;
         } else {
@@ -105,12 +99,12 @@ pub const CssModule = struct {
             },
         } else {
             // Local export. Mark as used.
-            const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+            const gop = bun.handleOom(this.exports_by_source_index.items[source_index].getOrPut(allocator, name));
             if (gop.found_existing) {
                 gop.value_ptr.is_referenced = true;
             } else {
                 var res = ArrayList(u8){};
-                res.appendSlice(allocator, "--") catch bun.outOfMemory();
+                bun.handleOom(res.appendSlice(allocator, "--"));
                 gop.value_ptr.* = CssModuleExport{
                     .name = this.config.pattern.writeToString(
                         allocator,
@@ -130,9 +124,9 @@ pub const CssModule = struct {
 
         this.references.put(
             allocator,
-            std.fmt.allocPrint(allocator, "--{s}", .{the_hash}) catch bun.outOfMemory(),
+            bun.handleOom(std.fmt.allocPrint(allocator, "--{s}", .{the_hash})),
             reference,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
 
         return the_hash;
     }
@@ -155,11 +149,11 @@ pub const CssModule = struct {
             return .{ .err = css.PrinterErrorKind.invalid_composes_selector };
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn addDashed(this: *CssModule, allocator: Allocator, local: []const u8, source_index: u32) void {
-        const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, local) catch bun.outOfMemory();
+        const gop = bun.handleOom(this.exports_by_source_index.items[source_index].getOrPut(allocator, local));
         if (!gop.found_existing) {
             gop.value_ptr.* = CssModuleExport{
                 // todo_stuff.depth
@@ -177,7 +171,7 @@ pub const CssModule = struct {
     }
 
     pub fn addLocal(this: *CssModule, allocator: Allocator, exported: []const u8, local: []const u8, source_index: u32) void {
-        const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, exported) catch bun.outOfMemory();
+        const gop = bun.handleOom(this.exports_by_source_index.items[source_index].getOrPut(allocator, exported));
         if (!gop.found_existing) {
             gop.value_ptr.* = CssModuleExport{
                 // todo_stuff.depth
@@ -271,10 +265,10 @@ pub const Pattern = struct {
             &closure,
             struct {
                 pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) void {
-                    self.res.appendSlice(self.allocator, prefix) catch bun.outOfMemory();
+                    bun.handleOom(self.res.appendSlice(self.allocator, prefix));
                     if (replace_dots) {
                         const start = self.res.items.len;
-                        self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
+                        bun.handleOom(self.res.appendSlice(self.allocator, slice));
                         const end = self.res.items.len;
                         for (self.res.items[start..end]) |*c| {
                             if (c.* == '.') {
@@ -283,7 +277,7 @@ pub const Pattern = struct {
                         }
                         return;
                     }
-                    self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
+                    bun.handleOom(self.res.appendSlice(self.allocator, slice));
                 }
             }.writefn,
         );
@@ -310,7 +304,7 @@ pub const Pattern = struct {
                 pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) void {
                     if (replace_dots) {
                         const start = self.res.items.len;
-                        self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
+                        bun.handleOom(self.res.appendSlice(self.allocator, slice));
                         const end = self.res.items.len;
                         for (self.res.items[start..end]) |*c| {
                             if (c.* == '.') {
@@ -319,7 +313,7 @@ pub const Pattern = struct {
                         }
                         return;
                     }
-                    self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
+                    bun.handleOom(self.res.appendSlice(self.allocator, slice));
                     return;
                 }
             }.writefn,
@@ -404,7 +398,7 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
     var stack_fallback = std.heap.stackFallback(128, allocator);
     const fmt_alloc = if (count <= 128) stack_fallback.get() else allocator;
     var hasher = bun.Wyhash11.init(0);
-    var fmt_str = std.fmt.allocPrint(fmt_alloc, fmt, args) catch bun.outOfMemory();
+    var fmt_str = bun.handleOom(std.fmt.allocPrint(fmt_alloc, fmt, args));
     hasher.update(fmt_str);
 
     const h: u32 = @truncate(hasher.final());
@@ -414,7 +408,7 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
     const encode_len = bun.base64.simdutfEncodeLenUrlSafe(h_bytes[0..].len);
 
     var slice_to_write = if (encode_len <= 128 - @as(usize, @intFromBool(at_start)))
-        allocator.alloc(u8, encode_len + @as(usize, @intFromBool(at_start))) catch bun.outOfMemory()
+        bun.handleOom(allocator.alloc(u8, encode_len + @as(usize, @intFromBool(at_start))))
     else
         fmt_str[0..];
 
@@ -430,3 +424,9 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
 
     return base64_encoded_hash;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

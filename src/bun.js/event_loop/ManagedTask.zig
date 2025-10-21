@@ -1,21 +1,21 @@
 //! This is a slow, dynamically-allocated one-off task
-//! Use it when you can't add to JSC.Task directly and managing the lifetime of the Task struct is overly complex
+//! Use it when you can't add to jsc.Task directly and managing the lifetime of the Task struct is overly complex
 
 const ManagedTask = @This();
 
 ctx: ?*anyopaque,
-callback: *const (fn (*anyopaque) void),
+callback: *const (fn (*anyopaque) bun.JSTerminated!void),
 
 pub fn task(this: *ManagedTask) Task {
     return Task.init(this);
 }
 
-pub fn run(this: *ManagedTask) void {
+pub fn run(this: *ManagedTask) bun.JSTerminated!void {
     @setRuntimeSafety(false);
+    defer bun.default_allocator.destroy(this);
     const callback = this.callback;
     const ctx = this.ctx;
-    callback(ctx.?);
-    bun.default_allocator.destroy(this);
+    try callback(ctx.?);
 }
 
 pub fn cancel(this: *ManagedTask) void {
@@ -27,7 +27,7 @@ pub fn cancel(this: *ManagedTask) void {
 pub fn New(comptime Type: type, comptime Callback: anytype) type {
     return struct {
         pub fn init(ctx: *Type) Task {
-            var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
+            var managed = bun.handleOom(bun.default_allocator.create(ManagedTask));
             managed.* = ManagedTask{
                 .callback = wrap,
                 .ctx = ctx,
@@ -35,12 +35,13 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
             return managed.task();
         }
 
-        pub fn wrap(this: ?*anyopaque) void {
-            @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+        pub fn wrap(this: ?*anyopaque) bun.JSTerminated!void {
+            return @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
         }
     };
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
+
+const jsc = bun.jsc;
+const Task = jsc.Task;

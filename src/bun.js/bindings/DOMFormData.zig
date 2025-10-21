@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-
 pub const DOMFormData = opaque {
     extern fn WebCore__DOMFormData__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMFormData;
     extern fn WebCore__DOMFormData__create(arg0: *JSGlobalObject) JSValue;
@@ -64,7 +57,7 @@ pub const DOMFormData = opaque {
 
     pub fn appendBlob(
         this: *DOMFormData,
-        global: *JSC.JSGlobalObject,
+        global: *jsc.JSGlobalObject,
         name_: *ZigString,
         blob: *anyopaque,
         filename_: *ZigString,
@@ -90,7 +83,7 @@ pub const DOMFormData = opaque {
     pub const FormDataEntry = union(enum) {
         string: ZigString,
         file: struct {
-            blob: *JSC.WebCore.Blob,
+            blob: *jsc.WebCore.Blob,
             filename: ZigString,
         },
     };
@@ -115,7 +108,7 @@ pub const DOMFormData = opaque {
                 else
                     FormDataEntry{
                         .file = .{
-                            .blob = bun.cast(*JSC.WebCore.Blob, value_ptr),
+                            .blob = bun.cast(*jsc.WebCore.Blob, value_ptr),
                             .filename = (filename orelse &ZigString.Empty).*,
                         },
                     };
@@ -123,7 +116,15 @@ pub const DOMFormData = opaque {
                 wrapper(ctx_, name_.*, value);
             }
         };
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
     }
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;

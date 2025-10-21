@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 const AddressableSize = u49;
 
 pub const TaggedPointer = packed struct(u64) {
@@ -236,3 +233,6 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");

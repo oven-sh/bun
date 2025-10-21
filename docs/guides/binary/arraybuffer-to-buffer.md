@@ -22,4 +22,4 @@ const nodeBuffer = Buffer.from(arrBuffer, 0, 16); // view first 16 bytes
 
 ---
 
-See [Docs > API > Binary Data](https://bun.sh/docs/api/binary-data#conversion) for complete documentation on manipulating binary data with Bun.
+See [Docs > API > Binary Data](https://bun.com/docs/api/binary-data#conversion) for complete documentation on manipulating binary data with Bun.

@@ -1,6 +1,8 @@
 //! This is AnyTask except it gives you two pointers instead of one.
-//! Generally, prefer JSC.Task instead of this.
+//! Generally, prefer jsc.Task instead of this.
+
 const AnyTaskWithExtraContext = @This();
+
 ctx: ?*anyopaque = undefined,
 callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
 next: ?*AnyTaskWithExtraContext = null,
@@ -17,7 +19,7 @@ pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *A
             @field(Ptr, fieldName)(ctx, extra);
         }
     };
-    const task = bun.default_allocator.create(Wrapper) catch bun.outOfMemory();
+    const task = bun.handleOom(bun.default_allocator.create(Wrapper));
     task.* = Wrapper{
         .any_task = AnyTaskWithExtraContext{
             .callback = &Wrapper.function,
@@ -63,7 +65,8 @@ pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: a
     };
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
+const std = @import("std");
+
+const jsc = bun.jsc;
+const Task = jsc.Task;

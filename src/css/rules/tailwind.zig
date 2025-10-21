@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");
 pub const Error = css.Error;
@@ -55,3 +52,6 @@ pub const TailwindStyleName = enum {
         return css.enum_property_util.toCss(@This(), this, W, dest);
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -31,6 +31,10 @@ pub const PosixLoop = extern struct {
         c.uws_res_clear_corked_socket(this);
     }
 
+    pub fn updateDate(this: *PosixLoop) void {
+        c.uws_loop_date_header_timer_update(this);
+    }
+
     pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
@@ -157,6 +161,10 @@ pub const PosixLoop = extern struct {
     pub fn run(this: *PosixLoop) void {
         c.us_loop_run(this);
     }
+
+    pub fn shouldEnableDateHeaderTimer(this: *const PosixLoop) bool {
+        return this.internal_loop_data.shouldEnableDateHeaderTimer();
+    }
 };
 
 pub const WindowsLoop = extern struct {
@@ -168,6 +176,10 @@ pub const WindowsLoop = extern struct {
     is_default: c_int,
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
+
+    pub fn shouldEnableDateHeaderTimer(this: *const WindowsLoop) bool {
+        return this.internal_loop_data.shouldEnableDateHeaderTimer();
+    }
 
     pub fn uncork(this: *PosixLoop) void {
         c.uws_res_clear_corked_socket(this);
@@ -245,6 +257,10 @@ pub const WindowsLoop = extern struct {
         c.uws_loop_defer(this, user_data, Handler.callback);
     }
 
+    pub fn updateDate(this: *Loop) void {
+        c.uws_loop_date_header_timer_update(this);
+    }
+
     fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {
         return struct {
             loop: *Loop,
@@ -287,12 +303,15 @@ const c = struct {
     pub extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
     pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
     pub extern fn uws_res_clear_corked_socket(loop: *Loop) void;
+    pub extern fn uws_loop_date_header_timer_update(loop: *Loop) void;
 };
 
-const bun = @import("bun");
-const uws = bun.uws;
+const log = bun.Output.scoped(.Loop, .visible);
 
-const InternalLoopData = uws.InternalLoopData;
-const Environment = bun.Environment;
 const std = @import("std");
-const log = bun.Output.scoped(.Loop, false);
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const uws = bun.uws;
+const InternalLoopData = uws.InternalLoopData;

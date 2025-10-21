@@ -4,7 +4,7 @@ name: Extract social share images and Open Graph tags
 
 ## Extract social share images and Open Graph tags
 
-Bun's [HTMLRewriter](https://bun.sh/docs/api/html-rewriter) API can be used to efficiently extract social share images and Open Graph metadata from HTML content. This is particularly useful for building link preview features, social media cards, or web scrapers. We can use HTMLRewriter to match CSS selectors to HTML elements, text, and attributes we want to process.
+Bun's [HTMLRewriter](https://bun.com/docs/api/html-rewriter) API can be used to efficiently extract social share images and Open Graph metadata from HTML content. This is particularly useful for building link preview features, social media cards, or web scrapers. We can use HTMLRewriter to match CSS selectors to HTML elements, text, and attributes we want to process.
 
 ```ts
 interface SocialMetadata {
@@ -81,12 +81,12 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 }
 
 // Example usage
-const metadata = await extractSocialMetadata("https://bun.sh");
+const metadata = await extractSocialMetadata("https://bun.com");
 console.log(metadata);
 // {
 //   title: "Bun — A fast all-in-one JavaScript runtime",
 //   description: "Bundle, transpile, install and run JavaScript & TypeScript projects — all in Bun. Bun is a fast all-in-one JavaScript runtime & toolkit designed for speed, complete with a bundler, test runner, and Node.js-compatible package manager.",
-//   image: "https://bun.sh/share.jpg",
+//   image: "https://bun.com/share.jpg",
 //   type: "website",
 //   ...
 // }

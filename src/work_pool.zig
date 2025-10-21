@@ -1,7 +1,3 @@
-const ThreadPool = bun.ThreadPool;
-const std = @import("std");
-const bun = @import("bun");
-
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 
@@ -55,3 +51,8 @@ pub const WorkPool = struct {
         schedule(&task_.task);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const ThreadPool = bun.ThreadPool;

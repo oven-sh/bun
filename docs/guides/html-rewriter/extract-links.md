@@ -4,7 +4,7 @@ name: Extract links from a webpage using HTMLRewriter
 
 ## Extract links from a webpage
 
-Bun's [HTMLRewriter](https://bun.sh/docs/api/html-rewriter) API can be used to efficiently extract links from HTML content. It works by chaining together CSS selectors to match the elements, text, and attributes you want to process. This is a simple example of how to extract links from a webpage. You can pass `.transform` a `Response`, `Blob`, or `string`.
+Bun's [HTMLRewriter](https://bun.com/docs/api/html-rewriter) API can be used to efficiently extract links from HTML content. It works by chaining together CSS selectors to match the elements, text, and attributes you want to process. This is a simple example of how to extract links from a webpage. You can pass `.transform` a `Response`, `Blob`, or `string`.
 
 ```ts
 async function extractLinks(url: string) {
@@ -22,11 +22,11 @@ async function extractLinks(url: string) {
 
   // Wait for the response to be processed
   await rewriter.transform(response).blob();
-  console.log([...links]); // ["https://bun.sh", "/docs", ...]
+  console.log([...links]); // ["https://bun.com", "/docs", ...]
 }
 
 // Extract all links from the Bun website
-await extractLinks("https://bun.sh");
+await extractLinks("https://bun.com");
 ```
 
 ---
@@ -65,4 +65,4 @@ const websiteLinks = await extractLinksFromURL("https://example.com");
 
 ---
 
-See [Docs > API > HTMLRewriter](https://bun.sh/docs/api/html-rewriter) for complete documentation on HTML transformation with Bun.
+See [Docs > API > HTMLRewriter](https://bun.com/docs/api/html-rewriter) for complete documentation on HTML transformation with Bun.

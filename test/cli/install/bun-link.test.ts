@@ -4,6 +4,7 @@ import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isWindows,
   readdirSorted,
   runBunInstall,
   stderrForInstall,
@@ -62,7 +63,7 @@ it("should link and unlink workspace package", async () => {
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "2 packages installed",
+    "Done! Checked 3 packages (no changes)",
   ]);
 
   let { stdout, stderr, exited } = spawn({
@@ -74,9 +75,9 @@ it("should link and unlink workspace package", async () => {
     env,
   });
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`Success! Registered "moo"`);
+  expect(await stdout.text()).toContain(`Success! Registered "moo"`);
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
@@ -88,9 +89,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed moo@link:moo`,
@@ -112,9 +113,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`success: unlinked package "moo"`);
+  expect(await stdout.text()).toContain(`success: unlinked package "moo"`);
   expect(await exited).toBe(0);
 
   // link the workspace root package to a workspace package
@@ -127,9 +128,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`Success! Registered "foo"`);
+  expect(await stdout.text()).toContain(`Success! Registered "foo"`);
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
@@ -141,9 +142,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed foo@link:foo`,
@@ -166,9 +167,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`success: unlinked package "foo"`);
+  expect(await stdout.text()).toContain(`success: unlinked package "foo"`);
   expect(await exited).toBe(0);
 });
 
@@ -366,11 +367,12 @@ it("should link dependency without crashing", async () => {
       name: link_name,
       version: "0.0.1",
       bin: {
-        [link_name]: `${link_name}.js`,
+        [link_name]: `${link_name}.py`,
       },
     }),
   );
-  await writeFile(join(link_dir, `${link_name}.js`), "console.log(42);");
+  // Use a Python script with \r\n shebang to test normalization
+  await writeFile(join(link_dir, `${link_name}.py`), "#!/usr/bin/env python\r\nprint('hello from python')");
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -413,10 +415,18 @@ it("should link dependency without crashing", async () => {
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", link_name].sort());
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([link_name]);
-  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.js`));
+  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.py`));
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
-    ["package.json", `${link_name}.js`].sort(),
+    ["package.json", `${link_name}.py`].sort(),
   );
+  // Verify that the shebang was normalized from \r\n to \n (only on non-Windows)
+  const binContent = await file(join(package_dir, "node_modules", link_name, `${link_name}.py`)).text();
+  if (isWindows) {
+    expect(binContent).toStartWith("#!/usr/bin/env python\r\nprint");
+  } else {
+    expect(binContent).toStartWith("#!/usr/bin/env python\nprint");
+    expect(binContent).not.toContain("\r\n");
+  }
   await access(join(package_dir, "bun.lockb"));
 
   const {

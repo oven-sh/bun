@@ -31,7 +31,7 @@ pub fn BodyReaderMixin(
                     };
                 }
                 fn onAborted(mixin: *Mixin, _: Response) void {
-                    mixin.body.deinit();
+                    mixin.body.clearAndFree();
                     onError(@fieldParentPtr(field, mixin));
                 }
             };
@@ -41,37 +41,54 @@ pub fn BodyReaderMixin(
 
         fn onData(ctx: *@This(), resp: uws.AnyResponse, chunk: []const u8, last: bool) !void {
             if (last) {
-                var body = ctx.body; // stack copy so onBody can free everything
-                resp.clearAborted();
+                // Free everything after
+                var body = ctx.body;
+                defer body.deinit();
+                ctx.body = .init(ctx.body.allocator);
                 resp.clearOnData();
                 if (body.items.len > 0) {
                     try body.appendSlice(chunk);
-                    try onBody(@fieldParentPtr(field, ctx), ctx.body.items, resp);
+                    try onBody(@fieldParentPtr(field, ctx), body.items, resp);
                 } else {
                     try onBody(@fieldParentPtr(field, ctx), chunk, resp);
                 }
-                body.deinit();
             } else {
                 try ctx.body.appendSlice(chunk);
             }
         }
 
         fn onOOM(ctx: *@This(), r: uws.AnyResponse) void {
+            var body = ctx.body;
+            ctx.body = .init(ctx.body.allocator);
+            body.deinit();
+            r.clearAborted();
+            r.clearOnData();
+            r.clearOnWritable();
+
             r.writeStatus("500 Internal Server Error");
             r.endWithoutBody(false);
-            ctx.body.deinit();
+
             onError(@fieldParentPtr(field, ctx));
         }
 
         fn onInvalid(ctx: *@This(), r: uws.AnyResponse) void {
+            var body = ctx.body;
+            ctx.body = .init(body.allocator);
+            body.deinit();
+
+            r.clearAborted();
+            r.clearOnData();
+            r.clearOnWritable();
+
             r.writeStatus("400 Bad Request");
             r.endWithoutBody(false);
-            ctx.body.deinit();
+
             onError(@fieldParentPtr(field, ctx));
         }
     };
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
 const uws = bun.uws;
-const std = @import("std");

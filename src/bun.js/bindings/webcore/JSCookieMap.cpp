@@ -176,8 +176,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     auto result_exception = CookieMap::create(WTFMove(init));
     if (result_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto result = result_exception.releaseReturnValue();
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTFMove(result))));
@@ -407,8 +407,8 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     auto cookie_exception = Cookie::create(cookieInit);
     if (cookie_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
 
     impl.set(WTFMove(cookie));
@@ -456,10 +456,12 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
 
         // Extract name
         if (nameValue.isUndefined()) nameValue = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         // Extract optional domain
-        if (auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName())) {
-            RETURN_IF_EXCEPTION(throwScope, {});
+        auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (domainValue) {
 
             if (!domainValue.isUndefined() && !domainValue.isNull()) {
                 deleteOptions.domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
@@ -468,9 +470,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         }
 
         // Extract optional path
-        if (auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName())) {
-            RETURN_IF_EXCEPTION(throwScope, {});
-
+        auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (pathValue) {
             if (!pathValue.isUndefined() && !pathValue.isNull()) {
                 deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
                 RETURN_IF_EXCEPTION(throwScope, {});

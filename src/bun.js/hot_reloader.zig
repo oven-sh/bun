@@ -25,6 +25,17 @@ pub const ImportWatcher = union(enum) {
         };
     }
 
+    pub inline fn addFileByPathSlow(
+        this: ImportWatcher,
+        file_path: string,
+        loader: options.Loader,
+    ) bool {
+        return switch (this) {
+            inline .hot, .watch => |w| w.addFileByPathSlow(file_path, loader),
+            else => true,
+        };
+    }
+
     pub inline fn addFile(
         this: ImportWatcher,
         fd: bun.FD,
@@ -34,7 +45,7 @@ pub const ImportWatcher = union(enum) {
         dir_fd: bun.FD,
         package_json: ?*bun.PackageJSON,
         comptime copy_file_path: bool,
-    ) bun.JSC.Maybe(void) {
+    ) bun.sys.Maybe(void) {
         return switch (this) {
             inline .hot, .watch => |watcher| watcher.addFile(
                 fd,
@@ -45,13 +56,13 @@ pub const ImportWatcher = union(enum) {
                 package_json,
                 copy_file_path,
             ),
-            .none => .{ .result = {} },
+            .none => .success,
         };
     }
 };
 
-pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
-pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
+pub const HotReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 
 extern fn BunDebugger__willHotReload() void;
 
@@ -63,10 +74,12 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         verbose: bool = false,
         pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
+        main: MainFile = .{},
+
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *Watcher {
-            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            const reloader = bun.handleOom(bun.default_allocator.create(Reloader));
             reloader.* = .{
                 .ctx = ctx,
                 .verbose = Environment.enable_logs or verbose,
@@ -86,7 +99,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         fn debug(comptime fmt: string, args: anytype) void {
             if (Environment.enable_logs) {
-                Output.scoped(.hot_reloader, false)(fmt, args);
+                Output.scoped(.hot_reloader, .visible)(fmt, args);
             } else {
                 Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
             }
@@ -96,7 +109,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             return this.ctx.eventLoop();
         }
 
-        pub fn enqueueTaskConcurrent(this: @This(), task: *JSC.ConcurrentTask) void {
+        pub fn enqueueTaskConcurrent(this: @This(), task: *jsc.ConcurrentTask) void {
             if (comptime reload_immediately)
                 unreachable;
 
@@ -105,12 +118,50 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub var clear_screen = false;
 
+        const MainFile = struct {
+            /// Includes a trailing "/"
+            dir: []const u8 = "",
+            dir_hash: Watcher.HashType = 0,
+
+            file: []const u8 = "",
+            hash: Watcher.HashType = 0,
+
+            /// On macOS, vim's atomic save triggers a race condition:
+            /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
+            /// 2. We receive the event and would normally trigger reload immediately
+            /// 3. But the new file hasn't been created yet - reload fails with ENOENT
+            /// 4. New file gets created and written (a.js)
+            /// 5. Parent directory gets NOTE_WRITE
+            ///
+            /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
+            /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
+            /// we check if the file exists and trigger the reload.
+            is_waiting_for_dir_change: bool = false,
+
+            pub fn init(file: []const u8) MainFile {
+                var main = MainFile{
+                    .file = file,
+                    .hash = if (file.len > 0) Watcher.getHash(file) else 0,
+                    .is_waiting_for_dir_change = false,
+                };
+
+                if (std.fs.path.dirname(file)) |dir| {
+                    bun.assert(bun.isSliceInBuffer(dir, file));
+                    bun.assert(file.len > dir.len + 1);
+                    main.dir = file[0 .. dir.len + 1];
+                    main.dir_hash = Watcher.getHash(main.dir);
+                }
+
+                return main;
+            }
+        };
+
         pub const Task = struct {
             count: u8 = 0,
             hashes: [8]u32,
             paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
             /// Left uninitialized until .enqueue
-            concurrent_task: JSC.ConcurrentTask,
+            concurrent_task: jsc.ConcurrentTask,
             reloader: *Reloader,
 
             pub fn initEmpty(reloader: *Reloader) Task {
@@ -150,7 +201,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *Task) void {
-                JSC.markBinding(@src());
+                jsc.markBinding(@src());
                 if (this.count == 0)
                     return;
 
@@ -174,7 +225,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .hashes = this.hashes,
                     .concurrent_task = undefined,
                 });
-                that.concurrent_task = .{ .task = JSC.Task.init(that), .auto_delete = false };
+                that.concurrent_task = .{ .task = jsc.Task.init(that), .auto_delete = false };
                 that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
             }
@@ -184,7 +235,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         };
 
-        pub fn enableHotModuleReloading(this: *Ctx) void {
+        pub fn enableHotModuleReloading(this: *Ctx, entry_path: ?[]const u8) void {
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 if (this.bun_watcher != .none)
                     return;
@@ -193,10 +244,11 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            var reloader = bun.handleOom(bun.default_allocator.create(Reloader));
             reloader.* = .{
                 .ctx = this,
                 .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
+                .main = MainFile.init(entry_path orelse ""),
             };
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
@@ -312,7 +364,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                 switch (kind) {
                     .file => {
-                        if (event.op.delete or event.op.rename) {
+                        if (event.op.delete or (event.op.rename and Environment.isMac)) {
                             ctx.removeAtIndex(
                                 event.index,
                                 0,
@@ -322,13 +374,29 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose)
-                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
+                            debug("File changed: {s} ({})", .{ fs.relativeTo(file_path), event });
 
                         if (event.op.write or event.op.delete or event.op.rename) {
+                            if (comptime Environment.isMac) {
+                                if (event.op.rename) {
+                                    // Special case for entrypoint: defer reload until we get
+                                    // a directory write event confirming the file exists.
+                                    // This handles vim's save process which renames the old file
+                                    // before the new file is re-created with a different inode.
+                                    if (this.main.hash == current_hash and !reload_immediately) {
+                                        this.main.is_waiting_for_dir_change = true;
+                                        continue;
+                                    }
+                                }
+
+                                // If we got a write event after rename, the file is back - proceed with reload
+                                if (this.main.is_waiting_for_dir_change and this.main.hash == current_hash) {
+                                    this.main.is_waiting_for_dir_change = false;
+                                }
+                            }
+
                             current_task.append(current_hash);
                         }
-
-                        // TODO: delete events?
                     },
                     .directory => {
                         if (comptime Environment.isWindows) {
@@ -348,6 +416,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     entries_option = existing;
                                 } else if (this.getTombstone(file_path)) |existing| {
                                     entries_option = existing;
+                                }
+
+                                if (event.op.write) {
+                                    // Check if the entrypoint now exists after an atomic save.
+                                    // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
+                                    // the file), this directory write event signals that the new
+                                    // file has been re-created. Verify it exists and trigger reload.
+                                    if (this.main.is_waiting_for_dir_change and this.main.dir_hash == current_hash) {
+                                        if (bun.sys.faccessat(file_descriptors[event.index], std.fs.path.basename(this.main.file)) == .result) {
+                                            this.main.is_waiting_for_dir_change = false;
+                                            current_task.append(this.main.hash);
+                                        }
+                                    }
                                 }
 
                                 var affected_i: usize = 0;
@@ -397,7 +478,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     bun.asByteSlice(changed_name_.?);
                                 if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                                const loader = (this.ctx.getLoaders().get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                const loader = (this.ctx.getLoaders().get(Fs.PathName.findExtname(changed_name)) orelse .file);
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
@@ -414,6 +495,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                     if (file_descriptors[entry_id].isValid()) {
                                                         if (prev_entry_id != entry_id) {
                                                             current_task.append(hashes[entry_id]);
+                                                            if (this.verbose)
+                                                                debug("Removing file: {s}", .{path_string.slice()});
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,
@@ -452,7 +535,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose) {
-                            debug("Dir change: {s}", .{fs.relativeTo(file_path)});
+                            debug("Dir change: {s} (affecting {d}, {})", .{ fs.relativeTo(file_path), affected.len, event });
                         }
                     },
                 }
@@ -461,16 +544,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const string = []const u8;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const options = bun.options;
-const JSC = bun.JSC;
-const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
-const VirtualMachine = JSC.VirtualMachine;
-const Watcher = bun.Watcher;
 pub const Buffer = MarkedArrayBuffer;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const Fs = bun.fs;
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+const options = bun.options;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
+const VirtualMachine = jsc.VirtualMachine;

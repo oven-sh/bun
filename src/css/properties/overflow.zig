@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -78,3 +75,6 @@ pub const TextOverflow = enum {
     pub const toCss = css_impl.toCss;
     pub const deepClone = css_impl.deepClone;
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

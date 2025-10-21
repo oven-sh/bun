@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
 const use_small_path_string_ = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
 
@@ -16,7 +14,7 @@ pub const PathString = packed struct(PathStringBackingIntType) {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = bun.JSC;
+    const jsc = bun.jsc;
 
     pub fn estimatedSize(this: *const PathString) usize {
         return @as(usize, this.len);
@@ -61,3 +59,6 @@ pub const PathString = packed struct(PathStringBackingIntType) {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

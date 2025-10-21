@@ -255,6 +255,7 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
         int64_t value = iter.highest_equivalent_value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, );
         map->set(globalObject, jsKey, jsValue);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -275,6 +276,7 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
         int64_t value = iter.highest_equivalent_value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, );
         map->set(globalObject, jsKey, jsValue);
         RETURN_IF_EXCEPTION(scope, void());
     }

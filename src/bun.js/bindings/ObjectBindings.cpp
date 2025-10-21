@@ -25,8 +25,9 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
-            if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
-                return true;
+            auto has = object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (has) return true;
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -41,7 +42,7 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
         if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
         else {
-            prototype = object->getPrototype(vm, globalObject);
+            prototype = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
         }
         if (!prototype.isObject())
@@ -68,10 +69,12 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigationUnsafe(JSC::VM& vm, 
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
 
     if (!isDefined) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::decode(JSC::JSValue::ValueDeleted);
     }
 
-    scope.assertNoException();
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue value = propertySlot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return value;
@@ -82,12 +85,8 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
-
-    if (!isDefined) {
-        return JSC::jsUndefined();
-    }
-
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isDefined) return JSC::jsUndefined();
     JSValue value = propertySlot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return value;

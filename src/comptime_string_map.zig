@@ -1,9 +1,3 @@
-const JSC = bun.JSC;
-const std = @import("std");
-const bun = @import("bun");
-const mem = std.mem;
-const strings = @import("./string_immutable.zig");
-
 /// Comptime string map optimized for small sets of disparate string keys.
 /// Works by separating the keys by length at comptime and only checking strings of
 /// equal length at runtime.
@@ -196,28 +190,16 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        /// Caller must ensure that the input is a string.
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
-                }
-            }
-
+        /// Throws if toString() throws.
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);
             defer str.deref();
             return getWithEql(str, bun.String.eqlComptime);
         }
 
-        /// Caller must ensure that the input is a string.
-        pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
-                }
-            }
-
+        /// Throws if toString() throws.
+        pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);
             defer str.deref();
@@ -557,3 +539,10 @@ const TestEnum2 = enum {
         .{ "00", .FL },
     });
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;
+
+const std = @import("std");
+const mem = std.mem;

@@ -3,7 +3,7 @@ name: Generate a yarn-compatible lockfile
 ---
 
 {% callout %}
-Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at no cost to performance. [**Learn more.**](https://bun.sh/docs/install/lockfile#text-based-lockfile)
+Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at no cost to performance. [**Learn more.**](https://bun.com/docs/install/lockfile#text-based-lockfile)
 {% /callout %}
 
 ---
@@ -41,4 +41,4 @@ abab@^2.0.6:
 
 ---
 
-See [Docs > Package manager](https://bun.sh/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](https://bun.com/docs/cli/install) for complete documentation of Bun's package manager.

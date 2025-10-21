@@ -136,6 +136,7 @@ pub const E = enum(u16) {
     UNKNOWN = 134,
     CHARSET = 135,
     EOF = 136,
+    FTYPE = 137,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -222,6 +223,7 @@ pub const E = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 };
 
 pub const S = struct {
@@ -438,6 +440,7 @@ pub const SystemErrno = enum(u16) {
     EUNKNOWN = 134,
     ECHARSET = 135,
     EOF = 136,
+    EFTYPE = 137,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -524,8 +527,9 @@ pub const SystemErrno = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 
-    pub const max = 137;
+    pub const max = 138;
 
     pub const Error = error{
         EPERM,
@@ -664,6 +668,7 @@ pub const SystemErrno = enum(u16) {
         EUNKNOWN,
         ECHARSET,
         EOF,
+        EFTYPE,
         Unexpected,
     };
 
@@ -809,6 +814,7 @@ pub const SystemErrno = enum(u16) {
         errors[@intFromEnum(SystemErrno.EUNKNOWN)] = error.EUNKNOWN;
         errors[@intFromEnum(SystemErrno.ECHARSET)] = error.ECHARSET;
         errors[@intFromEnum(SystemErrno.EOF)] = error.EOF;
+        errors[@intFromEnum(SystemErrno.EFTYPE)] = error.EFTYPE;
         break :brk errors;
     };
 
@@ -950,6 +956,7 @@ pub const SystemErrno = enum(u16) {
             error.EUNKNOWN => SystemErrno.EUNKNOWN,
             error.ECHARSET => SystemErrno.ECHARSET,
             error.EOF => SystemErrno.EOF,
+            error.EFTYPE => SystemErrno.EFTYPE,
             else => return null,
         };
     }
@@ -1162,8 +1169,11 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
     pub const NODATA = -uv.UV_ENODATA;
     pub const UNATCH = -uv.UV_EUNATCH;
+    pub const NOEXEC = -uv.UV_ENOEXEC;
 };
-const std = @import("std");
+
 const bun = @import("bun");
-const uv = bun.windows.libuv;
+const std = @import("std");
+
 const Win32Error = bun.windows.Win32Error;
+const uv = bun.windows.libuv;

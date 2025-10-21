@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -73,3 +71,6 @@ pub fn Size2D(comptime T: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");

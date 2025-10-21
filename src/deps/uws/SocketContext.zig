@@ -229,11 +229,11 @@ pub const SocketContext = opaque {
         ca_file_name: [*c]const u8 = null,
         ssl_ciphers: [*c]const u8 = null,
         ssl_prefer_low_memory_usage: i32 = 0,
-        key: ?[*]?[*:0]const u8 = null,
+        key: ?[*]const ?[*:0]const u8 = null,
         key_count: u32 = 0,
-        cert: ?[*]?[*:0]const u8 = null,
+        cert: ?[*]const ?[*:0]const u8 = null,
         cert_count: u32 = 0,
-        ca: ?[*]?[*:0]const u8 = null,
+        ca: ?[*]const ?[*:0]const u8 = null,
         ca_count: u32 = 0,
         secure_options: u32 = 0,
         reject_unauthorized: i32 = 0,
@@ -280,14 +280,17 @@ pub const c = struct {
     pub extern fn create_ssl_context_from_bun_options(options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 };
 
-const bun = @import("bun");
-const uws = bun.uws;
-const Loop = uws.Loop;
-const us_socket_t = uws.us_socket_t;
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const create_bun_socket_error_t = uws.create_bun_socket_error_t;
-const ListenSocket = uws.ListenSocket;
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
+
 const std = @import("std");
-const ConnectingSocket = uws.ConnectingSocket;
+
+const bun = @import("bun");
 const BoringSSL = bun.BoringSSL.c;
+
+const uws = bun.uws;
+const ConnectingSocket = uws.ConnectingSocket;
+const ListenSocket = uws.ListenSocket;
+const Loop = uws.Loop;
+const create_bun_socket_error_t = uws.create_bun_socket_error_t;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;
+const us_socket_t = uws.us_socket_t;

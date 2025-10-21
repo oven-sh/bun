@@ -65,12 +65,30 @@ function validateLinkHeaderValue(hints) {
   );
 }
 
+function validateString(value, name) {
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+}
+
+function validateFunction(value, name) {
+  if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
+}
+
+function validateBoolean(value, name) {
+  if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
+}
+
+function validateUndefined(value, name) {
+  if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
+}
+
 function validateInternalField(object, fieldKey, className) {
   if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
     throw $ERR_INVALID_ARG_TYPE("this", className, object);
   }
 }
+
 hideFromStack(validateLinkHeaderValue, validateInternalField);
+hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
 
 export default {
   /** (value, name) */
@@ -82,15 +100,15 @@ export default {
   /** `(value, name, min, max)` */
   validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
   /** `(value, name)` */
-  validateString: $newCppFunction("NodeValidator.cpp", "jsFunction_validateString", 0),
+  validateString,
   /** `(number, name)` */
   validateFiniteNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateFiniteNumber", 0),
   /** `(number, name, lower, upper, def)` */
   checkRangesOrGetDefault: $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0),
   /** `(value, name)` */
-  validateFunction: $newCppFunction("NodeValidator.cpp", "jsFunction_validateFunction", 0),
+  validateFunction,
   /** `(value, name)` */
-  validateBoolean: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBoolean", 0),
+  validateBoolean,
   /** `(port, name = 'Port', allowZero = true)` */
   validatePort: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePort", 0),
   /** `(signal, name)` */
@@ -108,7 +126,7 @@ export default {
   /** `(value, name)` */
   validatePlainFunction: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePlainFunction", 0),
   /** `(value, name)` */
-  validateUndefined: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUndefined", 0),
+  validateUndefined,
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */

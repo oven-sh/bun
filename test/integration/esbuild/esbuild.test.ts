@@ -29,8 +29,8 @@ describe("esbuild integration test", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("esbuild@0.19.8");
     expect(await exited).toBe(0);
@@ -44,8 +44,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
@@ -71,8 +71,8 @@ describe("esbuild integration test", () => {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("estrella@1.4.1");
     expect(await exited).toBe(0);
@@ -86,8 +86,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toContain("1.4.1");
     expect(await exited).toBe(0);
@@ -103,8 +103,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
@@ -134,8 +134,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("estrella@1.4.1");
     expect(out).toContain("esbuild@0.19.8");
@@ -150,8 +150,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toContain("1.4.1");
     expect(await exited).toBe(0);
@@ -165,8 +165,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
@@ -180,8 +180,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toContain("0.11.23");
 
@@ -194,8 +194,8 @@ describe("esbuild integration test", () => {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);

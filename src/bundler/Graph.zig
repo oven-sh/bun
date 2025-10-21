@@ -1,13 +1,12 @@
-pub const Graph = @This();
+const Graph = @This();
 
 pool: *ThreadPool,
-heap: ThreadlocalArena = .{},
-/// This allocator is thread-local to the Bundler thread
-/// .allocator == .heap.allocator()
-allocator: std.mem.Allocator = undefined,
+heap: ThreadLocalArena,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
+/// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
+entry_point_original_names: IndexStringMap = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast
@@ -34,31 +33,23 @@ pending_items: u32 = 0,
 /// tasks will be run, and the count is "moved" back to `pending_items`
 deferred_pending: u32 = 0,
 
-/// Maps a hashed path string to a source index, if it exists in the compilation.
-/// Instead of accessing this directly, consider using BundleV2.pathToSourceIndexMap
-path_to_source_index_map: PathToSourceIndexMap = .{},
-/// When using server components, a completely separate file listing is
-/// required to avoid incorrect inlining of defines and dependencies on
-/// other files. This is relevant for files shared between server and client
-/// and have no "use <side>" directive, and must be duplicated.
-///
-/// To make linking easier, this second graph contains indices into the
-/// same `.ast` and `.input_files` arrays.
-client_path_to_source_index_map: PathToSourceIndexMap = .{},
-/// When using server components with React, there is an additional module
-/// graph which is used to contain SSR-versions of all client components;
-/// the SSR graph. The difference between the SSR graph and the server
-/// graph is that this one does not apply '--conditions react-server'
-///
-/// In Bun's React Framework, it includes SSR versions of 'react' and
-/// 'react-dom' (an export condition is used to provide a different
-/// implementation for RSC, which is potentially how they implement
-/// server-only features such as async components).
-ssr_path_to_source_index_map: PathToSourceIndexMap = .{},
+/// A map of build targets to their corresponding module graphs.
+build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap),
 
 /// When Server Components is enabled, this holds a list of all boundary
 /// files. This happens for all files with a "use <side>" directive.
 server_component_boundaries: ServerComponentBoundary.List = .{},
+
+/// Track HTML imports from server-side code
+/// Each entry represents a server file importing an HTML file that needs a client build
+///
+/// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
+html_imports: struct {
+    /// Source index of the server file doing the import
+    server_source_indices: BabyList(Index.Int) = .{},
+    /// Source index of the HTML file being imported
+    html_source_indices: BabyList(Index.Int) = .{},
+} = .{},
 
 estimated_file_loader_count: usize = 0,
 
@@ -71,8 +62,14 @@ additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 kit_referenced_server_data: bool,
 kit_referenced_client_data: bool,
 
+/// Do any input_files have a secondary_path.len > 0?
+///
+/// Helps skip a loop.
+has_any_secondary_paths: bool = false,
+
 pub const InputFile = struct {
     source: Logger.Source,
+    secondary_path: []const u8 = "",
     loader: options.Loader = options.Loader.file,
     side_effects: _resolver.SideEffects,
     allocator: std.mem.Allocator = bun.default_allocator,
@@ -82,11 +79,15 @@ pub const InputFile = struct {
     is_plugin_file: bool = false,
 };
 
+pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {
+    return this.build_graphs.getPtr(target);
+}
+
 /// Schedule a task to be run on the JS thread which resolves the promise of
 /// each `.defer()` called in an onLoad plugin.
 ///
 /// Returns true if there were more tasks queued.
-pub fn drainDeferredTasks(this: *@This(), transpiler: *BundleV2) bool {
+pub fn drainDeferredTasks(this: *Graph, transpiler: *BundleV2) bool {
     transpiler.thread_lock.assertLocked();
 
     if (this.deferred_pending > 0) {
@@ -102,27 +103,31 @@ pub fn drainDeferredTasks(this: *@This(), transpiler: *BundleV2) bool {
     return false;
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
+pub const Index = bun.ast.Index;
+
+const string = []const u8;
+
+const IndexStringMap = @import("./IndexStringMap.zig");
 const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const BabyList = @import("../baby_list.zig").BabyList;
 const _resolver = @import("../resolver/resolver.zig");
-const allocators = @import("../allocators.zig");
+const std = @import("std");
 
-const JSAst = js_ast.BundledAst;
+const options = @import("../options.zig");
 const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
+
+const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
-const ThreadPool = bun.bundle_v2.ThreadPool;
+const BabyList = bun.collections.BabyList;
+const ThreadLocalArena = bun.allocators.MimallocArena;
+
+const js_ast = bun.ast;
+const JSAst = js_ast.BundledAst;
+const ServerComponentBoundary = js_ast.ServerComponentBoundary;
+
+const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const BundleV2 = bun.bundle_v2.BundleV2;
 const ParseTask = bun.bundle_v2.ParseTask;
 const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
-const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-const BundleV2 = bun.bundle_v2.BundleV2;
-const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const ThreadPool = bun.bundle_v2.ThreadPool;

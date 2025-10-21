@@ -1,10 +1,10 @@
 import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick } from "harness";
+import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
-import { join } from "path";
+import path, { join } from "path";
 import { pipeline } from "stream";
 import zlib from "zlib";
 
@@ -26,7 +26,7 @@ const bigText = Buffer.alloc(1 * 1024 * 1024, "a");
 const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
-describe("fetch() with streaming", () => {
+describe.concurrent("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
     it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
       using server = Bun.serve({
@@ -657,6 +657,7 @@ describe("fetch() with streaming", () => {
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
     { headers: { "Content-Encoding": "br" }, compression: "br" },
+    { headers: { "Content-Encoding": "zstd" }, compression: "zstd" },
   ] as const;
 
   function compress(compression, data: Uint8Array) {
@@ -685,6 +686,8 @@ describe("fetch() with streaming", () => {
             [zlib.constants.BROTLI_PARAM_SIZE_HINT]: 0,
           },
         });
+      case "zstd":
+        return zlib.zstdCompressSync(data, {});
       default:
         return data;
     }
@@ -1241,9 +1244,11 @@ describe("fetch() with streaming", () => {
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              // Since the compressed data is different, the error ends up different.
               expect((err as Error).name).toBe("Error");
-              expect((err as Error).code).toBe("ShortRead");
+              expect((err as Error).code).toBe("ZlibError");
+            } else if (compression === "zstd") {
+              expect((err as Error).name).toBe("Error");
+              expect((err as Error).code).toBe("ZstdDecompressionError");
             } else {
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");
@@ -1342,4 +1347,58 @@ describe("fetch() with streaming", () => {
       }
     });
   }
+
+  it.skipIf(
+    // The C program is POSIX only
+    isWindows,
+  )("should drain response body from HTTP thread when server sends chunk then stops (chunked encoding)", async () => {
+    // This test reproduces a bug where the HTTP client wasn't asking the HTTP thread
+    // to drain pending response body bytes. If the server sent headers + first chunk,
+    // then stopped sending data (but kept connection open), the read would hang forever.
+    //
+    // We use a C server with blocking sockets instead of Bun.listen because Bun's sockets
+    // are non-blocking and event-driven, which makes it difficult to reliably reproduce
+    // the exact timing conditions needed to trigger this bug. The C server uses blocking
+    // write() calls that ensure data is buffered in the kernel before the server stops
+    // sending, forcing the HTTP client to drain the response body from the HTTP thread.
+    const dir = tempDirWithFilesAnon({ "a": "// a" });
+    {
+      await using proc = Bun.spawn({
+        cmd: [
+          "cc",
+          "-Wno-error",
+          "-w",
+          path.join(import.meta.dirname, "http-chunked-server.c"),
+          "-o",
+          "http-chunked-server",
+        ],
+        cwd: dir,
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      expect(await proc.exited).toBe(0);
+    }
+
+    await using server = Bun.spawn({
+      cmd: [path.join(dir, "http-chunked-server")],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const url = new URL("http://127.0.0.1:" + (await server.stdout.text()).trim());
+
+    const response = await fetch(url.toString(), {});
+    const reader = response.body!.getReader();
+
+    // Read the data - this should not hang
+    const result = (await reader.read()) as ReadableStreamDefaultReadResult<any>;
+
+    // Verify we got the data without hanging
+    expect(result.done).toBe(false);
+    expect(result.value).toBeDefined();
+    expect(new TextDecoder().decode(result.value!)).toBe("hello\n");
+    server.kill("SIGTERM");
+  });
 });

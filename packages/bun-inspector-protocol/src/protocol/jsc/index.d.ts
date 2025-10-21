@@ -2507,7 +2507,8 @@ export namespace JSC {
     export type StopTrackingResponse = {};
   }
   export namespace TestReporter {
-    export type TestStatus = "pass" | "fail" | "timeout" | "skip" | "todo";
+    export type TestStatus = "pass" | "fail" | "timeout" | "skip" | "todo" | "skipped_because_label";
+    export type TestType = "test" | "describe";
     /**
      * undefined
      * @event `TestReporter.found`
@@ -2533,6 +2534,14 @@ export namespace JSC {
        * Name of the test that started.
        */
       name?: string | undefined;
+      /**
+       * Type of the item found (test or describe block).
+       */
+      type?: TestType | undefined;
+      /**
+       * ID of the parent describe block, if any.
+       */
+      parentId?: number | undefined;
     };
     /**
      * undefined

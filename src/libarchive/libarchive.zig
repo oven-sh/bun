@@ -1,16 +1,6 @@
 // @link "../deps/libarchive.a"
 
 pub const lib = @import("./libarchive-bindings.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FileDescriptorType = bun.FileDescriptor;
-const default_allocator = bun.default_allocator;
-const c = bun.c;
-const std = @import("std");
 const Archive = lib.Archive;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
@@ -355,7 +345,7 @@ pub const Archiver = struct {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
                                 const list = std.ArrayList(u8).init(default_allocator);
-                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
+                                var result = try strings.toUTF8ListWithType(list, pathname[0..pathname.len]);
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
                                 defer result.deinit();
                                 appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
@@ -621,3 +611,16 @@ pub const Archiver = struct {
         return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, options);
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptorType = bun.FileDescriptor;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const c = bun.c;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;

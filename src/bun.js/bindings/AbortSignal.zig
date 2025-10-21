@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CommonAbortReason = @import("CommonAbortReason.zig").CommonAbortReason;
-
 pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
@@ -47,14 +41,14 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__cleanNativeBindings(this, ctx);
     }
 
-    extern fn WebCore__AbortSignal__signal(*AbortSignal, *JSC.JSGlobalObject, CommonAbortReason) void;
+    extern fn WebCore__AbortSignal__signal(*AbortSignal, *jsc.JSGlobalObject, CommonAbortReason) void;
 
     pub fn signal(
         this: *AbortSignal,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
         reason: CommonAbortReason,
     ) void {
-        bun.Analytics.Features.abort_signal += 1;
+        bun.analytics.Features.abort_signal += 1;
         return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 
@@ -79,20 +73,20 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__abortReason(this);
     }
 
-    extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *JSC.JSGlobalObject, *u8) JSValue;
+    extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *jsc.JSGlobalObject, *u8) JSValue;
 
     pub const AbortReason = union(enum) {
         common: CommonAbortReason,
         js: JSValue,
 
-        pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
+        pub fn toBodyValueError(this: AbortReason, globalObject: *jsc.JSGlobalObject) jsc.WebCore.Body.Value.ValueError {
             return switch (this) {
                 .common => |reason| .{ .AbortReason = reason },
                 .js => |value| .{ .JSValue = .create(value, globalObject) },
             };
         }
 
-        pub fn toJS(this: AbortReason, global: *JSC.JSGlobalObject) JSValue {
+        pub fn toJS(this: AbortReason, global: *jsc.JSGlobalObject) JSValue {
             return switch (this) {
                 .common => |reason| reason.toJS(global),
                 .js => |value| value,
@@ -100,11 +94,11 @@ pub const AbortSignal = opaque {
         }
     };
 
-    pub fn reasonIfAborted(this: *AbortSignal, global: *JSC.JSGlobalObject) ?AbortReason {
+    pub fn reasonIfAborted(this: *AbortSignal, global: *jsc.JSGlobalObject) ?AbortReason {
         var reason: u8 = 0;
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
-            bun.debugAssert(js_reason == .undefined);
+            bun.debugAssert(js_reason.isUndefined());
             return .{ .common = @enumFromInt(reason) };
         }
         if (js_reason == .zero) {
@@ -140,7 +134,90 @@ pub const AbortSignal = opaque {
 
     extern fn WebCore__AbortSignal__new(*JSGlobalObject) *AbortSignal;
     pub fn new(global: *JSGlobalObject) *AbortSignal {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         return WebCore__AbortSignal__new(global);
     }
+
+    pub const Timeout = struct {
+        event_loop_timer: jsc.API.Timer.EventLoopTimer,
+
+        // The `Timeout`'s lifetime is owned by the AbortSignal.
+        // But this does have a ref count increment.
+        signal: *AbortSignal,
+
+        /// "epoch" is reused.
+        flags: jsc.API.Timer.TimerObjectInternals.Flags = .{},
+
+        const new = bun.TrivialNew(Timeout);
+
+        fn init(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
+            const this: *Timeout = .new(.{
+                .signal = signal_,
+                .event_loop_timer = .{
+                    .next = bun.timespec.now().addMs(@intCast(milliseconds)),
+                    .tag = .AbortSignalTimeout,
+                    .state = .CANCELLED,
+                },
+            });
+
+            if (comptime bun.Environment.ci_assert) {
+                if (signal_.aborted()) {
+                    @panic("unreachable: signal is already aborted");
+                }
+            }
+
+            // We default to not keeping the event loop alive with this timeout.
+            vm.timer.insert(&this.event_loop_timer);
+
+            return this;
+        }
+
+        fn cancel(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            if (this.event_loop_timer.state == .ACTIVE) {
+                vm.timer.remove(&this.event_loop_timer);
+            }
+        }
+
+        pub fn run(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.event_loop_timer.state = .FIRED;
+            this.cancel(vm);
+
+            // Dispatching the signal may cause the Timeout to get freed.
+            dispatch(vm, this.signal);
+        }
+
+        fn dispatch(vm: *jsc.VirtualMachine, signal_ptr: *AbortSignal) void {
+            const loop = vm.eventLoop();
+            loop.enter();
+            defer loop.exit();
+            signal_ptr.signal(vm.global, .Timeout);
+            signal_ptr.unref();
+        }
+
+        // This may run inside the "signal" call.
+        fn deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.cancel(vm);
+            bun.destroy(this);
+        }
+
+        /// Caller is expected to have already ref'd the AbortSignal.
+        export fn AbortSignal__Timeout__create(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
+            return Timeout.init(vm, signal_, milliseconds);
+        }
+
+        export fn AbortSignal__Timeout__run(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.run(vm);
+        }
+
+        export fn AbortSignal__Timeout__deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.deinit(vm);
+        }
+    };
 };
+
+const bun = @import("bun");
+const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -4,15 +4,6 @@
 // FIFO of fixed size items
 // Usually used for e.g. byte buffers
 
-const std = @import("std");
-const math = std.math;
-const mem = std.mem;
-const Allocator = mem.Allocator;
-const debug = std.debug;
-const assert = debug.assert;
-const testing = std.testing;
-const bun = @import("bun");
-
 pub const LinearFifoBufferType = union(enum) {
     /// The buffer is internal to the fifo; it is of the specified size.
     Static: usize,
@@ -132,6 +123,7 @@ pub fn LinearFifo(
         pub fn ensureTotalCapacity(self: *Self, size: usize) !void {
             if (self.buf.len >= size) return;
             if (buffer_type == .Dynamic) {
+                self.realign();
                 const new_size = if (powers_of_two) math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory else size;
                 const buf = try self.allocator.alloc(T, new_size);
                 if (self.count > 0) {
@@ -582,3 +574,15 @@ test "LinearFifo" {
         }
     }
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const math = std.math;
+const testing = std.testing;
+
+const debug = std.debug;
+const assert = debug.assert;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

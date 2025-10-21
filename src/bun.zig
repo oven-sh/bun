@@ -3184,7 +3184,7 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 pub const dns = @import("./dns.zig");
 
 pub fn getRoughTickCount() timespec {
-    if (bun.jsc.Jest.bun_test.FakeTimers.current_time.get()) |fake_time| {
+    if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
         return fake_time;
     }
 
@@ -3258,7 +3258,7 @@ pub fn getRoughTickCount() timespec {
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
 pub fn getRoughTickCountMs() u64 {
     if (Environment.isWindows) {
-        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.get()) |fake_time| {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
             return fake_time.ns() / std.time.ns_per_ms;
         }
         const GetTickCount64 = struct {
@@ -3279,20 +3279,6 @@ pub const timespec = extern struct {
 
     pub fn eql(this: *const timespec, other: *const timespec) bool {
         return this.sec == other.sec and this.nsec == other.nsec;
-    }
-
-    pub fn toInstant(this: *const timespec) std.time.Instant {
-        if (comptime Environment.isPosix) {
-            return std.time.Instant{
-                .timestamp = @bitCast(this.*),
-            };
-        }
-
-        if (comptime Environment.isWindows) {
-            return std.time.Instant{
-                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
-            };
-        }
     }
 
     // TODO: this is wrong!

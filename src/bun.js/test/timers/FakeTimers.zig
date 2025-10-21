@@ -11,40 +11,29 @@ pub var current_time: struct {
         nsec: i64,
         const min: PackedTime = .{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
     };
-    #time: std.atomic.Value(PackedTime) = .init(.min),
-    pub fn get(this: *@This()) ?bun.timespec {
-        const value = this.#time.load(.seq_cst);
+    #timespec_now: std.atomic.Value(PackedTime) = .init(.min),
+    date_now_offset: f64 = 0,
+    pub fn getTimespecNow(this: *@This()) ?bun.timespec {
+        const value = this.#timespec_now.load(.seq_cst);
         if (value == PackedTime.min) return null;
         return .{ .sec = value.sec, .nsec = value.nsec };
     }
-    pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, time: ?*const bun.timespec) void {
-        if (time) |t| {
-            this.#time.store(.{ .sec = t.sec, .nsec = t.nsec }, .seq_cst);
-            // Also set the override time for Date.now()
-            // The fake time uses monotonic clock (time since boot), but Date.now() needs Unix epoch time
-            // So we need to convert using the stored offset
-            const monotonic_ms: f64 = @floatFromInt(t.sec * std.time.ms_per_s + @divTrunc(t.nsec, std.time.ns_per_ms));
-            const offset = date_now_offset.load(.seq_cst);
-            // If offset is 0, this is the first time we're setting fake time - calculate the offset
-            if (offset == 0) {
-                const unix_epoch_ms = JSMock__getCurrentUnixTimeMs();
-                const calculated_offset = unix_epoch_ms - monotonic_ms;
-                date_now_offset.store(calculated_offset, .seq_cst);
-                // Date.now() should return an integer, so round to nearest millisecond
-                JSMock__setOverridenDateNow(globalObject, @round(unix_epoch_ms));
-            } else {
-                // Use the stored offset to convert monotonic time to Unix epoch time
-                // Date.now() should return an integer, so round to nearest millisecond
-                JSMock__setOverridenDateNow(globalObject, @round(monotonic_ms + offset));
+    pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, value: ?struct {
+        timespec: *const bun.timespec,
+        js: ?f64,
+    }) void {
+        if (value) |v| {
+            this.#timespec_now.store(.{ .sec = v.timespec.sec, .nsec = v.timespec.nsec }, .seq_cst);
+            const timespec_ms: f64 = @floatFromInt(v.timespec.ms());
+            if (v.js) |js| {
+                this.date_now_offset = js - timespec_ms;
             }
+            bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
         } else {
-            this.#time.store(.min, .seq_cst);
-            date_now_offset.store(0, .seq_cst);
-            // Reset Date.now() to use real time
-            JSMock__setOverridenDateNow(globalObject, -1.0);
+            this.#timespec_now.store(.min, .seq_cst);
+            bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
         }
     }
-    var date_now_offset: std.atomic.Value(f64) = .init(0);
 } = .{};
 
 fn assertValid(this: *FakeTimers, mode: enum { locked, unlocked }) void {
@@ -62,12 +51,12 @@ pub fn isActive(this: *FakeTimers) bool {
 
     return this.#active;
 }
-fn activate(this: *FakeTimers, time: bun.timespec, globalObject: *jsc.JSGlobalObject) void {
+fn activate(this: *FakeTimers, timespec_now: bun.timespec, js_now: f64, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.#active = true;
-    current_time.set(globalObject, &time);
+    current_time.set(globalObject, .{ .timespec = &timespec_now, .js = js_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
@@ -113,12 +102,12 @@ fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Tim
     const vm = globalObject.bunVM();
 
     if (bun.Environment.ci_assert) {
-        const prev = current_time.get();
+        const prev = current_time.getTimespecNow();
         bun.assert(prev != null);
         bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
     }
     const now = next.next;
-    current_time.set(globalObject, &now);
+    current_time.set(globalObject, .{ .timespec = &now, .js = null });
     next.fire(&now, vm);
 }
 fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
@@ -183,13 +172,13 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const timers = &vm.timer;
     const this = &timers.fake_timers;
 
+    const js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
+    const timespec_now = bun.timespec.now();
+
     {
         timers.lock.lock();
         defer timers.lock.unlock();
-        // For timer scheduling, use monotonic time as before
-        // But for Date.now(), we need to use Unix epoch time
-        const monotonic_now = bun.timespec.now();
-        this.activate(monotonic_now, globalObject);
+        this.activate(timespec_now, js_now, globalObject);
     }
 
     return callframe.this();
@@ -231,7 +220,7 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     const target = bun.timespec.now().addMs(timeoutAdd);
 
     this.executeUntil(globalObject, target);
-    current_time.set(globalObject, &target);
+    current_time.set(globalObject, .{ .timespec = &target, .js = null });
 
     return callframe.this();
 }
@@ -324,9 +313,3 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const TimerHeap = bun.api.Timer.TimerHeap;
 const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;
-
-// C++ function to set the overridden Date.now() time
-extern fn JSMock__setOverridenDateNow(*jsc.JSGlobalObject, f64) void;
-
-// C++ function to get the current Unix epoch time in milliseconds
-extern fn JSMock__getCurrentUnixTimeMs() f64;

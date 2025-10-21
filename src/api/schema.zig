@@ -2825,14 +2825,18 @@ pub const api = struct {
         /// token
         token: []const u8,
 
+        /// email
+        email: []const u8,
+
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len + this.email.len));
 
             var out: NpmRegistry = .{
                 .url = "",
                 .username = "",
                 .password = "",
                 .token = "",
+                .email = "",
             };
 
             var i: usize = 0;
@@ -2853,6 +2857,7 @@ pub const api = struct {
             this.username = try reader.readValue([]const u8);
             this.password = try reader.readValue([]const u8);
             this.token = try reader.readValue([]const u8);
+            this.email = try reader.readValue([]const u8);
             return this;
         }
 
@@ -2861,6 +2866,7 @@ pub const api = struct {
             try writer.writeValue(@TypeOf(this.username), this.username);
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
+            try writer.writeValue(@TypeOf(this.email), this.email);
         }
 
         pub const Parser = struct {

@@ -2,7 +2,7 @@
 ///
 /// ```
 /// // Either owned by the default allocator, or borrowed
-/// const MaybeOwnedFoo = bun.ptr.Owned(*Foo, bun.allocators.MaybeOwned(bun.DefaultAllocator));
+/// const MaybeOwnedFoo = bun.ptr.OwnedIn(*Foo, bun.allocators.MaybeOwned(bun.DefaultAllocator));
 ///
 /// var owned_foo: MaybeOwnedFoo = .new(makeFoo());
 /// var borrowed_foo: MaybeOwnedFoo = .fromRawIn(some_foo_ptr, .initBorrowed());

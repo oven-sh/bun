@@ -542,6 +542,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
             // Get root package ID
             const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+            
+            // Skip production reachability if root package ID is invalid
+            if (root_pkg_id == invalid_package_id) {
+                // Can't determine production dependencies without valid root package
+                production_reachable_hashes = null;
+            } else {
             const packages = manager.lockfile.packages.slice();
             const dependencies_lists = packages.items(.dependencies);
             const resolutions_lists = packages.items(.resolutions);
@@ -625,6 +631,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     try visited.put(pkg_id, {});
                     try reachable.put(name_hashes[pkg_id], {});
                 }
+            }
             }
         }
 

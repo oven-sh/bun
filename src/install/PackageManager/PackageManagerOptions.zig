@@ -254,6 +254,7 @@ pub fn load(
         .username = "",
         .password = "",
         .token = "",
+        .email = "",
     };
     if (bun_install_) |config| {
         if (config.default_registry) |registry| {

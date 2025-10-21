@@ -664,10 +664,25 @@ extern "C" BunString URL__search(WTF::URL* url)
     return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
+/// Returns the host WITHOUT the port.
+///
+/// Note that this does NOT match JS behavior, which returns the host with the port.
+///
+/// ```
+/// URL("http://example.com:8080").host() => "example.com"
+/// ```
 extern "C" BunString URL__host(WTF::URL* url)
 {
     return Bun::toStringRef(url->host().toStringWithoutCopying());
 }
+
+/// Returns the host WITH the port.
+///
+/// Note that this does NOT match JS behavior which returns the host without the port.
+///
+/// ```
+/// URL("http://example.com:8080").hostname() => "example.com:8080"
+/// ```
 extern "C" BunString URL__hostname(WTF::URL* url)
 {
     return Bun::toStringRef(url->hostAndPort());

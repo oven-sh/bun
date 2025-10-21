@@ -460,7 +460,7 @@ pub const Installer = struct {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
-                    var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res.tag) {
+                    var pkg_cache_dir_subpath: bun.AutoRelPath = .from(switch (pkg_res.tag) {
                         else => |tag| pkg_cache_dir_subpath: {
                             const patch_info = try installer.packagePatchInfo(
                                 pkg_name,
@@ -644,10 +644,16 @@ pub const Installer = struct {
                                 bun.Output.flush();
                             }
 
-                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
+                            var cloner: FileCloner = .{
+                                .cache_dir = cache_dir,
+                                .cache_dir_subpath = pkg_cache_dir_subpath,
+                                .dest_subpath = dest_subpath,
+                            };
+
+                            switch (cloner.clone()) {
                                 .result => {},
-                                .err => |clonefile_err1| {
-                                    switch (clonefile_err1.getErrno()) {
+                                .err => |err| {
+                                    switch (err.getErrno()) {
                                         .XDEV => {
                                             installer.supported_backend.store(.copyfile, .monotonic);
                                             continue :backend .copyfile;
@@ -656,19 +662,8 @@ pub const Installer = struct {
                                             installer.supported_backend.store(.hardlink, .monotonic);
                                             continue :backend .hardlink;
                                         },
-                                        .NOENT => {
-                                            const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
-                                                return .failure(.{ .link_package = clonefile_err1 });
-                                            };
-                                            FD.cwd().makePath(u8, parent_dest_dir) catch {};
-                                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
-                                                .result => {},
-                                                .err => |clonefile_err2| return .failure(.{ .link_package = clonefile_err2 }),
-                                            }
-                                        },
                                         else => {
-                                            installer.supported_backend.store(.hardlink, .monotonic);
-                                            continue :backend .hardlink;
+                                            return .failure(.{ .link_package = err });
                                         },
                                     }
                                 },
@@ -1433,6 +1428,7 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const Symlinker = @import("./Symlinker.zig").Symlinker;

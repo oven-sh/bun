@@ -579,6 +579,7 @@ pub const CommandLineReporter = struct {
 
     reporters: struct {
         dots: bool = false,
+        only_failures: bool = false,
         junit: ?*JunitReporter = null,
     } = .{},
 
@@ -874,8 +875,8 @@ pub const CommandLineReporter = struct {
                             },
                         }
                         buntest.reporter.?.last_printed_dot = true;
-                    } else if (Output.isAIAgent() and (comptime result.basicResult()) != .fail) {
-                        // when using AI agents, only print failures
+                    } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
+                        // when using --only-failures, only print failures
                     } else {
                         buntest.bun_test_root.onBeforePrint();
 
@@ -900,7 +901,7 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
-        if (!this.reporters.dots) switch (sequence.result.basicResult()) {
+        if (!this.reporters.dots and !this.reporters.only_failures) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
@@ -1362,6 +1363,11 @@ pub const TestCommand = struct {
         if (ctx.test_options.reporters.dots) {
             reporter.reporters.dots = true;
         }
+        if (ctx.test_options.reporters.only_failures) {
+            reporter.reporters.only_failures = true;
+        } else if (Output.isAIAgent()) {
+            reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
+        }
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -1518,8 +1524,8 @@ pub const TestCommand = struct {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, null),
+                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, null),
                 else => {},
             }
 
@@ -1766,7 +1772,8 @@ pub const TestCommand = struct {
         }
         const summary = reporter.summary();
 
-        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        const should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests and (failed_to_find_any_tests or summary.didLabelFilterOutAllTests());
+        if (should_fail_on_no_tests or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;

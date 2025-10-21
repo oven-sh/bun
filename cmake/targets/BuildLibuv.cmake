@@ -4,8 +4,8 @@ register_repository(
   REPOSITORY
     libuv/libuv
   COMMIT
-    # Corresponds to v1.51.0
-    5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b
+    # Latest HEAD (includes recursion bug fix #4784)
+    f3ce527ea940d926c40878ba5de219640c362811
 )
 
 if(WIN32)

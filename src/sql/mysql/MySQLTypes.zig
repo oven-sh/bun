@@ -305,16 +305,16 @@ pub const FieldType = enum(u8) {
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind NumberObject to query parameter. Use a primitive number instead.", .{});
             }
 
             if (tag == .BooleanObject) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind BooleanObject to query parameter. Use a primitive boolean instead.", .{});
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind this type to query parameter", .{});
             }
 
             // We will JSON.stringify anything else.

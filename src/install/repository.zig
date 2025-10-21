@@ -2,7 +2,6 @@ threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
-threadlocal var temp_path_buf: bun.PathBuffer = undefined;
 
 const SloppyGlobalGitConfig = struct {
     has_askpass: bool = false,
@@ -515,10 +514,14 @@ pub const Repository = extern struct {
 
             const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
 
+            const temp_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(temp_path_buf);
+            const tmpname_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(tmpname_buf);
+
             // Clone to temp directory first
-            var tmpname_buf: bun.PathBuffer = undefined;
-            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
-            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
+            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], tmpname_buf, bun.fastRandom());
+            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), temp_path_buf);
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
             var moved = false;
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};
@@ -644,10 +647,13 @@ pub const Repository = extern struct {
 
             const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
 
-            // Clone to temp directory first
-            var tmpname_buf: bun.PathBuffer = undefined;
-            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], &tmpname_buf, bun.fastRandom());
-            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), &temp_path_buf);
+            const temp_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(temp_path_buf);
+            const tmpname_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(tmpname_buf);
+
+            const tmpname = try FileSystem.tmpname(folder_name[0..@min(folder_name.len, 32)], tmpname_buf, bun.fastRandom());
+            const temp_target = try bun.getFdPath(.fromStdDir(temp_dir), temp_path_buf);
             const temp_target_full = Path.joinAbsString(temp_target, &.{tmpname}, .auto);
             var moved = false;
             errdefer if (!moved) temp_dir.deleteTree(tmpname) catch {};

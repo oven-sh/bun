@@ -17,7 +17,7 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
-describe("bun prune", () => {
+describe.concurrent("bun prune", () => {
   it("should show help with --help flag", async () => {
     using dir = tempDir("prune-help", {
       "package.json": JSON.stringify({

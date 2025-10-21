@@ -789,7 +789,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
             const digit = if (idx < ndigits) try reader.readInt(u16, .big) else 0;
             log("digit: {d}", .{digit});
             var digit_str: [4]u8 = undefined;
-            const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+            const digit_len = std.fmt.printInt(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
             if (!first_non_zero) {
                 //In the first digit, suppress extra leading decimal zeroes
                 var start_idx: usize = 0;
@@ -816,7 +816,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
                 const digit = reader.readInt(u16, .big) catch 0;
                 log("dscale digit: {d}", .{digit});
                 var digit_str: [4]u8 = undefined;
-                const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                const digit_len = std.fmt.printInt(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
                 try result.appendSlice(digit_str[0..digit_len]);
             } else {
                 log("dscale digit: 0000", .{});

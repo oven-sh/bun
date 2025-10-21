@@ -231,7 +231,7 @@ pub fn expire(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 
     // Convert seconds to a string
     var int_buf: [64]u8 = undefined;
-    const seconds_len = std.fmt.formatIntBuf(&int_buf, seconds, 10, .lower, .{});
+    const seconds_len = std.fmt.printInt(&int_buf, seconds, 10, .lower, .{});
     const seconds_slice = int_buf[0..seconds_len];
 
     // Send EXPIRE command

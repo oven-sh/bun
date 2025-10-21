@@ -1635,7 +1635,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
             const frac = @divFloor(kunits % 1000, 100);
             if (frac > 0) {
                 var decimal_buf = [_]u8{ '.', 0 };
-                _ = std.fmt.formatIntBuf(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
+                _ = std.fmt.printInt(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
                 buf_writer.writeAll(&decimal_buf) catch unreachable;
             }
             buf_writer.writeAll(unit.sep) catch unreachable;

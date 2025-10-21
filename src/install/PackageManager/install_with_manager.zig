@@ -574,7 +574,10 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        try manager.processPeerDependencyList();
+        if (manager.peer_dependencies.readableLength() > 0) {
+            try manager.processPeerDependencyList();
+            manager.drainDependencyList();
+        }
 
         if (manager.pendingTaskCount() > 0) {
             try waitForPeers(manager);

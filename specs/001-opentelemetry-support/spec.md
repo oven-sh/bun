@@ -22,7 +22,7 @@
 
 ### Session 2025-10-21
 
-- Q: Where should the `Bun.telemetry._node_binding()` function be implemented to bridge Node.js http.createServer() compatibility layer to native telemetry hooks? → A: Internal TypeScript module in src/js/internal/ with singleton telemetry_node_binding using .once pattern, directly importable from _http_server.ts (avoids global configure dependency in refactored attach/detach model)
+- Q: How should the Node.js http.createServer() compatibility layer integrate with native telemetry hooks? → A: Internal TypeScript module src/js/internal/telemetry_http.ts exposes registerInstrument/unregisterInstrument (called from Zig on attach/detach) and handleIncomingRequest/handleWriteHead (called from _http_server.ts on request/response), avoiding TS→Zig→TS roundtrip on every request - only happening once at setup/teardown
 - Q: How should the system determine resource attributes (service.name, service.version, deployment.environment) that are attached to every telemetry event? → A: Use standard OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES environment variables with fallback to package.json
 - Q: How should the system test Node.js http.createServer() telemetry hooks separately from Bun.serve() hooks? → A: Separate test files with telemetry- prefix (telemetry-http-hooks.test.ts for Bun.serve, telemetry-node-http-hooks.test.ts for http.createServer)
 - Q: When a TypeScript instrumentation hook (onOperationStart, onOperationEnd, etc.) throws an exception during execution, how should the system handle it? → A: Catch exception, log to stderr with rate limiting to prevent log flooding, clear exception state, continue request processing normally
@@ -107,7 +107,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide automatic HTTP server span creation for both `Bun.serve()` and Node.js `http` module compatibility layer (via internal TypeScript module src/js/internal/telemetry_node_binding with singleton pattern for bridging to native hooks)
+- **FR-001**: System MUST provide automatic HTTP server span creation for both `Bun.serve()` and Node.js `http` module compatibility layer
 - **FR-002**: System MUST support W3C TraceContext propagation (traceparent and tracestate headers) for distributed tracing
 - **FR-003**: System MUST provide automatic HTTP client span creation for `fetch()` requests
 - **FR-004**: System MUST support standard OpenTelemetry semantic conventions for HTTP spans (method, URL, status code, user agent)

@@ -184,20 +184,28 @@ specs/[###-feature]/
 ### Source Code (repository root)
 
 ```
-# Native Runtime Integration (Zig)
+# Native Runtime Integration (Zig + Internal TypeScript Bridge)
 src/bun.js/
-├── telemetry.zig                    # Core attach/detach API, InstrumentKind enum, ResponseBuilder pattern
-├── telemetry_http.zig               # HTTP-specific attributes and hooks
+├── telemetry.zig                    # Core attach/detach API, InstrumentKind enum
+├── telemetry_http.zig               # Calls registerInstrument/unregisterInstrument on attach/detach
 ├── api/
-│   ├── server.zig                   # CRITICAL: notifyRequestStart AFTER ensureURL(), BEFORE onRequest handler
-│   └── server/RequestContext.zig    # CRITICAL touchpoints (102+ commits to get right):
+│   ├── server.zig                   # Bun.serve() integration: notifyRequestStart AFTER ensureURL(), BEFORE onRequest
+│   └── server/RequestContext.zig    # Bun.serve() touchpoints:
 │       │                              - Add fields: telemetry_request_id (u64), request_start_time_ns (u64)
 │       │                              - finalize(): notifyRequestEnd + exitContext (cleanup AsyncLocalStorage)
 │       │                              - handleReject(): notifyRequestError before error handling
 │       │                              - Response paths: ResponseBuilder.setStatus/setHeaders/injectHeaders/fireAndForget
-└── js/node/_http_server.ts          # Node.js http.createServer() compatibility:
-                                       - onRequest hook: handleIncomingRequest (before user handler)
-                                       - writeHead hook: handleWriteHead (before headers sent)
+└── js/
+    ├── internal/
+    │   └── telemetry_http.ts        # Bridge module (AVOIDS TS→Zig→TS roundtrip per request):
+    │                                  - Setup: Zig calls registerInstrument() once on attach
+    │                                  - Request: _http_server.ts calls handleIncomingRequest()
+    │                                  - Response: _http_server.ts calls handleWriteHead()
+    │                                  - Teardown: Zig calls unregisterInstrument() once on detach
+    └── node/_http_server.ts          # Node.js http.createServer() compatibility:
+                                       - Imports internal/telemetry_http
+                                       - Calls handleIncomingRequest() before user handler
+                                       - Calls handleWriteHead() in _writeHead function
 
 # TypeScript Instrumentation Layer
 packages/bun-otel/
@@ -231,11 +239,14 @@ packages/bun-otel/
 
 # Native Hook Tests (NO @opentelemetry/ dependencies)
 test/js/bun/telemetry/
-├── attach-detach.test.ts            # Bun.telemetry.attach/detach API
-├── http-hooks.test.ts               # Verify Bun.serve() calls hooks
-├── fetch-hooks.test.ts              # Verify fetch() calls hooks
-├── operation-lifecycle.test.ts      # onOperationStart/End/Error flow
-└── context-propagation.test.ts      # Verify context passes through async ops
+├── attach-detach.test.ts                   # Bun.telemetry.attach/detach API
+├── telemetry-http-hooks.test.ts            # Verify Bun.serve() calls hooks
+├── telemetry-node-http-hooks.test.ts       # Verify Node.js http.createServer() calls internal/telemetry_http
+├── telemetry-http-bridge.test.ts           # Test internal/telemetry_http.ts bridge module (registerInstrument/unregisterInstrument/handleIncomingRequest/handleWriteHead)
+├── fetch-hooks.test.ts                     # Verify fetch() calls hooks
+├── operation-lifecycle.test.ts             # onOperationStart/End/Error flow
+├── context-propagation.test.ts             # Verify context passes through async ops
+└── header-security.test.ts                 # Validate blocked headers never captured
 
 # Standalone Integration Tests (separate package.json each)
 test/integration/opentelemetry/

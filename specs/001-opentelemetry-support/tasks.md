@@ -86,57 +86,61 @@
 - [ ] T028 [P] Integrate Telemetry hook into src/bun.js/api/server/RequestContext.zig finalize() method (invokeEnd + exitContext for AsyncLocalStorage cleanup, set telemetry_request_id = 0)
 - [ ] T029 [P] Integrate Telemetry hook into src/bun.js/api/server/RequestContext.zig handleReject() method (invokeError before error handling)
 - [ ] T030 Implement ResponseBuilder pattern in src/bun.js/api/server/RequestContext.zig response paths (setStatus, setHeaders, injectHeaders, fireAndForget with defer cleanup)
-- [ ] T031 [P] Integrate Telemetry hooks into src/js/node/_http_server.ts for Node.js compatibility layer (handleIncomingRequest before user handler, handleWriteHead before headers sent)
+- [ ] T031 [P] Validate src/js/internal/telemetry_http.ts bridge module (registerInstrument/unregisterInstrument/handleIncomingRequest/handleWriteHead)
+- [ ] T032 Integrate Telemetry hooks into src/js/node/_http_server.ts for Node.js compatibility layer (import internal/telemetry_http, call handleIncomingRequest before user handler, call handleWriteHead in _writeHead)
 
 ### Fetch Client Native Hooks (Zig)
 
-- [ ] T032 Implement buildFetchStartAttributes() in src/bun.js/telemetry_http.zig (method, url, outgoing headers)
-- [ ] T033 [P] Implement buildFetchEndAttributes() in src/bun.js/telemetry_http.zig (status_code, response headers, content_length)
-- [ ] T034 [P] Implement buildFetchErrorAttributes() in src/bun.js/telemetry_http.zig (NetworkError, TimeoutError, DNSError, TLSError)
-- [ ] T035 Integrate Telemetry hooks into src/bun.js/http/fetch.zig before fetch (invokeInject for trace propagation, invokeStart)
-- [ ] T036 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig after fetch completes (invokeEnd with response attributes)
-- [ ] T037 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig on fetch error (invokeError with error attributes)
+- [ ] T033 Implement buildFetchStartAttributes() in src/bun.js/telemetry_http.zig (method, url, outgoing headers)
+- [ ] T034 [P] Implement buildFetchEndAttributes() in src/bun.js/telemetry_http.zig (status_code, response headers, content_length)
+- [ ] T035 [P] Implement buildFetchErrorAttributes() in src/bun.js/telemetry_http.zig (NetworkError, TimeoutError, DNSError, TLSError)
+- [ ] T036 Integrate Telemetry hooks into src/bun.js/http/fetch.zig before fetch (invokeInject for trace propagation, invokeStart)
+- [ ] T037 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig after fetch completes (invokeEnd with response attributes)
+- [ ] T038 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig on fetch error (invokeError with error attributes)
 
 ### Native Hook Tests for HTTP/Fetch
 
 ⚠️ **CRITICAL**: All tests MUST use `waitForCondition()` helper instead of fixed `Bun.sleep()` delays, and `using` keyword for server cleanup (see Testing Pitfalls in plan.md)
 
-- [ ] T038 [P] [US1] Create test/js/bun/telemetry/http-hooks.test.ts verifying Bun.serve() calls onOperationStart/End with correct attributes (use waitForCondition, using server)
-- [ ] T039 [P] [US1] Create test/js/bun/telemetry/fetch-hooks.test.ts verifying fetch() calls onOperationStart/End/Inject with correct attributes
-- [ ] T040 [P] [US1] Create test/js/bun/telemetry/operation-lifecycle.test.ts testing onOperationStart → onOperationEnd flow and error flow
-- [ ] T041 [P] [US1] Create test/js/bun/telemetry/context-propagation.test.ts verifying request IDs are unique and attributes include operation.id
-- [ ] T042 [P] [US1] Create test/js/bun/telemetry/header-security.test.ts validating blocked headers (authorization, cookie, api-key) never captured
+- [ ] T039 [P] [US1] Create test/js/bun/telemetry/telemetry-http-hooks.test.ts verifying Bun.serve() calls onOperationStart/End with correct attributes (use waitForCondition, using server) - NO @opentelemetry/* imports
+- [ ] T040 [P] [US1] Create test/js/bun/telemetry/telemetry-node-http-hooks.test.ts verifying Node.js http.createServer() calls internal/telemetry_http.handleIncomingRequest/handleWriteHead - NO @opentelemetry/* imports
+- [ ] T041 [P] [US1] Create test/js/bun/telemetry/telemetry-http-bridge.test.ts testing internal/telemetry_http.ts registerInstrument/unregisterInstrument/handleIncomingRequest/handleWriteHead - NO @opentelemetry/* imports
+- [ ] T042 [P] [US1] Create test/js/bun/telemetry/fetch-hooks.test.ts verifying fetch() calls onOperationStart/End/Inject with correct attributes - NO @opentelemetry/* imports
+- [ ] T043 [P] [US1] Create test/js/bun/telemetry/operation-lifecycle.test.ts testing onOperationStart → onOperationEnd flow and error flow - NO @opentelemetry/* imports
+- [ ] T044 [P] [US1] Create test/js/bun/telemetry/context-propagation.test.ts verifying request IDs are unique and attributes include operation.id - NO @opentelemetry/* imports
+- [ ] T045 [P] [US1] Create test/js/bun/telemetry/header-security.test.ts validating blocked headers (authorization, cookie, api-key) never captured - NO @opentelemetry/* imports
 
 ### TypeScript Instrumentation Package (packages/bun-otel)
 
-- [ ] T041 [P] [US1] Implement BunHttpInstrumentation class in packages/bun-otel/src/instruments/BunHttpInstrumentation.ts (attach native instrument, create server spans, handle W3C TraceContext)
-- [ ] T042 [P] [US1] Implement BunFetchInstrumentation class in packages/bun-otel/src/instruments/BunFetchInstrumentation.ts (attach native instrument, create client spans, inject trace headers)
-- [ ] T043 [US1] Implement BunSDK class in packages/bun-otel/src/BunSDK.ts extending NodeSDK with auto-enabled Bun instrumentations (see contracts/BunSDK.md for API specification)
-- [ ] T044 [P] [US1] Implement AsyncContextManager workaround in packages/bun-otel/src/context/AsyncContextManager.ts for Bun-specific AsyncLocalStorage limitations
-- [ ] T045 [P] [US1] Create packages/bun-otel/src/index.ts re-exporting BunSDK, instrumentations, and types
-- [ ] T046 [P] [US1] Add semantic convention attribute mappings in BunHttpInstrumentation (http.request.method, url.path, http.response.status_code per OpenTelemetry v1.23.0)
+- [ ] T046 [P] [US1] Implement BunHttpInstrumentation class in packages/bun-otel/src/instruments/BunHttpInstrumentation.ts (attach native instrument, create server spans, handle W3C TraceContext)
+- [ ] T047 [P] [US1] Implement BunFetchInstrumentation class in packages/bun-otel/src/instruments/BunFetchInstrumentation.ts (attach native instrument, create client spans, inject trace headers)
+- [ ] T048 [US1] Implement BunSDK class in packages/bun-otel/src/BunSDK.ts extending NodeSDK with auto-enabled Bun instrumentations (see contracts/BunSDK.md for API specification)
+- [ ] T049 [P] [US1] Implement resource attribute detection in packages/bun-otel/src/BunSDK.ts (FR-021: OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES env vars with package.json fallback)
+- [ ] T050 [P] [US1] Implement AsyncContextManager workaround in packages/bun-otel/src/context/AsyncContextManager.ts for Bun-specific AsyncLocalStorage limitations
+- [ ] T051 [P] [US1] Create packages/bun-otel/src/index.ts re-exporting BunSDK, instrumentations, and types
+- [ ] T052 [P] [US1] Add semantic convention attribute mappings in BunHttpInstrumentation (http.request.method, url.path, http.response.status_code per OpenTelemetry v1.23.0)
 
 ### Package Tests (CAN import @opentelemetry/*)
 
-- [ ] T047 [P] [US1] Create packages/bun-otel/test/BunSDK.test.ts testing SDK lifecycle (start, shutdown, auto-instrumentation registration)
-- [ ] T048 [P] [US1] Create packages/bun-otel/test/BunHttpInstrumentation.test.ts verifying server spans created with correct attributes, W3C TraceContext extraction
-- [ ] T049 [P] [US1] Create packages/bun-otel/test/BunFetchInstrumentation.test.ts verifying client spans created, trace headers injected
-- [ ] T050 [P] [US1] Create packages/bun-otel/test/distributed-tracing.test.ts testing multi-hop trace propagation (Service A → Service B)
-- [ ] T051 [P] [US1] Create packages/bun-otel/test/header-capture.test.ts testing captureAttributes configuration and default safe headers
-- [ ] T052 [P] [US1] Create packages/bun-otel/test/issue-3775.test.ts reproducing GitHub #3775 scenario (verify /v1/traces endpoint receives data)
+- [ ] T053 [P] [US1] Create packages/bun-otel/test/BunSDK.test.ts testing SDK lifecycle (start, shutdown, auto-instrumentation registration)
+- [ ] T054 [P] [US1] Create packages/bun-otel/test/BunHttpInstrumentation.test.ts verifying server spans created with correct attributes, W3C TraceContext extraction
+- [ ] T055 [P] [US1] Create packages/bun-otel/test/BunFetchInstrumentation.test.ts verifying client spans created, trace headers injected
+- [ ] T056 [P] [US1] Create packages/bun-otel/test/distributed-tracing.test.ts testing multi-hop trace propagation (Service A → Service B)
+- [ ] T057 [P] [US1] Create packages/bun-otel/test/header-capture.test.ts testing captureAttributes configuration and default safe headers
+- [ ] T058 [P] [US1] Create packages/bun-otel/test/issue-3775.test.ts reproducing GitHub #3775 scenario (verify /v1/traces endpoint receives data)
 
 ### Integration Tests (standalone projects)
 
-- [ ] T053 [P] [US1] Create test/integration/opentelemetry/jaeger/ directory with package.json, docker-compose.yml (Jaeger container), and jaeger.test.ts
-- [ ] T054 [P] [US1] Create test/integration/opentelemetry/zipkin/ directory with package.json, docker-compose.yml (Zipkin container), and zipkin.test.ts
-- [ ] T055 [P] [US1] Create test/integration/opentelemetry/otlp/ directory with package.json, docker-compose.yml (OTLP collector), and otlp.test.ts
+- [ ] T059 [P] [US1] Create test/integration/opentelemetry/jaeger/ directory with package.json, docker-compose.yml (Jaeger container), and jaeger.test.ts
+- [ ] T060 [P] [US1] Create test/integration/opentelemetry/zipkin/ directory with package.json, docker-compose.yml (Zipkin container), and zipkin.test.ts
+- [ ] T061 [P] [US1] Create test/integration/opentelemetry/otlp/ directory with package.json, docker-compose.yml (OTLP collector), and otlp.test.ts
 
 ### Examples and Documentation
 
-- [ ] T056 [P] [US1] Create packages/bun-otel/examples/basic-tracing.ts demonstrating 10-second setup with BunSDK
-- [ ] T057 [P] [US1] Create packages/bun-otel/examples/distributed-tracing.ts showing multi-service trace propagation
-- [ ] T058 [P] [US1] Create packages/bun-otel/examples/with-jaeger.ts complete Jaeger integration example
-- [ ] T059 [P] [US1] Create packages/bun-otel/README.md with quickstart guide, API reference, and migration instructions from @opentelemetry/sdk-node
+- [ ] T062 [P] [US1] Create packages/bun-otel/examples/basic-tracing.ts demonstrating 10-second setup with BunSDK
+- [ ] T063 [P] [US1] Create packages/bun-otel/examples/distributed-tracing.ts showing multi-service trace propagation
+- [ ] T064 [P] [US1] Create packages/bun-otel/examples/with-jaeger.ts complete Jaeger integration example
+- [ ] T065 [P] [US1] Create packages/bun-otel/README.md with quickstart guide, API reference, and migration instructions from @opentelemetry/sdk-node
 
 **Checkpoint**: At this point, User Story 1 (P1 - Distributed Tracing) should be fully functional and testable independently. MVP complete!
 
@@ -154,33 +158,33 @@
 
 ### Native Metrics Hooks (Zig)
 
-- [ ] T060 [US2] Implement onOperationProgress hook invocation in src/bun.js/telemetry.zig (called on configurable poll interval after event loop flush)
-- [ ] T061 [P] [US2] Implement buildRuntimeMetricsAttributes() in src/bun.js/telemetry.zig (process.runtime.bun.memory.heap_used, process.runtime.bun.memory.rss, process.runtime.bun.event_loop.lag, process.runtime.bun.gc.*)
-- [ ] T062 [P] [US2] Implement runtime namespace detection in src/bun.js/telemetry.zig (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.*)
-- [ ] T063 Integrate periodic metrics sampling into src/bun.js/event_loop.zig (call onOperationProgress on configured interval)
+- [ ] T066 [US2] Implement onOperationProgress hook invocation in src/bun.js/telemetry.zig (called on configurable poll interval after event loop flush)
+- [ ] T067 [P] [US2] Implement buildRuntimeMetricsAttributes() in src/bun.js/telemetry.zig (process.runtime.bun.memory.heap_used, process.runtime.bun.memory.rss, process.runtime.bun.event_loop.lag, process.runtime.bun.gc.*)
+- [ ] T068 [P] [US2] Implement runtime namespace detection in src/bun.js/telemetry.zig (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.*)
+- [ ] T069 Integrate periodic metrics sampling into src/bun.js/event_loop.zig (call onOperationProgress on configured interval)
 
 ### Native Metrics Tests
 
-- [ ] T064 [P] [US2] Create test/js/bun/telemetry/metrics-hooks.test.ts verifying onOperationProgress called with runtime metrics attributes
-- [ ] T065 [P] [US2] Create test/js/bun/telemetry/metrics-sampling.test.ts testing configurable poll interval behavior
+- [ ] T070 [P] [US2] Create test/js/bun/telemetry/metrics-hooks.test.ts verifying onOperationProgress called with runtime metrics attributes
+- [ ] T071 [P] [US2] Create test/js/bun/telemetry/metrics-sampling.test.ts testing configurable poll interval behavior
 
 ### TypeScript Metrics Instrumentation
 
-- [ ] T066 [P] [US2] Implement BunMetricsInstrumentation class in packages/bun-otel/src/instruments/BunMetricsInstrumentation.ts (attach native instrument, feed samples to @opentelemetry/sdk-metrics MeterProvider)
-- [ ] T067 [US2] Extend BunHttpInstrumentation in packages/bun-otel/src/instruments/BunHttpInstrumentation.ts to emit HTTP metrics (http.server.request.count, http.server.request.duration histogram, http.server.active_requests gauge)
-- [ ] T068 [P] [US2] Extend BunFetchInstrumentation in packages/bun-otel/src/instruments/BunFetchInstrumentation.ts to emit HTTP client metrics (http.client.request.count, http.client.request.duration)
-- [ ] T069 Update BunSDK in packages/bun-otel/src/BunSDK.ts to auto-register metrics instrumentation when metricReaders configured (following NodeSDK pattern)
+- [ ] T072 [P] [US2] Implement BunMetricsInstrumentation class in packages/bun-otel/src/instruments/BunMetricsInstrumentation.ts (attach native instrument, feed samples to @opentelemetry/sdk-metrics MeterProvider)
+- [ ] T073 [US2] Extend BunHttpInstrumentation in packages/bun-otel/src/instruments/BunHttpInstrumentation.ts to emit HTTP metrics (http.server.request.count, http.server.request.duration histogram, http.server.active_requests gauge)
+- [ ] T074 [P] [US2] Extend BunFetchInstrumentation in packages/bun-otel/src/instruments/BunFetchInstrumentation.ts to emit HTTP client metrics (http.client.request.count, http.client.request.duration)
+- [ ] T075 Update BunSDK in packages/bun-otel/src/BunSDK.ts to auto-register metrics instrumentation when metricReaders configured (following NodeSDK pattern)
 
 ### Package Metrics Tests
 
-- [ ] T070 [P] [US2] Create packages/bun-otel/test/metrics.test.ts verifying HTTP metrics collected (request count, duration histogram, active requests)
-- [ ] T071 [P] [US2] Create packages/bun-otel/test/runtime-metrics.test.ts testing runtime metrics (memory, event loop lag, GC stats) exported correctly
-- [ ] T072 [P] [US2] Create packages/bun-otel/test/custom-metrics.test.ts demonstrating custom metrics creation alongside automatic instrumentation
+- [ ] T076 [P] [US2] Create packages/bun-otel/test/metrics.test.ts verifying HTTP metrics collected (request count, duration histogram, active requests)
+- [ ] T077 [P] [US2] Create packages/bun-otel/test/runtime-metrics.test.ts testing runtime metrics (memory, event loop lag, GC stats) exported correctly
+- [ ] T078 [P] [US2] Create packages/bun-otel/test/custom-metrics.test.ts demonstrating custom metrics creation alongside automatic instrumentation
 
 ### Examples
 
-- [ ] T073 [P] [US2] Create packages/bun-otel/examples/with-metrics.ts showing metrics configuration with Prometheus and OTLP exporters
-- [ ] T074 [P] [US2] Update packages/bun-otel/README.md with metrics section (configuration, available metrics, custom metrics API)
+- [ ] T079 [P] [US2] Create packages/bun-otel/examples/with-metrics.ts showing metrics configuration with Prometheus and OTLP exporters
+- [ ] T080 [P] [US2] Update packages/bun-otel/README.md with metrics section (configuration, available metrics, custom metrics API)
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently. Distributed tracing + metrics collection complete.
 
@@ -198,27 +202,27 @@
 
 ### Low-Level Trace Context API (Zig)
 
-- [ ] T075 [P] [US3] Implement Bun.telemetry.getActiveSpan() in src/bun.js/telemetry.zig (returns {traceId, spanId} from AsyncLocalStorage context or null)
-- [ ] T076 [P] [US3] Create test/js/bun/telemetry/get-active-span.test.ts verifying getActiveSpan() returns correct context within request handler
+- [ ] T081 [P] [US3] Implement Bun.telemetry.getActiveSpan() in src/bun.js/telemetry.zig (returns {traceId, spanId} from AsyncLocalStorage context or null)
+- [ ] T082 [P] [US3] Create test/js/bun/telemetry/get-active-span.test.ts verifying getActiveSpan() returns correct context within request handler
 
 ### High-Level Logger Integrations (TypeScript)
 
-- [ ] T077 [P] [US3] Implement PinoFormatter class in packages/bun-otel/src/instruments/logging/PinoFormatter.ts (mixin() method injecting trace context)
-- [ ] T078 [P] [US3] Implement WinstonFormatter class in packages/bun-otel/src/instruments/logging/WinstonFormatter.ts (format() method injecting trace context)
-- [ ] T079 Update BunSDK in packages/bun-otel/src/BunSDK.ts to export logging helpers
-- [ ] T080 [P] [US3] Update packages/bun-otel/src/index.ts to re-export logging formatters
+- [ ] T083 [P] [US3] Implement PinoFormatter class in packages/bun-otel/src/instruments/logging/PinoFormatter.ts (mixin() method injecting trace context)
+- [ ] T084 [P] [US3] Implement WinstonFormatter class in packages/bun-otel/src/instruments/logging/WinstonFormatter.ts (format() method injecting trace context)
+- [ ] T085 Update BunSDK in packages/bun-otel/src/BunSDK.ts to export logging helpers
+- [ ] T086 [P] [US3] Update packages/bun-otel/src/index.ts to re-export logging formatters
 
 ### Package Logging Tests
 
-- [ ] T081 [P] [US3] Create packages/bun-otel/test/logging.test.ts verifying PinoFormatter and WinstonFormatter inject trace context correctly
-- [ ] T082 [P] [US3] Create packages/bun-otel/test/manual-logging.test.ts testing low-level getActiveSpan() API for custom logger integration
+- [ ] T087 [P] [US3] Create packages/bun-otel/test/logging.test.ts verifying PinoFormatter and WinstonFormatter inject trace context correctly
+- [ ] T088 [P] [US3] Create packages/bun-otel/test/manual-logging.test.ts testing low-level getActiveSpan() API for custom logger integration
 
 ### Examples
 
-- [ ] T083 [P] [US3] Create packages/bun-otel/examples/with-logging-pino.ts demonstrating Pino integration with automatic trace context
-- [ ] T084 [P] [US3] Create packages/bun-otel/examples/with-logging-winston.ts demonstrating Winston integration
-- [ ] T085 [P] [US3] Create packages/bun-otel/examples/manual-logging.ts showing custom logger using getActiveSpan()
-- [ ] T086 Update packages/bun-otel/README.md with logging section (high-level formatters, low-level API, examples)
+- [ ] T089 [P] [US3] Create packages/bun-otel/examples/with-logging-pino.ts demonstrating Pino integration with automatic trace context
+- [ ] T090 [P] [US3] Create packages/bun-otel/examples/with-logging-winston.ts demonstrating Winston integration
+- [ ] T091 [P] [US3] Create packages/bun-otel/examples/manual-logging.ts showing custom logger using getActiveSpan()
+- [ ] T092 Update packages/bun-otel/README.md with logging section (high-level formatters, low-level API, examples)
 
 **Checkpoint**: All user stories (P1, P2, P3) should now be independently functional. Complete OpenTelemetry support implemented!
 
@@ -230,31 +234,31 @@
 
 ### Performance Validation
 
-- [ ] T087 [P] Create benchmark suite in packages/bun-otel/benchmarks/ using autocannon (baseline, disabled, enabled, with exporter)
-- [ ] T088 Run benchmarks and validate SC-003 (<5% overhead enabled) and SC-004 (<0.1% overhead disabled)
-- [ ] T089 [P] Profile memory usage under sustained load, validate bounded growth (maps cleaned up, no leaks)
+- [ ] T093 [P] Create benchmark suite in packages/bun-otel/benchmarks/ using oha or bombardier per Bun benchmarking standards (baseline, disabled, enabled, with exporter)
+- [ ] T094 Run benchmarks and validate SC-003 (<5% overhead enabled) and SC-004 (<0.1% overhead disabled)
+- [ ] T095 [P] Profile memory usage under sustained load, validate bounded growth (maps cleaned up, no leaks)
 
 ### Documentation and Polish
 
-- [ ] T090 [P] Create packages/bun-otel/CHANGELOG.md documenting all features and changes from configure() API
-- [ ] T091 [P] Create packages/bun-otel/MIGRATION.md with migration guide from @opentelemetry/sdk-node and from old configure() API
-- [ ] T092 [P] Add JSDoc comments to all public APIs in packages/bun-otel/src/
-- [ ] T093 Update Bun main documentation with OpenTelemetry quickstart guide
-- [ ] T094 [P] Add TypeScript type definitions (.d.ts) for Bun.telemetry global namespace
+- [ ] T096 [P] Create packages/bun-otel/CHANGELOG.md documenting all features and changes from configure() API
+- [ ] T097 [P] Create packages/bun-otel/MIGRATION.md with migration guide from @opentelemetry/sdk-node and from old configure() API
+- [ ] T098 [P] Add JSDoc comments to all public APIs in packages/bun-otel/src/
+- [ ] T099 Update Bun main documentation with OpenTelemetry quickstart guide
+- [ ] T100 [P] Add TypeScript type definitions (.d.ts) for Bun.telemetry global namespace
 
 ### Code Quality
 
-- [ ] T095 [P] Run eslint and prettier on packages/bun-otel/ codebase
-- [ ] T096 [P] Add error handling wrappers around all native hook invocations (defensive isolation)
-- [ ] T097 Review all protected JSValues for matching protect/unprotect pairs (memory safety audit)
-- [ ] T098 [P] Add input validation to all public APIs (throw TypeError for invalid arguments)
+- [ ] T101 [P] Run eslint and prettier on packages/bun-otel/ codebase
+- [ ] T102 [P] Implement FR-022 defensive error handling: wrap all instrumentation hook invocations with try-catch, log to stderr with rate limiting, clear exception state, continue normally
+- [ ] T103 Review all protected JSValues for matching protect/unprotect pairs (memory safety audit)
+- [ ] T104 [P] Add input validation to all public APIs (throw TypeError for invalid arguments)
 
 ### Final Validation
 
-- [ ] T099 Run all tests (native, package, integration) and verify 100% pass rate
-- [ ] T100 Validate quickstart.md examples work end-to-end with real backends
-- [ ] T101 [P] Run `bun run zig:check-all` to verify cross-platform compilation
-- [ ] T102 Create comprehensive end-to-end test combining tracing + metrics + logging in single application
+- [ ] T105 Run all tests (native, package, integration) and verify 100% pass rate
+- [ ] T106 Validate quickstart.md examples work end-to-end with real backends
+- [ ] T107 [P] Run `bun run zig:check-all` to verify cross-platform compilation
+- [ ] T108 Create comprehensive end-to-end test combining tracing + metrics + logging in single application
 
 ---
 
@@ -410,15 +414,15 @@ With multiple developers:
 
 - **Phase 1 (Setup)**: 6 tasks
 - **Phase 2 (Foundational)**: 14 tasks (CRITICAL - blocks all user stories)
-- **Phase 3 (User Story 1 - P1)**: 39 tasks (MVP target)
+- **Phase 3 (User Story 1 - P1)**: 45 tasks (MVP target - includes telemetry_http.ts validation, Node.js http.createServer() tests, resource attributes)
 - **Phase 4 (User Story 2 - P2)**: 15 tasks
 - **Phase 5 (User Story 3 - P3)**: 12 tasks
 - **Phase 6 (Polish)**: 16 tasks
 
-**Total**: 102 tasks
+**Total**: 108 tasks
 
 **Parallel Opportunities**: ~60% of tasks can run in parallel within phases (marked with [P])
 
-**MVP Scope (Recommended)**: Phase 1 + Phase 2 + Phase 3 = 59 tasks (distributed tracing only)
+**MVP Scope (Recommended)**: Phase 1 + Phase 2 + Phase 3 = 65 tasks (distributed tracing only)
 
-**Full Feature (P1+P2+P3)**: All phases = 102 tasks
+**Full Feature (P1+P2+P3)**: All phases = 108 tasks

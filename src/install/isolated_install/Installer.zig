@@ -7,6 +7,7 @@ pub const Installer = struct {
     installed: Bitset,
     install_node: ?*Progress.Node,
     scripts_node: ?*Progress.Node,
+    is_new_bun_modules: bool,
 
     manager: *PackageManager,
     command_ctx: Command.Context,
@@ -1232,7 +1233,14 @@ pub const Installer = struct {
             .target = target,
             .fallback_junction_target = full_target,
         };
-        _ = symlinker.ensureSymlink(.expect_existing);
+
+        // symlinks won't exist if node_modules/.bun is new
+        const link_strategy: Symlinker.Strategy = if (this.is_new_bun_modules)
+            .expect_missing
+        else
+            .expect_existing;
+
+        _ = symlinker.ensureSymlink(link_strategy);
     }
 
     pub fn linkDependencyBins(this: *const Installer, parent_entry_id: Store.Entry.Id) !void {

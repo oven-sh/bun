@@ -775,8 +775,8 @@ describe("bun prune", () => {
     expect(lodashExists).toBe(false);
   });
 
-  // TODO(bun-39): Implement recursive traversal for isolated linker mode
-  it.skip("should handle isolated linker mode with nested node_modules", async () => {
+  // TODO(bun-39): Recursive traversal implemented but not working - debugging needed
+  it("should handle isolated linker mode with nested node_modules", async () => {
     using dir = tempDir("prune-isolated-nested", {
       "package.json": JSON.stringify({
         name: "test",

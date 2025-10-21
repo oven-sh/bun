@@ -1265,12 +1265,14 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
+                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand, .PruneCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
                         .UpdateInteractiveCommand => .update,
                         .PublishCommand => .publish,
                         .AuditCommand => .audit,
+                        .PruneCommand => .prune,
+                        else => unreachable,
                     });
                 },
                 .InfoCommand => {

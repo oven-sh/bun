@@ -628,128 +628,140 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         }
 
-        // Iterate through node_modules and check each package
-        var iter = node_modules_dir.iterate();
-        while (iter.next() catch null) |entry| {
-            if (entry.kind != .directory) continue;
+        // Helper function to recursively prune a node_modules directory
+        const PruneContext = struct {
+            manager: *PackageManager,
+            name_hashes: []const PackageNameHash,
+            package_metas: @TypeOf(package_metas),
+            package_resolutions: @TypeOf(package_resolutions),
+            workspace_paths: @TypeOf(workspace_paths),
+            is_production: bool,
+            production_reachable_hashes: ?*const std.AutoHashMap(PackageNameHash, void),
+            is_dry_run: bool,
 
-            // Skip .bin and other special directories
-            if (entry.name[0] == '.') continue;
+            fn pruneNodeModulesRecursive(
+                self: *const @This(),
+                dir: std.fs.Dir,
+                depth: u8,
+            ) void {
+                // Limit recursion depth to prevent infinite loops
+                if (depth > 10) return;
 
-            // Handle scoped packages (@org/package)
-            if (entry.name[0] == '@') {
-                var scope_dir = node_modules_dir.openDir(entry.name, .{ .iterate = true }) catch continue;
-                defer scope_dir.close();
+                var iter = dir.iterate();
+                while (iter.next() catch null) |entry| {
+                    // Handle both directories and symlinks (packages can be symlinked in isolated mode)
+                    if (entry.kind != .directory and entry.kind != .sym_link) continue;
 
-                var scope_iter = scope_dir.iterate();
-                while (scope_iter.next() catch null) |scoped_entry| {
-                    if (scoped_entry.kind != .directory) continue;
+                    // Skip .bin and other special directories
+                    if (entry.name[0] == '.') continue;
 
-                    // Build full scoped package name
-                    var scoped_name_buf: bun.PathBuffer = undefined;
-                    const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
-                    const pkg_hash = String.Builder.stringHash(scoped_name);
+                    // Handle scoped packages (@org/package)
+                    if (entry.name[0] == '@') {
+                        var scope_dir = dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+                        defer scope_dir.close();
 
-                    // Find package in lockfile
-                    const pkg_index = std.mem.indexOfScalar(PackageNameHash, name_hashes, pkg_hash);
+                        var scope_iter = scope_dir.iterate();
+                        while (scope_iter.next() catch null) |scoped_entry| {
+                            // Handle both directories and symlinks (packages can be symlinked in isolated mode)
+                            if (scoped_entry.kind != .directory and scoped_entry.kind != .sym_link) continue;
 
-                    // Skip workspace packages (check workspace_paths or if it's a symlink)
-                    if (workspace_paths.contains(pkg_hash)) {
+                            // Build full scoped package name
+                            var scoped_name_buf: bun.PathBuffer = undefined;
+                            const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
+
+                            const should_remove = self.shouldRemovePackage(scoped_name);
+
+                            // Remove if marked for removal
+                            if (should_remove) {
+                                if (!self.is_dry_run) {
+                                    scope_dir.deleteTree(scoped_entry.name) catch continue;
+                                    self.manager.summary.remove += 1;
+                                } else {
+                                    self.manager.summary.remove += 1;
+                                }
+                            } else {
+                                // Package is kept, check for nested node_modules
+                                var pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
+                                defer pkg_dir.close();
+
+                                var nested_node_modules = pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
+                                defer nested_node_modules.close();
+
+                                self.pruneNodeModulesRecursive(nested_node_modules, depth + 1);
+                            }
+                        }
                         continue;
                     }
 
-                    // Check if this is a symlink (workspace packages are symlinked into node_modules)
-                    const scoped_stat = std.posix.fstatat(scope_dir.fd, scoped_entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
-                    if (scoped_stat) |stat| {
-                        if ((stat.mode & std.posix.S.IFMT) == std.posix.S.IFLNK) {
-                            // It's a symlink, likely a workspace package - skip it
-                            continue;
-                        }
-                    }
-
-                    if (pkg_index) |idx| {
-                        // Skip workspace packages (check resolution tag or origin)
-                        if (package_resolutions[idx].tag == .workspace or package_metas[idx].origin == .local) {
-                            continue;
-                        }
-                    }
-
-                    // Determine if package should be removed
-                    var should_remove = pkg_index == null;
-
-                    // In production mode, also remove devDependencies
-                    if (!should_remove and is_production and production_reachable_hashes != null) {
-                        // Package is in lockfile, but check if it's not reachable from production deps
-                        if (pkg_index != null and !production_reachable_hashes.?.contains(pkg_hash)) {
-                            should_remove = true;
-                        }
-                    }
+                    // Regular package
+                    const should_remove = self.shouldRemovePackage(entry.name);
 
                     // Remove if marked for removal
                     if (should_remove) {
-                        if (!is_dry_run) {
-                            scope_dir.deleteTree(scoped_entry.name) catch continue;
-                            // Only increment if deletion succeeded
-                            manager.summary.remove += 1;
+                        if (!self.is_dry_run) {
+                            dir.deleteTree(entry.name) catch continue;
+                            self.manager.summary.remove += 1;
                         } else {
-                            // In dry-run mode, count what would be removed
-                            manager.summary.remove += 1;
+                            self.manager.summary.remove += 1;
                         }
+                    } else {
+                        // Package is kept, check for nested node_modules
+                        var pkg_dir = dir.openDir(entry.name, .{}) catch continue;
+                        defer pkg_dir.close();
+
+                        var nested_node_modules = pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
+                        defer nested_node_modules.close();
+
+                        self.pruneNodeModulesRecursive(nested_node_modules, depth + 1);
                     }
                 }
-                continue;
             }
 
-            // Regular package
-            const pkg_hash = String.Builder.stringHash(entry.name);
+            fn shouldRemovePackage(self: *const @This(), pkg_name: []const u8) bool {
+                const pkg_hash = String.Builder.stringHash(pkg_name);
 
-            // Find package in lockfile
-            const pkg_index = std.mem.indexOfScalar(PackageNameHash, name_hashes, pkg_hash);
+                // Find package in lockfile
+                const pkg_index = std.mem.indexOfScalar(PackageNameHash, self.name_hashes, pkg_hash);
 
-            // Skip workspace packages (check if it's a symlink - workspace packages are symlinked)
-            if (workspace_paths.contains(pkg_hash)) {
-                continue;
-            }
-
-            // Check if this is a symlink (workspace packages are symlinked into node_modules)
-            const stat_result = std.posix.fstatat(node_modules_dir.fd, entry.name, std.posix.AT.SYMLINK_NOFOLLOW) catch null;
-            if (stat_result) |stat| {
-                if ((stat.mode & std.posix.S.IFMT) == std.posix.S.IFLNK) {
-                    // It's a symlink, likely a workspace package - skip it
-                    continue;
+                // Skip workspace packages (check workspace_paths)
+                if (self.workspace_paths.contains(pkg_hash)) {
+                    return false;
                 }
-            }
 
-            if (pkg_index) |idx| {
-                // Skip workspace packages (check resolution tag or origin)
-                if (package_resolutions[idx].tag == .workspace or package_metas[idx].origin == .local) {
-                    continue;
+                if (pkg_index) |idx| {
+                    // Skip workspace packages (check resolution tag or origin)
+                    if (self.package_resolutions[idx].tag == .workspace or self.package_metas[idx].origin == .local) {
+                        return false;
+                    }
                 }
-            }
 
-            // Determine if package should be removed
-            var should_remove = pkg_index == null;
+                // Determine if package should be removed
+                var should_remove = pkg_index == null;
 
-            // In production mode, also remove devDependencies
-            if (!should_remove and is_production and production_reachable_hashes != null) {
-                // Package is in lockfile, but check if it's not reachable from production deps
-                if (pkg_index != null and !production_reachable_hashes.?.contains(pkg_hash)) {
-                    should_remove = true;
+                // In production mode, also remove devDependencies
+                if (!should_remove and self.is_production and self.production_reachable_hashes != null) {
+                    // Package is in lockfile, but check if it's not reachable from production deps
+                    if (pkg_index != null and !self.production_reachable_hashes.?.contains(pkg_hash)) {
+                        should_remove = true;
+                    }
                 }
-            }
 
-            // Remove if marked for removal
-            if (should_remove) {
-                if (!is_dry_run) {
-                    node_modules_dir.deleteTree(entry.name) catch continue;
-                    // Only increment if deletion succeeded
-                    manager.summary.remove += 1;
-                } else {
-                    // In dry-run mode, count what would be removed
-                    manager.summary.remove += 1;
-                }
+                return should_remove;
             }
-        }
+        };
+
+        const prune_ctx = PruneContext{
+            .manager = manager,
+            .name_hashes = name_hashes,
+            .package_metas = package_metas,
+            .package_resolutions = package_resolutions,
+            .workspace_paths = workspace_paths,
+            .is_production = is_production,
+            .production_reachable_hashes = if (production_reachable_hashes) |*map| map else null,
+            .is_dry_run = is_dry_run,
+        };
+
+        prune_ctx.pruneNodeModulesRecursive(node_modules_dir, 0);
     }
 }
 

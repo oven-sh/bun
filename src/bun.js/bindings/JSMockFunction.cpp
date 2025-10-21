@@ -966,6 +966,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
         case JSMockImplementation::Kind::RejectedValue: {
             JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
+            RETURN_IF_EXCEPTION(scope, { });
             setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
             return JSValue::encode(rejectedPromise);
         }

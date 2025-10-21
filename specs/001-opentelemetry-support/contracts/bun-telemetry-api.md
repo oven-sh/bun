@@ -7,6 +7,7 @@
 
 **Related Contracts**:
 - [hook-lifecycle.md](./hook-lifecycle.md) - Detailed hook specifications, attribute formats, corner cases
+- [header-injection.md](./header-injection.md) - Header injection for distributed tracing, merge behavior, security
 
 ---
 
@@ -45,6 +46,14 @@ interface NativeInstrument {
   onOperationEnd?: (id: number, attributes: Record<string, any>) => void;
   onOperationError?: (id: number, attributes: Record<string, any>) => void;
   onOperationInject?: (id: number, data?: unknown) => Record<string, string> | void;
+
+  // Header injection configuration (optional)
+  // Declares which headers this instrument will inject
+  // See header-injection.md for merge behavior and security constraints
+  injectHeaders?: {
+    request?: string[];   // Headers for outgoing fetch requests
+    response?: string[];  // Headers for HTTP server responses
+  };
 }
 ```
 

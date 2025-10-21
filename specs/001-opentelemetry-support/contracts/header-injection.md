@@ -30,6 +30,95 @@
 
 ---
 
+## Header Merge Behavior
+
+### Multiple Instruments Returning Same Header Key
+
+**Problem**: When multiple instruments return values for the same header key (e.g., both return `traceparent`), we need a deterministic merge strategy.
+
+**Policy**: **Last Wins (Registration Order)**
+
+**Implementation**:
+```zig
+// In notifyInject()
+for (self.instrument_table[kind_index].items) |*record| {
+    const injected = record.invokeInject(self.global, id, data);
+    if (injected.isObject()) {
+        // Iterate keys
+        for (keys) |key| {
+            const value = injected.get(self.global, key);
+            merged.put(self.global, key, value); // PUT = last wins
+        }
+    }
+}
+```
+
+**Iteration Order**: Instruments iterate in **attachment order** (first attached → last attached)
+
+**Example**:
+```typescript
+// First instrument attached
+const id1 = Bun.telemetry.attach({
+  type: InstrumentKind.HTTP,
+  name: "instrument-1",
+  version: "1.0.0",
+  injectHeaders: { response: ["traceparent"] },
+  onOperationInject: () => ({ traceparent: "value-from-first" }),
+});
+
+// Second instrument attached (later)
+const id2 = Bun.telemetry.attach({
+  type: InstrumentKind.HTTP,
+  name: "instrument-2",
+  version: "1.0.0",
+  injectHeaders: { response: ["traceparent"] },
+  onOperationInject: () => ({ traceparent: "value-from-second" }),
+});
+
+// Result: "value-from-second" wins (last registered instrument)
+```
+
+**Rationale**:
+1. **Simple**: No complex concatenation logic (which headers support multiple values?)
+2. **Predictable**: Deterministic based on registration order
+3. **Flexible**: Users can control priority via attach order
+4. **Safe**: Single authoritative value per header (no conflicts)
+
+**Limitation**: This means **only one instrument should inject a given header key**. For distributed tracing, this is typically the W3C trace context instrument.
+
+### Special Case: tracestate Header
+
+**W3C Specification**: `tracestate` is a comma-separated list of vendor-specific trace state, where **newer entries prepend**:
+```
+tracestate: vendor2=value2,vendor1=value1
+```
+
+**Current Behavior**: Last wins (same as other headers)
+
+**Future Consideration** (out of scope for MVP): Add special handling for `tracestate` concatenation:
+```zig
+// Future: Special case for tracestate
+if (std.mem.eql(u8, key, "tracestate")) {
+    // Prepend new value to existing
+    const existing = merged.get(self.global, "tracestate");
+    if (existing.isString()) {
+        const combined = std.fmt.allocPrint(
+            allocator,
+            "{s},{s}",
+            .{ value.toString(self.global), existing.toString(self.global) },
+        );
+        merged.put(self.global, "tracestate", JSValue.createString(self.global, combined));
+        allocator.free(combined);
+        continue;
+    }
+}
+merged.put(self.global, key, value); // Normal case
+```
+
+**MVP Decision**: Use "last wins" for all headers (including `tracestate`). Most deployments use a single tracing vendor, so conflicts are rare.
+
+---
+
 ## API Surface
 
 ### 1. Instrument Configuration Extension
@@ -514,6 +603,52 @@ test("attach rejects blocked header injection", () => {
       onOperationInject: () => ({ authorization: "Bearer hacked" }),
     });
   }).toThrow(/blocked.*header/i);
+});
+```
+
+**Test: Header Merge - Last Wins**
+```typescript
+test("multiple instruments - last wins for duplicate headers", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("ok"),
+  });
+
+  // First instrument attached
+  const id1 = Bun.telemetry.attach({
+    type: InstrumentKind.HTTP,
+    name: "instrument-1",
+    version: "1.0.0",
+    injectHeaders: { response: ["traceparent", "x-custom"] },
+    onOperationInject: () => ({
+      traceparent: "value-from-first",
+      "x-custom": "first-only",
+    }),
+  });
+
+  // Second instrument attached (later) - duplicates traceparent
+  const id2 = Bun.telemetry.attach({
+    type: InstrumentKind.HTTP,
+    name: "instrument-2",
+    version: "1.0.0",
+    injectHeaders: { response: ["traceparent", "tracestate"] },
+    onOperationInject: () => ({
+      traceparent: "value-from-second", // Duplicate - should win
+      tracestate: "second-only",
+    }),
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`);
+
+  // Last instrument wins for traceparent
+  expect(response.headers.get("traceparent")).toBe("value-from-second");
+
+  // Non-conflicting headers present
+  expect(response.headers.get("x-custom")).toBe("first-only");
+  expect(response.headers.get("tracestate")).toBe("second-only");
+
+  Bun.telemetry.detach(id1);
+  Bun.telemetry.detach(id2);
 });
 ```
 

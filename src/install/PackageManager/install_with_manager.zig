@@ -588,9 +588,6 @@ pub fn installWithManager(
     try manager.log.print(Output.errorWriter());
     manager.log.reset();
 
-    // This operation doesn't perform any I/O, so it should be relatively cheap.
-    const lockfile_before_clean = manager.lockfile;
-
     manager.lockfile = try manager.lockfile.cleanWithLogger(
         manager,
         manager.update_requests,
@@ -716,6 +713,9 @@ pub fn installWithManager(
     }
 
     const packages_len_before_install = manager.lockfile.packages.len;
+
+    // Take the snapshot AFTER scripts are appended so frozen lockfile comparison is accurate
+    const lockfile_before_clean = manager.lockfile;
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {

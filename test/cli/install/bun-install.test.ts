@@ -20,6 +20,7 @@ import {
   joinP,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tempDirWithFiles,
   textLockfile,
   toBeValidBin,
@@ -6312,6 +6313,57 @@ registry = "${root_url}"
   const err = await stderr.text();
   expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
   expect(await exited).toBe(1);
+});
+
+it("frozen lockfile should work with workspace deps in both deps and devDeps", async () => {
+  using dir = tempDir("frozen-lockfile-workspace", {
+    "package.json": JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["workspaces/*"],
+    }),
+    "workspaces/api/package.json": JSON.stringify({
+      name: "@app/api",
+      dependencies: {
+        "@app/env": "workspace:*",
+      },
+      devDependencies: {
+        "@app/env": "workspace:*",
+        "@vercel/style-guide": "github:nikuscs/style-guide#canary",
+      },
+    }),
+    "workspaces/env/package.json": JSON.stringify({
+      name: "@app/env",
+      version: "1.0.0",
+    }),
+  });
+
+  // First install
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+  expect(exitCode1).toBe(0);
+
+  // Second install with --frozen-lockfile should succeed
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+
+  if (exitCode2 !== 0) {
+    console.error("STDOUT:", stdout2);
+    console.error("STDERR:", stderr2);
+  }
+  expect(exitCode2).toBe(0);
 });
 
 it("should perform bin-linking across multiple dependencies", async () => {

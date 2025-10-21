@@ -20,7 +20,8 @@ function replacements(content: string): string {
     .replaceAll("std.io.getStdErr()", "std.fs.File.stderr()")
     .replaceAll("std.io.getStdIn()", "std.fs.File.stdin()")
     .replaceAll("std.fmt.Formatter", "std.fmt.Alt")
-    .replaceAll("std.zig.fmtEscapes", "std.zig.fmtString");
+    .replaceAll("std.zig.fmtEscapes", "std.zig.fmtString")
+    .replaceAll("std.SinglyLinkedList", "bun.deprecated.SinglyLinkedList");
 }
 
 // Check for local changes in git before proceeding

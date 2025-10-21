@@ -723,7 +723,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -847,6 +847,54 @@ declare module "bun" {
   function write(
     destinationPath: PathLike,
     input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
+
+  /**
+   * Stream data from a {@link ReadableStream} to a file.
+   *
+   * @param destination The file to write to. If the file doesn't exist,
+   * it will be created and if the file does exist, it will be overwritten.
+   * @param input - `ReadableStream` object to read from
+   * @param options Options for the write
+   *
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  function write(
+    destination: BunFile,
+    input: ReadableStream,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
+
+  /**
+   * Stream data from a {@link ReadableStream} to a file.
+   *
+   * @param destinationPath The file path to write to. If the file doesn't
+   * exist, it will be created and if the file does exist, it will be overwritten.
+   * @param input - `ReadableStream` object to read from
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  function write(
+    destinationPath: PathLike,
+    input: ReadableStream,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
@@ -1320,7 +1368,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 

@@ -119,6 +119,10 @@ pub fn ArrayListAlignedIn(
             };
         }
 
+        pub fn writer(self: *Self) Unmanaged.Writer {
+            return self.#unmanaged.writer(self.getStdAllocator());
+        }
+
         /// Returns a borrowed version of the allocator.
         pub fn allocator(self: *const Self) bun.allocators.Borrowed(Allocator) {
             return bun.allocators.borrow(self.#allocator);

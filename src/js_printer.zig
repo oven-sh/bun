@@ -5164,7 +5164,6 @@ fn NewPrinter(
                 p.printNewline();
             } else {
                 // Print a mandatory newline after single-line comments
-                p.printIndent();
                 if (text.len > 0 and text[text.len - 1] == '\r') {
                     text = text[0 .. text.len - 1];
                 }

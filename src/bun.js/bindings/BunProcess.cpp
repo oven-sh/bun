@@ -3163,7 +3163,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     struct rusage rusage;
 #ifdef RUSAGE_THREAD
     int status = getrusage(RUSAGE_THREAD, &rusage);
-#elif defined(RUSAGE_LWP)
+#elifdef RUSAGE_LWP
     int status = getrusage(RUSAGE_LWP, &rusage);
 #else
     throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "getrusage"_s, ENOTSUP);

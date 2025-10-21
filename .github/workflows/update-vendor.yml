@@ -16,6 +16,7 @@ jobs:
       matrix:
         package:
           - elysia
+          - express
 
     steps:
       - uses: actions/checkout@v4

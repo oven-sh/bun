@@ -1597,7 +1597,7 @@ const FormatDurationData = struct {
 };
 
 /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
-fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+fn formatDurationOneDecimal(data: FormatDurationData, writer: *std.Io.Writer) !void {
     // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
     var buf: [24]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
@@ -1620,7 +1620,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
             buf_writer.writeByte(unit.sep) catch unreachable;
             ns_remaining -= units * unit.ns;
             if (ns_remaining == 0)
-                return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+                return writer.writeAll(fbs.getWritten());
         }
     }
 
@@ -1639,18 +1639,18 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
                 buf_writer.writeAll(&decimal_buf) catch unreachable;
             }
             buf_writer.writeAll(unit.sep) catch unreachable;
-            return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            return writer.writeAll(fbs.getWritten());
         }
     }
 
     std.fmt.formatInt(ns_remaining, 10, .lower, .{}, buf_writer) catch unreachable;
     buf_writer.writeAll("ns") catch unreachable;
-    return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+    return writer.writeAll(fbs.getWritten());
 }
 
 /// Return a Formatter for number of nanoseconds according to its magnitude:
 /// [#y][#w][#d][#h][#m]#[.###][n|u|m]s
-pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Alt(formatDurationOneDecimal) {
+pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Alt(FormatDurationData, formatDurationOneDecimal) {
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
 
@@ -1727,7 +1727,6 @@ pub fn escapePowershell(str: []const u8) std.fmt.Alt([]const u8, escapePowershel
 }
 
 fn escapePowershellImpl(str: []const u8, writer: *std.Io.Writer) !void {
-    comptime bun.assert(f.len == 0);
     var remain = str;
     while (bun.strings.indexOfAny(remain, "\"`")) |i| {
         try writer.writeAll(remain[0..i]);
@@ -1857,12 +1856,11 @@ pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatte
 ///
 /// this hash is used primarily for the hashes in bundler chunk file names. the
 /// output is all lowercase to avoid issues with case-insensitive filesystems.
-pub fn truncatedHash32(int: u64) std.fmt.Alt(truncatedHash32Impl) {
+pub fn truncatedHash32(int: u64) std.fmt.Alt(u64, truncatedHash32Impl) {
     return .{ .data = int };
 }
 
-fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    comptime bun.assert(fmt_str.len == 0);
+fn truncatedHash32Impl(int: u64, writer: *std.Io.Writer) !void {
     const in_bytes = std.mem.asBytes(&int);
     const chars = "0123456789abcdefghjkmnpqrstvwxyz";
     try writer.writeAll(&.{

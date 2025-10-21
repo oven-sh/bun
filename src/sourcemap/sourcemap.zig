@@ -1003,11 +1003,11 @@ pub const ParsedSourceMap = struct {
         }
     }
 
-    pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Alt(formatVLQsImpl) {
+    pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Alt(*const ParsedSourceMap, formatVLQsImpl) {
         return .{ .data = map };
     }
 
-    fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+    fn formatVLQsImpl(map: *const ParsedSourceMap, w: *std.Io.Writer) !void {
         try map.writeVLQs(w);
     }
 };

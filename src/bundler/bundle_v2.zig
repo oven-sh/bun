@@ -87,15 +87,14 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
         path_clone.pretty = std.fmt.bufPrint(buf, "{s}{}:{s}", .{
             if (target == .bake_server_components_ssr) "ssr:" else "",
             // make sure that a namespace including a colon wont collide with anything
-            std.fmt.Alt(fmtEscapedNamespace){ .data = path.namespace },
+            std.fmt.Alt([]const u8, fmtEscapedNamespace){ .data = path.namespace },
             path.text,
         }) catch buf[0..];
         return path_clone.dupeAllocFixPretty(allocator);
     }
 }
 
-fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
-    comptime bun.assert(fmt.len == 0);
+fn fmtEscapedNamespace(slice: []const u8, w: *std.Io.Writer) !void {
     var rest = slice;
     while (bun.strings.indexOfChar(rest, ':')) |i| {
         try w.writeAll(rest[0..i]);

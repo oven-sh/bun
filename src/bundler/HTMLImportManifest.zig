@@ -104,7 +104,7 @@ pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const Li
     try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
 }
 
-fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+fn escapedJSONFormatter(this: HTMLImportManifest, writer: *std.Io.Writer) bun.OOM!void {
     return writeEscapedJSON(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
         error.NoSpaceLeft => unreachable,
@@ -113,8 +113,8 @@ fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std
     };
 }
 
-pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Alt(escapedJSONFormatter) {
-    return std.fmt.Alt(escapedJSONFormatter){ .data = this };
+pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter) {
+    return .{ .data = this };
 }
 
 pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {

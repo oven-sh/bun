@@ -480,9 +480,9 @@ pub const FilePoll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub const Formatter = std.fmt.Alt(Flags.format);
+        pub const Formatter = std.fmt.Alt(Flags.Set, Flags.format);
 
-        pub fn format(this: Flags.Set, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Flags.Set, writer: *std.Io.Writer) !void {
             var iter = this.iterator();
             var is_first = true;
             while (iter.next()) |flag| {

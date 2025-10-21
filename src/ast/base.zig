@@ -142,14 +142,15 @@ pub const Ref = packed struct(u64) {
         );
     }
 
-    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Alt(dumpImpl) {
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Alt(DumpImplData, dumpImpl) {
         return .{ .data = .{
             .ref = ref,
             .symbol = ref.getSymbol(symbol_table),
         } };
     }
 
-    fn dumpImpl(data: struct { ref: Ref, symbol: *ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    const DumpImplData = struct { ref: Ref, symbol: *ast.Symbol };
+    fn dumpImpl(data: DumpImplData, writer: *std.Io.Writer) !void {
         try std.fmt.format(
             writer,
             "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",

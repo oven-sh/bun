@@ -569,11 +569,13 @@ pub const Transpiler = struct {
 
     pub noinline fn dumpEnvironmentVariables(transpiler: *const Transpiler) void {
         @branchHint(.cold);
-        const opts = std.json.StringifyOptions{
+        const opts = std.json.Stringify.Options{
             .whitespace = .indent_2,
         };
         Output.flush();
-        std.json.stringify(transpiler.env.map.*, opts, Output.writer()) catch unreachable;
+        var ow = Output.writer().adaptToNewApi(&.{});
+        var w: std.json.Stringify = .{ .writer = &ow.new_interface, .options = opts };
+        w.write(transpiler.env.map.*) catch unreachable;
         Output.flush();
     }
 

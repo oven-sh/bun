@@ -1616,7 +1616,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, writer: *std.Io.Writer) !v
     }) |unit| {
         if (ns_remaining >= unit.ns) {
             const units = ns_remaining / unit.ns;
-            std.fmt.formatInt(units, 10, .lower, .{}, buf_writer) catch unreachable;
+            buf_writer.print("{d}", .{units}) catch unreachable;
             buf_writer.writeByte(unit.sep) catch unreachable;
             ns_remaining -= units * unit.ns;
             if (ns_remaining == 0)
@@ -1631,7 +1631,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, writer: *std.Io.Writer) !v
     }) |unit| {
         const kunits = ns_remaining * 1000 / unit.ns;
         if (kunits >= 1000) {
-            std.fmt.formatInt(kunits / 1000, 10, .lower, .{}, buf_writer) catch unreachable;
+            buf_writer.print("{d}", .{kunits / 1000}) catch unreachable;
             const frac = @divFloor(kunits % 1000, 100);
             if (frac > 0) {
                 var decimal_buf = [_]u8{ '.', 0 };
@@ -1643,7 +1643,7 @@ fn formatDurationOneDecimal(data: FormatDurationData, writer: *std.Io.Writer) !v
         }
     }
 
-    std.fmt.formatInt(ns_remaining, 10, .lower, .{}, buf_writer) catch unreachable;
+    buf_writer.print("{d}", .{ns_remaining}) catch unreachable;
     buf_writer.writeAll("ns") catch unreachable;
     return writer.writeAll(fbs.getWritten());
 }

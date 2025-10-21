@@ -201,7 +201,7 @@ pub fn crashHandler(
                 //
                 // Output.errorWriter() is not used here because it may not be configured
                 // if the program crashes immediately at startup.
-                var writer_w = std.fs.File.stderr().writer(&.{});
+                var writer_w = std.fs.File.stderr().writerStreaming(&.{});
                 const writer = &writer_w.interface;
 
                 // The format of the panic trace is slightly different in debug
@@ -503,7 +503,8 @@ pub fn crashHandler(
             // A panic happened while trying to print a previous panic message,
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
-            const stderr = std.fs.File.stderr().writer();
+            var stderr_w = std.fs.File.stderr().writerStreaming(&.{});
+            const stderr = &stderr_w.interface;
             stderr.print("\npanic: {s}\n", .{reason}) catch std.posix.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.posix.abort();
         },
@@ -1659,7 +1660,7 @@ extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
-    var stderr_w = std.fs.File.stderr().writer(&.{});
+    var stderr_w = std.fs.File.stderr().writerStreaming(&.{});
     const stderr = &stderr_w.interface;
     if (!bun.Environment.show_crash_trace) {
         // debug symbols aren't available, lets print a tracestring

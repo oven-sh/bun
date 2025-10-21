@@ -552,6 +552,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
+        // Telemetry: notify about incoming request
+        try {
+          Bun.telemetry?._node_binding?.()?.handleIncomingRequest?.(http_req, http_res);
+        } catch {
+          // Telemetry failures should not crash the request path
+        }
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -741,15 +748,18 @@ Server.prototype.setTimeout = function (msecs, callback) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
+
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
+      // Error handling is done via Bun.telemetry.configure() callbacks
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
+      // Error handling is done via Bun.telemetry.configure() callbacks
       break;
     }
   }
@@ -1189,6 +1199,13 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 
   updateHasBody(response, statusCode);
+
+  // Telemetry: notify about response headers
+  try {
+    Bun.telemetry?._node_binding?.()?.handleWriteHead?.(response, statusCode);
+  } catch {
+    // Telemetry failures should not crash the request path
+  }
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

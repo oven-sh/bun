@@ -72,6 +72,11 @@ BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__attach);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__detach);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__isEnabledFor);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__listInstruments);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__getActiveSpan);
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
@@ -431,6 +436,25 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     return dnsObject;
 }
 
+static JSValue constructTelemetryObject(VM& vm, JSObject* bunObject)
+{
+    JSGlobalObject* globalObject = bunObject->globalObject();
+    JSC::JSObject* telemetryObject = JSC::constructEmptyObject(globalObject);
+
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "attach"_s), 1, Bun__Telemetry__attach, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "detach"_s), 1, Bun__Telemetry__detach, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isEnabledFor"_s), 1, Bun__Telemetry__isEnabledFor, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "listInstruments"_s), 0, Bun__Telemetry__listInstruments, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getActiveSpan"_s), 0, Bun__Telemetry__getActiveSpan, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    return telemetryObject;
+}
+
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
@@ -740,6 +764,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
+    telemetry                                      constructTelemetryObject                                            ReadOnly|DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback

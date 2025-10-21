@@ -77,6 +77,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
+        /// OpenTelemetry request ID (0 if telemetry disabled)
+        /// Set by server.zig during request initialization
+        /// Reference: specs/001-opentelemetry-support/plan.md lines 267-268
+        telemetry_request_id: u64 = 0,
+
+        /// Request start timestamp in nanoseconds (for calculating duration)
+        /// Set by server.zig when telemetry is enabled
+        /// Reference: specs/001-opentelemetry-support/plan.md lines 267-268
+        request_start_time_ns: u64 = 0,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -318,6 +328,69 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         fn handleReject(ctx: *RequestContext, value: jsc.JSValue) void {
             if (ctx.isAbortedOrEnded()) {
                 return;
+            }
+
+            // OpenTelemetry: Notify operation error BEFORE error handling
+            // Reference: specs/001-opentelemetry-support/plan.md lines 272
+            if (ctx.telemetry_request_id != 0 and ctx.server != null) {
+                const globalThis = ctx.server.?.globalThis;
+
+                if (bun.telemetry.getGlobalTelemetry()) |telemetry_instance| {
+                    // Extract error information from JSValue
+                    var error_type: []const u8 = "InternalError";
+                    var error_message: []const u8 = "Request handler rejected";
+                    var stack_trace: ?[]const u8 = null;
+
+                    if (!value.isEmptyOrUndefinedOrNull()) {
+                        // Try to get error message
+                        if (value.get(globalThis, "message") catch null) |msg_val| {
+                            if (msg_val.isString()) {
+                                var msg_str: jsc.ZigString = undefined;
+                                msg_val.toZigString(&msg_str, globalThis) catch {};
+                                const msg_slice = msg_str.toSlice(bun.default_allocator);
+                                error_message = msg_slice.slice();
+                            }
+                        }
+
+                        // Try to get error type (from constructor name)
+                        var class_name_str: jsc.ZigString = undefined;
+                        value.getClassName(globalThis, &class_name_str) catch {};
+                        if (class_name_str.len > 0) {
+                            const class_name_slice = class_name_str.toSlice(bun.default_allocator);
+                            error_type = class_name_slice.slice();
+                        }
+
+                        // Try to get stack trace
+                        if (value.get(globalThis, "stack") catch null) |stack_val| {
+                            if (stack_val.isString()) {
+                                var stack_str: jsc.ZigString = undefined;
+                                stack_val.toZigString(&stack_str, globalThis) catch {};
+                                const stack_slice = stack_str.toSlice(bun.default_allocator);
+                                stack_trace = stack_slice.slice();
+                            }
+                        }
+                    }
+
+                    // Build error attributes
+                    var error_attrs = bun.telemetry_http.buildHttpErrorAttributes(
+                        globalThis,
+                        ctx.request_start_time_ns,
+                        error_type,
+                        error_message,
+                        stack_trace,
+                        null, // status code unknown at this point
+                    );
+
+                    // Notify all registered HTTP instruments
+                    telemetry_instance.notifyOperationError(
+                        .http,
+                        ctx.telemetry_request_id,
+                        error_attrs.toJS(),
+                    );
+
+                    // Note: We don't reset telemetry_request_id here because finalizeWithoutDeinit
+                    // will still be called and needs to handle cleanup properly
+                }
             }
 
             const resp = ctx.resp.?;
@@ -698,6 +771,36 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
+            }
+
+            // OpenTelemetry: Notify operation end
+            // Reference: specs/001-opentelemetry-support/plan.md lines 269-270
+            // MUST call exitContext() AND set telemetry_request_id = 0 to prevent double-cleanup
+            if (this.telemetry_request_id != 0) {
+                if (bun.telemetry.getGlobalTelemetry()) |telemetry_instance| {
+                    // Build end attributes
+                    const status_code: u16 = if (this.response_ptr) |resp| resp.getInitStatusCode() else 500;
+                    const content_length: u64 = if (this.response_ptr) |resp| resp.getBodyLen() else 0;
+
+                    var end_attrs = bun.telemetry_http.buildHttpEndAttributes(
+                        globalThis,
+                        this.request_start_time_ns,
+                        status_code,
+                        content_length,
+                        null, // TODO: capture response headers based on configuration
+                    );
+
+                    // Notify all registered HTTP instruments
+                    telemetry_instance.notifyOperationEnd(
+                        .http,
+                        this.telemetry_request_id,
+                        end_attrs.toJS(),
+                    );
+
+                    // CRITICAL: Reset to prevent double-cleanup
+                    this.telemetry_request_id = 0;
+                    this.request_start_time_ns = 0;
+                }
             }
 
             if (this.response_jsvalue != .zero) {

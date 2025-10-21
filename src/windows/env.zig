@@ -54,6 +54,7 @@ pub fn convertEnvToWTF8() bun.OOM!void {
     std.os.environ = envp_nonnull_slice;
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const std = @import("std");

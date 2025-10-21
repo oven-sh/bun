@@ -1098,7 +1098,7 @@ pub fn startTelemetry(self: *RequestContext) void {
 
 #### Step 2.3: Update TypeScript Types
 
-**File**: `packages/bun-otel/types.ts`
+**File**: `packages/bun-types/telemetry.d.ts`
 
 ```typescript
 export enum AttrKey {

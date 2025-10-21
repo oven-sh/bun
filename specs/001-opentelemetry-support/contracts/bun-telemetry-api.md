@@ -18,17 +18,10 @@ Registers an instrumentation for specific operation types.
 
 **Parameters**:
 ```typescript
-enum InstrumentKind {
-  Custom = 0,
-  HTTP = 1,
-  Fetch = 2,
-  SQL = 3,
-  Redis = 4,
-  S3 = 5,
-}
+type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3";
 
 interface NativeInstrument {
-  type: InstrumentKind;           // Required: Operation category
+  type: InstrumentKind;           // Required: Operation category ("http", "fetch", etc.)
   name: string;                   // Required: Instrumentation name
   version: string;                // Required: Instrumentation version
 
@@ -63,7 +56,7 @@ interface NativeInstrument {
 **Throws**:
 ```typescript
 TypeError: "instrument must be an object"
-TypeError: "instrument.type must be a valid InstrumentKind"
+TypeError: "instrument.type must be a valid operation kind string"
 TypeError: "instrument.name must be a non-empty string"
 TypeError: "instrument.version must be a non-empty string"
 TypeError: "At least one hook function must be provided"
@@ -72,7 +65,7 @@ TypeError: "onOperationStart must be a function"
 ```
 
 **Validation**:
-- MUST: Valid InstrumentKind enum (0-5)
+- MUST: Valid InstrumentKind string ("custom" | "http" | "fetch" | "sql" | "redis" | "s3")
 - MUST: Non-empty `name` string (max 256 chars)
 - MUST: Non-empty `version` string (semver format)
 - MUST: Provide at least one hook function
@@ -92,7 +85,7 @@ TypeError: "onOperationStart must be a function"
 **Example**:
 ```typescript
 const instrumentId = Bun.telemetry.attach({
-  type: InstrumentKind.HTTP,
+  type: "http",
   name: "@opentelemetry/instrumentation-http",
   version: "0.1.0",
 
@@ -162,9 +155,34 @@ Bun.telemetry.detach(id); // Throws RangeError
 
 ## Type Definitions
 
-### InstrumentKind Enum
+### InstrumentKind Type
 
-**Zig Definition**:
+**Public API** (packages/bun-types/telemetry.d.ts):
+```typescript
+export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3";
+```
+
+**String Literal Meanings**:
+- `"custom"` - User-defined operations
+- `"http"` - HTTP server (Bun.serve, http.createServer)
+- `"fetch"` - Fetch client operations
+- `"sql"` - Database operations
+- `"redis"` - Redis operations
+- `"s3"` - S3 operations
+
+**Internal SDK** (bun-otel/types.ts - NOT exported):
+```typescript
+export enum InstrumentKind {
+  Custom = 0,
+  HTTP = 1,
+  Fetch = 2,
+  SQL = 3,
+  Redis = 4,
+  S3 = 5,
+}
+```
+
+**Zig Definition** (src/bun.js/telemetry.zig):
 ```zig
 pub const InstrumentKind = enum(u8) {
     custom = 0,
@@ -178,17 +196,7 @@ pub const InstrumentKind = enum(u8) {
 };
 ```
 
-**TypeScript Definition**:
-```typescript
-export enum InstrumentKind {
-  Custom = 0,
-  HTTP = 1,
-  Fetch = 2,
-  SQL = 3,
-  Redis = 4,
-  S3 = 5,
-}
-```
+**Design Rationale**: See ADR-003. Public API uses ergonomic string literals; internal SDK uses numeric enums for type-safe Zig FFI.
 
 **Extensibility**:
 - New kinds added in future Bun versions

@@ -435,7 +435,7 @@ pub const ConfigurationProperty = enum(u8) {
 };
 ```
 
-**TypeScript Definition** (packages/bun-otel/types.ts):
+**TypeScript Definition** (packages/bun-types/telemetry.d.ts):
 ```typescript
 export enum ConfigurationProperty {
   RESERVED = 0,
@@ -709,7 +709,8 @@ test("notifyStart invokes all registered instruments", () => {
 - `src/js/internal/telemetry_fetch.ts` - Fetch client bridge (future)
 
 **Type Definitions**:
-- `packages/bun-otel/types.ts` - Shared TypeScript types
+- `packages/bun-types/telemetry.d.ts` - Public telemetry API (string literals, no nativeHooks)
+- `packages/bun-otel/types.ts` - Internal SDK types (numeric enums, nativeHooks namespace) - NOT exported from package
 
 ### Memory Management
 

@@ -20,6 +20,8 @@ However, the API surfaces defined here would be perfectly amenable to providing 
 
 # Architecture
 
+This is a Significant API Evolution from the [POC](https://github.com/oven-sh/bun/pull/23798). The POC used a configure-based API with request callbacks, while the current spec uses an attach/detach pattern with operation-centric callbacks and explicit InstrumentKind types.
+
 ## Lifecycle State Machine
 
 The native telemetry hooks follow a state machine pattern for tracking operations:

@@ -17,8 +17,8 @@ interface NativeInstrument {
 
   // Attribute capture configuration
   captureAttributes?: {
-    requestHeaders?: string[];   // HTTP request headers to capture
-    responseHeaders?: string[];  // HTTP response headers to capture
+    requestHeaders?: string[]; // HTTP request headers to capture
+    responseHeaders?: string[]; // HTTP response headers to capture
     // Future: other attribute filters
   };
 
@@ -27,17 +27,22 @@ interface NativeInstrument {
   onOperationProgress?: (id: number, attributes: Record<string, any>) => void;
   onOperationEnd?: (id: number, attributes: Record<string, any>) => void;
   onOperationError?: (id: number, attributes: Record<string, any>) => void;
-  onOperationInject?: (id: number, data?: unknown) => Record<string, string> | void;
+  onOperationInject?: (
+    id: number,
+    data?: unknown,
+  ) => Record<string, string> | void;
 }
 ```
 
 ### captureAttributes Configuration
 
 **Default** (if undefined):
+
 - requestHeaders: `["content-type", "content-length", "user-agent", "accept"]`
 - responseHeaders: `["content-type", "content-length"]`
 
 **Validation**:
+
 - MUST: Use lowercase strings
 - MUST: Max 50 headers per list
 - MUST NOT: Include sensitive headers (always blocked)
@@ -68,7 +73,7 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 | url.query | string | "q=test" |
 | server.address | string | "example.com" |
 | server.port | number | 443 |
-| http.request.header.* | string | Per configured headers |
+| http.request.header.\* | string | Per configured headers |
 
 **Distributed Tracing** (if traceparent present):
 | Attribute | Type | Description |
@@ -83,19 +88,20 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 
 **When**: Incremental updates during operation
 
-| Context | Trigger |
-|---------|---------|
-| HTTP | After response headers sent |
-| Fetch | After response headers received |
-| SQL | After query plan (future) |
+| Context | Trigger                         |
+| ------- | ------------------------------- |
+| HTTP    | After response headers sent     |
+| Fetch   | After response headers received |
+| SQL     | After query plan (future)       |
 
 **Attributes**:
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | progress.phase | string | "response_headers_sent", etc. |
-| * | varies | Operation-specific attributes |
+| \* | varies | Operation-specific attributes |
 
 **Notes**:
+
 - MAY: Call 0-N times per operation
 - MUST: Provide incremental updates only
 - SHOULD: Use for span events
@@ -112,9 +118,10 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 | operation.duration | number | Total nanoseconds |
 | http.response.status_code | number | HTTP status (200, 404, etc.) |
 | http.response.body.size | number | Response bytes |
-| http.response.header.* | string | Per configured headers |
+| http.response.header.\* | string | Per configured headers |
 
 **Requirements**:
+
 - MUST: Delete span from tracking map
 - MUST: Set span status to OK
 - MUST: Call span.end()
@@ -134,6 +141,7 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 | operation.duration | number | Duration until failure |
 
 **Requirements**:
+
 - MUST: Record exception on span
 - MUST: Set span status to ERROR
 - MUST: Delete span from tracking map
@@ -153,6 +161,7 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 | Fetch Client | Before sending request |
 
 **Validation**:
+
 - MUST: Return plain object or void
 - MUST: Use valid header names (lowercase, alphanumeric + hyphen)
 - MUST: String values only (max 8KB)
@@ -178,12 +187,14 @@ Same as HTTP Server attributes but for outgoing requests.
 ## Lifecycle State Machine
 
 **Hook Order**:
+
 1. `onOperationStart` - Always called first
 2. `onOperationInject` - Called 0-N times for header injection
 3. `onOperationProgress` - Called 0-N times during execution
 4. `onOperationEnd` OR `onOperationError` - Exactly one called
 
 **Guarantees**:
+
 - MUST: Call Start before any other hooks
 - MUST: Call exactly one of End or Error
 - MUST: Use same thread for all hooks with same ID
@@ -194,18 +205,19 @@ Same as HTTP Server attributes but for outgoing requests.
 
 ## Corner Cases
 
-| Scenario | Behavior | Resolution |
-|----------|----------|------------|
-| Invalid traceparent header | trace.parent.* attributes omitted | Continue normally |
-| URL parsing fails | Attribute omitted, others present | Log error, continue |
-| 500MB response body | Size capped at MAX_SAFE_INTEGER | Log truncation |
-| 100KB header value | Truncated at 8KB | Log truncation |
-| Non-string header value | Convert via toString() | Omit if fails |
-| Missing optional field | Key not in attributes object | Check with `in` operator |
-| Hook throws exception | Caught, logged, request continues | No retry |
-| Hook takes 10s | No timeout, blocks request | Author responsibility |
+| Scenario                   | Behavior                           | Resolution               |
+| -------------------------- | ---------------------------------- | ------------------------ |
+| Invalid traceparent header | trace.parent.\* attributes omitted | Continue normally        |
+| URL parsing fails          | Attribute omitted, others present  | Log error, continue      |
+| 500MB response body        | Size capped at MAX_SAFE_INTEGER    | Log truncation           |
+| 100KB header value         | Truncated at 8KB                   | Log truncation           |
+| Non-string header value    | Convert via toString()             | Omit if fails            |
+| Missing optional field     | Key not in attributes object       | Check with `in` operator |
+| Hook throws exception      | Caught, logged, request continues  | No retry                 |
+| Hook takes 10s             | No timeout, blocks request         | Author responsibility    |
 
 **Attribute Value Limits**:
+
 - Header values: 8KB max
 - URL length: 64KB max
 - Error message: 4KB max
@@ -218,6 +230,7 @@ Same as HTTP Server attributes but for outgoing requests.
 ### 1. Hook Throws Exception
 
 **Scenario**:
+
 ```typescript
 onOperationStart(id, attributes) {
   throw new Error("Oops!");
@@ -225,6 +238,7 @@ onOperationStart(id, attributes) {
 ```
 
 **Behavior**:
+
 - Exception caught by Zig wrapper
 - Error logged to stderr with instrumentation name
 - Request processing **continues normally**
@@ -232,6 +246,7 @@ onOperationStart(id, attributes) {
 - No retry (one attempt only)
 
 **Log Output**:
+
 ```
 [Telemetry] Error in onOperationStart (@opentelemetry/instrumentation-http v1.0.0): Oops!
   at onOperationStart (instrumentation.ts:45)
@@ -242,6 +257,7 @@ onOperationStart(id, attributes) {
 ### 2. Invalid onOperationInject Return Value
 
 **Scenario**:
+
 ```typescript
 onOperationInject(id) {
   return { "invalid header name!": "value" };  // Invalid characters
@@ -249,12 +265,14 @@ onOperationInject(id) {
 ```
 
 **Behavior**:
+
 - Invalid headers filtered out
 - Valid headers (if any) still injected
 - Error logged (non-fatal)
 - Request proceeds
 
 **Validation**:
+
 - Header names: `^[a-z0-9-]+$` (lowercase alphanumeric + hyphen)
 - Header values: Non-empty strings, max 8KB
 - Max 20 headers total
@@ -266,6 +284,7 @@ onOperationInject(id) {
 **Scenario**: Memory allocation fails in Zig
 
 **Behavior**:
+
 - Hook **not called** (graceful degradation)
 - Request processing **continues normally**
 - Error logged to stderr
@@ -278,6 +297,7 @@ onOperationInject(id) {
 **Scenario**: Cannot convert Zig value to JSValue
 
 **Behavior**:
+
 - Attribute omitted from object
 - Other attributes still present
 - Error logged (non-fatal)
@@ -289,6 +309,7 @@ onOperationInject(id) {
 ### Overhead Breakdown (HTTP Request)
 
 **Telemetry Disabled** (no instruments attached):
+
 ```
 isEnabledFor() check:        ~5ns
 Early return:                ~2ns
@@ -296,6 +317,7 @@ Total per request:           ~7ns (<0.001% overhead)
 ```
 
 **Telemetry Enabled** (1 instrument attached):
+
 ```
 isEnabledFor() check:        ~5ns
 AttributeMap.init():         ~50ns
@@ -313,6 +335,7 @@ For 100μs fast request:      1.3% overhead  ✅
 ```
 
 **Memory per Request**:
+
 ```
 AttributeMap (Zig):          ~64 bytes
 JSValue object:              ~200 bytes (typical HTTP attributes)
@@ -321,6 +344,7 @@ Total:                       ~764 bytes per in-flight request
 ```
 
 **Cleanup**:
+
 - Attributes eligible for GC after hook completes
 - Span deleted from map in onOperationEnd/Error
 - No memory leaks if cleanup performed correctly
@@ -332,6 +356,7 @@ Total:                       ~764 bytes per in-flight request
 ### Header Capture Security
 
 **Blocklist** (always blocked, never captured):
+
 ```typescript
 const BLOCKED_HEADERS = [
   "authorization",
@@ -349,16 +374,18 @@ const BLOCKED_HEADERS = [
 ```
 
 **Enforcement**:
+
 - Blocklist checked **before** allowlist
 - Case-insensitive comparison
 - Partial matches blocked (e.g., "x-api-key-v2" blocked)
 - Zig layer enforces (TypeScript cannot override)
 
 **Validation at Attach Time**:
+
 ```typescript
 Bun.telemetry.attach({
   captureAttributes: {
-    requestHeaders: ["authorization"],  // ❌ REJECTED
+    requestHeaders: ["authorization"], // ❌ REJECTED
   },
 });
 // Throws TypeError: "authorization" is a blocked header
@@ -371,6 +398,7 @@ Bun.telemetry.attach({
 **Risk**: Malicious header values injected into attributes
 
 **Mitigation**:
+
 - All attribute values are strings (no objects/functions)
 - No eval() or code execution in attribute handling
 - Exporters responsible for sanitization before display
@@ -381,6 +409,7 @@ Bun.telemetry.attach({
 ### DOS Prevention
 
 **Limits**:
+
 - Max 50 headers in captureAttributes allowlist
 - Max 20 headers returned from onOperationInject
 - Max 8KB per header value (truncated)
@@ -394,6 +423,7 @@ Bun.telemetry.attach({
 ### How It Works (POC Already Solved This)
 
 **Zig Controls Initial Stack Frame**:
+
 ```zig
 // src/bun.js/api/server.zig
 fn handleRequest(request: *Request) void {
@@ -407,11 +437,12 @@ fn handleRequest(request: *Request) void {
 ```
 
 **TypeScript Sees Correct Context**:
+
 ```typescript
 // User handler code
 Bun.serve({
   async fetch(req) {
-    const span = trace.getActiveSpan();  // ✅ Works!
+    const span = trace.getActiveSpan(); // ✅ Works!
 
     await Bun.sleep(100);
     const span2 = trace.getActiveSpan(); // ✅ Still works!
@@ -422,6 +453,7 @@ Bun.serve({
 ```
 
 **No Workaround Needed**:
+
 - AsyncLocalStorage works correctly for all programmatic usage
 - `context.with()` works fine
 - Only limitation was wrapping request handler (solved by Zig)
@@ -433,12 +465,14 @@ Bun.serve({
 ### Validation Tests (test/js/bun/telemetry/)
 
 **Rules**:
+
 - Test ONLY attribute structure and hook calls
 - NO `@opentelemetry/*` imports
 - Verify attribute keys match semantic conventions
 - Validate error handling
 
 **Example**:
+
 ```typescript
 test("onOperationStart receives HTTP attributes", async () => {
   let capturedAttrs: any;
@@ -469,15 +503,17 @@ test("onOperationStart receives HTTP attributes", async () => {
 ## Integration Tests (packages/bun-otel/test/)
 
 **Rules**:
+
 - Test full OpenTelemetry integration
 - CAN import `@opentelemetry/*` packages
 - Verify spans created correctly
 - Test distributed tracing propagation
 
 **Example**:
+
 ```typescript
 import { trace } from "@opentelemetry/api";
-import { BunHttpInstrumentation } from "@bun/otel";
+import { BunHttpInstrumentation } from "bun-otel";
 
 test("creates spans with correct attributes", async () => {
   const instrumentation = new BunHttpInstrumentation();

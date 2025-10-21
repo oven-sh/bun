@@ -394,7 +394,7 @@ This is a **runtime extension** pattern combining native Zig code with a TypeScr
    - Self-contained TypeScript package with its own tests
    - Dependencies include `@opentelemetry/*` packages (NOT in Bun core)
    - Unit tests in `packages/bun-otel/test/` can import `@opentelemetry/*`
-   - Published to npm as `@bun/otel` or similar
+   - Published to npm as `bun-otel` or similar
 
 3. **Native Hook Tests** (`test/js/bun/telemetry/`):
    - Test ONLY the native Zig API surface (`Bun.telemetry.*`)

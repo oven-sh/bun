@@ -11,6 +11,7 @@
 This guide demonstrates how to instrument a Bun application with OpenTelemetry for distributed tracing, metrics, and logging. Bun's OpenTelemetry implementation is designed to be a **drop-in replacement for `@opentelemetry/sdk-node`**, allowing existing Node.js OpenTelemetry code to work with minimal changes.
 
 **Key Differences from Node.js**:
+
 - Uses native Zig hooks instead of monkey-patching (10x performance improvement)
 - Automatic instrumentation for `Bun.serve()` and `fetch()`
 - BunSDK wraps NodeSDK with Bun-specific instrumentations
@@ -22,7 +23,7 @@ This guide demonstrates how to instrument a Bun application with OpenTelemetry f
 ## 10-Second Setup
 
 ```bash
-bun install @bun/otel @opentelemetry/exporter-trace-otlp-http
+bun install bun-otel @opentelemetry/exporter-trace-otlp-http
 
 # Set service name
 export OTEL_SERVICE_NAME="my-bun-app"
@@ -33,7 +34,7 @@ docker run -p 4318:4318 otel/opentelemetry-collector
 
 ```typescript
 // server.ts
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 
 // Initialize SDK (uses OTEL_* environment variables)
 const sdk = new BunSDK();
@@ -62,7 +63,7 @@ process.on("SIGTERM", async () => {
 
 ```bash
 # Install Bun OpenTelemetry SDK
-bun install @bun/otel
+bun install bun-otel
 
 # Install exporters (choose your backend)
 bun install @opentelemetry/exporter-trace-otlp-http     # OTLP over HTTP
@@ -106,7 +107,7 @@ export OTEL_LOGS_EXPORTER="otlp"
 
 ```typescript
 // server.ts
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 
 const sdk = new BunSDK(); // Auto-configures from environment
 sdk.start();
@@ -137,7 +138,7 @@ process.on("SIGTERM", async () => {
 ### 2. Programmatic Configuration
 
 ```typescript
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
@@ -173,9 +174,9 @@ Bun's `BunSDK` extends `NodeSDK`, so **all NodeSDK examples work with minimal ch
 **Original Node.js Code** (from https://opentelemetry.io/docs/languages/js/getting-started/nodejs/):
 
 ```typescript
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 
 const sdk = new NodeSDK({
   traceExporter: new ConsoleSpanExporter(),
@@ -188,8 +189,8 @@ sdk.start();
 **Bun Equivalent** (2 lines changed):
 
 ```typescript
-import { BunSDK } from '@bun/otel';  // ← Changed: BunSDK instead of NodeSDK
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base';  // ← Changed: sdk-trace-base (not node-specific)
+import { BunSDK } from "bun-otel"; // ← Changed: BunSDK instead of NodeSDK
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base"; // ← Changed: sdk-trace-base (not node-specific)
 // getNodeAutoInstrumentations not needed - Bun auto-instruments HTTP/Fetch
 
 const sdk = new BunSDK({
@@ -208,7 +209,7 @@ sdk.start();
 
 ```typescript
 // service-a.ts
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { trace } from "@opentelemetry/api";
 
 const sdk = new BunSDK();
@@ -220,7 +221,7 @@ Bun.serve({
     const tracer = trace.getTracer("service-a");
 
     // Manual span for business logic
-    return await tracer.startActiveSpan("process-request", async (span) => {
+    return await tracer.startActiveSpan("process-request", async span => {
       span.setAttribute("user.id", "123");
 
       // Call downstream service (trace context propagated automatically)
@@ -240,7 +241,7 @@ Bun.serve({
 
 ```typescript
 // service-b.ts
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 
 const sdk = new BunSDK();
 sdk.start();
@@ -273,7 +274,7 @@ const tracer = trace.getTracer("my-app");
 
 Bun.serve({
   async fetch(req) {
-    return await tracer.startActiveSpan("database-query", async (span) => {
+    return await tracer.startActiveSpan("database-query", async span => {
       try {
         span.setAttribute("db.operation", "SELECT");
         span.setAttribute("db.table", "users");
@@ -344,7 +345,7 @@ Bun.serve({
 ### Prometheus Exporter
 
 ```typescript
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
 
 const prometheusExporter = new PrometheusExporter({
@@ -363,7 +364,7 @@ sdk.start();
 ### OTLP Metrics
 
 ```typescript
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
@@ -390,15 +391,13 @@ sdk.start();
 ### Structured Logging with Trace Context
 
 ```typescript
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { logs } from "@opentelemetry/api-logs";
 import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 
 const sdk = new BunSDK({
-  logRecordProcessors: [
-    new BatchLogRecordProcessor(new OTLPLogExporter()),
-  ],
+  logRecordProcessors: [new BatchLogRecordProcessor(new OTLPLogExporter())],
 });
 
 sdk.start();
@@ -427,7 +426,7 @@ Bun.serve({
 
 ```typescript
 // Using pino (example - P3 feature)
-import { BunSDK, createPinoTraceFormatter } from "@bun/otel";
+import { BunSDK, createPinoTraceFormatter } from "bun-otel";
 import pino from "pino";
 
 const sdk = new BunSDK();
@@ -455,8 +454,8 @@ Bun.serve({
 ### Custom Header Allowlist
 
 ```typescript
-import { BunSDK } from "@bun/otel";
-import { BunHttpInstrumentation } from "@bun/otel/instrumentations";
+import { BunSDK } from "bun-otel";
+import { BunHttpInstrumentation } from "bun-otel/instrumentations";
 
 const httpInstrumentation = new BunHttpInstrumentation({
   captureAttributes: {
@@ -466,10 +465,7 @@ const httpInstrumentation = new BunHttpInstrumentation({
       "x-request-id",
       "x-correlation-id",
     ],
-    responseHeaders: [
-      "content-type",
-      "x-trace-id",
-    ],
+    responseHeaders: ["content-type", "x-trace-id"],
   },
 });
 
@@ -489,6 +485,7 @@ sdk.start();
 ### Overhead Measurements (from POC)
 
 **Telemetry Disabled**:
+
 ```
 Requests/sec: 100,000
 Latency p50:  10.2ms
@@ -497,6 +494,7 @@ Overhead:     <0.1% (unmeasurable)
 ```
 
 **Telemetry Enabled** (with console exporter):
+
 ```
 Requests/sec: 95,000
 Latency p50:  10.7ms
@@ -505,6 +503,7 @@ Overhead:     ~4.5%
 ```
 
 **Comparison with Node.js + monkey-patching**:
+
 ```
 Node.js (require-in-the-middle): ~15-20% overhead
 Bun (native hooks):              ~4-5% overhead
@@ -519,7 +518,7 @@ Performance gain:                ~3-4x better
 
 ```typescript
 import { test, expect } from "bun:test";
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 
 test("HTTP request creates span", async () => {
@@ -554,24 +553,28 @@ test("HTTP request creates span", async () => {
 ### No Traces Appearing
 
 **Check 1**: Verify SDK is started
+
 ```typescript
 const sdk = new BunSDK();
 sdk.start(); // ← Don't forget this!
 ```
 
 **Check 2**: Check exporter configuration
+
 ```bash
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
 export OTEL_LOG_LEVEL="debug"  # See diagnostic logs
 ```
 
 **Check 3**: Verify collector is running
+
 ```bash
 curl http://localhost:4318/v1/traces
 # Should return method not allowed (POST required)
 ```
 
 **Check 4**: Check sampling
+
 ```bash
 # 100% sampling for debugging
 export OTEL_TRACES_SAMPLER="always_on"
@@ -611,6 +614,7 @@ Bun.serve({
 **Cause**: Spans not deleted from instrumentation map
 
 **Check**:
+
 ```typescript
 // In your instrumentation
 onOperationEnd(id, attributes) {
@@ -636,6 +640,7 @@ onOperationError(id, attributes) {
 **Symptom**: >5% latency overhead
 
 **Check 1**: Exporter configuration
+
 ```typescript
 // Use batch processor, not simple processor
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -652,6 +657,7 @@ const sdk = new BunSDK({
 ```
 
 **Check 2**: Reduce header capture
+
 ```typescript
 // Capturing many headers is expensive
 captureAttributes: {
@@ -661,6 +667,7 @@ captureAttributes: {
 ```
 
 **Check 3**: Adjust sampling
+
 ```bash
 # Production: 10% sampling
 export OTEL_TRACES_SAMPLER="parentbased_traceidratio"
@@ -673,14 +680,20 @@ export OTEL_TRACES_SAMPLER_ARG="0.1"
 
 ```typescript
 // instrumentation.ts
-import { BunSDK } from "@bun/otel";
+import { BunSDK } from "bun-otel";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { ParentBasedSampler, TraceIdRatioBasedSampler } from "@opentelemetry/sdk-trace-base";
+import {
+  ParentBasedSampler,
+  TraceIdRatioBasedSampler,
+} from "@opentelemetry/sdk-trace-base";
 import { Resource } from "@opentelemetry/resources";
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from "@opentelemetry/semantic-conventions";
 
 // Resource detection
 const resource = new Resource({
@@ -709,7 +722,7 @@ const metricExporter = new OTLPMetricExporter({
 // Production sampling: 10% with parent-based
 const sampler = new ParentBasedSampler({
   root: new TraceIdRatioBasedSampler(
-    parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || "0.1")
+    parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || "0.1"),
   ),
 });
 

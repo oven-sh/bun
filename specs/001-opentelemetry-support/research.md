@@ -83,7 +83,7 @@ Bun.telemetry.getActiveSpan(): { traceId: string, spanId: string } | null
 **Rationale**:
 
 - **Bun core cannot depend on `@opentelemetry/*` packages** - keeps core dependency-free
-- Users opt-in by `bun add @bun/otel` (or equivalent npm package name)
+- Users opt-in by `bun add bun-otel` (or equivalent npm package name)
 - Native hooks are generic - work for any telemetry system (not just OpenTelemetry)
 - Clear separation: hooks (Zig) vs instrumentation logic (TypeScript)
 
@@ -262,7 +262,7 @@ new NodeSDK({
 **High-Level** (`packages/bun-otel/src/instruments/logging/`):
 
 ```typescript
-import { PinoFormatter } from "@bun/otel/logging";
+import { PinoFormatter } from "bun-otel/logging";
 
 const logger = pino({
   mixin: PinoFormatter.mixin(),

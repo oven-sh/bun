@@ -6,6 +6,7 @@ const { validateObject, validateLinkHeaderValue, validateBoolean, validateIntege
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
+const telemetryHttp = require("internal/telemetry_http");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -554,7 +555,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         // Telemetry: notify about incoming request
         try {
-          Bun.telemetry?._node_binding?.()?.handleIncomingRequest?.(http_req, http_res);
+          telemetryHttp.handleIncomingRequest(http_req, http_res);
         } catch {
           // Telemetry failures should not crash the request path
         }
@@ -1202,7 +1203,7 @@ function _writeHead(statusCode, reason, obj, response) {
 
   // Telemetry: notify about response headers
   try {
-    Bun.telemetry?._node_binding?.()?.handleWriteHead?.(response, statusCode);
+    telemetryHttp.handleWriteHead(response, statusCode);
   } catch {
     // Telemetry failures should not crash the request path
   }

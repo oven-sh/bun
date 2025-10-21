@@ -1,0 +1,58 @@
+{
+  "name": "@bun/otel",
+  "version": "0.1.0",
+  "description": "OpenTelemetry instrumentation for Bun runtime with native hooks",
+  "keywords": [
+    "opentelemetry",
+    "tracing",
+    "metrics",
+    "observability",
+    "bun"
+  ],
+  "license": "MIT",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./instrumentations": "./instruments/index.ts",
+    "./logging": "./instruments/logging/index.ts"
+  },
+  "files": [
+    "*.ts",
+    "instruments/**/*.ts",
+    "context/**/*.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "format": "prettier --write \"**/*.ts\""
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^1.30.0",
+    "@opentelemetry/sdk-metrics": "^1.30.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "@opentelemetry/sdk-node": "^0.55.0",
+    "@opentelemetry/context-async-hooks": "^1.30.0"
+  },
+  "peerDependencies": {
+    "bun": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.55.0",
+    "bun-types": "latest",
+    "prettier": "^3.0.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun.git",
+    "directory": "packages/bun-otel"
+  }
+}

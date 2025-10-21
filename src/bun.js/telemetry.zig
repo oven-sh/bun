@@ -4,6 +4,7 @@ const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
+const ZigString = jsc.ZigString;
 
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
 /// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
@@ -167,6 +168,23 @@ pub const Telemetry = struct {
     /// Monotonic request ID generator (thread-safe)
     next_request_id: std.atomic.Value(u64),
 
+    /// Header capture configuration (from environment variables)
+    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST
+    http_capture_headers_server_request: []const []const u8,
+    http_capture_headers_server_request_js: JSValue,
+
+    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE
+    http_capture_headers_server_response: []const []const u8,
+    http_capture_headers_server_response_js: JSValue,
+
+    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST
+    http_capture_headers_fetch_request: []const []const u8,
+    http_capture_headers_fetch_request_js: JSValue,
+
+    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE
+    http_capture_headers_fetch_response: []const []const u8,
+    http_capture_headers_fetch_response_js: JSValue,
+
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
 
@@ -180,10 +198,52 @@ pub const Telemetry = struct {
             list.* = std.ArrayList(InstrumentRecord).init(allocator);
         }
 
+        // TODO: Parse from environment variables, for now use sample values
+        // Sample headers for demonstration (commonly captured headers)
+        const sample_request_headers = &[_][]const u8{ "user-agent", "content-type", "authorization" };
+        const sample_response_headers = &[_][]const u8{ "content-type", "content-length" };
+
+        // Create JSValue arrays for header capture configuration
+        const server_req_headers_js = try JSValue.createEmptyArray(global, sample_request_headers.len);
+        for (sample_request_headers, 0..) |header, i| {
+            const header_str = ZigString.init(header).toJS(global);
+            try server_req_headers_js.putIndex(global, @intCast(i), header_str);
+        }
+        server_req_headers_js.protect(); // Keep alive
+
+        const server_res_headers_js = try JSValue.createEmptyArray(global, sample_response_headers.len);
+        for (sample_response_headers, 0..) |header, i| {
+            const header_str = ZigString.init(header).toJS(global);
+            try server_res_headers_js.putIndex(global, @intCast(i), header_str);
+        }
+        server_res_headers_js.protect(); // Keep alive
+
+        const fetch_req_headers_js = try JSValue.createEmptyArray(global, sample_request_headers.len);
+        for (sample_request_headers, 0..) |header, i| {
+            const header_str = ZigString.init(header).toJS(global);
+            try fetch_req_headers_js.putIndex(global, @intCast(i), header_str);
+        }
+        fetch_req_headers_js.protect(); // Keep alive
+
+        const fetch_res_headers_js = try JSValue.createEmptyArray(global, sample_response_headers.len);
+        for (sample_response_headers, 0..) |header, i| {
+            const header_str = ZigString.init(header).toJS(global);
+            try fetch_res_headers_js.putIndex(global, @intCast(i), header_str);
+        }
+        fetch_res_headers_js.protect(); // Keep alive
+
         self.* = Telemetry{
             .instrument_table = instrument_table,
             .next_instrument_id = std.atomic.Value(u32).init(1),
             .next_request_id = std.atomic.Value(u64).init(1),
+            .http_capture_headers_server_request = sample_request_headers,
+            .http_capture_headers_server_request_js = server_req_headers_js,
+            .http_capture_headers_server_response = sample_response_headers,
+            .http_capture_headers_server_response_js = server_res_headers_js,
+            .http_capture_headers_fetch_request = sample_request_headers,
+            .http_capture_headers_fetch_request_js = fetch_req_headers_js,
+            .http_capture_headers_fetch_response = sample_response_headers,
+            .http_capture_headers_fetch_response_js = fetch_res_headers_js,
             .allocator = allocator,
             .global = global,
         };
@@ -199,6 +259,13 @@ pub const Telemetry = struct {
             }
             list.deinit();
         }
+
+        // Unprotect header capture JSValue arrays
+        self.http_capture_headers_server_request_js.unprotect();
+        self.http_capture_headers_server_response_js.unprotect();
+        self.http_capture_headers_fetch_request_js.unprotect();
+        self.http_capture_headers_fetch_response_js.unprotect();
+
         self.allocator.destroy(self);
     }
 
@@ -624,6 +691,149 @@ pub fn jsListInstruments(
     return telemetry.listInstruments(maybe_kind, global) catch .js_undefined;
 }
 
+/// Bun.telemetry.nativeHooks.notifyStart(kind: number, id: number, attributes: object): void
+/// Internal API for TypeScript telemetry bridges (e.g., internal/telemetry_http.ts)
+pub fn jsNotifyOperationStart(
+    _: *JSGlobalObject,
+    callframe: *CallFrame,
+) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return .js_undefined;
+    }
+
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+
+    const kind_value = arguments.ptr[0];
+    const id_value = arguments.ptr[1];
+    const attributes = arguments.ptr[2];
+
+    if (!kind_value.isNumber() or !id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const kind_num = kind_value.asInt32();
+    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+        return .js_undefined;
+    }
+
+    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    telemetry.notifyOperationStart(kind, id, attributes);
+    return .js_undefined;
+}
+
+/// Bun.telemetry.nativeHooks.notifyEnd(kind: number, id: number, attributes: object): void
+/// Internal API for TypeScript telemetry bridges
+pub fn jsNotifyOperationEnd(
+    _: *JSGlobalObject,
+    callframe: *CallFrame,
+) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return .js_undefined;
+    }
+
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+
+    const kind_value = arguments.ptr[0];
+    const id_value = arguments.ptr[1];
+    const attributes = arguments.ptr[2];
+
+    if (!kind_value.isNumber() or !id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const kind_num = kind_value.asInt32();
+    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+        return .js_undefined;
+    }
+
+    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    telemetry.notifyOperationEnd(kind, id, attributes);
+    return .js_undefined;
+}
+
+/// Bun.telemetry.nativeHooks.notifyError(kind: number, id: number, attributes: object): void
+/// Internal API for TypeScript telemetry bridges
+pub fn jsNotifyOperationError(
+    _: *JSGlobalObject,
+    callframe: *CallFrame,
+) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return .js_undefined;
+    }
+
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+
+    const kind_value = arguments.ptr[0];
+    const id_value = arguments.ptr[1];
+    const attributes = arguments.ptr[2];
+
+    if (!kind_value.isNumber() or !id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const kind_num = kind_value.asInt32();
+    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+        return .js_undefined;
+    }
+
+    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    telemetry.notifyOperationError(kind, id, attributes);
+    return .js_undefined;
+}
+
+/// Bun.telemetry.nativeHooks.getCaptureHeadersServerRequest(): string[]
+/// Returns configured request headers to capture for HTTP server instrumentation
+/// Internal API for TypeScript telemetry bridges
+pub fn jsGetCaptureHeadersServerRequest(
+    _: *JSGlobalObject,
+    _: *CallFrame,
+) callconv(.C) JSValue {
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+    return telemetry.http_capture_headers_server_request_js;
+}
+
+/// Bun.telemetry.nativeHooks.getCaptureHeadersServerResponse(): string[]
+/// Returns configured response headers to capture for HTTP server instrumentation
+/// Internal API for TypeScript telemetry bridges
+pub fn jsGetCaptureHeadersServerResponse(
+    _: *JSGlobalObject,
+    _: *CallFrame,
+) callconv(.C) JSValue {
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+    return telemetry.http_capture_headers_server_response_js;
+}
+
+/// Bun.telemetry.nativeHooks.getCaptureHeadersFetchRequest(): string[]
+/// Returns configured request headers to capture for fetch client instrumentation
+/// Internal API for TypeScript telemetry bridges
+pub fn jsGetCaptureHeadersFetchRequest(
+    _: *JSGlobalObject,
+    _: *CallFrame,
+) callconv(.C) JSValue {
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+    return telemetry.http_capture_headers_fetch_request_js;
+}
+
+/// Bun.telemetry.nativeHooks.getCaptureHeadersFetchResponse(): string[]
+/// Returns configured response headers to capture for fetch client instrumentation
+/// Internal API for TypeScript telemetry bridges
+pub fn jsGetCaptureHeadersFetchResponse(
+    _: *JSGlobalObject,
+    _: *CallFrame,
+) callconv(.C) JSValue {
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+    return telemetry.http_capture_headers_fetch_response_js;
+}
+
 /// Bun.telemetry.getActiveSpan(): { traceId: string, spanId: string } | null
 /// TODO: Implement AsyncLocalStorage integration for trace context
 pub fn jsGetActiveSpan(
@@ -643,6 +853,13 @@ comptime {
         @export(&jsIsEnabledFor, .{ .name = "Bun__Telemetry__isEnabledFor" });
         @export(&jsListInstruments, .{ .name = "Bun__Telemetry__listInstruments" });
         @export(&jsGetActiveSpan, .{ .name = "Bun__Telemetry__getActiveSpan" });
+        @export(&jsNotifyOperationStart, .{ .name = "Bun__Telemetry__nativeHooks__notifyStart" });
+        @export(&jsNotifyOperationEnd, .{ .name = "Bun__Telemetry__nativeHooks__notifyEnd" });
+        @export(&jsNotifyOperationError, .{ .name = "Bun__Telemetry__nativeHooks__notifyError" });
+        @export(&jsGetCaptureHeadersServerRequest, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersServerRequest" });
+        @export(&jsGetCaptureHeadersServerResponse, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersServerResponse" });
+        @export(&jsGetCaptureHeadersFetchRequest, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersFetchRequest" });
+        @export(&jsGetCaptureHeadersFetchResponse, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersFetchResponse" });
         @export(&initGlobalTelemetryC, .{ .name = "Bun__Telemetry__init" });
         @export(&deinitGlobalTelemetryC, .{ .name = "Bun__Telemetry__deinit" });
     }

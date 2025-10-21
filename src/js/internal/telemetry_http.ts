@@ -2,39 +2,19 @@
 // Node.js HTTP server telemetry integration
 //
 // This module bridges Bun.telemetry's native instrumentation API with Node.js http.Server.
-// It maintains a registry of HTTP instruments and proxies lifecycle events to their hooks.
+// It uses Bun.telemetry.nativeHooks to notify instruments managed in the native registry.
 //
 // Flow:
 // 1. User calls Bun.telemetry.attach({ type: InstrumentKind.HTTP, ... })
-// 2. Zig validates, stores instrument, calls registerInstrument() (this module)
+// 2. Zig validates and stores instrument in native registry
 // 3. _http_server.ts calls handleIncomingRequest() and handleWriteHead()
-// 4. This module builds attribute objects and invokes all registered instruments
+// 4. This module builds attribute objects and uses nativeHooks to notify all registered instruments
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-/**
- * HTTP instrumentation registered via Bun.telemetry.attach()
- */
-interface HttpInstrument {
-  // Metadata
-  id: number;
-  name: string;
-  version: string;
-
-  // Header capture configuration (passed from Zig as JSValue string[])
-  requestHeaders: string[];
-  responseHeaders: string[];
-
-  // Lifecycle hooks (at least one will be defined)
-  onOperationStart?: (id: number, attributes: Record<string, any>) => void;
-  onOperationProgress?: (id: number, attributes: Record<string, any>) => void;
-  onOperationEnd?: (id: number, attributes: Record<string, any>) => void;
-  onOperationError?: (id: number, attributes: Record<string, any>) => void;
-  onOperationInject?: (id: number, data?: unknown) => Record<string, string> | void;
-}
-
-// Registry of active HTTP instruments (supports multiple for robustness/testing)
-const instruments: HttpInstrument[] = [];
+// Access native telemetry hooks (exposed from Zig via BunObject.cpp)
+const nativeHooks = Bun.telemetry.nativeHooks;
+const HTTP_KIND = 1; // InstrumentKind.HTTP
 
 // Symbols for tracking request state on ServerResponse objects
 const kOperationId = Symbol("kOperationId");
@@ -110,7 +90,9 @@ function buildResponseAttributes(
   startTime: number,
   responseHeaders: string[],
 ): Record<string, any> {
+  const opId = (res as any)[kOperationId];
   const attributes: Record<string, any> = {
+    "operation.id": opId,
     "http.response.status_code": statusCode,
     "operation.duration": (performance.now() - startTime) * 1_000_000, // Convert to nanoseconds
   };
@@ -139,8 +121,14 @@ function buildResponseAttributes(
 /**
  * Build error attributes (OpenTelemetry semantic conventions).
  */
-function buildErrorAttributes(error: unknown, startTime: number, statusCode?: number): Record<string, any> {
+function buildErrorAttributes(
+  opId: number,
+  error: unknown,
+  startTime: number,
+  statusCode?: number,
+): Record<string, any> {
   const attributes: Record<string, any> = {
+    "operation.id": opId,
     "operation.duration": (performance.now() - startTime) * 1_000_000,
   };
 
@@ -163,72 +151,34 @@ function buildErrorAttributes(error: unknown, startTime: number, statusCode?: nu
 }
 
 /**
- * Invoke onOperationEnd for all registered instruments.
+ * Invoke onOperationEnd via native hooks.
  */
 function notifyOperationEnd(res: ServerResponse): void {
   const startTime = (res as any)[kStartTime];
   const opId = (res as any)[kOperationId];
   if (startTime === undefined || opId === undefined) return;
 
-  for (const instrument of instruments) {
-    if (instrument.onOperationEnd) {
-      try {
-        const attributes = buildResponseAttributes(res, res.statusCode, startTime, instrument.responseHeaders);
-        instrument.onOperationEnd(opId, attributes);
-      } catch (err) {
-        // Silently fail - telemetry should never break the application
-      }
-    }
-  }
+  const responseHeaders = nativeHooks.getCaptureHeadersServerResponse();
+  const attributes = buildResponseAttributes(res, res.statusCode, startTime, responseHeaders);
+  nativeHooks.notifyEnd(HTTP_KIND, opId, attributes);
 }
 
 /**
- * Invoke onOperationError for all registered instruments.
+ * Invoke onOperationError via native hooks.
  */
 function notifyOperationError(res: ServerResponse, error: unknown, errorType?: string): void {
   const startTime = (res as any)[kStartTime];
   const opId = (res as any)[kOperationId];
   if (startTime === undefined || opId === undefined) return;
 
-  for (const instrument of instruments) {
-    if (instrument.onOperationError) {
-      try {
-        const attributes = buildErrorAttributes(error, startTime, res.statusCode);
-        if (errorType) {
-          attributes["error.type"] = errorType;
-        }
-        instrument.onOperationError(opId, attributes);
-      } catch (err) {
-        // Silently fail
-      }
-    }
+  const attributes = buildErrorAttributes(opId, error, startTime, res.statusCode);
+  if (errorType) {
+    attributes["error.type"] = errorType;
   }
+  nativeHooks.notifyError(HTTP_KIND, opId, attributes);
 }
 
 export default {
-  /**
-   * Register an HTTP instrumentation.
-   * Called from Zig via telemetry_http.zig when Bun.telemetry.attach({ type: InstrumentKind.HTTP, ... }) is invoked.
-   *
-   * @param instrument Instrumentation metadata and hooks
-   */
-  registerInstrument(instrument: HttpInstrument): void {
-    instruments.push(instrument);
-  },
-
-  /**
-   * Unregister an HTTP instrumentation.
-   * Called from Zig via telemetry_http.zig when Bun.telemetry.detach(id) is invoked.
-   *
-   * @param id Instrument ID to remove
-   */
-  unregisterInstrument(id: number): void {
-    const index = instruments.findIndex(inst => inst.id === id);
-    if (index !== -1) {
-      instruments.splice(index, 1);
-    }
-  },
-
   /**
    * Called when an incoming HTTP request is received (Node.js http.Server).
    * Invoked by _http_server.ts in onNodeHTTPRequest callback.
@@ -238,7 +188,8 @@ export default {
    * @returns Operation ID, or undefined if no instruments registered
    */
   handleIncomingRequest(req: IncomingMessage, res: ServerResponse): number | undefined {
-    if (instruments.length === 0) return undefined;
+    // Fast path: check if telemetry is enabled for HTTP
+    if (!nativeHooks.isEnabledFor(HTTP_KIND)) return undefined;
 
     try {
       // Generate unique operation ID (nanosecond-based)
@@ -248,17 +199,12 @@ export default {
       (res as any)[kOperationId] = operationId;
       (res as any)[kStartTime] = performance.now();
 
-      // Invoke onOperationStart for each registered instrument
-      for (const instrument of instruments) {
-        if (instrument.onOperationStart) {
-          try {
-            const attributes = buildRequestAttributes(req, operationId, instrument.requestHeaders);
-            instrument.onOperationStart(operationId, attributes);
-          } catch (err) {
-            // Silently fail
-          }
-        }
-      }
+      // Get configured headers to capture and build attributes
+      const requestHeaders = nativeHooks.getCaptureHeadersServerRequest();
+      const attributes = buildRequestAttributes(req, operationId, requestHeaders);
+
+      // Notify all registered instruments via native hooks
+      nativeHooks.notifyStart(HTTP_KIND, operationId, attributes);
 
       // Attach lifecycle event listeners
       res.once("finish", () => notifyOperationEnd(res));
@@ -285,56 +231,28 @@ export default {
    * Called when response.writeHead() is invoked (Node.js http.Server).
    * Invoked by _http_server.ts in _writeHead function.
    *
-   * Collects headers to inject from all instruments and notifies about response progress.
+   * Note: Currently a placeholder for future distributed tracing integration.
+   * Future features:
+   * - Header injection (traceparent, tracestate via onOperationInject)
+   * - Progress notifications (via onOperationProgress)
    *
    * @param res Server response
    * @param statusCode HTTP status code
-   * @returns Headers to inject (e.g., { "x-trace-id": "..." }), or undefined
+   * @returns Headers to inject (e.g., { "traceparent": "..." }), or undefined
    */
   handleWriteHead(res: ServerResponse, statusCode: number): Record<string, string> | undefined {
-    if (instruments.length === 0) return undefined;
+    // Fast path: check if telemetry is enabled
+    if (!nativeHooks.isEnabledFor(HTTP_KIND)) return undefined;
 
     try {
       // Prevent duplicate emissions
       if ((res as any)[kHeadersEmitted]) return undefined;
       (res as any)[kHeadersEmitted] = true;
 
-      const opId = (res as any)[kOperationId];
-      if (opId === undefined) return undefined;
+      // TODO: Call nativeHooks.notifyInject() when distributed tracing is added
+      // TODO: Call nativeHooks.notifyProgress() when progress tracking is needed
 
-      let headersToInject: Record<string, string> | undefined = undefined;
-
-      // Invoke onOperationInject for each instrument (collect headers to inject)
-      for (const instrument of instruments) {
-        if (instrument.onOperationInject) {
-          try {
-            const headers = instrument.onOperationInject(opId);
-            if (headers && typeof headers === "object") {
-              headersToInject = headersToInject || {};
-              $Object.assign(headersToInject, headers);
-            }
-          } catch (err) {
-            // Silently fail
-          }
-        }
-      }
-
-      // Invoke onOperationProgress for each instrument (response headers being written)
-      for (const instrument of instruments) {
-        if (instrument.onOperationProgress) {
-          try {
-            const startTime = (res as any)[kStartTime];
-            if (startTime !== undefined) {
-              const attributes = buildResponseAttributes(res, statusCode, startTime, instrument.responseHeaders);
-              instrument.onOperationProgress(opId, attributes);
-            }
-          } catch (err) {
-            // Silently fail
-          }
-        }
-      }
-
-      return headersToInject;
+      return undefined;
     } catch (error) {
       // Silently fail
       return undefined;

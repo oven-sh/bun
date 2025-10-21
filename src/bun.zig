@@ -478,6 +478,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 }
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+pub const LinearFifoBufferType = @import("./linear_fifo.zig").LinearFifoBufferType;
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {

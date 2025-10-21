@@ -201,7 +201,8 @@ pub fn crashHandler(
                 //
                 // Output.errorWriter() is not used here because it may not be configured
                 // if the program crashes immediately at startup.
-                const writer = std.fs.File.stderr().writer();
+                var writer_w = std.fs.File.stderr().writer(&.{});
+                const writer = &writer_w.interface;
 
                 // The format of the panic trace is slightly different in debug
                 // builds. Mainly, we demangle the backtrace immediately instead
@@ -1658,7 +1659,8 @@ extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
-    const stderr = std.fs.File.stderr().writer();
+    var stderr_w = std.fs.File.stderr().writer(&.{});
+    const stderr = &stderr_w.interface;
     if (!bun.Environment.show_crash_trace) {
         // debug symbols aren't available, lets print a tracestring
         stderr.print("View Debug Trace: {}\n", .{TraceString{
@@ -2093,7 +2095,7 @@ pub fn getSourceAtAddress(debug_info: *debug.SelfInfo, address: usize) !?SourceA
 
 /// Clone of `debug.printLineInfo` as it is private.
 fn printLineInfo(
-    out_stream: anytype,
+    out_stream: *std.Io.Writer,
     source_location: ?SourceLocation,
     address: usize,
     symbol_name: []const u8,
@@ -2138,7 +2140,7 @@ fn printLineInfo(
                 if (sl.column > 0 and tty_config == .no_color) {
                     // The caret already takes one char
                     const space_needed = @as(usize, @intCast(sl.column - 1));
-                    try out_stream.writeByteNTimes(' ', space_needed);
+                    try out_stream.splatByteAll(' ', space_needed);
                     try out_stream.writeAll("^\n");
                 }
             } else |err| switch (err) {

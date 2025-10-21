@@ -16,7 +16,7 @@ pub const DefaultAllocator = allocators.Default;
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
-pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .auto else .Inline;
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
 pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
@@ -3772,6 +3772,7 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+pub const deprecated = @import("./deprecated.zig");
 
 // Export function to check if --use-system-ca flag is set
 pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {

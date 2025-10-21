@@ -1722,11 +1722,11 @@ pub fn NullableFallback(comptime T: type) type {
     };
 }
 
-pub fn escapePowershell(str: []const u8) std.fmt.Alt(escapePowershellImpl) {
+pub fn escapePowershell(str: []const u8) std.fmt.Alt([]const u8, escapePowershellImpl) {
     return .{ .data = str };
 }
 
-fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+fn escapePowershellImpl(str: []const u8, writer: *std.Io.Writer) !void {
     comptime bun.assert(f.len == 0);
     var remain = str;
     while (bun.strings.indexOfAny(remain, "\"`")) |i| {

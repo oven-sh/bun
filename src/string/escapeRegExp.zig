@@ -78,10 +78,7 @@ pub fn jsEscapeRegExp(global: *JSGlobalObject, call_frame: *jsc.CallFrame) JSErr
         return global.throw("expected string argument", .{});
     }
 
-    var input_str = try input_value.toBunString(global);
-    defer input_str.deref();
-
-    var input = input_str.toSlice(bun.default_allocator);
+    var input = try input_value.toSlice(global, bun.default_allocator);
     defer input.deinit();
 
     var buf: bun.collections.ArrayListDefault(u8) = .init();
@@ -101,10 +98,7 @@ pub fn jsEscapeRegExpForPackageNameMatching(global: *JSGlobalObject, call_frame:
         return global.throw("expected string argument", .{});
     }
 
-    var input_str = try input_value.toBunString(global);
-    defer input_str.deref();
-
-    var input = input_str.toSlice(bun.default_allocator);
+    var input = try input_value.toSlice(global, bun.default_allocator);
     defer input.deinit();
 
     var buf: bun.collections.ArrayListDefault(u8) = .init();

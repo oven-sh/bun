@@ -1976,16 +1976,17 @@ fn updateNamedCatalog(
 }
 
 fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
-    if (original_version.len > 1) brk: {
+    if (original_version.len > 1) {
         var orig_version = original_version;
         var alias: ?string = null;
 
         // Preserve npm: prefix
         if (strings.withoutPrefixIfPossibleComptime(original_version, "npm:")) |after_npm| {
             if (strings.lastIndexOfChar(after_npm, '@')) |i| {
-                if (i + 1 >= after_npm.len) break :brk;
                 alias = after_npm[0..i];
-                orig_version = after_npm[i + 1 ..];
+                if (i + 2 < after_npm.len) {
+                  orig_version = after_npm[i + 1 ..];
+                }
             } else {
                 alias = after_npm;
             }

@@ -478,7 +478,7 @@ fn processEvents(this: *@This()) noreturn {
         // this.loop.run();
         if (comptime Environment.isDebug) {
             const end = std.time.nanoTimestamp();
-            threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
+            threadlog("Waited {D}\n", .{@as(i64, @truncate(end - start_time))});
             Output.flush();
         }
     }

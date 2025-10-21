@@ -412,7 +412,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn mut(this: Slice) []u8 {
-            return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr)))[0..this.len];
+            return @as([*]u8, @constCast(this.ptr))[0..this.len];
         }
 
         /// Does nothing if the slice is not allocated

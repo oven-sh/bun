@@ -3174,8 +3174,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
     double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 
-#else
-    // Windows and other platforms - use libuv
+#elif OS(WINDOWS)
+    // Windows: use libuv
     uv_rusage_t rusage;
     int err = uv_getrusage_thread(&rusage);
     if (err) {
@@ -3188,6 +3188,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 
     double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
     double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+#else
+    // Other platforms: not supported yet
+    throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "threadCpuUsage"_s, ENOTSUP);
+    return {};
 #endif
 
     if (callFrame->argumentCount() > 0) {

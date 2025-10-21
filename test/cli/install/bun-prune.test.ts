@@ -670,9 +670,7 @@ linkWorkspacePackages = true
 
 // Isolated linker tests run sequentially (not concurrently) to avoid handler conflicts
 describe("bun prune - isolated linker", () => {
-  // TODO: Prune logic doesn't correctly handle removing packages in isolated linker mode
-  // The packages may be in nested locations (node_modules/pkg/node_modules) and aren't being removed
-  it.skip("should prune nested node_modules in isolated linker mode", async () => {
+  it("should prune nested node_modules in isolated linker mode", async () => {
     // Set up dummy registry handler for is-number package
     const urls: string[] = [];
     setHandler(

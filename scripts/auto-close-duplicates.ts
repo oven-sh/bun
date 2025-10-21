@@ -105,10 +105,11 @@ async function closeIssueAsDuplicate(
   duplicateOfNumber: number,
   token: string,
 ): Promise<void> {
-  // Close the issue as duplicate
+  // Close the issue as duplicate and add the duplicate label
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}`, token, "PATCH", {
     state: "closed",
     state_reason: "duplicate",
+    labels: ["duplicate"],
   });
 
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, token, "POST", {

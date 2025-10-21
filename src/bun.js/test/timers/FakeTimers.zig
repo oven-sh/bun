@@ -24,6 +24,7 @@ pub var current_time: struct {
         timespec: *const bun.timespec,
         js: ?f64,
     }) void {
+        const vm = globalObject.bunVM();
         if (value) |v| {
             this.#timespec_now.store(.{ .sec = v.timespec.sec, .nsec = v.timespec.nsec }, .seq_cst);
             const timespec_ms: f64 = @floatFromInt(v.timespec.ms());
@@ -31,9 +32,15 @@ pub var current_time: struct {
                 this.date_now_offset = js - timespec_ms;
             }
             bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
+
+            // Also override performance.now() with the same time (in nanoseconds)
+            const timespec_nano: u64 = @as(u64, @intCast(v.timespec.sec)) * std.time.ns_per_s + @as(u64, @intCast(v.timespec.nsec));
+            vm.overridden_performance_now = timespec_nano;
         } else {
             this.#timespec_now.store(.min, .seq_cst);
             bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
+            // Clear the performance.now() override
+            vm.overridden_performance_now = null;
         }
     }
 } = .{};

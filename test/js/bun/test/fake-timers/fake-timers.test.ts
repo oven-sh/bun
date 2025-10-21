@@ -288,6 +288,98 @@ describe("Date.now() mocking", () => {
   });
 });
 
+describe("performance.now() mocking", () => {
+  test("performance.now() before and after vi.useFakeTimers() should be roughly equal", () => {
+    const beforeFake = performance.now();
+    vi.useFakeTimers();
+    const afterFake = performance.now();
+
+    // The fake time should start at approximately the real time
+    // Allow a tolerance of 100ms for the time it takes to call useFakeTimers()
+    const diff = Math.abs(afterFake - beforeFake);
+    expect(diff).toBeLessThan(100);
+  });
+
+  test("performance.now() should be mocked when fake timers are active", () => {
+    vi.useFakeTimers();
+    const start = performance.now();
+
+    // Advance time by 1000ms
+    vi.advanceTimersByTime(1000);
+
+    // performance.now() should reflect the advanced time
+    expect(performance.now()).toBe(start + 1000);
+
+    // Advance more time
+    vi.advanceTimersByTime(500);
+    expect(performance.now()).toBe(start + 1500);
+  });
+
+  test("performance.now() returns to real time when fake timers are disabled", () => {
+    vi.useFakeTimers();
+    const initialFakeTime = performance.now();
+    vi.advanceTimersByTime(1000);
+    const advancedFakeTime = performance.now();
+    expect(advancedFakeTime).toBe(initialFakeTime + 1000);
+
+    vi.useRealTimers();
+
+    // After disabling fake timers, performance.now() should return real time
+    // The real time should be close to when we started (within a few ms)
+    // It should NOT be the advanced fake time
+    const realNow = performance.now();
+    // Allow 10ms tolerance for rounding
+    expect(Math.abs(realNow - initialFakeTime)).toBeLessThan(10);
+    expect(realNow).toBeLessThan(advancedFakeTime); // Real time hasn't advanced as much as fake time
+  });
+
+  test("performance.now() advances with advanceTimersToNextTimer", () => {
+    vi.useFakeTimers();
+    const start = performance.now();
+
+    setTimeout(() => {}, 100);
+    setTimeout(() => {}, 200);
+
+    vi.advanceTimersToNextTimer();
+    expect(performance.now()).toBe(start + 100);
+
+    vi.advanceTimersToNextTimer();
+    expect(performance.now()).toBe(start + 200);
+  });
+
+  test("performance.now() is consistent with timer callbacks", () => {
+    vi.useFakeTimers();
+    const start = performance.now();
+    let capturedTime = 0;
+
+    setTimeout(() => {
+      capturedTime = performance.now();
+    }, 500);
+
+    vi.advanceTimersByTime(500);
+
+    // The time captured in the callback should match
+    expect(capturedTime).toBe(start + 500);
+    expect(performance.now()).toBe(start + 500);
+  });
+
+  test("performance.now() and Date.now() are both mocked consistently", () => {
+    vi.useFakeTimers();
+    const perfStart = performance.now();
+    const dateStart = Date.now();
+
+    vi.advanceTimersByTime(1000);
+
+    // Both should have advanced by the same amount
+    expect(performance.now()).toBe(perfStart + 1000);
+    expect(Date.now()).toBe(dateStart + 1000);
+
+    vi.advanceTimersByTime(500);
+    expect(performance.now()).toBe(perfStart + 1500);
+    expect(Date.now()).toBe(dateStart + 1500);
+  });
+});
+
 describe("async timer methods", () => {
   test("advanceTimersToNextTimerAsync waits for async callbacks", async () => {
     vi.useFakeTimers();

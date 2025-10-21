@@ -170,47 +170,34 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
-const prune_specific_params = [_]ParamType{
+// Prune-specific parameters - only includes flags that are relevant for the prune command
+const prune_params: []const ParamType = &[_]ParamType{
     clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
     clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
     clap.parseParam("-p, --production                      Also remove devDependencies") catch unreachable,
     clap.parseParam("-P, --prod                            Alias for --production") catch unreachable,
-    clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
-    clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
-    clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
-    clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
-    clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
+    clap.parseParam("--dry-run                             Don't remove anything (show what would be removed)") catch unreachable,
+    clap.parseParam("-f, --force                           Force removal even if there are errors") catch unreachable,
     clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
     clap.parseParam("--no-cache                            Ignore manifest cache entirely") catch unreachable,
     clap.parseParam("--silent                              Don't log anything") catch unreachable,
-    clap.parseParam("--quiet                               Only show tarball name when packing") catch unreachable,
+    clap.parseParam("--quiet                               Minimal output") catch unreachable,
     clap.parseParam("--verbose                             Excessively verbose logging") catch unreachable,
     clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
     clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
-    clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
+    clap.parseParam("--no-verify                           Skip verifying integrity when checking packages") catch unreachable,
     clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
-    clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
-    clap.parseParam("-g, --global                          Install globally") catch unreachable,
+    clap.parseParam("-g, --global                          Prune global packages") catch unreachable,
     clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
-    clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
+    clap.parseParam("--backend <STR>                       Platform-specific optimizations. " ++ platform_specific_backend_label) catch unreachable,
     clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
     clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
     clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
-    clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
-    clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
-    clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
-    clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
-    clap.parseParam("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)") catch unreachable,
-    clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
-    clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
-};
-
-const prune_params: []const ParamType = &(prune_specific_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                              ") catch unreachable,
-});
+};
 
 cache_dir: ?string = null,
 lockfile: string = "",
@@ -870,7 +857,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production") or args.flag("--prod");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
+    cli.frozen_lockfile = if (comptime subcommand != .prune) 
+        args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"))
+    else 
+        false;
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");
@@ -881,16 +871,18 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.quiet = args.flag("--quiet");
     cli.verbose = args.flag("--verbose") or Output.is_verbose;
     cli.ignore_scripts = args.flag("--ignore-scripts");
-    cli.trusted = args.flag("--trust");
+    cli.trusted = if (comptime subcommand != .prune) args.flag("--trust") else false;
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");
-    cli.lockfile_only = args.flag("--lockfile-only");
+    cli.lockfile_only = if (comptime subcommand != .prune) args.flag("--lockfile-only") else false;
 
-    if (args.option("--linker")) |linker| {
-        cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {
-            Output.errGeneric("Expected --linker to be one of 'isolated' or 'hoisted'", .{});
-            Global.exit(1);
-        };
+    if (comptime subcommand != .prune) {
+        if (args.option("--linker")) |linker| {
+            cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {
+                Output.errGeneric("Expected --linker to be one of 'isolated' or 'hoisted'", .{});
+                Global.exit(1);
+            };
+        }
     }
 
     if (args.option("--cache-dir")) |cache_dir| {
@@ -908,39 +900,45 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         };
     }
 
-    if (args.flag("--save-text-lockfile")) {
-        cli.save_text_lockfile = true;
-    }
-
-    if (args.option("--minimum-release-age")) |min_age_secs| {
-        const secs = std.fmt.parseFloat(f64, min_age_secs) catch {
-            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
-            Global.crash();
-        };
-        if (secs < 0) {
-            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
-            Global.crash();
+    if (comptime subcommand != .prune) {
+        if (args.flag("--save-text-lockfile")) {
+            cli.save_text_lockfile = true;
         }
-        cli.minimum_release_age_ms = secs * std.time.ms_per_s;
     }
 
-    const omit_values = args.options("--omit");
-
-    if (omit_values.len > 0) {
-        var omit: Omit = .{};
-        for (omit_values) |omit_value| {
-            if (strings.eqlComptime(omit_value, "dev")) {
-                omit.dev = true;
-            } else if (strings.eqlComptime(omit_value, "optional")) {
-                omit.optional = true;
-            } else if (strings.eqlComptime(omit_value, "peer")) {
-                omit.peer = true;
-            } else {
-                Output.errGeneric("invalid `omit` value: '{s}'", .{omit_value});
+    if (comptime subcommand != .prune) {
+        if (args.option("--minimum-release-age")) |min_age_secs| {
+            const secs = std.fmt.parseFloat(f64, min_age_secs) catch {
+                Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
+                Global.crash();
+            };
+            if (secs < 0) {
+                Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
                 Global.crash();
             }
+            cli.minimum_release_age_ms = secs * std.time.ms_per_s;
         }
-        cli.omit = omit;
+    }
+
+    if (comptime subcommand != .prune) {
+        const omit_values = args.options("--omit");
+
+        if (omit_values.len > 0) {
+            var omit: Omit = .{};
+            for (omit_values) |omit_value| {
+                if (strings.eqlComptime(omit_value, "dev")) {
+                    omit.dev = true;
+                } else if (strings.eqlComptime(omit_value, "optional")) {
+                    omit.optional = true;
+                } else if (strings.eqlComptime(omit_value, "peer")) {
+                    omit.peer = true;
+                } else {
+                    Output.errGeneric("invalid `omit` value: '{s}'", .{omit_value});
+                    Global.crash();
+                }
+            }
+            cli.omit = omit;
+        }
     }
 
     // commands that support --filter
@@ -1004,7 +1002,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     // saving.
     if (comptime subcommand == .link or subcommand == .unlink) {
         cli.no_save = !args.flag("--save");
-    } else {
+    } else if (comptime subcommand != .prune) {
         cli.no_save = args.flag("--no-save");
     }
 
@@ -1046,51 +1044,55 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     // Parse multiple --cpu flags and combine them using Negatable
-    const cpu_values = args.options("--cpu");
-    if (cpu_values.len > 0) {
-        var cpu_negatable = Npm.Architecture.none.negatable();
-        for (cpu_values) |cpu_str| {
-            // apply() already handles "any" as wildcard and negation with !
-            cpu_negatable.apply(cpu_str);
+    if (comptime subcommand != .prune) {
+        const cpu_values = args.options("--cpu");
+        if (cpu_values.len > 0) {
+            var cpu_negatable = Npm.Architecture.none.negatable();
+            for (cpu_values) |cpu_str| {
+                // apply() already handles "any" as wildcard and negation with !
+                cpu_negatable.apply(cpu_str);
 
-            // Support * as an alias for "any"
-            if (strings.eqlComptime(cpu_str, "*")) {
-                cpu_negatable.had_wildcard = true;
-                cpu_negatable.had_unrecognized_values = false;
-            } else if (cpu_negatable.had_unrecognized_values and
-                !strings.eqlComptime(cpu_str, "any") and
-                !strings.eqlComptime(cpu_str, "none"))
-            {
-                // Only error for truly unrecognized values (not "any" or "none")
-                Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.", .{cpu_str});
-                Global.crash();
+                // Support * as an alias for "any"
+                if (strings.eqlComptime(cpu_str, "*")) {
+                    cpu_negatable.had_wildcard = true;
+                    cpu_negatable.had_unrecognized_values = false;
+                } else if (cpu_negatable.had_unrecognized_values and
+                    !strings.eqlComptime(cpu_str, "any") and
+                    !strings.eqlComptime(cpu_str, "none"))
+                {
+                    // Only error for truly unrecognized values (not "any" or "none")
+                    Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.", .{cpu_str});
+                    Global.crash();
+                }
             }
+            cli.cpu = cpu_negatable.combine();
         }
-        cli.cpu = cpu_negatable.combine();
     }
 
     // Parse multiple --os flags and combine them using Negatable
-    const os_values = args.options("--os");
-    if (os_values.len > 0) {
-        var os_negatable = Npm.OperatingSystem.none.negatable();
-        for (os_values) |os_str| {
-            // apply() already handles "any" as wildcard and negation with !
-            os_negatable.apply(os_str);
+    if (comptime subcommand != .prune) {
+        const os_values = args.options("--os");
+        if (os_values.len > 0) {
+            var os_negatable = Npm.OperatingSystem.none.negatable();
+            for (os_values) |os_str| {
+                // apply() already handles "any" as wildcard and negation with !
+                os_negatable.apply(os_str);
 
-            // Support * as an alias for "any"
-            if (strings.eqlComptime(os_str, "*")) {
-                os_negatable.had_wildcard = true;
-                os_negatable.had_unrecognized_values = false;
-            } else if (os_negatable.had_unrecognized_values and
-                !strings.eqlComptime(os_str, "any") and
-                !strings.eqlComptime(os_str, "none"))
-            {
-                // Only error for truly unrecognized values (not "any" or "none")
-                Output.errGeneric("Invalid operating system: '{s}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.", .{os_str});
-                Global.crash();
+                // Support * as an alias for "any"
+                if (strings.eqlComptime(os_str, "*")) {
+                    os_negatable.had_wildcard = true;
+                    os_negatable.had_unrecognized_values = false;
+                } else if (os_negatable.had_unrecognized_values and
+                    !strings.eqlComptime(os_str, "any") and
+                    !strings.eqlComptime(os_str, "none"))
+                {
+                    // Only error for truly unrecognized values (not "any" or "none")
+                    Output.errGeneric("Invalid operating system: '{s}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.", .{os_str});
+                    Global.crash();
+                }
             }
+            cli.os = os_negatable.combine();
         }
-        cli.os = os_negatable.combine();
     }
 
     if (comptime subcommand == .add or subcommand == .install) {

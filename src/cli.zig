@@ -342,6 +342,7 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        pass_with_no_tests: bool = false,
         concurrent: bool = false,
         randomize: bool = false,
         seed: ?u32 = null,
@@ -354,6 +355,7 @@ pub const Command = struct {
 
         reporters: struct {
             dots: bool = false,
+            only_failures: bool = false,
             junit: bool = false,
         } = .{},
         reporter_outfile: ?[]const u8 = null,

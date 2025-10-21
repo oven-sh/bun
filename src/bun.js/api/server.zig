@@ -400,7 +400,7 @@ const ServePlugins = struct {
                         this.ref();
                         const promise_value = promise.asValue();
                         this.state.pending.promise.strong.set(global, promise_value);
-                        promise_value.then(global, this, onResolveImpl, onRejectImpl);
+                        try promise_value.then(global, this, onResolveImpl, onRejectImpl);
                         return;
                     },
                     .fulfilled => {
@@ -593,6 +593,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return p.getOrStartLoad(server.globalThis, callback) catch |err| switch (err) {
                     error.JSError => std.debug.panic("unhandled exception from ServePlugins.getStartOrLoad", .{}),
                     error.OutOfMemory => bun.outOfMemory(),
+                    error.JSTerminated => std.debug.panic("unhandled exception from ServePlugins.getStartOrLoad", .{}),
                 };
             }
             // no plugins
@@ -1943,7 +1944,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                                 node_response.promise = strong_promise;
                                 strong_promise = .empty;
-                                result._then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
+                                result.then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject) catch {}; // TODO: properly propagate exception upwards
                                 is_async = true;
                             }
 
@@ -2923,7 +2924,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         vm.eventLoop().enqueueTask(jsc.Task.init(ptr));
     }
 
-    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) void {
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) bun.JSTerminated!void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
 
         const globalObject = this.globalObject;
@@ -2936,7 +2937,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
-            promise.resolve(globalObject, .js_undefined);
+            try promise.resolve(globalObject, .js_undefined);
         }
     }
 };
@@ -3245,6 +3246,7 @@ pub export fn Server__setIdleTimeout(server: jsc.JSValue, seconds: jsc.JSValue, 
         error.OutOfMemory => {
             _ = globalThis.throwOutOfMemoryValue();
         },
+        error.JSTerminated => {},
     };
 }
 

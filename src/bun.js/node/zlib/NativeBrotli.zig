@@ -79,7 +79,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 
     var err = this.stream.init();
     if (err.isError()) {
-        try impl.emitError(this, globalThis, this_value, err);
+        impl.emitError(this, globalThis, this_value, err);
         return .false;
     }
 

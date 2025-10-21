@@ -230,6 +230,11 @@ function asyncWrap(fn: any, name: string) {
   return wrapped;
 }
 
+// most code should use $assert but this code is exposed and tested publicly
+function assert(ok: boolean, message: string) {
+  if (!ok) throw $ERR_INTERNAL_ASSERTION(message);
+}
+
 {
   const {
     writeFile,
@@ -278,6 +283,7 @@ function asyncWrap(fn: any, name: string) {
     [Symbol("messaging_transfer_symbol")]() {}
 
     async appendFile(data, options) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding = "utf8";
@@ -299,6 +305,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async chmod(mode) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fchmod", fd);
 
@@ -311,6 +318,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async chown(uid, gid) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fchown", fd);
 
@@ -323,6 +331,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async datasync() {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fdatasync", fd);
 
@@ -335,6 +344,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async sync() {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fsync", fd);
 
@@ -347,6 +357,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async read(bufferOrParams, offset, length, position) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fsync", fd);
 
@@ -390,6 +401,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async readv(buffers, position) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("readv", fd);
 
@@ -402,6 +414,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async readFile(options) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("readFile", fd);
 
@@ -418,6 +431,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async stat(options) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("fstat", fd);
 
@@ -430,6 +444,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async truncate(len = 0) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("ftruncate", fd);
 
@@ -442,6 +457,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async utimes(atime, mtime) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("futimes", fd);
 
@@ -454,6 +470,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async write(buffer, offset, length, position) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("write", fd);
 
@@ -480,6 +497,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async writev(buffers, position) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("writev", fd);
 
@@ -492,6 +510,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async writeFile(data: string, options: any = "utf8") {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
@@ -514,6 +533,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     close = () => {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       if (fd === -1) {
         return Promise.$resolve();
@@ -551,6 +571,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     readableWebStream(_options = kEmptyObject) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("readableWebStream", fd);
 
@@ -558,6 +579,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     createReadStream(options = kEmptyObject) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("createReadStream", fd);
       return new (require("internal/fs/streams").ReadStream)(undefined, {
@@ -568,6 +590,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     createWriteStream(options = kEmptyObject) {
+      assert(this[kRefs] !== undefined, "handle must be an instance of FileHandle");
       const fd = this[kFd];
       throwEBADFIfNecessary("createWriteStream", fd);
       return new (require("internal/fs/streams").WriteStream)(undefined, {

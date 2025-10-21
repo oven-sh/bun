@@ -937,10 +937,10 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
-                        // .monotonic is okay because the task isn't running on another thread.
                         if (entry_hoisted[entry_id.get()]) {
                             installer.linkToHiddenNodeModules(entry_id);
                         }
+                        // .monotonic is okay because the task isn't running on another thread.
                         entry_steps[entry_id.get()].store(.done, .monotonic);
                         installer.onTaskComplete(entry_id, .skipped);
                         continue;

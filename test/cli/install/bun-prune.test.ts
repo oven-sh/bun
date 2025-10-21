@@ -816,4 +816,65 @@ linker = "isolated"
     // Verify nested lodash was removed
     expect(existsSync(nestedPkgPath)).toBe(false);
   });
+
+  it("should handle scoped packages (@scope/name)", async () => {
+    using dir = tempDir("prune-scoped", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: { "@types/node": "^18.0.0" },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Add extraneous scoped package
+    await using addProc = Bun.spawn({
+      cmd: [bunExe(), "add", "@types/uuid"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await addProc.exited).toBe(0);
+
+    // Remove @types/uuid from package.json
+    const pkg = await file(join(String(dir), "package.json")).json();
+    delete pkg.dependencies["@types/uuid"];
+    writeFileSync(join(String(dir), "package.json"), JSON.stringify(pkg, null, 2));
+
+    // Verify both scoped packages exist
+    expect(existsSync(join(String(dir), "node_modules/@types/node"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/@types/uuid"))).toBe(true);
+
+    // Run prune
+    await using pruneProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pruneProc.stdout.text(),
+      pruneProc.stderr.text(),
+      pruneProc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("error:");
+
+    // Verify @types/uuid was removed but @types/node was preserved
+    expect(existsSync(join(String(dir), "node_modules/@types/node"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/@types/uuid"))).toBe(false);
+  });
 });

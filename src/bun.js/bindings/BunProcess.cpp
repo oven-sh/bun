@@ -2760,6 +2760,98 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+static char* name_by_uid(uid_t uid)
+{
+    struct passwd pwd;
+    struct passwd* pp = nullptr;
+    char buf[8192];
+
+    if (getpwuid_r(uid, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+        return strdup(pp->pw_name);
+    }
+
+    return nullptr;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto userArg = callFrame->argument(0);
+    auto extraGroupArg = callFrame->argument(1);
+
+    // Validate arguments
+    if (!userArg.isNumber() && !userArg.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "number or string"_s, userArg);
+    }
+    if (!extraGroupArg.isNumber() && !extraGroupArg.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "extraGroup"_s, "number or string"_s, extraGroupArg);
+    }
+
+    char* user = nullptr;
+    bool must_free = false;
+    CString utf8String;
+
+    // Get username
+    if (userArg.isNumber()) {
+        uint32_t uid = userArg.toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        user = name_by_uid(uid);
+        must_free = true;
+
+        if (user == nullptr) {
+            auto message = makeString("User identifier does not exist: "_s, uid);
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+    } else {
+        auto str = userArg.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        utf8String = str.utf8();
+
+        // Verify the user exists first
+        struct passwd pwd;
+        struct passwd* pp = nullptr;
+        char buf[8192];
+
+        if (getpwnam_r(utf8String.data(), &pwd, buf, sizeof(buf), &pp) != 0 || pp == nullptr) {
+            auto message = makeString("User identifier does not exist: "_s, str);
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+
+        // utf8.data() is null-terminated, no need to duplicate
+        user = const_cast<char*>(utf8String.data());
+        must_free = false;
+    }
+
+    // Get extra group
+    auto extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupArg);
+    if (scope.exception()) {
+        if (must_free) free(user);
+        return {};
+    }
+
+    gid_t extra_group = extraGroupValue.toUInt32(globalObject);
+    if (scope.exception()) {
+        if (must_free) free(user);
+        return {};
+    }
+
+    // Call initgroups
+    int rc = initgroups(user, extra_group);
+
+    if (must_free) free(user);
+
+    if (rc != 0) {
+        throwSystemError(scope, globalObject, "initgroups"_s, errno);
+        return {};
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -3935,6 +4027,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
 
+  initgroups                       Process_functioninitgroups                          Function 2
   setegid                          Process_functionsetegid                             Function 1
   seteuid                          Process_functionseteuid                             Function 1
   setgid                           Process_functionsetgid                              Function 1

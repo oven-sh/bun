@@ -1,13 +1,12 @@
 # Contract: Bun.telemetry API
 
-**Feature**: OpenTelemetry Support for Bun
 **Component**: Native Telemetry API (Zig layer)
 **Scope**: Core attach/detach instrumentation API
-**Audience**: TypeScript instrumentation authors (packages/bun-otel)
+**Design Rationale**: [ADR-001](./decisions/ADR-001-telemetry-api-design.md)
 
 **Related Contracts**:
-- [hook-lifecycle.md](./hook-lifecycle.md) - Detailed hook specifications, attribute formats, corner cases
-- [header-injection.md](./header-injection.md) - Header injection for distributed tracing, merge behavior, security
+- [hook-lifecycle.md](./hook-lifecycle.md) - Hook specifications and attributes
+- [header-injection.md](./header-injection.md) - Header injection for distributed tracing
 
 ---
 
@@ -72,16 +71,14 @@ TypeError: "onOperationStart must be a function"
 // ... similar for other hooks
 ```
 
-**Validation Rules**:
-1. `type` must be valid InstrumentKind enum value (0-5)
-2. `name` must be non-empty string (max 256 chars)
-3. `version` must be non-empty string following semver format
-4. At least one hook function must be provided
-5. All provided hooks must be callable functions
-6. Hooks must not be async functions (synchronous execution only)
-7. `captureAttributes.requestHeaders` must be array of lowercase strings (max 50)
-8. `captureAttributes.responseHeaders` must be array of lowercase strings (max 50)
-9. Blocked headers (authorization, cookie, etc.) rejected at attach time
+**Validation**:
+- MUST: Valid InstrumentKind enum (0-5)
+- MUST: Non-empty `name` string (max 256 chars)
+- MUST: Non-empty `version` string (semver format)
+- MUST: Provide at least one hook function
+- MUST NOT: Use async functions as hooks
+- MUST: Lowercase strings in `captureAttributes` arrays (max 50)
+- MUST NOT: Include blocked headers (authorization, cookie, etc.)
 
 **Side Effects**:
 - Instrument registered in global `Telemetry` singleton
@@ -163,33 +160,6 @@ Bun.telemetry.detach(id); // Throws RangeError
 
 ---
 
-### `Bun.telemetry.isEnabledFor(kind: InstrumentKind): boolean`
-
-Checks if any instruments are registered for a specific operation type.
-
-**Parameters**:
-- `kind` (InstrumentKind): Operation category to check
-
-**Returns**: `boolean`
-- `true` if at least one instrument registered for `kind`
-- `false` otherwise
-
-**Throws**: Never (returns `false` for invalid `kind`)
-
-**Performance**:
-- O(1) check (array length lookup)
-- ~5ns overhead when disabled
-- Used internally for early returns
-
-**Example**:
-```typescript
-if (Bun.telemetry.isEnabledFor(InstrumentKind.HTTP)) {
-  console.log("HTTP instrumentation active");
-}
-```
-
----
-
 ## Type Definitions
 
 ### InstrumentKind Enum
@@ -229,99 +199,43 @@ export enum InstrumentKind {
 
 ## Error Handling
 
-### Instrumentation Hook Errors
+**Hook Errors**:
+- MUST: Log exceptions to stderr with context
+- MUST: Continue request processing
+- MUST: Invoke remaining instruments
+- MUST NOT: Crash runtime
+- MUST NOT: Silently swallow errors
 
-**Policy**: Defensive isolation - errors in hooks must not crash Bun runtime
-
-**Behavior**:
-```zig
-// Zig wrapper around hook invocation
-fn callHook(fn: JSValue, args: []const JSValue) void {
-    const result = fn.call(global, args);
-    if (result.isError()) {
-        // Log error but continue processing
-        global.throwError("Instrumentation hook threw error", result);
-        // Operation continues normally
-    }
-}
-```
-
-**User-Facing Behavior**:
-- Exceptions in hooks logged to stderr
-- Request processing continues
-- Other instruments still invoked
-- No crash, no silent failure
-
-**Example**:
-```typescript
-Bun.telemetry.attach({
-  type: InstrumentKind.HTTP,
-  name: "buggy-instrument",
-  version: "1.0.0",
-
-  onOperationStart(id, attributes) {
-    throw new Error("Oops!"); // Logged, request continues
-  },
-});
-
-// Server still works, error logged:
-// [Telemetry] Error in onOperationStart (buggy-instrument v1.0.0): Oops!
-```
+**Error Format**: `[Telemetry] Error in {hook} ({name} v{version}): {message}`
 
 ---
 
 ## Concurrency & Thread Safety
 
-**Threading Model**:
-- Attach/detach: Main JavaScript thread only
-- Hook invocation: Request thread (may differ per request)
-- No locks required (single-threaded JS execution)
-
-**Atomic Operations**:
-```zig
-// ID generation is thread-safe
-next_instrument_id: std.atomic.Value(u32)
-next_request_id: std.atomic.Value(u64)
-```
-
-**Invariants**:
-- IDs globally unique (never reused)
-- No race conditions in registration
-- Hook execution serialized per request
+- MUST: Attach/detach on main JavaScript thread only
+- MAY: Invoke hooks on different request threads
+- MUST: Use atomic operations for ID generation
+- MUST NOT: Reuse IDs (globally unique)
+- MUST: Serialize hook execution per request
 
 ---
 
 ## Memory Management
 
-### Protected JSValues
+**JSValue Protection**:
+- MUST: protect() JSValues on attach
+- MUST: unprotect() JSValues on detach
+- MUST: Match every protect() with unprotect()
+- MUST: Use defer for exception safety
 
-**Problem**: JavaScript objects must not be GC'd while Zig holds references
-
-**Solution**: Reference counting with protect/unprotect
-```zig
-// On attach
-instrument_obj.protect();         // Increment ref count
-on_op_start_fn.protect();
-on_op_end_fn.protect();
-// ...
-
-// On detach
-instrument_obj.unprotect();       // Decrement ref count
-on_op_start_fn.unprotect();
-on_op_end_fn.unprotect();
-```
-
-**Invariants**:
-- Every `protect()` has matching `unprotect()`
-- Detach always cleans up all protected values
-- Exception safety via Zig `defer`
+**Implementation**: See `telemetry.zig` protect/unprotect calls
 
 ---
 
 ## Performance Characteristics
 
 ### When Disabled (no instruments)
-- `isEnabledFor()`: ~5ns per check
+- `nativeHooks.isEnabledFor()`: ~5ns per check
 - Early return before attribute building
 - **Target**: <0.1% overhead
 
@@ -340,131 +254,71 @@ on_op_end_fn.unprotect();
 
 ## Integration Points
 
-### Where Hooks Are Called
+**HTTP Server**: `src/bun.js/api/server.zig`
+- MUST: Check `nativeHooks.isEnabledFor(.http)` before processing
+- MUST: Generate unique request ID
+- MUST: Invoke `onOperationStart` on request arrival
+- MUST: Invoke `onOperationEnd` on response completion
 
-**HTTP Server** (`src/bun.js/api/server.zig`):
-```zig
-// Request start
-if (Telemetry.isEnabledFor(.http)) {
-    const req_id = Telemetry.nextRequestId();
-    const info = buildHttpInfo(request);
-    Telemetry.invokeStart(.http, req_id, info);
-}
-
-// Request end
-if (Telemetry.isEnabledFor(.http)) {
-    const result = buildHttpResult(response);
-    Telemetry.invokeEnd(.http, req_id, result);
-}
-```
-
-**Fetch Client** (`src/bun.js/webcore/fetch.zig`):
-```zig
-// Before fetch
-if (Telemetry.isEnabledFor(.fetch)) {
-    const req_id = Telemetry.nextRequestId();
-    const info = buildFetchInfo(request);
-
-    // Get headers to inject
-    const inject_data = Telemetry.invokeInject(.fetch, req_id);
-    if (inject_data.isObject()) {
-        request.headers.merge(inject_data);
-    }
-
-    Telemetry.invokeStart(.fetch, req_id, info);
-}
-```
+**Fetch Client**: `src/bun.js/webcore/fetch.zig`
+- MUST: Check `nativeHooks.isEnabledFor(.fetch)` before processing
+- MUST: Call `onOperationInject` for header injection
+- MUST: Merge returned headers into request
+- MUST: Invoke lifecycle hooks in order
 
 ---
 
 ## Testing Contract
 
-### Core Tests (test/js/bun/telemetry/)
+**Location**: `test/js/bun/telemetry/`
 
-**Rules**:
-- Test ONLY native API surface
-- NO `@opentelemetry/*` imports
-- Verify hooks called with correct data
-- Validate error handling
-
-**Example**:
-```typescript
-import { test, expect } from "bun:test";
-
-test("attach registers instrument and returns ID", () => {
-  const id = Bun.telemetry.attach({
-    type: InstrumentKind.HTTP,
-    name: "test-instrument",
-    version: "1.0.0",
-    onOperationStart: () => {},
-  });
-
-  expect(typeof id).toBe("number");
-  expect(id).toBeGreaterThan(0);
-
-  Bun.telemetry.detach(id); // cleanup
-});
-
-test("detach removes instrument", () => {
-  const id = Bun.telemetry.attach({ /* ... */ });
-
-  Bun.telemetry.detach(id);
-
-  // Second detach should throw
-  expect(() => Bun.telemetry.detach(id)).toThrow(RangeError);
-});
-```
+**Requirements**:
+- MUST: Test native API surface only
+- MUST NOT: Import `@opentelemetry/*` packages
+- MUST: Verify hook invocation with correct attributes
+- MUST: Validate error handling behaviors
+- MUST: Clean up instruments after each test
 
 ---
 
 ## Backward Compatibility
 
-**Versioning Strategy**:
-- API stable in Bun 1.x series
-- New InstrumentKind values added over time
-- Existing kinds never change behavior
-- Hook signatures may gain optional fields (backward compatible)
-
-**Migration from configure() API** (deprecated):
-```typescript
-// Old (deprecated):
-Bun.telemetry.configure({ /* ... */ });
-
-// New (1.0+):
-const id = Bun.telemetry.attach({ /* ... */ });
-// Remember to call detach(id) when done
-```
+- MUST: Keep API stable in Bun 1.x series
+- MAY: Add new InstrumentKind values
+- MUST NOT: Change existing kind behaviors
+- MAY: Add optional fields to hook signatures
+- SHOULD: Use attach/detach instead of deprecated configure()
 
 ---
 
 ## Security Considerations
 
-### Hook Isolation
-- Hooks cannot access other instruments' data
-- Hooks cannot modify request processing
-- Hooks cannot prevent request completion
+**Hook Isolation**:
+- MUST NOT: Access other instruments' data
+- MUST NOT: Modify request processing
+- MUST NOT: Prevent request completion
 
-### Header Capture
-- Only allowlisted headers captured (deny-by-default security model)
-- Sensitive headers always blocked (authorization, cookie, api-key, session tokens, etc.)
-- Complete blocklist documented in [hook-lifecycle.md](./hook-lifecycle.md#header-capture-security)
-- Configurable via `captureAttributes` in NativeInstrument interface
+**Header Capture**:
+- MUST: Use allowlist model (deny-by-default)
+- MUST NOT: Capture sensitive headers (authorization, cookie, api-key, etc.)
+- MUST: Respect `captureAttributes` configuration
+- See: [hook-lifecycle.md](./hook-lifecycle.md#header-capture-security) for blocklist
 
-### Resource Limits
-- No hard limit on instrument count (trust model)
-- Bounded memory per instrument (~160 bytes)
-- No DOS vector (synchronous execution)
+**Resource Limits**:
+- Memory: ~160 bytes per instrument
+- Headers: Max 50 per capture list
+- Execution: Synchronous only (no DOS via async)
 
 ---
 
 ## Future Extensions
 
-### Planned Additions
-- `Bun.telemetry.listInstruments(): Array<{id, name, kind}>` - introspection
-- `Bun.telemetry.getActiveSpan(): Span | null` - manual instrumentation
-- New InstrumentKind values: `WebSocket`, `DNS`, `FileSystem`
+**Planned**:
+- `listInstruments()`: Introspection API
+- `getActiveSpan()`: Manual instrumentation
+- New kinds: WebSocket, DNS, FileSystem
 
-### Non-Goals
+**Non-Goals**:
 - Async hooks (performance impact)
 - Inter-instrument communication (coupling)
-- Dynamic hook registration mid-operation (complexity)
+- Dynamic hook registration (complexity)

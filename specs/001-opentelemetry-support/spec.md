@@ -121,7 +121,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-012**: System MUST achieve functional equivalence with `@opentelemetry/sdk-node` for HTTP tracing
 - **FR-013**: System MUST provide zero-cost abstraction when telemetry is disabled (no performance impact)
 - **FR-014**: System MUST support B3, Jaeger, and W3C Baggage propagation formats in addition to W3C TraceContext
-- **FR-015**: System MUST allow configuration of request/response header capture with explicit allowlist (deny-by-default security model), providing safe defaults (content-type, user-agent, accept, content-length) when no custom allowlist specified
+- **FR-015**: System MUST allow configuration of request/response header capture with explicit allowlist (deny-by-default security model), providing safe defaults (content-type, user-agent, accept, content-length) when no custom allowlist specified, as detailed in Security Model section
 - **FR-016**: System MUST support error tracking with automatic span status marking and error recording
 - **FR-017**: System MUST implement bounded retry with exponential backoff (3 attempts) for failed telemetry exports, dropping data after retry exhaustion to prevent memory buildup
 - **FR-018**: System MUST provide Bun-specific instrumentations via packages/bun-otel for Bun-native APIs (http, fetch, sql, redis, s3) and system metrics, with standard OpenTelemetry API compatibility for manual instrumentation
@@ -129,6 +129,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-020**: System MUST provide both high-level logger integration helpers (BunSDK formatters for pino/winston) and low-level trace context access API (Bun.telemetry.getActiveSpan()) for log correlation
 - **FR-021**: System MUST determine resource attributes (service.name, service.version, deployment.environment) using standard OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES environment variables, with fallback to package.json (name and version fields)
 - **FR-022**: System MUST implement defensive error handling for instrumentation hook exceptions - catch exceptions, log to stderr with rate limiting to prevent log flooding, clear exception state, and continue request processing normally without affecting application behavior
+- **FR-023**: System MUST enforce header validation rules (lowercase strings only, maximum 50 headers per list, sensitive headers always blocked, invalid headers logged and ignored non-fatally) as specified in Security Model section to prevent data leakage and denial-of-service attacks
 
 ### Key Entities _(include if feature involves data)_
 
@@ -139,6 +140,53 @@ Developers can correlate application logs with traces by injecting trace context
 - **Instrumentation**: Registered component that hooks into native operations to create telemetry data
 - **Exporter**: Component responsible for sending telemetry data to backend systems (OTLP, Jaeger, Zipkin, etc.)
 - **Resource**: Metadata describing the entity producing telemetry (service name, version, host, etc.)
+
+### Security Model
+
+The telemetry system implements defense-in-depth security measures to prevent data leakage and denial-of-service attacks:
+
+#### Header Capture Security
+
+**Deny-by-Default Model**: Only explicitly allowlisted headers are captured for telemetry. When no custom configuration is provided, the system uses a safe default allowlist containing only non-sensitive headers:
+- `content-type`
+- `content-length`
+- `user-agent`
+- `accept`
+
+**Sensitive Header Blocklist**: The following headers are ALWAYS blocked from capture, even if explicitly included in a user-provided allowlist:
+- `authorization`
+- `proxy-authorization`
+- `cookie`
+- `set-cookie`
+- `x-api-key`
+- `x-auth-token`
+- `x-csrf-token`
+- `x-forwarded-*` headers containing authentication tokens
+- Any header matching patterns: `*-token`, `*-key`, `*-secret`, `*-password`
+
+**Header Validation Rules**:
+1. **Lowercase Requirement**: All header names MUST be lowercase strings. Mixed-case or uppercase header names are rejected.
+2. **Maximum List Size**: Header capture lists are limited to 50 headers maximum to prevent denial-of-service attacks through configuration bloat.
+3. **Invalid Header Handling**: Invalid or malformed header configurations are logged to stderr with rate limiting and gracefully ignored (non-fatal). The system falls back to safe defaults.
+4. **Character Validation**: Header names must match RFC 9110 field-name requirements (visible ASCII characters excluding delimiters).
+
+#### Trace Context Injection Security
+
+**W3C TraceContext Validation**: Incoming `traceparent` and `tracestate` headers are validated against W3C TraceContext specification:
+- Malformed headers are logged and ignored without breaking request processing
+- Invalid trace IDs or span IDs are rejected (must be valid hex strings of correct length)
+- Version mismatch is handled gracefully with fallback to supported versions
+
+**Header Injection Limits**:
+- Maximum 10 trace context headers can be injected per request/response
+- Header values are sanitized to prevent header injection attacks
+- Total injected header size is capped at 8KB to prevent response bloat
+
+#### Rate Limiting and DoS Prevention
+
+**Error Logging Rate Limits**: Telemetry-related errors (configuration validation failures, malformed headers, instrumentation exceptions) are rate-limited to 10 messages per second to prevent log flooding attacks.
+
+**Memory Bounds**: Failed telemetry exports are buffered with strict memory limits (configurable, default 100MB) before data is dropped, preventing memory exhaustion from backend unavailability.
 
 ## Success Criteria _(mandatory)_
 

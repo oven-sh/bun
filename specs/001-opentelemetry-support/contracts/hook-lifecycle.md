@@ -1,27 +1,8 @@
 # Contract: Hook Lifecycle and Attributes
 
-**Feature**: OpenTelemetry Support for Bun
 **Component**: Operation Lifecycle Hooks
-**Scope**: Critical public API surface for instrumentation
-**Audience**: TypeScript instrumentation authors
-
----
-
-## Design Philosophy
-
-**Core Principle**: Zig layer produces **semantic convention attributes**, TypeScript consumes them.
-
-**Flow**:
-```
-Zig Runtime → AttributeMap → toJS() → Record<string, any> → Hook → OpenTelemetry Span
-```
-
-**Key Invariants**:
-1. All hooks receive **attributes** (not custom objects)
-2. Attribute keys follow OpenTelemetry semantic conventions
-3. Zig performs all mapping and filtering
-4. TypeScript sees standard attribute format
-5. No conversion needed - direct span.setAttributes(attributes)
+**Scope**: Hook signatures and attribute specifications
+**Design Rationale**: [ADR-002](./decisions/ADR-002-hook-lifecycle-design.md)
 
 ---
 
@@ -52,511 +33,183 @@ interface NativeInstrument {
 
 ### captureAttributes Configuration
 
-**Purpose**: Define which headers to capture (deny-by-default security model)
-
-**Default Behavior** (if undefined):
-```typescript
-{
-  requestHeaders: [
-    "content-type",
-    "content-length",
-    "user-agent",
-    "accept",
-  ],
-  responseHeaders: [
-    "content-type",
-    "content-length",
-  ],
-}
-```
-
-**Custom Configuration**:
-```typescript
-Bun.telemetry.attach({
-  type: InstrumentKind.HTTP,
-  name: "my-instrumentation",
-  version: "1.0.0",
-
-  captureAttributes: {
-    requestHeaders: ["content-type", "x-request-id", "x-correlation-id"],
-    responseHeaders: ["content-type", "x-trace-id"],
-  },
-
-  onOperationStart(id, attributes) {
-    // attributes["http.request.header.x-request-id"] present if header exists
-    // attributes["http.request.header.authorization"] NEVER present (blocklist)
-  },
-});
-```
+**Default** (if undefined):
+- requestHeaders: `["content-type", "content-length", "user-agent", "accept"]`
+- responseHeaders: `["content-type", "content-length"]`
 
 **Validation**:
-- Header names must be lowercase strings
-- Maximum 50 headers per list (prevent DOS)
-- Sensitive headers always blocked (see Security Model section)
-- Invalid headers logged and ignored (non-fatal)
+- MUST: Use lowercase strings
+- MUST: Max 50 headers per list
+- MUST NOT: Include sensitive headers (always blocked)
+- SHOULD: Log and ignore invalid entries (non-fatal)
 
 ---
 
 ## Hook Signatures
 
-All hooks receive operation ID and **semantic convention attributes**.
+All hooks: `(id: number, attributes: Record<string, any>) => void`
 
-### onOperationStart(id: number, attributes: Record<string, any>): void
+### onOperationStart
 
-Called when operation begins.
+**When**: Operation begins
 
-**Common Attributes** (all operations):
-- `operation.id` (number): Unique operation identifier
-- `operation.timestamp` (number): Nanoseconds since epoch
+**Common Attributes**:
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| operation.id | number | Unique identifier |
+| operation.timestamp | number | Nanoseconds since epoch |
 
-**HTTP-Specific Attributes**:
-- `http.request.method` (string): GET, POST, PUT, DELETE, etc.
-- `url.full` (string): Complete request URL with query
-- `url.path` (string): URL path component
-- `url.query` (string): Query string (if present)
-- `url.scheme` (string): http or https
-- `server.address` (string): Host header value
-- `server.port` (number): Server port
-- `http.request.header.<name>` (string): Captured request headers
+**HTTP Server Attributes**:
+| Attribute | Type | Example |
+|-----------|------|---------|
+| http.request.method | string | "GET", "POST" |
+| url.full | string | "https://example.com/api?q=test" |
+| url.path | string | "/api" |
+| url.query | string | "q=test" |
+| server.address | string | "example.com" |
+| server.port | number | 443 |
+| http.request.header.* | string | Per configured headers |
 
-**Distributed Tracing Attributes** (if traceparent header present):
-- `trace.parent.trace_id` (string): 128-bit hex trace ID from traceparent
-- `trace.parent.span_id` (string): 64-bit hex parent span ID
-- `trace.parent.trace_flags` (number): Trace flags (0x01 = sampled)
-- `trace.parent.trace_state` (string): Vendor trace state (if present)
-
-**Fetch-Specific Attributes**:
-- `http.request.method` (string): HTTP method
-- `url.full` (string): Complete target URL
-- `http.request.header.<name>` (string): Outgoing headers (if configured)
-
-**Usage**:
-```typescript
-onOperationStart(id, attributes) {
-  const span = tracer.startSpan(attributes["url.path"], {
-    kind: SpanKind.SERVER,
-    startTime: attributes["operation.timestamp"],
-    attributes,  // Direct assignment
-  });
-
-  this.spans.set(id, span);
-}
-```
+**Distributed Tracing** (if traceparent present):
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| trace.parent.trace_id | string | 128-bit hex trace ID |
+| trace.parent.span_id | string | 64-bit hex parent span |
+| trace.parent.trace_flags | number | 0x01 = sampled |
 
 ---
 
-### onOperationProgress(id: number, attributes: Record<string, any>): void
+### onOperationProgress
 
-Called during operation execution for incremental updates.
+**When**: Incremental updates during operation
 
-**When Called**:
-- HTTP: After response headers sent, before body complete
-- Fetch: After response headers received
-- SQL: After query plan generated (future)
-- Custom: User-defined progress points
+| Context | Trigger |
+|---------|---------|
+| HTTP | After response headers sent |
+| Fetch | After response headers received |
+| SQL | After query plan (future) |
 
-**Attributes** (subset of operation-specific attributes):
-- `progress.phase` (string): "response_headers_sent" | "response_body_chunk" | ...
-- Operation-specific attributes (HTTP status, partial bytes transferred, etc.)
+**Attributes**:
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| progress.phase | string | "response_headers_sent", etc. |
+| * | varies | Operation-specific attributes |
 
-**HTTP Example**:
-```typescript
-onOperationProgress(id, attributes) {
-  const span = this.spans.get(id);
-  if (!span) return;
-
-  span.addEvent("response_started", {
-    "http.response.status_code": attributes["http.response.status_code"],
-  });
-}
-```
-
-**Usage Notes**:
-- May be called 0-N times per operation
-- Not guaranteed for all operations
-- Attributes are **incremental** (not full operation state)
-- Used for long-running operations to show progress
+**Notes**:
+- MAY: Call 0-N times per operation
+- MUST: Provide incremental updates only
+- SHOULD: Use for span events
 
 ---
 
-### onOperationEnd(id: number, attributes: Record<string, any>): void
+### onOperationEnd
 
-Called when operation completes successfully.
+**When**: Operation completes successfully
 
-**HTTP-Specific Attributes**:
-- `http.response.status_code` (number): HTTP status code (200, 404, etc.)
-- `http.response.body.size` (number): Response content length in bytes
-- `http.response.header.<name>` (string): Captured response headers
-- `operation.duration` (number): Total duration in nanoseconds
+**Common Attributes**:
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| operation.duration | number | Total nanoseconds |
+| http.response.status_code | number | HTTP status (200, 404, etc.) |
+| http.response.body.size | number | Response bytes |
+| http.response.header.* | string | Per configured headers |
 
-**Fetch-Specific Attributes**:
-- `http.response.status_code` (number): Response status
-- `http.response.body.size` (number): Response size
-- `http.response.header.<name>` (string): Response headers
-- `operation.duration` (number): Total request duration
-
-**Usage**:
-```typescript
-onOperationEnd(id, attributes) {
-  const span = this.spans.get(id);
-  if (!span) return;
-
-  span.setAttributes(attributes);
-  span.setStatus({ code: SpanStatusCode.OK });
-  span.end(attributes["operation.timestamp"] + attributes["operation.duration"]);
-
-  this.spans.delete(id);  // Critical: prevent memory leak
-}
-```
+**Requirements**:
+- MUST: Delete span from tracking map
+- MUST: Set span status to OK
+- MUST: Call span.end()
 
 ---
 
-### onOperationError(id: number, attributes: Record<string, any>): void
+### onOperationError
 
-Called when operation fails.
+**When**: Operation fails
 
 **Error Attributes**:
-- `error.type` (string): Error category
-  - HTTP: "ParseError" | "TimeoutError" | "NetworkError" | "InternalError" | "AbortError"
-  - Fetch: "NetworkError" | "TimeoutError" | "AbortError" | "DNSError" | "TLSError"
-- `error.message` (string): Human-readable error message
-- `error.stack_trace` (string): Stack trace (if available)
-- `http.response.status_code` (number): Status sent to client (if any)
-- `operation.duration` (number): Duration until failure
+| Attribute | Type | Values/Description |
+|-----------|------|-------------------|
+| error.type | string | "ParseError", "TimeoutError", "NetworkError", etc. |
+| error.message | string | Human-readable message |
+| error.stack_trace | string | Stack trace (optional) |
+| operation.duration | number | Duration until failure |
 
-**Usage**:
-```typescript
-onOperationError(id, attributes) {
-  const span = this.spans.get(id);
-  if (!span) return;
-
-  span.recordException({
-    name: attributes["error.type"],
-    message: attributes["error.message"],
-    stack: attributes["error.stack_trace"],
-  });
-
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: attributes["error.message"],
-  });
-
-  span.end();
-  this.spans.delete(id);  // Critical: prevent memory leak
-}
-```
+**Requirements**:
+- MUST: Record exception on span
+- MUST: Set span status to ERROR
+- MUST: Delete span from tracking map
 
 ---
 
-### onOperationInject(id: number, data?: unknown): Record<string, string> | void
+### onOperationInject
 
-Called to inject headers into outbound requests (distributed tracing).
+**Purpose**: Inject headers for distributed tracing
 
-**Parameters**:
-- `id` (number): Operation ID
-- `data` (unknown): Optional custom data (reserved for future use)
-
-**Returns**:
-- `Record<string, string>`: Headers to inject
-- `void` | `undefined`: No headers to inject
+**Returns**: `Record<string, string>` or `void`
 
 **When Called**:
-- HTTP: Before processing request (server receives context)
-- Fetch: Before sending request (client propagates context)
-- Multiple times OK (instrumentation must cache if expensive)
-
-**Usage**:
-```typescript
-onOperationInject(id, data) {
-  const span = trace.getActiveSpan();
-  if (!span) return;
-
-  const { traceId, spanId, traceFlags } = span.spanContext();
-
-  return {
-    "traceparent": `00-${traceId}-${spanId}-${traceFlags.toString(16).padStart(2, '0')}`,
-  };
-}
-```
+| Context | Timing |
+|---------|--------|
+| HTTP Server | Before processing request |
+| Fetch Client | Before sending request |
 
 **Validation**:
-- Return value must be plain object or void
-- Keys must be valid HTTP header names (lowercase, alphanumeric + hyphen)
-- Values must be strings (non-empty, max 8KB per header)
-- Maximum 20 headers (prevent DOS)
-- Invalid return logged and ignored (non-fatal)
+- MUST: Return plain object or void
+- MUST: Use valid header names (lowercase, alphanumeric + hyphen)
+- MUST: String values only (max 8KB)
+- MUST NOT: Exceed 20 headers
+- SHOULD: Cache if computation expensive
+
+**Canonical Example**: Return `{"traceparent": "00-{traceId}-{spanId}-{flags}"}`
 
 ---
 
 ## Attribute Reference
 
-### Standard HTTP Server Attributes (OpenTelemetry v1.23.0+)
+### HTTP Server Attributes (OpenTelemetry v1.23.0+)
 
-**Request Phase** (onOperationStart):
-```typescript
-{
-  "operation.id": 123,
-  "operation.timestamp": 1698765432123456789,
+See tables in onOperationStart/End/Error sections above for complete list.
 
-  // HTTP method and URL
-  "http.request.method": "GET",
-  "url.full": "http://localhost:3000/api/users?limit=10",
-  "url.path": "/api/users",
-  "url.query": "limit=10",
-  "url.scheme": "http",
+### Fetch Client Attributes
 
-  // Server info
-  "server.address": "localhost",
-  "server.port": 3000,
-
-  // Request headers (if configured)
-  "http.request.header.content-type": "application/json",
-  "http.request.header.user-agent": "curl/7.68.0",
-  "http.request.header.x-request-id": "abc-123",
-
-  // Trace context (if traceparent header present)
-  "trace.parent.trace_id": "0af7651916cd43dd8448eb211c80319c",
-  "trace.parent.span_id": "b7ad6b7169203331",
-  "trace.parent.trace_flags": 1,
-}
-```
-
-**Response Phase** (onOperationEnd):
-```typescript
-{
-  "http.response.status_code": 200,
-  "http.response.body.size": 4567,
-  "operation.duration": 12345678,  // nanoseconds
-
-  // Response headers (if configured)
-  "http.response.header.content-type": "application/json",
-  "http.response.header.x-trace-id": "def-456",
-}
-```
-
-**Error Phase** (onOperationError):
-```typescript
-{
-  "error.type": "InternalError",
-  "error.message": "Cannot read property 'id' of undefined",
-  "error.stack_trace": "TypeError: Cannot read...\n  at handler (server.ts:45)",
-  "http.response.status_code": 500,  // if sent
-  "operation.duration": 8765432,
-}
-```
-
-### Standard Fetch Client Attributes
-
-**Request Phase** (onOperationStart):
-```typescript
-{
-  "operation.id": 456,
-  "operation.timestamp": 1698765432987654321,
-
-  "http.request.method": "POST",
-  "url.full": "https://api.example.com/data",
-  "url.scheme": "https",
-  "server.address": "api.example.com",
-  "server.port": 443,
-
-  "http.request.header.content-type": "application/json",
-}
-```
-
-**Response Phase** (onOperationEnd):
-```typescript
-{
-  "http.response.status_code": 201,
-  "http.response.body.size": 1234,
-  "operation.duration": 45678901,
-
-  "http.response.header.content-type": "application/json",
-}
-```
+Same as HTTP Server attributes but for outgoing requests.
 
 ---
 
 ## Lifecycle State Machine
 
-```
-┌──────────────────┐
-│  Operation Start │
-└────────┬─────────┘
-         │
-         ▼
-    ┌────────────────────┐
-    │ onOperationStart() │ ◄── Attributes with request info
-    └────────┬───────────┘
-             │
-             ▼
-    ┌─────────────────────┐
-    │ onOperationInject() │ ◄── Called if distributed tracing active
-    └────────┬────────────┘     Returns headers to inject
-             │
-             ▼
-    ┌──────────────────────┐
-    │  Operation Executing │
-    └────────┬─────────────┘
-             │
-             ▼
-    ┌──────────────────────┐
-    │ [0-N times]          │
-    │ onOperationProgress()│ ◄── Incremental updates during execution
-    └────────┬─────────────┘
-             │
-        ┌────┴────┐
-        │         │
-        ▼         ▼
-   ┌─────────┐ ┌──────────┐
-   │ Success │ │  Failure │
-   └────┬────┘ └────┬─────┘
-        │           │
-        ▼           ▼
-┌──────────────┐ ┌────────────────┐
-│ onOpEnd()    │ │ onOpError()    │ ◄── Attributes with result/error
-│              │ │                │
-│ (delete id)  │ │ (delete id)    │ ◄── MUST delete from map
-└──────────────┘ └────────────────┘
-```
+**Hook Order**:
+1. `onOperationStart` - Always called first
+2. `onOperationInject` - Called 0-N times for header injection
+3. `onOperationProgress` - Called 0-N times during execution
+4. `onOperationEnd` OR `onOperationError` - Exactly one called
 
 **Guarantees**:
-1. `onOperationStart` always called first
-2. `onOperationProgress` called 0-N times (not guaranteed)
-3. `onOperationInject` called 0-N times (instrumentation caches if needed)
-4. Exactly ONE of `onOperationEnd` OR `onOperationError` called (never both, never neither)
-5. All hooks for same ID called on same thread
-6. ID never reused (monotonic counter)
+- MUST: Call Start before any other hooks
+- MUST: Call exactly one of End or Error
+- MUST: Use same thread for all hooks with same ID
+- MUST NOT: Reuse operation IDs (monotonic counter)
+- MUST: Delete spans from tracking map in End/Error
 
 ---
 
 ## Corner Cases
 
-### 1. Malformed Trace Context Headers
+| Scenario | Behavior | Resolution |
+|----------|----------|------------|
+| Invalid traceparent header | trace.parent.* attributes omitted | Continue normally |
+| URL parsing fails | Attribute omitted, others present | Log error, continue |
+| 500MB response body | Size capped at MAX_SAFE_INTEGER | Log truncation |
+| 100KB header value | Truncated at 8KB | Log truncation |
+| Non-string header value | Convert via toString() | Omit if fails |
+| Missing optional field | Key not in attributes object | Check with `in` operator |
+| Hook throws exception | Caught, logged, request continues | No retry |
+| Hook takes 10s | No timeout, blocks request | Author responsibility |
 
-**Scenario**: Client sends invalid `traceparent` header
-```
-traceparent: invalid-format-here
-```
-
-**Behavior**:
-- `trace.parent.*` attributes **not included** in onOperationStart
-- No error thrown
-- Operation proceeds normally
-- Instrumentation can handle missing trace context
-
-**Test**:
-```typescript
-test("invalid traceparent header ignored", async () => {
-  let attributes: any;
-
-  Bun.telemetry.attach({
-    type: InstrumentKind.HTTP,
-    onOperationStart(id, attrs) { attributes = attrs; },
-  });
-
-  await fetch("http://localhost:3000", {
-    headers: { "traceparent": "garbage" },
-  });
-
-  expect(attributes["trace.parent.trace_id"]).toBeUndefined();
-});
-```
-
----
-
-### 2. Missing Required Attributes
-
-**Scenario**: Zig fails to build attribute (e.g., URL parsing fails)
-
-**Behavior**:
-- Attribute omitted (not set to null/undefined)
-- Other attributes still present
-- Hook still called with partial attributes
-- Error logged to stderr (non-fatal)
-
----
-
-### 3. Very Large Attribute Values
-
-**Scenario**: Response body 500MB, header value 100KB
-
-**Behavior**:
-- `http.response.body.size` capped at Number.MAX_SAFE_INTEGER
-- Header values truncated at 8KB
-- Truncation logged (non-fatal)
-
-**Limits**:
-- Header values: 8KB max per header
+**Attribute Value Limits**:
+- Header values: 8KB max
 - URL length: 64KB max
 - Error message: 4KB max
 - Stack trace: 16KB max
-
----
-
-### 4. Non-String Header Values
-
-**Scenario**: Header with number/boolean value (protocol violation)
-
-**Behavior**:
-- Converted to string via `toString()`
-- If conversion fails, attribute omitted
-- Logged as warning (non-fatal)
-
----
-
-### 5. Duplicate Attribute Keys
-
-**Scenario**: Custom attribute conflicts with semantic convention
-
-**Behavior**:
-- Semantic convention attributes **always win**
-- Custom attributes silently overwritten
-- This should never happen (Zig controls all attribute keys)
-
----
-
-### 6. Null/Undefined Attribute Values
-
-**Scenario**: Optional field not present (e.g., no query string)
-
-**Behavior**:
-- Attribute key **not included** in object
-- JavaScript sees `!(key in attributes)` → true
-- Never set to `null` or `undefined`
-
-**Example**:
-```typescript
-// URL: http://localhost:3000/api/users (no query)
-attributes = {
-  "url.path": "/api/users",
-  // "url.query" not present
-};
-
-"url.query" in attributes  // false (not undefined!)
-```
-
----
-
-### 7. Hook Execution Time Limits
-
-**Scenario**: Hook takes 10 seconds to execute
-
-**Behavior**:
-- **No timeout enforced** (hooks run to completion)
-- Long-running hooks block request processing
-- Instrumentation author responsible for performance
-- Future: Consider async hooks or timeout enforcement
-
-**Best Practice**:
-```typescript
-onOperationStart(id, attributes) {
-  // Fast: store in map
-  this.spans.set(id, tracer.startSpan("op", { attributes }));
-
-  // DON'T: Slow external API call
-  // await fetch("http://slow-api.com/log");  // BLOCKS REQUEST!
-}
-```
 
 ---
 
@@ -847,37 +500,10 @@ test("creates spans with correct attributes", async () => {
 
 ## Future Extensions
 
-### Planned Additions
-
-1. **Attribute Filtering**:
-```typescript
-captureAttributes: {
-  filters: {
-    "http.request.header.*": ["content-type", "user-agent"],
-    "http.response.header.*": ["content-type"],
-  },
-}
-```
-
-2. **Custom Attributes**:
-```typescript
-onOperationStart(id, attributes) {
-  // Instrumentation can add custom attributes
-  attributes["custom.tenant_id"] = extractTenantId(attributes["url.path"]);
-}
-```
-
-3. **Async Hooks** (if performance acceptable):
-```typescript
-onOperationStartAsync?: async (id, attributes) => {
-  await logToExternalSystem(attributes);
-};
-```
-
-4. **Attribute Transformers**:
-```typescript
-transformAttributes?: (attributes: Record<string, any>) => Record<string, any>;
-```
+- Attribute filtering patterns
+- Custom attribute injection
+- Async hooks (if performance acceptable)
+- Attribute transformers
 
 ---
 

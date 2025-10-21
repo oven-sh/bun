@@ -40,7 +40,7 @@
 - [ ] T010 Implement Telemetry singleton in src/bun.js/telemetry.zig (instrument_table array indexed by InstrumentKind, atomic ID generation)
 - [ ] T011 Implement Bun.telemetry.attach(instrument) in src/bun.js/telemetry.zig (validate functions, protect JSValues, return ID)
 - [ ] T012 [P] Implement Bun.telemetry.detach(id) in src/bun.js/telemetry.zig (unprotect JSValues, remove from registry)
-- [ ] T013 [P] Implement Bun.telemetry.isEnabledFor(kind) in src/bun.js/telemetry.zig (O(1) array length check)
+- [ ] T013 [P] Implement Bun.telemetry.nativeHooks.isEnabledFor(kind) in src/bun.js/telemetry.zig (O(1) array length check)
 
 ### AttributeMap MVP Implementation (Zig)
 

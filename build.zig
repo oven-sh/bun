@@ -99,7 +99,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
         opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
-        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
 
@@ -290,14 +290,16 @@ pub fn build(b: *Build) !void {
         var o = build_options;
         var unit_tests = b.addTest(.{
             .name = "bun-test",
-            .optimize = build_options.optimize,
-            .root_source_file = b.path("src/unit_test.zig"),
             .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
-            .target = build_options.target,
+            .root_module = b.createModule(.{
+                .optimize = build_options.optimize,
+                .root_source_file = b.path("src/unit_test.zig"),
+                .target = build_options.target,
+                .omit_frame_pointer = false,
+                .strip = false,
+            }),
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-            .omit_frame_pointer = false,
-            .strip = false,
         });
         configureObj(b, &o, unit_tests);
         // Setting `linker_allow_shlib_undefined` causes the linker to ignore
@@ -616,7 +618,11 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    obj.no_link_obj = true;
+    if (@hasField(Compile, "no_link_obj")) {
+        obj.no_link_obj = true;
+    } else {
+        // TODO: port change
+    }
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -804,7 +810,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 fn propagateImports(source_mod: *Module) !void {
     var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
     defer seen.deinit();
-    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    var queue = std.array_list.Managed(*Module).init(source_mod.owner.graph.arena);
     defer queue.deinit();
     try queue.appendSlice(source_mod.import_table.values());
     while (queue.pop()) |mod| {

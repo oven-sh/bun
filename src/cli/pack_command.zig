@@ -1045,7 +1045,7 @@ pub const PackCommand = struct {
                     const bin_without_trailing = strings.withoutTrailingSlash(bin.path);
                     if (strings.hasPrefix(maybe_bin_path, bin_without_trailing)) {
                         const remain = maybe_bin_path[bin_without_trailing.len..];
-                        if (remain.len > 1 and remain[0] == '/' and !strings.containsChar(remain[1..], '/')) {
+                        if (remain.len > 1 and remain[0] == '/' and !bun.path.hasPosixPathSeparators(remain[1..])) {
                             return true;
                         }
                     }

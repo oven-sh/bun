@@ -914,7 +914,7 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path
-    const PATH_to_use: []const u8 = if (strings.containsChar(argv0_to_use, '/'))
+    const PATH_to_use: []const u8 = if (bun.path.hasPosixPathSeparators(argv0_to_use))
         ""
         // If no $PATH is provided, we fallback to the one from environ
         // This is already the behavior of the PATH passed in here.

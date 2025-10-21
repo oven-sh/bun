@@ -239,7 +239,7 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
     var path_to_use = utf8;
 
-    if (bun.strings.containsChar(utf8, '/')) {
+    if (bun.path.hasPosixPathSeparators(utf8)) {
         renormalized = bun.path_buffer_pool.get();
         @memcpy(renormalized.?[0..utf8.len], utf8);
         for (renormalized.?[0..utf8.len]) |*c| {

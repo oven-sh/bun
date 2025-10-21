@@ -372,7 +372,7 @@ pub const FSEventsLoop = struct {
                     }
 
                     // Do not emit events from subdirectories (without option set)
-                    if (path.len == 0 or (bun.strings.containsChar(path, '/') and !handle.recursive)) {
+                    if (path.len == 0 or (bun.path.hasPosixPathSeparators(path) and !handle.recursive)) {
                         continue;
                     }
 

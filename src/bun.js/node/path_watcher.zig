@@ -220,7 +220,7 @@ pub const PathWatcherManager = struct {
                                 }
 
                                 // Do not emit events from subdirectories (without option set)
-                                if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
+                                if (path.len == 0 or (bun.path.hasPosixPathSeparators(path) and !watcher.recursive)) {
                                     continue;
                                 }
                                 watcher.emit(event_type.toEvent(path), hash, timestamp, true);
@@ -271,7 +271,7 @@ pub const PathWatcherManager = struct {
                                 }
 
                                 // Do not emit events from subdirectories (without option set)
-                                if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
+                                if (path.len == 0 or (bun.path.hasPosixPathSeparators(path) and !watcher.recursive)) {
                                     continue;
                                 }
 

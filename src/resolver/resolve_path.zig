@@ -2056,6 +2056,24 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+/// Test whether the path contains path slashes appropriate to this platform.
+pub fn hasPathSlashes(str: []const u8) bool {
+    return if (bun.Environment.isWindows)
+        hasPosixPathSeparators(str) or hasWindowsPathSeparators(str)
+    else
+        hasPosixPathSeparators(str);
+}
+
+/// Test whether the path contains Windows backslashes.
+pub fn hasWindowsPathSeparators(str: []const u8) bool {
+    return strings.containsChar(str, '\\');
+}
+
+/// Test whether the path contains POSIX forward slashes.
+pub fn hasPosixPathSeparators(str: []const u8) bool {
+    return strings.containsChar(str, '/');
+}
+
 const Fs = @import("../fs.zig");
 const std = @import("std");
 

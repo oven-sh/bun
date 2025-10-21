@@ -9,8 +9,8 @@ test("escapeRegExp", () => {
 
 test("escapeRegExpForPackageName", () => {
   // same as the other but '*' becomes '.*' instead of '\*'
-  expect(escapeRegExpForPackageNameMatching("foo - bar*", true)).toBe("foo \\x2d bar.*");
-  expect(escapeRegExpForPackageNameMatching("\\ ^ $ * + ? . ( ) | { } [ ]", true)).toBe(
+  expect(escapeRegExpForPackageNameMatching("foo - bar*")).toBe("foo \\x2d bar.*");
+  expect(escapeRegExpForPackageNameMatching("\\ ^ $ * + ? . ( ) | { } [ ]")).toBe(
     "\\\\ \\^ \\$ .* \\+ \\? \\. \\( \\) \\| \\{ \\} \\[ \\]",
   );
 });

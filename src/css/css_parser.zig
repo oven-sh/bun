@@ -5022,7 +5022,7 @@ const Tokenizer = struct {
                 break :brk .{ .delim = '~' };
             },
             else => brk: {
-                if (!std.ascii.isASCII(b)) {
+                if (!std.ascii.isAscii(b)) {
                     break :brk this.consumeIdentLike();
                 }
                 this.advance(1);
@@ -5803,10 +5803,10 @@ const Tokenizer = struct {
             '-' => this.hasAtLeast(1) and switch (this.byteAt(1)) {
                 'a'...'z', 'A'...'Z', '-', '_', 0 => true,
                 '\\' => !this.hasNewlineAt(1),
-                else => |b| !std.ascii.isASCII(b),
+                else => |b| !std.ascii.isAscii(b),
             },
             '\\' => !this.hasNewlineAt(1),
-            else => |b| !std.ascii.isASCII(b),
+            else => |b| !std.ascii.isAscii(b),
         };
     }
 
@@ -5837,7 +5837,7 @@ const Tokenizer = struct {
             // rejected.
             for (0..n) |i| {
                 const b = this.byteAt(i);
-                std.debug.assert(std.ascii.isASCII(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
+                std.debug.assert(std.ascii.isAscii(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
                 std.debug.assert(b != '\r' and b != '\n' and b != '\x0C');
             }
         }
@@ -6749,7 +6749,7 @@ pub const serializer = struct {
                 '0'...'9', 'A'...'Z', 'a'...'z', '_', '-' => continue,
                 // the unicode replacement character
                 0 => bun.strings.encodeUTF8Comptime(0xFFD),
-                else => if (!std.ascii.isASCII(b)) continue else null,
+                else => if (!std.ascii.isAscii(b)) continue else null,
             };
 
             try writer.writeAll(value[chunk_start..i]);

@@ -336,7 +336,6 @@ describe("iterator", () => {
     const CookieMapConstructor = Bun.CookieMap;
     const cookieMap = new CookieMapConstructor(CookieMapConstructor, CookieMapConstructor, Bun, CookieMapConstructor);
     // Should throw TypeError instead of crashing with null pointer dereference
-    expect(() => cookieMap.delete(cookieMap)).toThrow(TypeError);
-    expect(() => cookieMap.delete(cookieMap)).toThrow("Cookie name is required");
+    expect(() => cookieMap.delete(cookieMap)).toThrow(new TypeError("Cookie name is required"));
   });
 });

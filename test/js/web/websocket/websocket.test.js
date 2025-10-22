@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, tls } from "harness";
+import { bunEnv, bunExe, gc, tls, tempDir } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
@@ -729,6 +729,33 @@ describe.concurrent("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
+  });
+
+  it.concurrent("should work with process.nextTick override", async () => {
+    using dir = tempDir("websocket-nexttick", {
+      "test.js": `{
+  process.nextTick = function (arg) {
+    console.log(arg)
+  }
+  using server = Bun.serve({
+    port: 0,
+    fetch() { return new Response(); },
+    websocket: { message() {} },
+  });
+  const ws = new WebSocket(\`ws://\${server.hostname}:\${server.port}\`, {});
+  ws.addEventListener("open", null);
+}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
   });
 
   it("should exit after killed", async () => {

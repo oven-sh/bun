@@ -277,6 +277,7 @@ pub inline fn notifyHttpRequestStart(
     globalObject: *JSGlobalObject,
     method: []const u8,
     url: []const u8,
+    headers: JSValue,
 ) void {
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(.http)) return;
@@ -286,7 +287,7 @@ pub inline fn notifyHttpRequestStart(
     ctx.start_time_ns = @intCast(std.time.nanoTimestamp());
 
     // Build and send start attributes
-    var start_attrs = buildHttpStartAttributes(globalObject, ctx.request_id, method, url, null);
+    var start_attrs = buildHttpStartAttributes(globalObject, ctx.request_id, method, url, headers);
     telemetry_inst.notifyOperationStart(.http, ctx.request_id, start_attrs.toJS());
 }
 

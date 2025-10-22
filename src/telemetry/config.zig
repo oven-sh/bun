@@ -34,11 +34,11 @@ pub const TelemetryConfig = struct {
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
 
-    /// Initialize configuration with sample/default values
+    /// Initialize configuration with safe default values
     /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_* environment variables
     pub fn init(allocator: std.mem.Allocator, global: *JSGlobalObject) !TelemetryConfig {
-        // Sample headers for demonstration (commonly captured headers)
-        const sample_request_headers = &[_][]const u8{ "user-agent", "content-type", "authorization" };
+        // Safe default headers (deny-by-default security model - only non-sensitive headers)
+        const sample_request_headers = &[_][]const u8{ "content-type", "user-agent", "accept", "content-length" };
         const sample_response_headers = &[_][]const u8{ "content-type", "content-length" };
 
         // Create JSValue arrays for header capture configuration

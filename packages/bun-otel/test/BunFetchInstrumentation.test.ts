@@ -14,12 +14,19 @@ import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunFetchInstrumentation } from "../src/instruments/BunFetchInstrumentation";
+import { ConfigurationProperty } from "../types";
+import { TempConfig } from "./config-helper";
 import { EchoServer } from "./echo-server";
 
 describe("BunFetchInstrumentation", () => {
   let exporter: InMemorySpanExporter;
   let provider: BasicTracerProvider;
   let instrumentation: BunFetchInstrumentation;
+
+  using _globalConfig = new TempConfig({
+    [ConfigurationProperty.http_capture_headers_fetch_request]: ["content-type", "x-custom-header"],
+    [ConfigurationProperty.http_capture_headers_fetch_response]: ["content-type", "x-response-header"],
+  });
 
   beforeAll(() => {
     // Setup tracer provider with in-memory exporter

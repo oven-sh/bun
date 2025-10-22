@@ -130,6 +130,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-021**: System MUST determine resource attributes (service.name, service.version, deployment.environment) using standard OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES environment variables, with fallback to package.json (name and version fields)
 - **FR-022**: System MUST implement defensive error handling for instrumentation hook exceptions - catch exceptions, log to stderr with rate limiting to prevent log flooding, clear exception state, and continue request processing normally without affecting application behavior
 - **FR-023**: System MUST enforce header validation rules (lowercase strings only, maximum 50 headers per list, sensitive headers always blocked, invalid headers logged and ignored non-fatally) as specified in Security Model section to prevent data leakage and denial-of-service attacks
+- **FR-024**: All memory allocations in telemetry native hooks MUST be annotated with `// TODO OTEL_MALLOC - REVIEW` unless explicitly justified with human-reviewed `// OTEL_MALLOC - <reason>` comments to ensure memory safety auditing
 
 ### Key Entities _(include if feature involves data)_
 

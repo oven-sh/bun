@@ -324,9 +324,9 @@ pub const Route = struct {
                     if (server.config().isDevelopment()) {
                         switch (bun.Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
-                                var writer = bun.Output.errorWriterBuffered();
-                                this.state.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
-                                writer.context.flush() catch {};
+                                const writer = bun.Output.errorWriterBuffered();
+                                this.state.err.printWithEnableAnsiColors(writer, enable_ansi_colors) catch {};
+                                writer.flush() catch {};
                             },
                         }
                     }

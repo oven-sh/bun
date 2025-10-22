@@ -36,11 +36,20 @@ pub const Source = struct {
         }
     }.getBufferedStream();
 
-    buffered_stream: BufferedStream,
-    buffered_error_stream: BufferedStream,
+    stdout_buffer: [4096]u8,
+    stderr_buffer: [4096]u8,
+    buffered_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    buffered_error_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    buffered_stream: *std.Io.Writer,
+    buffered_error_stream: *std.Io.Writer,
 
-    stream: StreamType,
-    error_stream: StreamType,
+    stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    error_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    stream: *std.Io.Writer,
+    error_stream: *std.Io.Writer,
+
+    raw_stream: StreamType,
+    raw_error_stream: StreamType,
     out_buffer: []u8 = &([_]u8{}),
     err_buffer: []u8 = &([_]u8{}),
 
@@ -55,17 +64,29 @@ pub const Source = struct {
         source_set = true;
 
         out.* = .{
-            .stream = stream,
-            .error_stream = err_stream,
-            .buffered_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = stream.quietWriter() }
-            else
-                stream,
-            .buffered_error_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = err_stream.quietWriter() }
-            else
-                err_stream,
+            .raw_stream = stream,
+            .raw_error_stream = err_stream,
+
+            .stdout_buffer = undefined,
+            .stderr_buffer = undefined,
+            .buffered_stream = undefined,
+            .buffered_stream_backing = undefined,
+            .buffered_error_stream_backing = undefined,
+            .buffered_error_stream = undefined,
+
+            .stream_backing = undefined,
+            .error_stream_backing = undefined,
+            .stream = undefined,
+            .error_stream = undefined,
         };
+        out.buffered_stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&out.stdout_buffer);
+        out.buffered_error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&out.stderr_buffer);
+        out.buffered_stream = &out.buffered_stream_backing.new_interface;
+        out.buffered_error_stream = &out.buffered_error_stream_backing.new_interface;
+        out.stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&.{});
+        out.error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&.{});
+        out.stream = &out.stream_backing.new_interface;
+        out.error_stream = &out.error_stream_backing.new_interface;
     }
 
     pub fn configureThread() void {
@@ -557,30 +578,30 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 // TODO: investigate migrating this to the buffered one.
-pub fn errorWriter() WriterType {
-    bun.debugAssert(source_set);
-    return source.error_stream.quietWriter();
-}
-
-pub fn errorWriterBuffered() Source.BufferedStream.Writer {
-    bun.debugAssert(source_set);
-    return source.buffered_error_stream.writer();
-}
-
-// TODO: investigate returning the buffered_error_stream
-pub fn errorStream() Source.StreamType {
+pub fn errorWriter() *std.Io.Writer {
     bun.debugAssert(source_set);
     return source.error_stream;
 }
 
-pub fn writer() WriterType {
+pub fn errorWriterBuffered() *std.Io.Writer {
     bun.debugAssert(source_set);
-    return source.stream.quietWriter();
+    return source.buffered_error_stream;
 }
 
-pub fn writerBuffered() Source.BufferedStream.Writer {
+// TODO: investigate returning the buffered_error_stream
+pub fn errorStream() *std.Io.Writer {
     bun.debugAssert(source_set);
-    return source.buffered_stream.writer();
+    return source.error_stream;
+}
+
+pub fn writer() *std.Io.Writer {
+    bun.debugAssert(source_set);
+    return source.stream;
+}
+
+pub fn writerBuffered() *std.Io.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream;
 }
 
 pub fn resetTerminal() void {
@@ -589,17 +610,17 @@ pub fn resetTerminal() void {
     }
 
     if (enable_ansi_colors_stderr) {
-        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.error_stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     } else {
-        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     }
 }
 
 pub fn resetTerminalAll() void {
     if (enable_ansi_colors_stderr)
-        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.error_stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     if (enable_ansi_colors_stdout)
-        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
 }
 
 /// Write buffered stdout & stderr to the terminal.
@@ -757,7 +778,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
-            source.buffered_stream.writer().print(fmt, args) catch {};
+            source.buffered_stream.print(fmt, args) catch {};
         } else {
             writer().print(fmt, args) catch {};
         }
@@ -1122,9 +1143,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
     } else {
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe
         if (enable_buffering)
-            source.buffered_error_stream.writer().print(fmt, args) catch {}
+            source.buffered_error_stream.print(fmt, args) catch {}
         else
-            source.error_stream.writer().print(fmt, args) catch {};
+            source.error_stream.print(fmt, args) catch {};
     }
 }
 

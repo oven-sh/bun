@@ -1969,35 +1969,52 @@ pub fn parse(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]js
 
 /// Based on Node v21.6.1 path.posix.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
-pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) MaybeSlice(T) {
+pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T), buf3: *std.ArrayList(T)) MaybeSlice(T) {
     comptime validatePathT(T, "relativePosixT");
 
     // validateString of `from` and `to` are performed in pub fn relative.
     if (std.mem.eql(T, from, to)) {
-        return MaybeSlice(T){ .result = &.{} };
+        return .{ .result = &.{} };
     }
 
-    // Trim leading forward slashes.
-    // Backed by expandable buf2 because fromOrig may be long.
+    // We need to save the resolved paths because they'll be backed by temporary buffers
+    // Use buf2 and buf3 as scratch buffers for resolving from
     const fromOrig = switch (resolvePosixT(T, &.{from}, buf2, buf3)) {
         .result => |r| r,
-        .err => |e| return MaybeSlice(T){ .err = e },
+        .err => |e| return .{ .err = e },
     };
     const fromOrigLen = fromOrig.len;
-    // Backed by buf.
-    const toOrig = switch (resolvePosixT(T, &.{to}, buf, buf3)) {
-        .result => |r| r,
-        .err => |e| return MaybeSlice(T){ .err = e },
-    };
 
-    if (std.mem.eql(T, fromOrig, toOrig)) {
-        return MaybeSlice(T){ .result = &.{} };
+    // Save fromOrig into buf (we'll use buf for the final result later)
+    buf.clearRetainingCapacity();
+    buf.ensureTotalCapacity(fromOrigLen) catch return .{ .err = Syscall.Error.oom };
+    const oldLen = buf.items.len;
+    buf.items.len = oldLen + fromOrigLen;
+    bun.memmove(buf.allocatedSlice()[oldLen .. oldLen + fromOrigLen], fromOrig);
+    const fromOrigSaved = buf.items[0..fromOrigLen];
+
+    // Now use buf2 and buf3 as scratch buffers for resolving to
+    const toOrig = switch (resolvePosixT(T, &.{to}, buf2, buf3)) {
+        .result => |r| r,
+        .err => |e| return .{ .err = e },
+    };
+    const toOrigLen = toOrig.len;
+
+    // Save toOrig into buf3
+    buf3.clearRetainingCapacity();
+    buf3.ensureTotalCapacity(toOrigLen) catch return .{ .err = Syscall.Error.oom };
+    const oldLen3 = buf3.items.len;
+    buf3.items.len = oldLen3 + toOrigLen;
+    bun.memmove(buf3.allocatedSlice()[oldLen3 .. oldLen3 + toOrigLen], toOrig);
+    const toOrigSaved = buf3.items[0..toOrigLen];
+
+    if (std.mem.eql(T, fromOrigSaved, toOrigSaved)) {
+        return .{ .result = &.{} };
     }
 
     const fromStart = 1;
     const fromEnd = fromOrigLen;
     const fromLen = fromEnd - fromStart;
-    const toOrigLen = toOrig.len;
     var toStart: usize = 1;
     const toLen = toOrigLen - toStart;
 
@@ -2011,8 +2028,8 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
     {
         var i: usize = 0;
         while (i < smallestLength) : (i += 1) {
-            const fromByte = fromOrig[fromStart + i];
-            if (fromByte != toOrig[toStart + i]) {
+            const fromByte = fromOrigSaved[fromStart + i];
+            if (fromByte != toOrigSaved[toStart + i]) {
                 break;
             } else if (fromByte == CHAR_FORWARD_SLASH) {
                 lastCommonSep = i;
@@ -2022,18 +2039,33 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
     }
     if (matchesAllOfSmallest) {
         if (toLen > smallestLength) {
-            if (toOrig[toStart + smallestLength] == CHAR_FORWARD_SLASH) {
+            if (toOrigSaved[toStart + smallestLength] == CHAR_FORWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='/foo/bar'; to='/foo/bar/baz'
-                return MaybeSlice(T){ .result = toOrig[toStart + smallestLength + 1 .. toOrigLen :0] };
+                // Return a slice from toOrigSaved, adding null terminator
+                const resultStart = toStart + smallestLength + 1;
+                const resultLen = toOrigLen - resultStart;
+                buf2.clearRetainingCapacity();
+                buf2.ensureTotalCapacity(resultLen + 1) catch return .{ .err = Syscall.Error.oom };
+                buf2.items.len = resultLen + 1;
+                bun.memmove(buf2.items[0..resultLen], toOrigSaved[resultStart..toOrigLen]);
+                buf2.items[resultLen] = 0;
+                return .{ .result = buf2.items[0..resultLen :0] };
             }
             if (smallestLength == 0) {
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
-                return MaybeSlice(T){ .result = toOrig[toStart + smallestLength .. toOrigLen :0] };
+                const resultStart = toStart + smallestLength;
+                const resultLen = toOrigLen - resultStart;
+                buf2.clearRetainingCapacity();
+                buf2.ensureTotalCapacity(resultLen + 1) catch return .{ .err = Syscall.Error.oom };
+                buf2.items.len = resultLen + 1;
+                bun.memmove(buf2.items[0..resultLen], toOrigSaved[resultStart..toOrigLen]);
+                buf2.items[resultLen] = 0;
+                return .{ .result = buf2.items[0..resultLen :0] };
             }
         } else if (fromLen > smallestLength) {
-            if (fromOrig[fromStart + smallestLength] == CHAR_FORWARD_SLASH) {
+            if (fromOrigSaved[fromStart + smallestLength] == CHAR_FORWARD_SLASH) {
                 // We get here if `to` is the exact base path for `from`.
                 // For example: from='/foo/bar/baz'; to='/foo/bar'
                 lastCommonSep = smallestLength;
@@ -2045,11 +2077,9 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
         }
     }
 
-    var bufOffset: usize = 0;
-    var bufSize: usize = 0;
+    // Clear buf2 for building the final result
+    buf2.clearRetainingCapacity();
 
-    // Backed by buf3.
-    var out: []const T = &.{};
     // Add a block to isolate `i`.
     {
         // Generate the relative path based on the path difference between `to`
@@ -2059,21 +2089,19 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
         //  for (i = fromStart + lastCommonSep + 1; i <= fromEnd; ++i) {
         var i: usize = fromStart + (if (lastCommonSep != null) lastCommonSep.? + 1 else 0);
         while (i <= fromEnd) : (i += 1) {
-            if (i == fromEnd or fromOrig[i] == CHAR_FORWARD_SLASH) {
+            if (i == fromEnd or fromOrigSaved[i] == CHAR_FORWARD_SLASH) {
                 // Translated from the following JS code:
                 //   out += out.length === 0 ? '..' : '/..';
-                if (out.len > 0) {
-                    bufOffset = bufSize;
-                    bufSize += 3;
-                    buf3[bufOffset] = CHAR_FORWARD_SLASH;
-                    buf3[bufOffset + 1] = CHAR_DOT;
-                    buf3[bufOffset + 2] = CHAR_DOT;
+                if (buf2.items.len > 0) {
+                    buf2.ensureTotalCapacity(buf2.items.len + 3) catch return .{ .err = Syscall.Error.oom };
+                    buf2.appendAssumeCapacity(CHAR_FORWARD_SLASH);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
                 } else {
-                    bufSize = 2;
-                    buf3[0] = CHAR_DOT;
-                    buf3[1] = CHAR_DOT;
+                    buf2.ensureTotalCapacity(2) catch return .{ .err = Syscall.Error.oom };
+                    buf2.appendAssumeCapacity(CHAR_DOT);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
                 }
-                out = buf3[0..bufSize];
             }
         }
     }
@@ -2085,55 +2113,71 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
     //   return `${out}${StringPrototypeSlice(to, toStart + lastCommonSep)}`;
     toStart = if (lastCommonSep != null) toStart + lastCommonSep.? else 0;
     const sliceSize = toOrigLen - toStart;
-    const outLen = out.len;
-    bufSize = outLen;
+
     if (sliceSize > 0) {
-        bufOffset = bufSize;
-        bufSize += sliceSize;
-        // Use bun.copy because toOrig and buf overlap.
-        bun.copy(T, buf[bufOffset..bufSize], toOrig[toStart..toOrigLen]);
+        const currentLen = buf2.items.len;
+        buf2.ensureTotalCapacity(currentLen + sliceSize + 1) catch return .{ .err = Syscall.Error.oom };
+        buf2.items.len = currentLen + sliceSize;
+        bun.memmove(buf2.allocatedSlice()[currentLen .. currentLen + sliceSize], toOrigSaved[toStart..toOrigLen]);
     }
-    if (outLen > 0) {
-        bun.memmove(buf[0..outLen], out);
-    }
-    buf[bufSize] = 0;
-    return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+
+    const finalLen = buf2.items.len;
+    buf2.ensureTotalCapacity(finalLen + 1) catch return .{ .err = Syscall.Error.oom };
+    buf2.items.len = finalLen + 1;
+    buf2.items[finalLen] = 0;
+    return .{ .result = buf2.items[0..finalLen :0] };
 }
 
 /// Based on Node v21.6.1 path.win32.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
-pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) MaybeSlice(T) {
+pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T), buf3: *std.ArrayList(T)) MaybeSlice(T) {
     comptime validatePathT(T, "relativeWindowsT");
 
     // validateString of `from` and `to` are performed in pub fn relative.
     if (std.mem.eql(T, from, to)) {
-        return MaybeSlice(T){ .result = &.{} };
+        return .{ .result = &.{} };
     }
 
-    // Backed by expandable buf2 because fromOrig may be long.
+    // Resolve fromOrig into buf2
+    buf2.clearRetainingCapacity();
     const fromOrig = switch (resolveWindowsT(T, &.{from}, buf2, buf3)) {
         .result => |r| r,
-        .err => |e| return MaybeSlice(T){ .err = e },
+        .err => |e| return .{ .err = e },
     };
     const fromOrigLen = fromOrig.len;
-    // Backed by buf.
-    const toOrig = switch (resolveWindowsT(T, &.{to}, buf, buf3)) {
+
+    // Save fromOrig to buf3 to avoid aliasing when resolving toOrig
+    buf3.clearRetainingCapacity();
+    buf3.ensureTotalCapacity(fromOrigLen) catch return .{ .err = Syscall.Error.oom };
+    buf3.items.len = fromOrigLen;
+    bun.memmove(buf3.items[0..fromOrigLen], fromOrig);
+    const fromOrigSaved = buf3.items[0..fromOrigLen];
+
+    // Resolve toOrig into buf
+    buf.clearRetainingCapacity();
+    const toOrig = switch (resolveWindowsT(T, &.{to}, buf, buf2)) {
         .result => |r| r,
-        .err => |e| return MaybeSlice(T){ .err = e },
+        .err => |e| return .{ .err = e },
     };
-
-    if (std.mem.eql(T, fromOrig, toOrig) or
-        eqlIgnoreCaseT(T, fromOrig, toOrig))
-    {
-        return MaybeSlice(T){ .result = &.{} };
-    }
-
     const toOrigLen = toOrig.len;
+
+    // Save toOrig to the end of buf3, including the sentinel
+    buf3.ensureTotalCapacity(fromOrigLen + toOrigLen + 1) catch return .{ .err = Syscall.Error.oom };
+    buf3.items.len = fromOrigLen + toOrigLen + 1;
+    bun.memmove(buf3.items[fromOrigLen .. fromOrigLen + toOrigLen], toOrig);
+    buf3.items[fromOrigLen + toOrigLen] = 0;
+    const toOrigSaved = buf3.items[fromOrigLen .. fromOrigLen + toOrigLen :0];
+
+    if (std.mem.eql(T, fromOrigSaved, toOrigSaved) or
+        eqlIgnoreCaseT(T, fromOrigSaved, toOrigSaved))
+    {
+        return .{ .result = &.{} };
+    }
 
     // Trim leading backslashes
     var fromStart: usize = 0;
     while (fromStart < fromOrigLen and
-        fromOrig[fromStart] == CHAR_BACKWARD_SLASH)
+        fromOrigSaved[fromStart] == CHAR_BACKWARD_SLASH)
     {
         fromStart += 1;
     }
@@ -2141,7 +2185,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     // Trim trailing backslashes (applicable to UNC paths only)
     var fromEnd = fromOrigLen;
     while (fromEnd - 1 > fromStart and
-        fromOrig[fromEnd - 1] == CHAR_BACKWARD_SLASH)
+        fromOrigSaved[fromEnd - 1] == CHAR_BACKWARD_SLASH)
     {
         fromEnd -= 1;
     }
@@ -2151,7 +2195,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     // Trim leading backslashes
     var toStart: usize = 0;
     while (toStart < toOrigLen and
-        toOrig[toStart] == CHAR_BACKWARD_SLASH)
+        toOrigSaved[toStart] == CHAR_BACKWARD_SLASH)
     {
         toStart = toStart + 1;
     }
@@ -2159,7 +2203,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     // Trim trailing backslashes (applicable to UNC paths only)
     var toEnd = toOrigLen;
     while (toEnd - 1 > toStart and
-        toOrig[toEnd - 1] == CHAR_BACKWARD_SLASH)
+        toOrigSaved[toEnd - 1] == CHAR_BACKWARD_SLASH)
     {
         toEnd -= 1;
     }
@@ -2176,8 +2220,8 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     {
         var i: usize = 0;
         while (i < smallestLength) : (i += 1) {
-            const fromByte = fromOrig[fromStart + i];
-            if (toLowerT(T, fromByte) != toLowerT(T, toOrig[toStart + i])) {
+            const fromByte = fromOrigSaved[fromStart + i];
+            if (toLowerT(T, fromByte) != toLowerT(T, toOrigSaved[toStart + i])) {
                 break;
             } else if (fromByte == CHAR_BACKWARD_SLASH) {
                 lastCommonSep = i;
@@ -2190,23 +2234,23 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     // return the original `to`.
     if (!matchesAllOfSmallest) {
         if (lastCommonSep == null) {
-            return MaybeSlice(T){ .result = toOrig };
+            return .{ .result = toOrigSaved };
         }
     } else {
         if (toLen > smallestLength) {
-            if (toOrig[toStart + smallestLength] == CHAR_BACKWARD_SLASH) {
+            if (toOrigSaved[toStart + smallestLength] == CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
-                return MaybeSlice(T){ .result = toOrig[toStart + smallestLength + 1 .. toOrigLen :0] };
+                return .{ .result = toOrigSaved[toStart + smallestLength + 1 .. toOrigLen :0] };
             }
             if (smallestLength == 2) {
                 // We get here if `from` is the device root.
                 // For example: from='C:\'; to='C:\foo'
-                return MaybeSlice(T){ .result = toOrig[toStart + smallestLength .. toOrigLen :0] };
+                return .{ .result = toOrigSaved[toStart + smallestLength .. toOrigLen :0] };
             }
         }
         if (fromLen > smallestLength) {
-            if (fromOrig[fromStart + smallestLength] == CHAR_BACKWARD_SLASH) {
+            if (fromOrigSaved[fromStart + smallestLength] == CHAR_BACKWARD_SLASH) {
                 // We get here if `to` is the exact base path for `from`.
                 // For example: from='C:\foo\bar'; to='C:\foo'
                 lastCommonSep = smallestLength;
@@ -2221,10 +2265,8 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
         }
     }
 
-    var bufOffset: usize = 0;
-    var bufSize: usize = 0;
-
-    // Backed by buf3.
+    // Build "out" using buf2
+    buf2.clearRetainingCapacity();
     var out: []const T = &.{};
     // Add a block to isolate `i`.
     {
@@ -2232,21 +2274,20 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
         // and `from`.
         var i: usize = fromStart + (if (lastCommonSep != null) lastCommonSep.? + 1 else 0);
         while (i <= fromEnd) : (i += 1) {
-            if (i == fromEnd or fromOrig[i] == CHAR_BACKWARD_SLASH) {
+            if (i == fromEnd or fromOrigSaved[i] == CHAR_BACKWARD_SLASH) {
                 // Translated from the following JS code:
                 //   out += out.length === 0 ? '..' : '\\..';
                 if (out.len > 0) {
-                    bufOffset = bufSize;
-                    bufSize += 3;
-                    buf3[bufOffset] = CHAR_BACKWARD_SLASH;
-                    buf3[bufOffset + 1] = CHAR_DOT;
-                    buf3[bufOffset + 2] = CHAR_DOT;
+                    buf2.ensureTotalCapacity(buf2.items.len + 3) catch return .{ .err = Syscall.Error.oom };
+                    buf2.appendAssumeCapacity(CHAR_BACKWARD_SLASH);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
                 } else {
-                    bufSize = 2;
-                    buf3[0] = CHAR_DOT;
-                    buf3[1] = CHAR_DOT;
+                    buf2.ensureTotalCapacity(2) catch return .{ .err = Syscall.Error.oom };
+                    buf2.appendAssumeCapacity(CHAR_DOT);
+                    buf2.appendAssumeCapacity(CHAR_DOT);
                 }
-                out = buf3[0..bufSize];
+                out = buf2.items[0..buf2.items.len];
             }
         }
     }
@@ -2266,32 +2307,34 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     const outLen = out.len;
     if (outLen > 0) {
         const sliceSize = toEnd - toStart;
-        bufSize = outLen;
+        const totalLen = outLen + sliceSize;
+        buf.clearRetainingCapacity();
+        buf.ensureTotalCapacity(totalLen + 1) catch return .{ .err = Syscall.Error.oom };
+        buf.items.len = totalLen + 1;
+        // Copy "out" first
+        bun.memmove(buf.items[0..outLen], out);
+        // Then append the slice from toOrig
         if (sliceSize > 0) {
-            bufOffset = bufSize;
-            bufSize += sliceSize;
-            // Use bun.copy because toOrig and buf overlap.
-            bun.copy(T, buf[bufOffset..bufSize], toOrig[toStart..toEnd]);
+            bun.memmove(buf.items[outLen .. outLen + sliceSize], toOrigSaved[toStart..toEnd]);
         }
-        bun.memmove(buf[0..outLen], out);
-        buf[bufSize] = 0;
-        return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+        buf.items[totalLen] = 0;
+        return .{ .result = buf.items[0..totalLen :0] };
     }
 
-    if (toOrig[toStart] == CHAR_BACKWARD_SLASH) {
+    if (toOrigSaved[toStart] == CHAR_BACKWARD_SLASH) {
         toStart += 1;
     }
-    return MaybeSlice(T){ .result = toOrig[toStart..toEnd :0] };
+    return .{ .result = toOrigSaved[toStart..toEnd :0] };
 }
 
-pub fn relativePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!jsc.JSValue {
+pub fn relativePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T), buf3: *std.ArrayList(T)) bun.JSError!jsc.JSValue {
     return switch (relativePosixT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) bun.JSError!jsc.JSValue {
+pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, from: []const T, to: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T), buf3: *std.ArrayList(T)) bun.JSError!jsc.JSValue {
     return switch (relativeWindowsT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
@@ -2300,14 +2343,13 @@ pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, 
 
 pub fn relativeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!jsc.JSValue {
     const bufLen = @max(from.len + to.len, PATH_SIZE(T));
-    // +1 for null terminator
-    const buf = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf);
-    const buf2 = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf2);
-    const buf3 = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf3);
-    return if (isWindows) relativeWindowsJS_T(T, globalObject, from, to, buf, buf2, buf3) else relativePosixJS_T(T, globalObject, from, to, buf, buf2, buf3);
+    var buf = try std.ArrayList(T).initCapacity(allocator, bufLen + 1);
+    defer buf.deinit();
+    var buf2 = try std.ArrayList(T).initCapacity(allocator, bufLen + 1);
+    defer buf2.deinit();
+    var buf3 = try std.ArrayList(T).initCapacity(allocator, bufLen + 1);
+    defer buf3.deinit();
+    return if (isWindows) relativeWindowsJS_T(T, globalObject, from, to, &buf, &buf2, &buf3) else relativePosixJS_T(T, globalObject, from, to, &buf, &buf2, &buf3);
 }
 
 pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
@@ -2334,19 +2376,14 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
 
 /// Based on Node v21.6.1 path.posix.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) MaybeSlice(T) {
+pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) MaybeSlice(T) {
     comptime validatePathT(T, "resolvePosixT");
 
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
-    var resolvedPath: [:0]const T = undefined;
-    resolvedPath.len = 0;
-    var resolvedPathLen: usize = 0;
+    buf2.clearRetainingCapacity();
     var resolvedAbsolute: bool = false;
-
-    var bufOffset: usize = 0;
-    var bufSize: usize = 0;
 
     var i_i64: i64 = if (paths.len == 0) -1 else @as(i64, @intCast(paths.len - 1));
     while (i_i64 > -2 and !resolvedAbsolute) : (i_i64 -= 1) {
@@ -2358,7 +2395,7 @@ pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2:
             var tmpBuf: [MAX_PATH_SIZE(T)]T = undefined;
             path = switch (posixCwdT(T, &tmpBuf)) {
                 .result => |r| r,
-                .err => |e| return MaybeSlice(T){ .err = e },
+                .err => |e| return .{ .err = e },
             };
         }
         // validateString of `path` is performed in pub fn resolve.
@@ -2371,58 +2408,69 @@ pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2:
 
         // Translated from the following JS code:
         //   resolvedPath = `${path}/${resolvedPath}`;
-        if (resolvedPathLen > 0) {
-            bufOffset = len + 1;
-            bufSize = bufOffset + resolvedPathLen;
-            // Move all bytes to the right by path.len + 1 for the separator.
-            // Use bun.copy because resolvedPath and buf2 overlap.
-            bun.copy(u8, buf2[bufOffset..bufSize], resolvedPath);
+        const oldLen = buf2.items.len;
+        if (oldLen > 0) {
+            const newSize = len + 1 + oldLen;
+            buf2.ensureTotalCapacity(newSize + 1) catch return .{ .err = Syscall.Error.oom };
+            // Move existing content to the right
+            bun.memmove(buf2.allocatedSlice()[len + 1 .. newSize], buf2.items[0..oldLen]);
+            // Copy new path at the beginning
+            bun.memmove(buf2.allocatedSlice()[0..len], path);
+            // Add separator
+            buf2.allocatedSlice()[len] = CHAR_FORWARD_SLASH;
+            buf2.items.len = newSize;
+        } else {
+            // First path
+            buf2.ensureTotalCapacity(len) catch return .{ .err = Syscall.Error.oom };
+            buf2.items.len = len;
+            bun.memmove(buf2.allocatedSlice()[0..len], path);
         }
-        bufSize = len;
-        bun.memmove(buf2[0..bufSize], path);
-        bufSize += 1;
-        buf2[len] = CHAR_FORWARD_SLASH;
-        bufSize += resolvedPathLen;
 
-        buf2[bufSize] = 0;
-        resolvedPath = buf2[0..bufSize :0];
-        resolvedPathLen = bufSize;
         resolvedAbsolute = path[0] == CHAR_FORWARD_SLASH;
     }
 
     // Exit early for empty path.
-    if (resolvedPathLen == 0) {
-        return MaybeSlice(T){ .result = comptime L(T, CHAR_STR_DOT) };
+    if (buf2.items.len == 0) {
+        return .{ .result = comptime L(T, CHAR_STR_DOT) };
     }
 
     // At this point the path should be resolved to a full absolute path, but
     // handle relative paths to be safe (might happen when process.cwd() fails)
 
-    // Normalize the path
-    resolvedPath = normalizeStringT(T, resolvedPath, !resolvedAbsolute, CHAR_FORWARD_SLASH, .posix, buf);
-    // resolvedPath is now backed by buf.
-    resolvedPathLen = resolvedPath.len;
+    // Normalize the path using buf for the normalized result
+    // We need a separate buffer for normalization to avoid aliasing
+    buf.clearRetainingCapacity();
+    buf.ensureTotalCapacity(buf2.items.len + 2) catch return .{ .err = Syscall.Error.oom };
+    buf.items.len = buf.capacity;
+    const normalized = normalizeStringT(T, buf2.items, !resolvedAbsolute, CHAR_FORWARD_SLASH, .posix, buf.allocatedSlice());
 
     // Translated from the following JS code:
     //   if (resolvedAbsolute) {
     //     return `/${resolvedPath}`;
     //   }
     if (resolvedAbsolute) {
-        bufSize = resolvedPathLen + 1;
-        // Use bun.copy because resolvedPath and buf overlap.
-        bun.copy(T, buf[1..bufSize], resolvedPath);
-        buf[0] = CHAR_FORWARD_SLASH;
-        buf[bufSize] = 0;
-        return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+        // normalized is already in buf, we just need to prepend '/' and add null terminator
+        const normalizedLen = normalized.len;
+        const resultLen = normalizedLen + 1;
+        // Ensure capacity for the result
+        buf.ensureTotalCapacity(resultLen + 1) catch return .{ .err = Syscall.Error.oom };
+        // Move normalized content to make room for leading slash
+        if (normalizedLen > 0 and normalized.ptr != buf.allocatedSlice().ptr + 1) {
+            bun.memmove(buf.allocatedSlice()[1..resultLen], normalized);
+        }
+        buf.items.len = resultLen + 1;
+        buf.items[0] = CHAR_FORWARD_SLASH;
+        buf.items[resultLen] = 0;
+        return .{ .result = buf.items[0..resultLen :0] };
     }
     // Translated from the following JS code:
     //   return resolvedPath.length > 0 ? resolvedPath : '.';
-    return MaybeSlice(T){ .result = if (resolvedPathLen > 0) resolvedPath else comptime L(T, CHAR_STR_DOT) };
+    return .{ .result = if (normalized.len > 0) normalized else comptime L(T, CHAR_STR_DOT) };
 }
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) MaybeSlice(T) {
+pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) MaybeSlice(T) {
     comptime validatePathT(T, "resolveWindowsT");
 
     const isSepT = isSepWindowsT;
@@ -2481,14 +2529,19 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                     }
                     bufSize = 1;
                     // Reuse buf2 for the env key because it's used to get the path.
-                    buf2[0] = '=';
+                    buf2.clearRetainingCapacity();
+                    buf2.ensureTotalCapacity(1 + resolvedDeviceLen + 1) catch return .{ .err = Syscall.Error.oom };
+                    buf2.items.len = 1;
+                    buf2.items[0] = '=';
                     bufOffset = bufSize;
                     bufSize += resolvedDeviceLen;
-                    bun.memmove(buf2[bufOffset..bufSize], resolvedDevice);
+                    buf2.ensureTotalCapacity(bufSize + 1) catch return .{ .err = Syscall.Error.oom };
+                    buf2.items.len = bufSize;
+                    bun.memmove(buf2.items[bufOffset..bufSize], resolvedDevice);
                     if (T == u16) {
-                        break :brk buf2[0..bufSize];
+                        break :brk buf2.items[0..bufSize];
                     } else {
-                        bufSize = std.unicode.wtf16LeToWtf8(buf2[0..bufSize], &u16Buf);
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2.items[0..bufSize], &u16Buf);
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };
@@ -2500,12 +2553,18 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                 if (std.process.getenvW(key_w)) |r| {
                     if (T == u16) {
                         bufSize = r.len;
-                        bun.memmove(buf2[0..bufSize], r);
+                        buf2.clearRetainingCapacity();
+                        buf2.ensureTotalCapacity(bufSize) catch return .{ .err = Syscall.Error.oom };
+                        buf2.items.len = bufSize;
+                        bun.memmove(buf2.items[0..bufSize], r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        bufSize = std.unicode.wtf16LeToWtf8(buf2, r);
+                        buf2.clearRetainingCapacity();
+                        buf2.ensureTotalCapacity(r.len * 3) catch return .{ .err = Syscall.Error.oom }; // wtf16 to utf8 can expand
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2.allocatedSlice(), r);
+                        buf2.items.len = bufSize;
                     }
-                    envPath = buf2[0..bufSize];
+                    envPath = buf2.items[0..bufSize];
                 }
             }
             if (envPath) |_envPath| {
@@ -2535,11 +2594,14 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
                 bufSize = resolvedDeviceLen;
-                bun.memmove(buf2[0..bufSize], resolvedDevice);
+                buf2.clearRetainingCapacity();
+                buf2.ensureTotalCapacity(bufSize + 1) catch return .{ .err = Syscall.Error.oom };
+                buf2.items.len = bufSize + 1;
+                bun.memmove(buf2.items[0..bufSize], resolvedDevice);
                 bufOffset = bufSize;
                 bufSize += 1;
-                buf2[bufOffset] = CHAR_BACKWARD_SLASH;
-                path = buf2[0..bufSize];
+                buf2.items[bufOffset] = CHAR_BACKWARD_SLASH;
+                path = buf2.items[0..bufSize];
             }
         }
 
@@ -2668,23 +2730,27 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             // Translated from the following JS code:
             //   resolvedTail = `${StringPrototypeSlice(path, rootEnd)}\\${resolvedTail}`;
             const sliceLen = len - rootEnd;
+            const newTailLen = sliceLen + 1 + resolvedTailLen;
+            buf2.ensureTotalCapacity(newTailLen) catch return .{ .err = Syscall.Error.oom };
+
             if (resolvedTailLen > 0) {
                 bufOffset = sliceLen + 1;
                 bufSize = bufOffset + resolvedTailLen;
                 // Move all bytes to the right by path slice.len + 1 for the separator
                 // Use bun.copy because resolvedTail and buf2 overlap.
-                bun.copy(u8, buf2[bufOffset..bufSize], resolvedTail);
+                bun.copy(T, buf2.allocatedSlice()[bufOffset..bufSize], resolvedTail);
             }
             bufSize = sliceLen;
             if (sliceLen > 0) {
-                bun.memmove(buf2[0..bufSize], path[rootEnd..len]);
+                bun.memmove(buf2.allocatedSlice()[0..bufSize], path[rootEnd..len]);
             }
             bufOffset = bufSize;
             bufSize += 1;
-            buf2[bufOffset] = CHAR_BACKWARD_SLASH;
+            buf2.allocatedSlice()[bufOffset] = CHAR_BACKWARD_SLASH;
             bufSize += resolvedTailLen;
+            buf2.items.len = bufSize;
 
-            resolvedTail = buf2[0..bufSize];
+            resolvedTail = buf2.items[0..bufSize];
             resolvedTailLen = bufSize;
             resolvedAbsolute = _isAbsolute;
 
@@ -2704,7 +2770,8 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
     // fails)
 
     // Normalize the tail path
-    resolvedTail = normalizeStringT(T, resolvedTail, !resolvedAbsolute, CHAR_BACKWARD_SLASH, .windows, buf);
+    buf.ensureTotalCapacity(resolvedTailLen + 1) catch return .{ .err = Syscall.Error.oom };
+    resolvedTail = normalizeStringT(T, resolvedTail, !resolvedAbsolute, CHAR_BACKWARD_SLASH, .windows, buf.allocatedSlice());
     // resolvedTail is now backed by buf.
     resolvedTailLen = resolvedTail.len;
 
@@ -2713,35 +2780,39 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
     if (resolvedAbsolute) {
         bufOffset = resolvedDeviceLen + 1;
         bufSize = bufOffset + resolvedTailLen;
+        buf.ensureTotalCapacity(bufSize + 1) catch return .{ .err = Syscall.Error.oom };
         // Use bun.copy because resolvedTail and buf overlap.
-        bun.copy(T, buf[bufOffset..bufSize], resolvedTail);
-        buf[resolvedDeviceLen] = CHAR_BACKWARD_SLASH;
-        bun.memmove(buf[0..resolvedDeviceLen], resolvedDevice);
-        buf[bufSize] = 0;
-        return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+        bun.copy(T, buf.allocatedSlice()[bufOffset..bufSize], resolvedTail);
+        buf.allocatedSlice()[resolvedDeviceLen] = CHAR_BACKWARD_SLASH;
+        bun.memmove(buf.allocatedSlice()[0..resolvedDeviceLen], resolvedDevice);
+        buf.items.len = bufSize + 1;
+        buf.items[bufSize] = 0;
+        return .{ .result = buf.items[0..bufSize :0] };
     }
     // Translated from the following JS code:
     //   : `${resolvedDevice}${resolvedTail}` || '.'
     if ((resolvedDeviceLen + resolvedTailLen) > 0) {
         bufOffset = resolvedDeviceLen;
         bufSize = bufOffset + resolvedTailLen;
+        buf.ensureTotalCapacity(bufSize + 1) catch return .{ .err = Syscall.Error.oom };
         // Use bun.copy because resolvedTail and buf overlap.
-        bun.copy(T, buf[bufOffset..bufSize], resolvedTail);
-        bun.memmove(buf[0..resolvedDeviceLen], resolvedDevice);
-        buf[bufSize] = 0;
-        return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+        bun.copy(T, buf.allocatedSlice()[bufOffset..bufSize], resolvedTail);
+        bun.memmove(buf.allocatedSlice()[0..resolvedDeviceLen], resolvedDevice);
+        buf.items.len = bufSize + 1;
+        buf.items[bufSize] = 0;
+        return .{ .result = buf.items[0..bufSize :0] };
     }
-    return MaybeSlice(T){ .result = comptime L(T, CHAR_STR_DOT) };
+    return .{ .result = comptime L(T, CHAR_STR_DOT) };
 }
 
-pub fn resolvePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
+pub fn resolvePosixJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) bun.JSError!jsc.JSValue {
     return switch (resolvePosixT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
     };
 }
 
-pub fn resolveWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
+pub fn resolveWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, paths: []const []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) bun.JSError!jsc.JSValue {
     return switch (resolveWindowsT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
@@ -2754,11 +2825,11 @@ pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocato
     for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
     bufLen = @max(bufLen, PATH_SIZE(T));
     // +2 to account for separator and null terminator during path resolution
-    const buf = try allocator.alloc(T, bufLen + 2);
-    defer allocator.free(buf);
-    const buf2 = try allocator.alloc(T, bufLen + 2);
-    defer allocator.free(buf2);
-    return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
+    var buf = try std.ArrayList(T).initCapacity(allocator, bufLen + 2);
+    defer buf.deinit();
+    var buf2 = try std.ArrayList(T).initCapacity(allocator, bufLen + 2);
+    defer buf2.deinit();
+    return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, &buf, &buf2) else resolvePosixJS_T(T, globalObject, paths, &buf, &buf2);
 }
 
 extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;
@@ -2834,25 +2905,26 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
-pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf2: []T) MaybeSlice(T) {
+pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) MaybeSlice(T) {
     comptime validatePathT(T, "toNamespacedPathWindowsT");
 
     // validateString of `path` is performed in pub fn toNamespacedPath.
-    // Backed by buf.
+    // Resolve path into buf
+    buf.clearRetainingCapacity();
     const resolvedPath = switch (resolveWindowsT(T, &.{path}, buf, buf2)) {
         .result => |r| r,
-        .err => |e| return MaybeSlice(T){ .err = e },
+        .err => |e| return .{ .err = e },
     };
 
     const len = resolvedPath.len;
     if (len <= 2) {
-        @memcpy(buf[0..path.len], path);
-        buf[path.len] = 0;
-        return MaybeSlice(T){ .result = buf[0..path.len :0] };
+        buf.clearRetainingCapacity();
+        buf.ensureTotalCapacity(path.len + 1) catch return .{ .err = Syscall.Error.oom };
+        buf.items.len = path.len + 1;
+        bun.memmove(buf.items[0..path.len], path);
+        buf.items[path.len] = 0;
+        return .{ .result = buf.items[0..path.len :0] };
     }
-
-    var bufOffset: usize = 0;
-    var bufSize: usize = 0;
 
     const byte0 = resolvedPath[0];
     if (byte0 == CHAR_BACKWARD_SLASH) {
@@ -2864,24 +2936,25 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
 
                 // Translated from the following JS code:
                 //   return `\\\\?\\UNC\\${StringPrototypeSlice(resolvedPath, 2)}`;
-                bufOffset = 6;
-                bufSize = len + 6;
+                const newLen = len + 6;
+                buf.ensureTotalCapacity(newLen + 1) catch return .{ .err = Syscall.Error.oom };
                 // Move all bytes to the right by 6 so that the first two bytes are
                 // overwritten by "\\\\?\\UNC\\" which is 8 bytes long.
                 // Use bun.copy because resolvedPath and buf overlap.
-                bun.copy(T, buf[bufOffset..bufSize], resolvedPath);
+                bun.copy(T, buf.allocatedSlice()[6..newLen], resolvedPath);
                 // Equiv to std.os.windows.NamespacePrefix.verbatim
                 // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
-                buf[0] = CHAR_BACKWARD_SLASH;
-                buf[1] = CHAR_BACKWARD_SLASH;
-                buf[2] = CHAR_QUESTION_MARK;
-                buf[3] = CHAR_BACKWARD_SLASH;
-                buf[4] = 'U';
-                buf[5] = 'N';
-                buf[6] = 'C';
-                buf[7] = CHAR_BACKWARD_SLASH;
-                buf[bufSize] = 0;
-                return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+                buf.items.len = newLen + 1;
+                buf.items[0] = CHAR_BACKWARD_SLASH;
+                buf.items[1] = CHAR_BACKWARD_SLASH;
+                buf.items[2] = CHAR_QUESTION_MARK;
+                buf.items[3] = CHAR_BACKWARD_SLASH;
+                buf.items[4] = 'U';
+                buf.items[5] = 'N';
+                buf.items[6] = 'C';
+                buf.items[7] = CHAR_BACKWARD_SLASH;
+                buf.items[newLen] = 0;
+                return .{ .result = buf.items[0..newLen :0] };
             }
         }
     } else if (isWindowsDeviceRootT(T, byte0) and
@@ -2892,24 +2965,25 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
 
         // Translated from the following JS code:
         //   return `\\\\?\\${resolvedPath}`
-        bufOffset = 4;
-        bufSize = len + 4;
+        const newLen = len + 4;
+        buf.ensureTotalCapacity(newLen + 1) catch return .{ .err = Syscall.Error.oom };
         // Move all bytes to the right by 4
         // Use bun.copy because resolvedPath and buf overlap.
-        bun.copy(T, buf[bufOffset..bufSize], resolvedPath);
+        bun.copy(T, buf.allocatedSlice()[4..newLen], resolvedPath);
         // Equiv to std.os.windows.NamespacePrefix.verbatim
         // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
-        buf[0] = CHAR_BACKWARD_SLASH;
-        buf[1] = CHAR_BACKWARD_SLASH;
-        buf[2] = CHAR_QUESTION_MARK;
-        buf[3] = CHAR_BACKWARD_SLASH;
-        buf[bufSize] = 0;
-        return MaybeSlice(T){ .result = buf[0..bufSize :0] };
+        buf.items.len = newLen + 1;
+        buf.items[0] = CHAR_BACKWARD_SLASH;
+        buf.items[1] = CHAR_BACKWARD_SLASH;
+        buf.items[2] = CHAR_QUESTION_MARK;
+        buf.items[3] = CHAR_BACKWARD_SLASH;
+        buf.items[newLen] = 0;
+        return .{ .result = buf.items[0..newLen :0] };
     }
-    return MaybeSlice(T){ .result = resolvedPath };
+    return .{ .result = resolvedPath };
 }
 
-pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, buf: []T, buf2: []T) bun.JSError!jsc.JSValue {
+pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, path: []const T, buf: *std.ArrayList(T), buf2: *std.ArrayList(T)) bun.JSError!jsc.JSValue {
     return switch (toNamespacedPathWindowsT(T, path, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJS(globalObject),
@@ -2920,11 +2994,11 @@ pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject,
     if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
     const bufLen = @max(path.len, PATH_SIZE(T));
     // +8 for possible UNC prefix, +1 for null terminator
-    const buf = try allocator.alloc(T, bufLen + 8 + 1);
-    defer allocator.free(buf);
-    const buf2 = try allocator.alloc(T, bufLen + 8 + 1);
-    defer allocator.free(buf2);
-    return toNamespacedPathWindowsJS_T(T, globalObject, path, buf, buf2);
+    var buf = try std.ArrayList(T).initCapacity(allocator, bufLen + 8 + 1);
+    defer buf.deinit();
+    var buf2 = try std.ArrayList(T).initCapacity(allocator, bufLen + 8 + 1);
+    defer buf2.deinit();
+    return toNamespacedPathWindowsJS_T(T, globalObject, path, &buf, &buf2);
 }
 
 pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {

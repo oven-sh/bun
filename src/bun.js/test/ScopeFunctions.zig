@@ -310,6 +310,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
         }
 
         var description_name = try description.getName(globalThis);
+        defer description_name.deref();
         if (description_name.length() > 0) {
             return description_name.toOwnedSlice(gpa);
         }
@@ -324,8 +325,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
 
     if (description.isNumber() or description.isString()) {
         var slice = try description.toSlice(globalThis, gpa);
-        defer slice.deinit();
-        return try gpa.dupe(u8, slice.slice());
+        return slice.intoOwnedSlice(gpa);
     }
 
     return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});

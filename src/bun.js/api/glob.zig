@@ -24,13 +24,13 @@ const ScanOpts = struct {
 
         const cwd_str: []const u8 = cwd_str: {
             const cwd_utf8 = cwd_string.toUTF8WithoutRef(allocator);
-            defer cwd_utf8.deinit();
 
             // If its absolute return as is
             if (ResolvePath.Platform.auto.isAbsolute(cwd_utf8.slice())) {
                 break :cwd_str (try cwd_utf8.cloneIfBorrowed(allocator)).slice();
             }
 
+            defer cwd_utf8.deinit();
             var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
             if (!absolute) {

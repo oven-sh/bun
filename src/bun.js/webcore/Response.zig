@@ -715,11 +715,17 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, j
                 .headers = null,
             };
         }
+        if (arguments[1].isCallable()) {
+            if (!globalThis.hasException()) {
+                return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided value is not of type 'ResponseInit'", .{});
+            }
+            return error.JSError;
+        }
         if (arguments[1].isObject()) {
             break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
         }
         if (!globalThis.hasException()) {
-            return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+            return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided value is not of type 'ResponseInit'", .{});
         }
         return error.JSError;
     });

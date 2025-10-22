@@ -28,31 +28,6 @@ pub fn isEnabled() bool {
     };
 }
 
-pub fn isCI() bool {
-    return switch (is_ci) {
-        .yes => true,
-        .no => false,
-        .unknown => {
-            is_ci = detect: {
-                inline for (.{
-                    "CI",
-                    "TDDIUM",
-                    "GITHUB_ACTIONS",
-                    "JENKINS_URL",
-                    "bamboo.buildKey",
-                }) |key| {
-                    if (bun.getenvZ(key) != null) {
-                        break :detect .yes;
-                    }
-                }
-                break :detect .no;
-            };
-            bun.assert(is_ci == .yes or is_ci == .no);
-            return is_ci == .yes;
-        },
-    };
-}
-
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
     pub var builtin_modules = std.enums.EnumSet(bun.jsc.ModuleLoader.HardcodedModule).initEmpty();

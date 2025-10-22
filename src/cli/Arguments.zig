@@ -209,6 +209,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
+    clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -461,6 +462,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         // Handle --dots flag as shorthand for --reporter=dots
         if (args.flag("--dots")) {
             ctx.test_options.reporters.dots = true;
+        }
+
+        // Handle --only-failures flag
+        if (args.flag("--only-failures")) {
+            ctx.test_options.reporters.only_failures = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {
@@ -1327,7 +1333,6 @@ const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const clap = bun.clap;
 const js_ast = bun.ast;
 const logger = bun.logger;
@@ -1335,6 +1340,7 @@ const options = bun.options;
 const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
+const RegularExpression = bun.jsc.RegularExpression;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

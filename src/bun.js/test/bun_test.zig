@@ -173,7 +173,7 @@ pub const BunTestRoot = struct {
     pub fn onBeforePrint(this: *BunTestRoot) void {
         if (this.active_file.get()) |active_file| {
             if (active_file.reporter) |reporter| {
-                if (reporter.last_printed_dot and reporter.reporters.dots) {
+                if (reporter.reporters.dots and reporter.last_printed_dot) {
                     bun.Output.prettyError("<r>\n", .{});
                     bun.Output.flush();
                     reporter.last_printed_dot = false;

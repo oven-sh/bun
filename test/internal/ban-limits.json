@@ -34,7 +34,7 @@
   "std.debug.dumpStackTrace": 0,
   "std.debug.print": 0,
   "std.enums.tagName(": 2,
-  "std.fs.Dir": 165,
+  "std.fs.Dir": 164,
   "std.fs.File": 62,
   "std.fs.cwd": 103,
   "std.log": 1,

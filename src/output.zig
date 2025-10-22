@@ -45,15 +45,16 @@ pub const Source = struct {
     err_buffer: []u8 = &([_]u8{}),
 
     pub fn init(
+        out: *Source,
         stream: StreamType,
         err_stream: StreamType,
-    ) Source {
+    ) void {
         if ((comptime Environment.isDebug and use_mimalloc) and !source_set) {
             bun.mimalloc.mi_option_set(.show_errors, 1);
         }
         source_set = true;
 
-        return Source{
+        out.* = .{
             .stream = stream,
             .error_stream = err_stream,
             .buffered_stream = if (Environment.isNative)
@@ -70,7 +71,7 @@ pub const Source = struct {
     pub fn configureThread() void {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
-        source = Source.init(stdout_stream, stderr_stream);
+        source.init(stdout_stream, stderr_stream);
         bun.StackCheck.configureThread();
     }
 
@@ -237,8 +238,7 @@ pub const Source = struct {
             const stdout = bun.sys.File.from(std.fs.File.stdout());
             const stderr = bun.sys.File.from(std.fs.File.stderr());
 
-            Source.init(stdout, stderr)
-                .set();
+            Source.setInit(stdout, stderr);
 
             if (comptime Environment.isDebug or Environment.enable_logs) {
                 initScopedDebugWriterAtStartup();
@@ -379,8 +379,8 @@ pub const Source = struct {
         return lazy_color_depth;
     }
 
-    pub fn set(new_source: *const Source) void {
-        source = new_source.*;
+    pub fn setInit(stdout: StreamType, stderr: StreamType) void {
+        source.init(stdout, stderr);
 
         source_set = true;
         if (!stdout_stream_set) {

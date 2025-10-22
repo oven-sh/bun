@@ -2321,6 +2321,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 );
                 this.flags.needs_content_range = false;
             }
+
+            // OpenTelemetry: Inject propagation headers at the very end, using stack buffers
+            if (this.telemetry_ctx.isEnabled()) {
+                bun.telemetry_http.renderInjectedTraceHeadersToUWSResponse(
+                    .http,
+                    this.telemetry_ctx.request_id,
+                    .js_undefined,
+                    this.resp.?,
+                    this.server.?.globalThis,
+                );
+            }
         }
 
         fn doWriteStatus(this: *RequestContext, status: u16) void {

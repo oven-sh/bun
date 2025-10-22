@@ -1323,6 +1323,16 @@ pub const FetchTasklet = struct {
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         http.HTTPThread.init(&.{});
+
+        // OpenTelemetry: Notify operation start and inject propagation headers
+        // MUST happen before get() so headers are included in AsyncHTTP.init()
+        var telemetry_request_id: u64 = 0;
+        var telemetry_start_time_ns: u64 = 0;
+        if (bun.telemetry_fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, null, @constCast(&fetch_options.headers))) |request_id| {
+            telemetry_request_id = request_id;
+            telemetry_start_time_ns = @intCast(std.time.nanoTimestamp());
+        }
+
         var node = try get(
             allocator,
             global,
@@ -1330,11 +1340,9 @@ pub const FetchTasklet = struct {
             promise,
         );
 
-        // OpenTelemetry: Notify operation start
-        if (bun.telemetry_fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, null)) |request_id| {
-            node.telemetry_request_id = request_id;
-            node.telemetry_start_time_ns = @intCast(std.time.nanoTimestamp());
-        }
+        // Store telemetry context on node
+        node.telemetry_request_id = telemetry_request_id;
+        node.telemetry_start_time_ns = telemetry_start_time_ns;
 
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);

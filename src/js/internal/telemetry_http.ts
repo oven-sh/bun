@@ -16,6 +16,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 const nativeHooks = Bun.telemetry.nativeHooks;
 const HTTP_KIND = 1; // InstrumentKind.HTTP
 
+// ConfigurationProperty enum values (matches telemetry.zig)
+const ConfigurationProperty = {
+  RESERVED: 0,
+  HTTP_CAPTURE_HEADERS_SERVER_REQUEST: 1,
+  HTTP_CAPTURE_HEADERS_SERVER_RESPONSE: 2,
+  HTTP_PROPAGATE_HEADERS_SERVER_RESPONSE: 3,
+  HTTP_CAPTURE_HEADERS_FETCH_REQUEST: 4,
+  HTTP_CAPTURE_HEADERS_FETCH_RESPONSE: 5,
+  HTTP_PROPAGATE_HEADERS_FETCH_REQUEST: 6,
+} as const;
+
 // Symbols for tracking request state on ServerResponse objects
 const kOperationId = Symbol("kOperationId");
 const kStartTime = Symbol("kStartTime");
@@ -158,7 +169,9 @@ function notifyOperationEnd(res: ServerResponse): void {
   const opId = (res as any)[kOperationId];
   if (startTime === undefined || opId === undefined) return;
 
-  const responseHeaders = nativeHooks.getCaptureHeadersServerResponse();
+  const responseHeaders = nativeHooks.getConfigurationProperty(
+    ConfigurationProperty.HTTP_CAPTURE_HEADERS_SERVER_RESPONSE,
+  );
   const attributes = buildResponseAttributes(res, res.statusCode, startTime, responseHeaders);
   nativeHooks.notifyEnd(HTTP_KIND, opId, attributes);
 }
@@ -200,7 +213,9 @@ export default {
       (res as any)[kStartTime] = performance.now();
 
       // Get configured headers to capture and build attributes
-      const requestHeaders = nativeHooks.getCaptureHeadersServerRequest();
+      const requestHeaders = nativeHooks.getConfigurationProperty(
+        ConfigurationProperty.HTTP_CAPTURE_HEADERS_SERVER_REQUEST,
+      );
       const attributes = buildRequestAttributes(req, operationId, requestHeaders);
 
       // Notify all registered instruments via native hooks
@@ -231,10 +246,9 @@ export default {
    * Called when response.writeHead() is invoked (Node.js http.Server).
    * Invoked by _http_server.ts in _writeHead function.
    *
-   * Note: Currently a placeholder for future distributed tracing integration.
-   * Future features:
-   * - Header injection (traceparent, tracestate via onOperationInject)
-   * - Progress notifications (via onOperationProgress)
+   * Implements distributed tracing header injection:
+   * - Calls nativeHooks.notifyInject() to collect headers from all instruments
+   * - Merges injected headers into response (linear concatenation, duplicates allowed)
    *
    * @param res Server response
    * @param statusCode HTTP status code
@@ -249,7 +263,44 @@ export default {
       if ((res as any)[kHeadersEmitted]) return undefined;
       (res as any)[kHeadersEmitted] = true;
 
-      // TODO: Call nativeHooks.notifyInject() when distributed tracing is added
+      const opId = (res as any)[kOperationId];
+      if (opId === undefined) return undefined;
+
+      // Get configured header names to propagate (e.g., ["traceparent", "tracestate"])
+      const headerNames = nativeHooks.getConfigurationProperty(
+        ConfigurationProperty.HTTP_PROPAGATE_HEADERS_SERVER_RESPONSE,
+      );
+
+      // Fast path: no headers configured
+      if (!headerNames || !$isArray(headerNames) || headerNames.length === 0) {
+        return undefined;
+      }
+
+      // Call all instruments to get header values (returns array of objects)
+      const injectedValues = nativeHooks.notifyInject(HTTP_KIND, opId, undefined);
+
+      // Fast path: no instruments returned values
+      if (!injectedValues || !$isArray(injectedValues) || injectedValues.length === 0) {
+        return undefined;
+      }
+
+      // Iterate through configured header names and set them on response
+      // Using linear concatenation: duplicates allowed, set() calls accumulate
+      for (const headerName of headerNames) {
+        if (typeof headerName !== "string") continue;
+
+        // Look up this header in all injected value objects
+        for (const injected of injectedValues) {
+          if (!$isObject(injected)) continue;
+
+          const headerValue = injected[headerName];
+          if (headerValue !== undefined && headerValue !== null && typeof headerValue === "string") {
+            // Set header on response (allows duplicates via multiple setHeader calls)
+            res.setHeader(headerName, headerValue);
+          }
+        }
+      }
+
       // TODO: Call nativeHooks.notifyProgress() when progress tracking is needed
 
       return undefined;

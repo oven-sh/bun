@@ -3,6 +3,7 @@
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
+import { InstrumentKind } from "./types";
 
 describe("fetch telemetry hooks", () => {
   test("calls onOperationStart with correct attributes on successful fetch", async () => {
@@ -16,7 +17,7 @@ describe("fetch telemetry hooks", () => {
     let startId: number | undefined;
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-fetch-start",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -28,7 +29,7 @@ describe("fetch telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     await fetch(`http://localhost:${server.port}/test`);
 
@@ -43,8 +44,6 @@ describe("fetch telemetry hooks", () => {
 
     // url.full should contain the complete URL
     expect(startAttrs["url.full"]).toContain(`http://localhost:${server.port}/test`);
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("calls onOperationEnd with correct attributes on successful fetch", async () => {
@@ -59,7 +58,7 @@ describe("fetch telemetry hooks", () => {
     let capturedEndId: number | undefined;
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-fetch-end",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -73,7 +72,7 @@ describe("fetch telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     const response = await fetch(`http://localhost:${server.port}/test`);
     const body = await response.text();
@@ -89,8 +88,6 @@ describe("fetch telemetry hooks", () => {
       expect(typeof endAttrs["operation.duration"]).toBe("number");
       expect(endAttrs["operation.duration"]).toBeGreaterThan(0);
     }
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("calls onOperationError on failed fetch", async () => {
@@ -107,7 +104,7 @@ describe("fetch telemetry hooks", () => {
     let errorId: number | undefined;
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-fetch-error",
       version: "1.0.0",
       onOperationStart() {},
@@ -119,7 +116,7 @@ describe("fetch telemetry hooks", () => {
       },
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     // This should fail with connection refused
     await fetch(`http://localhost:${port}`).catch(() => {
@@ -134,8 +131,6 @@ describe("fetch telemetry hooks", () => {
 
     // Should have some error information
     expect(errorAttrs["error.type"] !== undefined || errorAttrs["error.message"] !== undefined).toBe(true);
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("assigns unique operation IDs to concurrent fetches", async () => {
@@ -151,7 +146,7 @@ describe("fetch telemetry hooks", () => {
     const operationIds = new Set<number>();
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-concurrent-fetch",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -161,7 +156,7 @@ describe("fetch telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     // Launch 5 concurrent fetches
     await Promise.all([
@@ -174,8 +169,6 @@ describe("fetch telemetry hooks", () => {
 
     // Each fetch should have a unique operation ID
     expect(operationIds.size).toBe(5);
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("handles POST requests with body correctly", async () => {
@@ -193,7 +186,7 @@ describe("fetch telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-post-fetch",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -204,7 +197,7 @@ describe("fetch telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     const payload = { test: "data", value: 123 };
     await fetch(`http://localhost:${server.port}/api`, {
@@ -216,8 +209,6 @@ describe("fetch telemetry hooks", () => {
     expect(startCalled).toBe(true);
     expect(startAttrs["http.request.method"]).toBe("POST");
     expect(startAttrs["url.path"]).toBe("/api");
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("complete fetch lifecycle calls start->end in sequence", async () => {
@@ -231,7 +222,7 @@ describe("fetch telemetry hooks", () => {
     let endId: number | undefined;
 
     const instrument = {
-      type: 2, // InstrumentKind.Fetch
+      type: InstrumentKind.Fetch,
       name: "test-lifecycle",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -247,14 +238,12 @@ describe("fetch telemetry hooks", () => {
       },
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     await fetch(`http://localhost:${server.port}`);
 
     expect(callSequence).toEqual(["start", "end"]);
     expect(startId).toBe(endId);
-
-    Bun.telemetry.detach(instrumentId);
   });
 
   test("handles different HTTP methods correctly", async () => {
@@ -275,7 +264,7 @@ describe("fetch telemetry hooks", () => {
       const capturedAttrs: any = {};
 
       const instrument = {
-        type: 2,
+        type: InstrumentKind.Fetch,
         name: `test-${method}`,
         version: "1.0.0",
         onOperationStart(id: number, attributes: any) {
@@ -285,13 +274,11 @@ describe("fetch telemetry hooks", () => {
         onOperationError() {},
       };
 
-      const instrumentId = Bun.telemetry.attach(instrument);
+      using ref = Bun.telemetry.attach(instrument);
 
       await fetch(`http://localhost:${server.port}`, { method });
 
       expect(capturedAttrs["http.request.method"]).toBe(expected);
-
-      Bun.telemetry.detach(instrumentId);
     }
   });
 
@@ -304,7 +291,7 @@ describe("fetch telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 2,
+      type: InstrumentKind.Fetch,
       name: "test-query-params",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -314,7 +301,7 @@ describe("fetch telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
+    using ref = Bun.telemetry.attach(instrument);
 
     await fetch(`http://localhost:${server.port}/api/users?id=123&filter=active`);
 
@@ -322,7 +309,5 @@ describe("fetch telemetry hooks", () => {
     expect(startAttrs["url.path"]).toMatch(/\/api\/users/);
     expect(startAttrs["url.full"]).toContain("id=123");
     expect(startAttrs["url.full"]).toContain("filter=active");
-
-    Bun.telemetry.detach(instrumentId);
   });
 });

@@ -4277,6 +4277,24 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
     }
 }
 
+JSC::EncodedJSValue JSC__JSGlobalObject__getDisposeSymbol(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    // Get the Symbol object from global
+    JSC::JSValue symbolValue = globalObject->get(globalObject, vm.propertyNames->Symbol);
+    if (!symbolValue.isObject()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSObject* symbolObject = JSC::asObject(symbolValue);
+
+    // Get Symbol.dispose
+    JSC::JSValue disposeSymbol = symbolObject->get(globalObject, vm.propertyNames->dispose);
+
+    return JSC::JSValue::encode(disposeSymbol);
+}
+
 JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, ZigString* arg2)
 {
 

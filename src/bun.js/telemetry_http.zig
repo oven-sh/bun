@@ -41,13 +41,13 @@ pub const HttpTelemetryContext = struct {
 /// - http.request.header.*: string (if configured via captureAttributes)
 /// - trace.parent.* (if traceparent header present)
 pub fn buildHttpStartAttributes(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     request_id: u64,
     method: []const u8,
     url: []const u8,
     headers: ?JSValue,
 ) AttributeMap {
-    var attrs = AttributeMap.init(global);
+    var attrs = AttributeMap.init(globalObject);
 
     // Operation metadata
     attrs.set("operation.id", telemetry.jsRequestId(request_id));
@@ -57,21 +57,21 @@ pub fn buildHttpStartAttributes(
     attrs.set("operation.timestamp", JSValue.jsNumber(@as(f64, @floatFromInt(timestamp_ns))));
 
     // HTTP method
-    attrs.fastSet(.http_request_method, ZigString.init(method).toJS(global));
+    attrs.fastSet(.http_request_method, ZigString.init(method).toJS(globalObject));
 
     // URL components
-    attrs.set("url.full", ZigString.init(url).toJS(global));
+    attrs.set("url.full", ZigString.init(url).toJS(globalObject));
 
     // Parse URL to extract components
     if (parseURL(url)) |url_parts| {
         if (url_parts.path.len > 0) {
-            attrs.fastSet(.url_path, ZigString.init(url_parts.path).toJS(global));
+            attrs.fastSet(.url_path, ZigString.init(url_parts.path).toJS(globalObject));
         }
         if (url_parts.query.len > 0) {
-            attrs.fastSet(.url_query, ZigString.init(url_parts.query).toJS(global));
+            attrs.fastSet(.url_query, ZigString.init(url_parts.query).toJS(globalObject));
         }
-        attrs.set("url.scheme", ZigString.init(url_parts.scheme).toJS(global));
-        attrs.fastSet(.server_address, ZigString.init(url_parts.host).toJS(global));
+        attrs.set("url.scheme", ZigString.init(url_parts.scheme).toJS(globalObject));
+        attrs.fastSet(.server_address, ZigString.init(url_parts.host).toJS(globalObject));
         if (url_parts.port) |port| {
             attrs.fastSet(.server_port, JSValue.jsNumber(@as(f64, @floatFromInt(port))));
         }
@@ -94,13 +94,13 @@ pub fn buildHttpStartAttributes(
 /// - operation.duration: number (nanoseconds)
 /// - http.response.header.*: string (if configured)
 pub fn buildHttpEndAttributes(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     start_timestamp_ns: u64,
     status_code: u16,
     content_length: u64,
     headers: ?JSValue,
 ) AttributeMap {
-    var attrs = AttributeMap.init(global);
+    var attrs = AttributeMap.init(globalObject);
 
     // HTTP response status
     attrs.fastSet(.http_response_status_code, JSValue.jsNumber(@as(f64, @floatFromInt(status_code))));
@@ -131,21 +131,21 @@ pub fn buildHttpEndAttributes(
 /// - http.response.status_code: number (if response was sent)
 /// - operation.duration: number (nanoseconds)
 pub fn buildHttpErrorAttributes(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     start_timestamp_ns: u64,
     error_type: []const u8,
     error_message: []const u8,
     stack_trace: ?[]const u8,
     status_code: ?u16,
 ) AttributeMap {
-    var attrs = AttributeMap.init(global);
+    var attrs = AttributeMap.init(globalObject);
 
     // Error information
-    attrs.fastSet(.error_type, ZigString.init(error_type).toJS(global));
-    attrs.fastSet(.error_message, ZigString.init(error_message).toJS(global));
+    attrs.fastSet(.error_type, ZigString.init(error_type).toJS(globalObject));
+    attrs.fastSet(.error_message, ZigString.init(error_message).toJS(globalObject));
 
     if (stack_trace) |stack| {
-        attrs.set("error.stack_trace", ZigString.init(stack).toJS(global));
+        attrs.set("error.stack_trace", ZigString.init(stack).toJS(globalObject));
     }
 
     // Status code if response was sent
@@ -254,7 +254,7 @@ test "parseURL no query" {
 /// Returns initialized context for tracking this request
 pub inline fn notifyHttpRequestStart(
     ctx: *HttpTelemetryContext,
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     method: []const u8,
     url: []const u8,
 ) void {
@@ -266,14 +266,14 @@ pub inline fn notifyHttpRequestStart(
     ctx.start_time_ns = @intCast(std.time.nanoTimestamp());
 
     // Build and send start attributes
-    var start_attrs = buildHttpStartAttributes(global, ctx.request_id, method, url, null);
+    var start_attrs = buildHttpStartAttributes(globalObject, ctx.request_id, method, url, null);
     telemetry_inst.notifyOperationStart(.http, ctx.request_id, start_attrs.toJS());
 }
 
 /// Notify HTTP request error - extracts error details from JSValue
 pub inline fn notifyHttpRequestError(
     ctx: *const HttpTelemetryContext,
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     error_value: JSValue,
 ) void {
     if (!ctx.isEnabled()) return;
@@ -286,10 +286,10 @@ pub inline fn notifyHttpRequestError(
 
     if (!error_value.isEmptyOrUndefinedOrNull()) {
         // Try to get error message
-        if (error_value.get(global, "message") catch null) |msg_val| {
+        if (error_value.get(globalObject, "message") catch null) |msg_val| {
             if (msg_val.isString()) {
                 var msg_str: ZigString = undefined;
-                msg_val.toZigString(&msg_str, global) catch {};
+                msg_val.toZigString(&msg_str, globalObject) catch {};
                 if (msg_str.len > 0) {
                     const msg_slice = msg_str.toSlice(bun.default_allocator);
                     error_message = msg_slice.slice();
@@ -299,17 +299,17 @@ pub inline fn notifyHttpRequestError(
 
         // Try to get error type (from constructor name)
         var class_name_str: ZigString = undefined;
-        error_value.getClassName(global, &class_name_str) catch {};
+        error_value.getClassName(globalObject, &class_name_str) catch {};
         if (class_name_str.len > 0) {
             const class_name_slice = class_name_str.toSlice(bun.default_allocator);
             error_type = class_name_slice.slice();
         }
 
         // Try to get stack trace
-        if (error_value.get(global, "stack") catch null) |stack_val| {
+        if (error_value.get(globalObject, "stack") catch null) |stack_val| {
             if (stack_val.isString()) {
                 var stack_str: ZigString = undefined;
-                stack_val.toZigString(&stack_str, global) catch {};
+                stack_val.toZigString(&stack_str, globalObject) catch {};
                 if (stack_str.len > 0) {
                     const stack_slice = stack_str.toSlice(bun.default_allocator);
                     stack_trace = stack_slice.slice();
@@ -319,7 +319,7 @@ pub inline fn notifyHttpRequestError(
     }
 
     // Build and send error attributes
-    var error_attrs = buildHttpErrorAttributes(global, ctx.start_time_ns, error_type, error_message, stack_trace, null);
+    var error_attrs = buildHttpErrorAttributes(globalObject, ctx.start_time_ns, error_type, error_message, stack_trace, null);
     telemetry_inst.notifyOperationError(.http, ctx.request_id, error_attrs.toJS());
 }
 
@@ -327,7 +327,7 @@ pub inline fn notifyHttpRequestError(
 /// Automatically resets the context to prevent double-cleanup
 pub inline fn notifyHttpRequestEnd(
     ctx: *HttpTelemetryContext,
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     status_code: u16,
     content_length: u64,
 ) void {
@@ -335,9 +335,158 @@ pub inline fn notifyHttpRequestEnd(
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
     // Build and send end attributes
-    var end_attrs = buildHttpEndAttributes(global, ctx.start_time_ns, status_code, content_length, null);
+    var end_attrs = buildHttpEndAttributes(globalObject, ctx.start_time_ns, status_code, content_length, null);
     telemetry_inst.notifyOperationEnd(.http, ctx.request_id, end_attrs.toJS());
 
     // CRITICAL: Reset to prevent double-cleanup
     ctx.reset();
+}
+
+// ============================================================================
+// Header Injection/Propagation Helpers
+// ============================================================================
+
+/// Add propagation headers to HTTP response headers from instrumentation
+/// Integration point for HTTP server distributed tracing header injection
+/// Note: Fetch client header injection is handled in telemetry_fetch.zig
+///
+/// Usage in server.zig (HTTP response):
+///   addPropagationHeaders(.http, req_id, data, response.headers, global);
+///
+/// The function:
+/// 1. Calls notifyOperationInject to get header values from all instruments
+/// 2. Reads configured header names from ConfigurationProperty
+/// 3. Merges injected values into the headers object (linear concatenation)
+pub inline fn addPropagationHeaders(
+    comptime kind: telemetry.InstrumentKind,
+    request_id: u64,
+    data: JSValue,
+    headers: *bun.webcore.FetchHeaders,
+    globalObject: *JSGlobalObject,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+    if (!telemetry_inst.isEnabledFor(kind)) return;
+
+    // Only HTTP server responses supported here (fetch handled in telemetry_fetch.zig)
+    const config_property_id: u8 = switch (kind) {
+        .http => @intFromEnum(telemetry.ConfigurationProperty.http_propagate_headers_server_response),
+        else => return,
+    };
+
+    // Get configured header names (array of strings or undefined)
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+
+    // Call all instruments to get header values
+    const injected_values = telemetry_inst.notifyOperationInject(kind, request_id, data);
+    if (injected_values.isUndefined() or !injected_values.isArray()) return;
+
+    // Get length of arrays
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    const injected_values_len = injected_values.getLength(globalObject) catch return;
+    if (header_names_len == 0 or injected_values_len == 0) return;
+
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
+
+        // Convert header name to ZigString
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+
+        // Look up this header in all injected value objects
+        // Using linear concatenation: iterate through all injected objects
+        var j: u32 = 0;
+        while (j < injected_values_len) : (j += 1) {
+            const injected_obj = injected_values.getIndex(globalObject, j) catch continue;
+            if (!injected_obj.isObject()) continue;
+
+            // Get the header value from this injected object
+            const header_value_js_opt = injected_obj.get(globalObject, header_name_zig.slice()) catch continue;
+            const header_value_js = header_value_js_opt orelse continue;
+            if (header_value_js.isUndefined() or header_value_js.isNull()) continue;
+            if (!header_value_js.isString()) continue;
+
+            // Convert header value to ZigString and append
+            var header_value_zig: ZigString = ZigString.Empty;
+            header_value_js.toZigString(&header_value_zig, globalObject) catch continue;
+
+            // Append to headers (allows duplicates - linear concatenation)
+            headers.append(&header_name_zig, &header_value_zig, globalObject);
+        }
+    }
+}
+
+/// Render injected trace headers to uWebSockets Response using stack-allocated buffers
+/// MUST be called at the end of renderMetadata, after all other headers
+pub inline fn renderInjectedTraceHeadersToUWSResponse(
+    comptime kind: telemetry.InstrumentKind,
+    request_id: u64,
+    data: JSValue,
+    resp: anytype, // uws Response
+    globalObject: *JSGlobalObject,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+    if (!telemetry_inst.isEnabledFor(kind)) return;
+
+    const config_property_id: u8 = switch (kind) {
+        .http => @intFromEnum(telemetry.ConfigurationProperty.http_propagate_headers_server_response),
+        else => return,
+    };
+
+    // Get configured header names
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+
+    // Call all instruments to get header values
+    const injected_values = telemetry_inst.notifyOperationInject(kind, request_id, data);
+    if (injected_values.isUndefined() or !injected_values.isArray()) return;
+
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    const injected_values_len = injected_values.getLength(globalObject) catch return;
+    if (header_names_len == 0 or injected_values_len == 0) return;
+
+    // Stack-allocated buffers for header name and value (matches content-range pattern)
+    var header_name_buf: [256]u8 = undefined;
+    var header_value_buf: [1024]u8 = undefined;
+
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
+
+        // Copy header name to stack buffer
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+        const header_name_len = @min(header_name_zig.len, header_name_buf.len);
+        if (header_name_len == 0) continue;
+        @memcpy(header_name_buf[0..header_name_len], header_name_zig.slice()[0..header_name_len]);
+        const header_name_slice = header_name_buf[0..header_name_len];
+
+        // Iterate through all injected value objects (linear concatenation)
+        var j: u32 = 0;
+        while (j < injected_values_len) : (j += 1) {
+            const injected_obj = injected_values.getIndex(globalObject, j) catch continue;
+            if (!injected_obj.isObject()) continue;
+
+            const header_value_js_opt = injected_obj.get(globalObject, header_name_zig.slice()) catch continue;
+            const header_value_js = header_value_js_opt orelse continue;
+            if (header_value_js.isUndefined() or header_value_js.isNull()) continue;
+            if (!header_value_js.isString()) continue;
+
+            // Copy header value to stack buffer
+            var header_value_zig: ZigString = ZigString.Empty;
+            header_value_js.toZigString(&header_value_zig, globalObject) catch continue;
+            const header_value_len = @min(header_value_zig.len, header_value_buf.len);
+            if (header_value_len == 0) continue;
+            @memcpy(header_value_buf[0..header_value_len], header_value_zig.slice()[0..header_value_len]);
+            const header_value_slice = header_value_buf[0..header_value_len];
+
+            // Write to uws Response using stack-allocated buffers
+            resp.writeHeader(header_name_slice, header_value_slice);
+        }
+    }
 }

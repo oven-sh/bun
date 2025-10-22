@@ -1,5 +1,5 @@
 {
-  "name": "@bun/otel",
+  "name": "bun-otel",
   "version": "0.1.0",
   "description": "OpenTelemetry instrumentation for Bun runtime with native hooks",
   "keywords": [

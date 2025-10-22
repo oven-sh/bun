@@ -2,23 +2,16 @@
  * Test native HTTP server telemetry hooks
  * NO @opentelemetry/* imports - testing ONLY Bun.telemetry.attach() API
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { InstrumentKind } from "./types";
 
 describe("Bun.serve() telemetry hooks", () => {
-  let instrumentIds: number[] = [];
-
-  afterEach(() => {
-    // Cleanup all attached instruments
-    instrumentIds.forEach(id => Bun.telemetry.detach(id));
-    instrumentIds = [];
-  });
-
   test("calls onOperationStart with correct attributes for GET request", async () => {
     let startCalled = false;
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1, // InstrumentKind.HTTP
+      type: InstrumentKind.HTTP,
       name: "test-http-start",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -29,8 +22,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -58,7 +50,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const endAttrs: any = {};
 
     const instrument = {
-      type: 1, // InstrumentKind.HTTP
+      type: InstrumentKind.HTTP,
       name: "test-http-end",
       version: "1.0.0",
       onOperationStart() {},
@@ -69,8 +61,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const responseBody = "Hello from Bun!";
     using server = Bun.serve({
@@ -98,7 +89,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-query-params",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -109,8 +100,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -133,7 +123,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-post-method",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -144,8 +134,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -173,7 +162,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const errorAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-error-handling",
       version: "1.0.0",
       onOperationStart() {},
@@ -184,8 +173,7 @@ describe("Bun.serve() telemetry hooks", () => {
       },
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -216,7 +204,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const statusCodes: number[] = [];
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-status-codes",
       version: "1.0.0",
       onOperationStart() {},
@@ -226,8 +214,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -257,7 +244,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const operationIds = new Set<number>();
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-concurrent-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -268,8 +255,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -294,7 +280,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const endIds: number[] = [];
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-matching-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -308,8 +294,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -332,7 +317,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-full-url",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -343,8 +328,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,
@@ -365,7 +349,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-no-query",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -376,8 +360,7 @@ describe("Bun.serve() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     using server = Bun.serve({
       port: 0,

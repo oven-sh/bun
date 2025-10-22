@@ -80,10 +80,10 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__getActiveSpan);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyStart);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyEnd);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyError);
-BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getCaptureHeadersServerRequest);
-BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getCaptureHeadersServerResponse);
-BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getCaptureHeadersFetchRequest);
-BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getCaptureHeadersFetchResponse);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyProgress);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyInject);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getConfigurationProperty);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__setConfigurationProperty);
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
@@ -452,8 +452,6 @@ static JSValue constructTelemetryObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "detach"_s), 1, Bun__Telemetry__detach, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isEnabledFor"_s), 1, Bun__Telemetry__isEnabledFor, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::DontDelete | 0);
     telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "listInstruments"_s), 0, Bun__Telemetry__listInstruments, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getActiveSpan"_s), 0, Bun__Telemetry__getActiveSpan, ImplementationVisibility::Public, NoIntrinsic,
@@ -469,13 +467,13 @@ static JSValue constructTelemetryObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyError"_s), 3, Bun__Telemetry__nativeHooks__notifyError, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCaptureHeadersServerRequest"_s), 0, Bun__Telemetry__nativeHooks__getCaptureHeadersServerRequest, ImplementationVisibility::Public, NoIntrinsic,
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyProgress"_s), 3, Bun__Telemetry__nativeHooks__notifyProgress, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCaptureHeadersServerResponse"_s), 0, Bun__Telemetry__nativeHooks__getCaptureHeadersServerResponse, ImplementationVisibility::Public, NoIntrinsic,
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyInject"_s), 3, Bun__Telemetry__nativeHooks__notifyInject, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCaptureHeadersFetchRequest"_s), 0, Bun__Telemetry__nativeHooks__getCaptureHeadersFetchRequest, ImplementationVisibility::Public, NoIntrinsic,
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getConfigurationProperty"_s), 1, Bun__Telemetry__nativeHooks__getConfigurationProperty, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCaptureHeadersFetchResponse"_s), 0, Bun__Telemetry__nativeHooks__getCaptureHeadersFetchResponse, ImplementationVisibility::Public, NoIntrinsic,
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setConfigurationProperty"_s), 2, Bun__Telemetry__nativeHooks__setConfigurationProperty, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
     telemetryObject->putDirect(vm, JSC::Identifier::fromString(vm, "nativeHooks"_s), nativeHooksObject, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);

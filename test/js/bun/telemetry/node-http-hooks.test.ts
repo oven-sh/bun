@@ -5,24 +5,17 @@
  * This tests the Node.js compatibility layer telemetry integration,
  * which bridges http.createServer() to Bun's native telemetry system.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import http from "node:http";
+import { InstrumentKind } from "./types";
 
 describe("http.createServer() telemetry hooks", () => {
-  let instrumentIds: number[] = [];
-
-  afterEach(() => {
-    // Cleanup all attached instruments
-    instrumentIds.forEach(id => Bun.telemetry.detach(id));
-    instrumentIds = [];
-  });
-
   test("calls onOperationStart with correct attributes for GET request", async () => {
     let startCalled = false;
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1, // InstrumentKind.HTTP
+      type: InstrumentKind.HTTP,
       name: "test-node-http-start",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -33,8 +26,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -68,7 +60,7 @@ describe("http.createServer() telemetry hooks", () => {
     const endAttrs: any = {};
 
     const instrument = {
-      type: 1, // InstrumentKind.HTTP
+      type: InstrumentKind.HTTP,
       name: "test-node-http-end",
       version: "1.0.0",
       onOperationStart() {},
@@ -79,8 +71,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -115,7 +106,7 @@ describe("http.createServer() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-query-params",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -126,8 +117,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -158,7 +148,7 @@ describe("http.createServer() telemetry hooks", () => {
     const endAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-status-code",
       version: "1.0.0",
       onOperationStart() {},
@@ -169,8 +159,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(404, { "Content-Type": "text/plain" });
@@ -200,7 +189,7 @@ describe("http.createServer() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-post-method",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -211,8 +200,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(201, { "Content-Type": "application/json" });
@@ -247,7 +235,7 @@ describe("http.createServer() telemetry hooks", () => {
     const errorAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-error-handling",
       version: "1.0.0",
       onOperationStart() {},
@@ -258,8 +246,7 @@ describe("http.createServer() telemetry hooks", () => {
       },
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       // Instead of throwing, send an error response
@@ -296,7 +283,7 @@ describe("http.createServer() telemetry hooks", () => {
     const statusCodes: number[] = [];
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-status-codes",
       version: "1.0.0",
       onOperationStart() {},
@@ -306,8 +293,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       const url = new URL(req.url!, `http://${req.headers.host}`);
@@ -344,7 +330,7 @@ describe("http.createServer() telemetry hooks", () => {
     const operationIds = new Set<number>();
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-concurrent-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -354,8 +340,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer(async (req, res) => {
       // Add a small delay to ensure requests overlap
@@ -388,7 +373,7 @@ describe("http.createServer() telemetry hooks", () => {
     const endIds: number[] = [];
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-matching-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -400,8 +385,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -432,7 +416,7 @@ describe("http.createServer() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-full-url",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -443,8 +427,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -472,7 +455,7 @@ describe("http.createServer() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-no-query",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -483,8 +466,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -516,7 +498,7 @@ describe("http.createServer() telemetry hooks", () => {
     const endAttrs: any = {};
 
     const instrument = {
-      type: 1,
+      type: InstrumentKind.HTTP,
       name: "test-node-implicit-status",
       version: "1.0.0",
       onOperationStart() {},
@@ -527,8 +509,7 @@ describe("http.createServer() telemetry hooks", () => {
       onOperationError() {},
     };
 
-    const instrumentId = Bun.telemetry.attach(instrument);
-    instrumentIds.push(instrumentId);
+    using ref = Bun.telemetry.attach(instrument);
 
     const server = http.createServer((req, res) => {
       // Don't call writeHead, just end with data

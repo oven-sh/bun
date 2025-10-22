@@ -1,0 +1,403 @@
+/**
+ * OpenTelemetry instrumentation support for Bun runtime.
+ *
+ * This module provides a native attach/detach API for registering instrumentations
+ * that receive lifecycle callbacks during operations (HTTP requests, fetch calls, etc.).
+ *
+ * @example
+ * ```typescript
+ * // Register an HTTP server instrumentation
+ * const instrumentId = Bun.telemetry.attach({
+ *   type: "http",
+ *   name: "@opentelemetry/instrumentation-http",
+ *   version: "0.1.0",
+ *
+ *   captureAttributes: {
+ *     requestHeaders: ["content-type", "user-agent"],
+ *     responseHeaders: ["content-type"],
+ *   },
+ *
+ *   injectHeaders: {
+ *     response: ["traceparent", "tracestate"],
+ *   },
+ *
+ *   onOperationStart(id, attributes) {
+ *     console.log(`HTTP ${attributes["http.request.method"]} ${attributes["url.path"]} started`);
+ *   },
+ *
+ *   onOperationEnd(id, attributes) {
+ *     console.log(`HTTP completed with status ${attributes["http.response.status_code"]}`);
+ *   },
+ *
+ *   onOperationInject(id, data) {
+ *     // Return headers to inject for distributed tracing
+ *     return {
+ *       traceparent: "00-trace-id-span-id-01",
+ *       tracestate: "vendor=value",
+ *     };
+ *   },
+ * });
+ *
+ * // Later: unregister the instrumentation
+ * Bun.telemetry.detach(instrumentId);
+ * ```
+ *
+ * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md
+ */
+declare module "bun" {
+  /**
+   * Branded type for request IDs to prevent accidental mixing with plain numbers.
+   *
+   * Runtime: Just a number
+   * Compile-time: Type-safe identifier for telemetry operations
+   *
+   * @internal Used internally by hooks - users don't create these directly
+   */
+  export type RequestId = number & { readonly __brand: unique symbol };
+
+  /**
+   * Reference to an attached instrument, returned by Bun.telemetry.attach().
+   *
+   * Implements Disposable for automatic cleanup with `using` statement:
+   * ```typescript
+   * using instrument = Bun.telemetry.attach({ ... });
+   * // Automatically detached at scope exit
+   * ```
+   *
+   * Can also be manually detached:
+   * ```typescript
+   * const instrument = Bun.telemetry.attach({ ... });
+   * Bun.telemetry.detach(instrument);
+   * ```
+   */
+  export type InstrumentRef = { id: number } & Disposable;
+
+  /**
+   * Categorizes operation types for routing telemetry data to appropriate handlers.
+   *
+   * Use string literals to specify which operations your instrumentation handles.
+   * For example: `type: "http"` instruments HTTP server operations.
+   *
+   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#instrumentkind-enum
+   */
+  export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3";
+
+  /**
+   * User-facing API for registering instrumentations with Bun's native telemetry hooks.
+   *
+   * Instruments receive lifecycle callbacks during operations with semantic convention
+   * attributes following OpenTelemetry specifications.
+   *
+   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#api-surface
+   */
+  export interface NativeInstrument {
+    /**
+     * Operation category this instrument handles.
+     *
+     * Determines which operations will invoke this instrument's hooks.
+     * For example, "http" instruments only receive HTTP server events.
+     */
+    type: InstrumentKind | number; // TODO - this only needs to be exposed in packages/bun-otel/types.ts; public API accepts only strings
+
+    /**
+     * Human-readable name for this instrumentation.
+     *
+     * Used for debugging and error messages.
+     * Recommended format: @scope/package-name
+     *
+     * @example "@opentelemetry/instrumentation-http"
+     */
+    name: string;
+
+    /**
+     * Semantic version of this instrumentation.
+     *
+     * Must follow semver format (e.g., "1.0.0")
+     */
+    version: string;
+
+    /**
+     * Attribute capture configuration (optional).
+     *
+     * Specifies which HTTP headers to capture as span attributes.
+     * Only headers explicitly listed here will be captured.
+     *
+     * Security: Sensitive headers (authorization, cookie, etc.) are blocked
+     * even if listed here.
+     *
+     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/hook-lifecycle.md#header-capture-security
+     */
+    captureAttributes?: {
+      /** HTTP request headers to capture (lowercase, max 50 headers) */
+      requestHeaders?: string[];
+      /** HTTP response headers to capture (lowercase, max 50 headers) */
+      responseHeaders?: string[];
+    };
+
+    /**
+     * Header injection configuration (optional).
+     *
+     * Declares which headers this instrument will inject for distributed tracing.
+     * Header keys must be declared here; extra keys in onOperationInject return
+     * values are ignored.
+     *
+     * Security: Sensitive headers (authorization, cookie, etc.) are blocked
+     * even if listed here.
+     *
+     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/header-injection.md
+     */
+    injectHeaders?: {
+      /** Headers to inject into outgoing requests (for Fetch client) */
+      request?: string[];
+      /** Headers to inject into outgoing responses (for HTTP server) */
+      response?: string[];
+    };
+
+    /**
+     * Called when an operation starts.
+     *
+     * Receives semantic convention attributes describing the operation.
+     * For HTTP: method, URL, headers (if configured), etc.
+     * For Fetch: method, URL, headers (if configured), etc.
+     *
+     * MUST be synchronous (no async/await).
+     * Errors are caught and logged; operation continues.
+     *
+     * @param id - Unique operation ID (for correlating with onOperationEnd/Error)
+     * @param attributes - Operation-specific attributes following OpenTelemetry semantic conventions
+     *
+     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/hook-lifecycle.md
+     */
+    onOperationStart?: (id: RequestId, attributes: Record<string, any>) => void;
+
+    /**
+     * Called during long-running operations to report progress (optional).
+     *
+     * Use cases:
+     * - Large file uploads/downloads (report bytes transferred)
+     * - Long-running SQL queries (report rows processed)
+     * - Streaming responses (report chunks sent)
+     *
+     * MUST be synchronous (no async/await).
+     * Errors are caught and logged; operation continues.
+     *
+     * @param id - Operation ID from onOperationStart
+     * @param attributes - Progress-specific attributes
+     */
+    onOperationProgress?: (id: RequestId, attributes: Record<string, any>) => void;
+
+    /**
+     * Called when an operation completes successfully.
+     *
+     * Receives semantic convention attributes describing the result.
+     * For HTTP: status code, response headers (if configured), body size, etc.
+     * For Fetch: status code, response headers (if configured), body size, etc.
+     *
+     * MUST be synchronous (no async/await).
+     * Errors are caught and logged; operation continues.
+     *
+     * @param id - Operation ID from onOperationStart
+     * @param attributes - Result attributes following OpenTelemetry semantic conventions
+     */
+    onOperationEnd?: (id: RequestId, attributes: Record<string, any>) => void;
+
+    /**
+     * Called when an operation fails.
+     *
+     * Receives semantic convention attributes describing the error.
+     * Includes: error.type, error.message, error.stack, etc.
+     *
+     * Called INSTEAD of (not in addition to) onOperationEnd.
+     *
+     * MUST be synchronous (no async/await).
+     * Errors are caught and logged; operation continues.
+     *
+     * @param id - Operation ID from onOperationStart
+     * @param attributes - Error attributes following OpenTelemetry semantic conventions
+     */
+    onOperationError?: (id: RequestId, attributes: Record<string, any>) => void;
+
+    /**
+     * Called to inject context into outgoing operations (optional).
+     *
+     * For distributed tracing: return headers to inject (traceparent, tracestate, etc.)
+     * For HTTP server: headers injected into responses
+     * For Fetch client: headers injected into requests
+     *
+     * Only header keys declared in injectHeaders are used; extra keys are ignored.
+     *
+     * MUST be synchronous (no async/await).
+     * Errors are caught and logged; no headers injected.
+     *
+     * @param id - Operation ID from onOperationStart
+     * @param data - Optional context data
+     * @returns Headers object to inject (only keys from injectHeaders are used), or void/undefined
+     *
+     * @example
+     * ```typescript
+     * onOperationInject(id, data) {
+     *   return {
+     *     traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+     *     tracestate: "vendor1=value1,vendor2=value2"
+     *   };
+     * }
+     * ```
+     */
+    onOperationInject?: (id: RequestId, data?: unknown) => Record<string, string> | void;
+  }
+
+  /**
+   * Information returned by Bun.telemetry.listInstruments()
+   */
+  export interface InstrumentInfo {
+    /** Unique instrument ID (from attach()) */
+    id: number;
+    /** Operation kind this instrument handles */
+    kind: InstrumentKind;
+    /** Instrumentation name */
+    name: string;
+    /** Instrumentation version */
+    version: string;
+  }
+
+  /**
+   * Active span context for logging integration (future)
+   *
+   * @experimental
+   */
+  export interface ActiveSpanContext {
+    /** W3C Trace Context trace ID (hex string) */
+    traceId: string;
+    /** W3C Trace Context span ID (hex string) */
+    spanId: string;
+  }
+
+  /**
+   * Telemetry API for application observability and OpenTelemetry support.
+   *
+   * The telemetry API provides lightweight operation tracking with minimal overhead.
+   * Instruments can be attached/detached dynamically and receive lifecycle callbacks
+   * with semantic convention attributes.
+   *
+   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md
+   */
+  export namespace telemetry {
+    /**
+     * Register an instrumentation with the native runtime.
+     *
+     * Multiple instruments can be registered for the same operation kind.
+     * All registered instruments receive lifecycle callbacks in registration order.
+     *
+     * Validation:
+     * - type must be a valid operation kind string (or it will go in as "custom")
+     * - name must be a non-empty string (max 256 chars)
+     * - version must be a non-empty string (semver format)
+     * - At least one hook function (onOperationStart/End/Error/Progress/Inject) must be provided
+     * - Hook functions must NOT be async
+     * - captureAttributes header names must be lowercase (max 50 per array)
+     * - injectHeaders header names must be lowercase (max 20 per array)
+     * - Sensitive headers (authorization, cookie, etc.) are blocked in both capture and inject
+     *
+     * Side effects:
+     * - Instrument registered in global Telemetry singleton
+     * - JSValue references protected from garbage collection
+     * - Future operations of matching type will invoke hooks
+     *
+     * Performance:
+     * - O(1) registration time
+     * - ~160 bytes memory allocation per instrument
+     *
+     * @param instrument - Instrumentation object implementing NativeInstrument
+     * @returns InstrumentRef with disposable cleanup (use with `using` statement)
+     * @throws {TypeError} If validation fails (invalid type, missing required fields, async hooks, etc.)
+     *
+     * @example
+     * ```typescript
+     * // Automatic cleanup with using statement (recommended)
+     * using instrument = Bun.telemetry.attach({
+     *   type: "http",
+     *   name: "@opentelemetry/instrumentation-http",
+     *   version: "0.1.0",
+     *   onOperationStart(id, attributes) {
+     *     console.log(`Request started: ${attributes["http.request.method"]} ${attributes["url.path"]}`);
+     *   },
+     *   onOperationEnd(id, attributes) {
+     *     console.log(`Request completed: ${attributes["http.response.status_code"]}`);
+     *   },
+     * });
+     * // Automatically detached at scope exit
+     *
+     * // Manual cleanup
+     * const ref = Bun.telemetry.attach({ ... });
+     * console.log(ref.id); // Access numeric ID if needed
+     * Bun.telemetry.detach(ref);
+     * ```
+     *
+     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#buntelemetryattachinstrument-nativeinstrument-number
+     */
+    export function attach(instrument: NativeInstrument): InstrumentRef;
+
+    /**
+     * Unregister a previously attached instrumentation.
+     *
+     * After detaching, the instrument's hooks will no longer be invoked for
+     * future operations. In-flight operations (already started) continue to completion.
+     *
+     * Validation:
+     * - instrumentRef must be an InstrumentRef returned from attach()
+     * - instrumentRef must correspond to a currently registered instrument
+     * - Detaching same ref twice returns false (idempotent)
+     *
+     * Side effects:
+     * - Instrument removed from global registry
+     * - JSValue references unprotected (allows garbage collection)
+     * - Future operations will NOT invoke this instrument's hooks
+     *
+     * Performance:
+     * - O(n) where n = number of instruments for that kind (typically <10)
+     * - All memory freed immediately
+     *
+     * @param instrumentRef - InstrumentRef returned from attach()
+     * @returns true if instrument was detached, false if already detached or not found
+     *
+     * @example
+     * ```typescript
+     * const ref = Bun.telemetry.attach({ ... });
+     *
+     * // Later: unregister
+     * Bun.telemetry.detach(ref); // returns true
+     *
+     * // Already detached
+     * Bun.telemetry.detach(ref); // returns false
+     * ```
+     *
+     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#buntelemetrydetachinstrumentid-number-void
+     */
+    export function detach(instrumentRef: InstrumentRef): boolean;
+
+    /**
+     * List all registered instruments (optional filter by kind).
+     *
+     * @param kind - Optional filter by InstrumentKind
+     * @returns Array of instrument info
+     *
+     * @experimental - Planned future API
+     */
+    export function listInstruments(kind?: InstrumentKind): InstrumentInfo[];
+
+    /**
+     * Get the active span context (for logging integration).
+     *
+     * Returns span context if currently within a traced operation (e.g., inside
+     * an HTTP request handler with an active span), otherwise returns null.
+     *
+     * Useful for correlating logs with traces by including traceId and spanId
+     * in log output.
+     *
+     * @returns Span context if within traced operation, null otherwise
+     *
+     * @experimental - Planned future API
+     */
+    export function getActiveSpan(): ActiveSpanContext | null;
+  }
+}

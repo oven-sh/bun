@@ -6,6 +6,10 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
 const ZigString = jsc.ZigString;
 
+const telemetry_config = @import("./telemetry_config.zig");
+pub const ConfigurationProperty = telemetry_config.ConfigurationProperty;
+const TelemetryConfig = telemetry_config.TelemetryConfig;
+
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
 /// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
 pub const InstrumentKind = enum(u8) {
@@ -18,6 +22,16 @@ pub const InstrumentKind = enum(u8) {
 
     pub const COUNT = @typeInfo(InstrumentKind).@"enum".fields.len;
 };
+
+/// Parse an instrument kind from a string JSValue.
+/// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3".
+/// Returns .custom (0) if the value is not a string or does not match a known kind.
+pub fn parseStringInstrumentType(globalObject: *JSGlobalObject, val: JSValue) InstrumentKind {
+    if (!val.isString()) return .custom;
+    const zstr = val.getZigString(globalObject) catch return .custom;
+    const slice = zstr.slice();
+    return std.meta.stringToEnum(InstrumentKind, slice) orelse .custom;
+}
 
 /// Stores registered instrumentation with cached function pointers for performance.
 /// Lifecycle: Created during attach(), disposed during detach()
@@ -38,19 +52,24 @@ pub const InstrumentRecord = struct {
     on_op_error_fn: JSValue,
     on_op_inject_fn: JSValue,
 
+    /// Per-instrument configuration (null if instrument has no injectHeaders config)
+    /// Contains parsed header injection configuration from instrument.injectHeaders
+    instrument_config: ?TelemetryConfig,
+
     /// Initialize a new instrument record from a JavaScript instrument object
     pub fn init(
         id: u32,
         kind: InstrumentKind,
         instrument_obj: JSValue,
-        global: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
+        allocator: std.mem.Allocator,
     ) !InstrumentRecord {
         // Validate that at least one hook function is provided
-        const on_op_start = try instrument_obj.get(global, "onOperationStart") orelse .js_undefined;
-        const on_op_progress = try instrument_obj.get(global, "onOperationProgress") orelse .js_undefined;
-        const on_op_end = try instrument_obj.get(global, "onOperationEnd") orelse .js_undefined;
-        const on_op_error = try instrument_obj.get(global, "onOperationError") orelse .js_undefined;
-        const on_op_inject = try instrument_obj.get(global, "onOperationInject") orelse .js_undefined;
+        const on_op_start = try instrument_obj.get(globalObject, "onOperationStart") orelse .js_undefined;
+        const on_op_progress = try instrument_obj.get(globalObject, "onOperationProgress") orelse .js_undefined;
+        const on_op_end = try instrument_obj.get(globalObject, "onOperationEnd") orelse .js_undefined;
+        const on_op_error = try instrument_obj.get(globalObject, "onOperationError") orelse .js_undefined;
+        const on_op_inject = try instrument_obj.get(globalObject, "onOperationInject") orelse .js_undefined;
 
         // At least one hook must be callable
         const has_any_hook = on_op_start.isCallable() or
@@ -61,6 +80,31 @@ pub const InstrumentRecord = struct {
 
         if (!has_any_hook) {
             return error.NoHooksProvided;
+        }
+
+        // Parse injectHeaders configuration if present
+        var instrument_config: ?TelemetryConfig = null;
+        const inject_headers = try instrument_obj.get(globalObject, "injectHeaders") orelse .js_undefined;
+        if (inject_headers.isObject()) {
+            // Create a minimal TelemetryConfig just for this instrument's headers
+            var config = try TelemetryConfig.init(allocator, globalObject);
+            errdefer config.deinit();
+
+            // Parse request headers (for fetch client)
+            const request_headers = try inject_headers.get(globalObject, "request") orelse .js_undefined;
+            if (request_headers.isArray()) {
+                // TelemetryConfig.set() will protect the JSValue
+                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request), request_headers);
+            }
+
+            // Parse response headers (for HTTP server)
+            const response_headers = try inject_headers.get(globalObject, "response") orelse .js_undefined;
+            if (response_headers.isArray()) {
+                // TelemetryConfig.set() will protect the JSValue
+                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_server_response), response_headers);
+            }
+
+            instrument_config = config;
         }
 
         // Protect the instrument object from garbage collection
@@ -75,16 +119,22 @@ pub const InstrumentRecord = struct {
             .on_op_end_fn = on_op_end,
             .on_op_error_fn = on_op_error,
             .on_op_inject_fn = on_op_inject,
+            .instrument_config = instrument_config,
         };
     }
 
     /// Dispose of this instrument record and unprotect JSValues
     pub fn dispose(self: *InstrumentRecord) void {
         self.native_instrument_object.unprotect();
+
+        // Clean up instrument config if present
+        if (self.instrument_config) |*config| {
+            config.deinit();
+        }
     }
 
     /// Invoke onOperationStart hook if present
-    pub fn invokeStart(self: *InstrumentRecord, global: *JSGlobalObject, id: u64, info: JSValue) void {
+    pub fn invokeStart(self: *InstrumentRecord, globalObject: *JSGlobalObject, id: u64, info: JSValue) void {
         if (!self.on_op_start_fn.isCallable()) return;
 
         const args = [_]JSValue{
@@ -92,14 +142,14 @@ pub const InstrumentRecord = struct {
             info,
         };
 
-        _ = self.on_op_start_fn.callWithGlobalThis(global, &args) catch |err| {
+        _ = self.on_op_start_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             // Defensive isolation: telemetry failures must not crash the application
             std.debug.print("Telemetry: onOperationStart failed: {}\n", .{err});
         };
     }
 
     /// Invoke onOperationEnd hook if present
-    pub fn invokeEnd(self: *InstrumentRecord, global: *JSGlobalObject, id: u64, result: JSValue) void {
+    pub fn invokeEnd(self: *InstrumentRecord, globalObject: *JSGlobalObject, id: u64, result: JSValue) void {
         if (!self.on_op_end_fn.isCallable()) return;
 
         const args = [_]JSValue{
@@ -107,13 +157,13 @@ pub const InstrumentRecord = struct {
             result,
         };
 
-        _ = self.on_op_end_fn.callWithGlobalThis(global, &args) catch |err| {
+        _ = self.on_op_end_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             std.debug.print("Telemetry: onOperationEnd failed: {}\n", .{err});
         };
     }
 
     /// Invoke onOperationError hook if present
-    pub fn invokeError(self: *InstrumentRecord, global: *JSGlobalObject, id: u64, error_info: JSValue) void {
+    pub fn invokeError(self: *InstrumentRecord, globalObject: *JSGlobalObject, id: u64, error_info: JSValue) void {
         if (!self.on_op_error_fn.isCallable()) return;
 
         const args = [_]JSValue{
@@ -121,13 +171,13 @@ pub const InstrumentRecord = struct {
             error_info,
         };
 
-        _ = self.on_op_error_fn.callWithGlobalThis(global, &args) catch |err| {
+        _ = self.on_op_error_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             std.debug.print("Telemetry: onOperationError failed: {}\n", .{err});
         };
     }
 
     /// Invoke onOperationInject hook if present, returns injected data or undefined
-    pub fn invokeInject(self: *InstrumentRecord, global: *JSGlobalObject, id: u64, data: JSValue) JSValue {
+    pub fn invokeInject(self: *InstrumentRecord, globalObject: *JSGlobalObject, id: u64, data: JSValue) JSValue {
         if (!self.on_op_inject_fn.isCallable()) return .js_undefined;
 
         const args = [_]JSValue{
@@ -135,14 +185,14 @@ pub const InstrumentRecord = struct {
             data,
         };
 
-        return self.on_op_inject_fn.callWithGlobalThis(global, &args) catch |err| {
+        return self.on_op_inject_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             std.debug.print("Telemetry: onOperationInject failed: {}\n", .{err});
             return .js_undefined;
         };
     }
 
     /// Invoke onOperationProgress hook if present
-    pub fn invokeProgress(self: *InstrumentRecord, global: *JSGlobalObject, id: u64, attributes: JSValue) void {
+    pub fn invokeProgress(self: *InstrumentRecord, globalObject: *JSGlobalObject, id: u64, attributes: JSValue) void {
         if (!self.on_op_progress_fn.isCallable()) return;
 
         const args = [_]JSValue{
@@ -150,7 +200,7 @@ pub const InstrumentRecord = struct {
             attributes,
         };
 
-        _ = self.on_op_progress_fn.callWithGlobalThis(global, &args) catch |err| {
+        _ = self.on_op_progress_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             std.debug.print("Telemetry: onOperationProgress failed: {}\n", .{err});
         };
     }
@@ -168,28 +218,14 @@ pub const Telemetry = struct {
     /// Monotonic request ID generator (thread-safe)
     next_request_id: std.atomic.Value(u64),
 
-    /// Header capture configuration (from environment variables)
-    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST
-    http_capture_headers_server_request: []const []const u8,
-    http_capture_headers_server_request_js: JSValue,
-
-    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE
-    http_capture_headers_server_response: []const []const u8,
-    http_capture_headers_server_response_js: JSValue,
-
-    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST
-    http_capture_headers_fetch_request: []const []const u8,
-    http_capture_headers_fetch_request_js: JSValue,
-
-    /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE
-    http_capture_headers_fetch_response: []const []const u8,
-    http_capture_headers_fetch_response_js: JSValue,
+    /// Configuration manager (handles both JS and native property storage)
+    config: TelemetryConfig,
 
     allocator: std.mem.Allocator,
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
 
     /// Initialize the global telemetry singleton
-    pub fn init(allocator: std.mem.Allocator, global: *JSGlobalObject) !*Telemetry {
+    pub fn init(allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !*Telemetry {
         const self = try allocator.create(Telemetry);
 
         // Initialize all instrument lists
@@ -198,54 +234,16 @@ pub const Telemetry = struct {
             list.* = std.ArrayList(InstrumentRecord).init(allocator);
         }
 
-        // TODO: Parse from environment variables, for now use sample values
-        // Sample headers for demonstration (commonly captured headers)
-        const sample_request_headers = &[_][]const u8{ "user-agent", "content-type", "authorization" };
-        const sample_response_headers = &[_][]const u8{ "content-type", "content-length" };
-
-        // Create JSValue arrays for header capture configuration
-        const server_req_headers_js = try JSValue.createEmptyArray(global, sample_request_headers.len);
-        for (sample_request_headers, 0..) |header, i| {
-            const header_str = ZigString.init(header).toJS(global);
-            try server_req_headers_js.putIndex(global, @intCast(i), header_str);
-        }
-        server_req_headers_js.protect(); // Keep alive
-
-        const server_res_headers_js = try JSValue.createEmptyArray(global, sample_response_headers.len);
-        for (sample_response_headers, 0..) |header, i| {
-            const header_str = ZigString.init(header).toJS(global);
-            try server_res_headers_js.putIndex(global, @intCast(i), header_str);
-        }
-        server_res_headers_js.protect(); // Keep alive
-
-        const fetch_req_headers_js = try JSValue.createEmptyArray(global, sample_request_headers.len);
-        for (sample_request_headers, 0..) |header, i| {
-            const header_str = ZigString.init(header).toJS(global);
-            try fetch_req_headers_js.putIndex(global, @intCast(i), header_str);
-        }
-        fetch_req_headers_js.protect(); // Keep alive
-
-        const fetch_res_headers_js = try JSValue.createEmptyArray(global, sample_response_headers.len);
-        for (sample_response_headers, 0..) |header, i| {
-            const header_str = ZigString.init(header).toJS(global);
-            try fetch_res_headers_js.putIndex(global, @intCast(i), header_str);
-        }
-        fetch_res_headers_js.protect(); // Keep alive
+        // Initialize configuration manager
+        const config = try TelemetryConfig.init(allocator, globalObject);
 
         self.* = Telemetry{
             .instrument_table = instrument_table,
             .next_instrument_id = std.atomic.Value(u32).init(1),
             .next_request_id = std.atomic.Value(u64).init(1),
-            .http_capture_headers_server_request = sample_request_headers,
-            .http_capture_headers_server_request_js = server_req_headers_js,
-            .http_capture_headers_server_response = sample_response_headers,
-            .http_capture_headers_server_response_js = server_res_headers_js,
-            .http_capture_headers_fetch_request = sample_request_headers,
-            .http_capture_headers_fetch_request_js = fetch_req_headers_js,
-            .http_capture_headers_fetch_response = sample_response_headers,
-            .http_capture_headers_fetch_response_js = fetch_res_headers_js,
+            .config = config,
             .allocator = allocator,
-            .global = global,
+            .globalObject = globalObject,
         };
 
         return self;
@@ -260,11 +258,8 @@ pub const Telemetry = struct {
             list.deinit();
         }
 
-        // Unprotect header capture JSValue arrays
-        self.http_capture_headers_server_request_js.unprotect();
-        self.http_capture_headers_server_response_js.unprotect();
-        self.http_capture_headers_fetch_request_js.unprotect();
-        self.http_capture_headers_fetch_response_js.unprotect();
+        // Clean up configuration manager
+        self.config.deinit();
 
         self.allocator.destroy(self);
     }
@@ -279,34 +274,61 @@ pub const Telemetry = struct {
         return self.next_request_id.fetchAdd(1, .monotonic);
     }
 
+    /// Get a configuration property value by its enum ID
+    /// Returns the JSValue for the property, or .js_undefined if invalid
+    pub fn getConfigurationProperty(self: *Telemetry, property_id: u8) JSValue {
+        return self.config.get(property_id);
+    }
+
+    /// Set a configuration property, keeping both JS and native arrays in sync
+    /// Unprotects old JSValue if present, validates after setting
+    pub fn setConfigurationProperty(self: *Telemetry, property_id: u8, js_value: JSValue) !void {
+        try self.config.set(property_id, js_value);
+    }
+
     /// Attach a new instrumentation to the registry
     /// Returns the instrument ID on success, error on failure
-    pub fn attach(self: *Telemetry, instrument_obj: JSValue, global: *JSGlobalObject) !u32 {
+    ///
+    /// SECURITY: This native function does NOT validate header names for security.
+    /// It is the caller's responsibility (packages/bun-otel SDK) to validate that:
+    /// - injectHeaders do not include sensitive headers (authorization, cookie, set-cookie, etc.)
+    /// - captureAttributes do not include sensitive headers
+    /// - Header names follow RFC 9110 specifications
+    /// See: specs/001-opentelemetry-support/contracts/header-injection.md for blocked header list
+    pub fn attach(self: *Telemetry, instrument_obj: JSValue, globalObject: *JSGlobalObject) !u32 {
         // Validate instrument object
         if (!instrument_obj.isObject()) {
             return error.InvalidInstrument;
         }
 
         // Extract and validate 'type' field
-        const type_value = try instrument_obj.get(global, "type") orelse return error.MissingType;
-        if (!type_value.isNumber()) {
+        const type_value = try instrument_obj.get(globalObject, "type") orelse return error.MissingType;
+        var kind: InstrumentKind = .custom;
+        if (type_value.isNumber()) {
+            const type_num = type_value.asInt32();
+            if (type_num < 0 or type_num >= InstrumentKind.COUNT) {
+                return error.InvalidType;
+            }
+            kind = @enumFromInt(@as(u8, @intCast(type_num)));
+        } else if (type_value.isString()) {
+            kind = parseStringInstrumentType(globalObject, type_value);
+            // parseStringInstrumentType always returns a valid InstrumentKind (defaults to .custom)
+        } else {
             return error.InvalidType;
         }
-
-        const type_num = type_value.asInt32();
-        if (type_num < 0 or type_num >= InstrumentKind.COUNT) {
-            return error.InvalidType;
-        }
-
-        const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(type_num)));
 
         // Generate ID and create record
         const id = self.generateInstrumentId();
-        const record = try InstrumentRecord.init(id, kind, instrument_obj, global);
+        const record = try InstrumentRecord.init(id, kind, instrument_obj, globalObject, self.allocator);
 
         // Add to appropriate instrument list
         const kind_index = @intFromEnum(kind);
         try self.instrument_table[kind_index].append(record);
+
+        // Rebuild inject config for this kind if it's HTTP or Fetch
+        if (kind == .http or kind == .fetch) {
+            try self.config.rebuildInjectConfig(kind, self.instrument_table[kind_index].items);
+        }
 
         return id;
     }
@@ -315,11 +337,20 @@ pub const Telemetry = struct {
     /// Returns true if found and removed, false otherwise
     pub fn detach(self: *Telemetry, id: u32) bool {
         // Search all instrument lists for matching ID
-        for (&self.instrument_table) |*list| {
+        for (&self.instrument_table, 0..) |*list, kind_idx| {
             for (list.items, 0..) |*record, i| {
                 if (record.id == id) {
+                    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_idx)));
                     record.dispose();
                     _ = list.swapRemove(i);
+
+                    // Rebuild inject config for this kind if it's HTTP or Fetch
+                    if (kind == .http or kind == .fetch) {
+                        self.config.rebuildInjectConfig(kind, list.items) catch |err| {
+                            std.debug.print("Telemetry: Failed to rebuild inject config on detach: {}\n", .{err});
+                        };
+                    }
+
                     return true;
                 }
             }
@@ -335,24 +366,24 @@ pub const Telemetry = struct {
     }
 
     /// List all registered instruments, optionally filtered by kind
-    pub fn listInstruments(self: *Telemetry, maybe_kind: ?InstrumentKind, global: *JSGlobalObject) !JSValue {
-        const array = try JSValue.createEmptyArray(global, 0);
+    pub fn listInstruments(self: *Telemetry, maybe_kind: ?InstrumentKind, globalObject: *JSGlobalObject) !JSValue {
+        const array = try JSValue.createEmptyArray(globalObject, 0);
         var index: u32 = 0;
 
         if (maybe_kind) |kind| {
             // List only instruments of specified kind
             const kind_index = @intFromEnum(kind);
             for (self.instrument_table[kind_index].items) |*record| {
-                const info = self.createInstrumentInfo(record, global);
-                try array.putIndex(global, index, info);
+                const info = self.createInstrumentInfo(record, globalObject);
+                try array.putIndex(globalObject, index, info);
                 index += 1;
             }
         } else {
             // List all instruments
             for (&self.instrument_table) |*list| {
                 for (list.items) |*record| {
-                    const info = self.createInstrumentInfo(record, global);
-                    try array.putIndex(global, index, info);
+                    const info = self.createInstrumentInfo(record, globalObject);
+                    try array.putIndex(globalObject, index, info);
                     index += 1;
                 }
             }
@@ -362,18 +393,18 @@ pub const Telemetry = struct {
     }
 
     /// Create an InstrumentInfo object from an InstrumentRecord
-    fn createInstrumentInfo(self: *Telemetry, record: *const InstrumentRecord, global: *JSGlobalObject) JSValue {
+    fn createInstrumentInfo(self: *Telemetry, record: *const InstrumentRecord, globalObject: *JSGlobalObject) JSValue {
         _ = self;
-        const info = JSValue.createEmptyObject(global, 4);
+        const info = JSValue.createEmptyObject(globalObject, 4);
 
-        info.put(global, "id", JSValue.jsNumber(@as(f64, @floatFromInt(record.id))));
-        info.put(global, "kind", JSValue.jsNumber(@as(f64, @floatFromInt(@intFromEnum(record.kind)))));
+        info.put(globalObject, "id", JSValue.jsNumber(@as(f64, @floatFromInt(record.id))));
+        info.put(globalObject, "kind", JSValue.jsNumber(@as(f64, @floatFromInt(@intFromEnum(record.kind)))));
 
-        const name = (record.native_instrument_object.get(global, "name") catch null) orelse .js_undefined;
-        info.put(global, "name", name);
+        const name = (record.native_instrument_object.get(globalObject, "name") catch null) orelse .js_undefined;
+        info.put(globalObject, "name", name);
 
-        const version = (record.native_instrument_object.get(global, "version") catch null) orelse .js_undefined;
-        info.put(global, "version", version);
+        const version = (record.native_instrument_object.get(globalObject, "version") catch null) orelse .js_undefined;
+        info.put(globalObject, "version", version);
 
         return info;
     }
@@ -382,7 +413,15 @@ pub const Telemetry = struct {
     pub fn notifyOperationStart(self: *Telemetry, kind: InstrumentKind, id: u64, info: JSValue) void {
         const kind_index = @intFromEnum(kind);
         for (self.instrument_table[kind_index].items) |*record| {
-            record.invokeStart(self.global, id, info);
+            record.invokeStart(self.globalObject, id, info);
+        }
+    }
+
+    /// Invoke onOperationProgress for all instruments registered for this kind
+    pub fn notifyOperationProgress(self: *Telemetry, kind: InstrumentKind, id: u64, attributes: JSValue) void {
+        const kind_index = @intFromEnum(kind);
+        for (self.instrument_table[kind_index].items) |*record| {
+            record.invokeProgress(self.globalObject, id, attributes);
         }
     }
 
@@ -390,7 +429,7 @@ pub const Telemetry = struct {
     pub fn notifyOperationEnd(self: *Telemetry, kind: InstrumentKind, id: u64, result: JSValue) void {
         const kind_index = @intFromEnum(kind);
         for (self.instrument_table[kind_index].items) |*record| {
-            record.invokeEnd(self.global, id, result);
+            record.invokeEnd(self.globalObject, id, result);
         }
     }
 
@@ -398,34 +437,29 @@ pub const Telemetry = struct {
     pub fn notifyOperationError(self: *Telemetry, kind: InstrumentKind, id: u64, error_info: JSValue) void {
         const kind_index = @intFromEnum(kind);
         for (self.instrument_table[kind_index].items) |*record| {
-            record.invokeError(self.global, id, error_info);
+            record.invokeError(self.globalObject, id, error_info);
         }
     }
 
-    /// Invoke onOperationInject for all instruments, merge returned headers
+    /// Invoke onOperationInject for all instruments, collect results into array
+    /// Returns a flat array of property values from all instruments
     pub fn notifyOperationInject(self: *Telemetry, kind: InstrumentKind, id: u64, data: JSValue) JSValue {
         const kind_index = @intFromEnum(kind);
-        const merged = JSValue.createEmptyObject(self.global, 0);
+        const results = JSValue.createEmptyArray(self.globalObject, 0) catch {
+            std.debug.print("Telemetry: Failed to create array for injected values\n", .{});
+            return .js_undefined;
+        };
 
         for (self.instrument_table[kind_index].items) |*record| {
-            const injected = record.invokeInject(self.global, id, data);
-            if (injected.isObject()) {
-                // Merge injected headers into result
-                const keys = injected.getOwnPropertyNames(self.global);
-                const len = keys.getLength(self.global);
-
-                var i: u32 = 0;
-                while (i < len) : (i += 1) {
-                    const key = keys.getIndex(self.global, i);
-                    const value = injected.get(self.global, key.toString(self.global).toSlice(self.global).?);
-                    if (value) |v| {
-                        merged.put(self.global, key.toString(self.global).toSlice(self.global).?, v);
-                    }
-                }
+            const injected = record.invokeInject(self.globalObject, id, data);
+            if (!injected.isUndefined() and !injected.isNull()) {
+                results.push(self.globalObject, injected) catch |err| {
+                    std.debug.print("Telemetry: Failed to push injected value to array: {}\n", .{err});
+                };
             }
         }
 
-        return merged;
+        return results;
     }
 };
 
@@ -471,13 +505,13 @@ pub const AttributeKey = enum(u8) {
 pub const AttributeMap = struct {
     /// Internal storage: plain JavaScript object
     value: JSValue,
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
 
     /// Create a new empty attribute map
-    pub fn init(global: *JSGlobalObject) AttributeMap {
+    pub fn init(globalObject: *JSGlobalObject) AttributeMap {
         return AttributeMap{
-            .value = JSValue.createEmptyObject(global, 16),
-            .global = global,
+            .value = JSValue.createEmptyObject(globalObject, 16),
+            .globalObject = globalObject,
         };
     }
 
@@ -485,24 +519,24 @@ pub const AttributeMap = struct {
     /// MVP: Internally uses string lookup (enum just for type safety)
     pub fn fastSet(self: *AttributeMap, key: AttributeKey, val: JSValue) void {
         const key_str = key.toString();
-        self.value.put(self.global, key_str, val);
+        self.value.put(self.globalObject, key_str, val);
     }
 
     /// Fast get for known semantic convention attributes
     /// MVP: Internally uses string lookup
     pub fn fastGet(self: *AttributeMap, key: AttributeKey) JSValue {
         const key_str = key.toString();
-        return self.value.get(self.global, key_str) orelse .js_undefined;
+        return self.value.get(self.globalObject, key_str) orelse .js_undefined;
     }
 
     /// Set a custom attribute (string key)
     pub fn set(self: *AttributeMap, key: []const u8, val: JSValue) void {
-        self.value.put(self.global, key, val);
+        self.value.put(self.globalObject, key, val);
     }
 
     /// Get a custom attribute (string key)
     pub fn get(self: *AttributeMap, key: []const u8) JSValue {
-        return self.value.get(self.global, key) orelse .js_undefined;
+        return self.value.get(self.globalObject, key) orelse .js_undefined;
     }
 
     /// Return the underlying JavaScript object (for passing to callbacks)
@@ -545,9 +579,9 @@ pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSErro
 var global_telemetry: ?*Telemetry = null;
 
 /// Initialize the global telemetry instance
-pub fn initGlobalTelemetry(allocator: std.mem.Allocator, global: *JSGlobalObject) !void {
+pub fn initGlobalTelemetry(allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !void {
     if (global_telemetry != null) return;
-    global_telemetry = try Telemetry.init(allocator, global);
+    global_telemetry = try Telemetry.init(allocator, globalObject);
 }
 
 /// Get the global telemetry instance
@@ -564,10 +598,10 @@ pub fn deinitGlobalTelemetry() void {
 }
 
 /// C-compatible init function for use from C++ (returns 0 on success, 1 on error)
-pub fn initGlobalTelemetryC(global: *JSGlobalObject) callconv(.C) c_int {
+pub fn initGlobalTelemetryC(globalObject: *JSGlobalObject) callconv(.C) c_int {
     // Use bun.default_allocator
     const allocator = bun.default_allocator;
-    initGlobalTelemetry(allocator, global) catch {
+    initGlobalTelemetry(allocator, globalObject) catch {
         return 1; // Error
     };
     return 0; // Success
@@ -582,41 +616,92 @@ pub fn deinitGlobalTelemetryC() callconv(.C) void {
 // JavaScript Bindings
 // ====================
 
-/// Bun.telemetry.attach(instrument: NativeInstrument): number
+/// Symbol.dispose callback for InstrumentRef
+/// Reads this.id and calls telemetry.detach(id)
+pub fn jsInstrumentRefDispose(
+    globalObject: *JSGlobalObject,
+    callframe: *CallFrame,
+) callconv(.C) JSValue {
+    const this = callframe.this();
+
+    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
+
+    // Read this.id
+    const maybe_id_value = this.get(globalObject, "id") catch return .js_undefined;
+    const id_value = maybe_id_value orelse return .js_undefined;
+    if (!id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const num = id_value.asNumber();
+    if (num < 0 or num > std.math.maxInt(u32)) {
+        return .js_undefined;
+    }
+
+    const id = @as(u32, @intFromFloat(num));
+    _ = telemetry.detach(id);
+
+    return .js_undefined;
+}
+
+/// Bun.telemetry.attach(instrument: NativeInstrument): InstrumentRef
 pub fn jsAttach(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     callframe: *CallFrame,
 ) callconv(.C) JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        global.throw("telemetry.attach requires 1 argument (instrument object)", .{}) catch {};
+        globalObject.throw("telemetry.attach requires 1 argument (instrument object)", .{}) catch {};
         return .js_undefined;
     }
 
     const telemetry = getGlobalTelemetry() orelse {
-        global.throw("Telemetry not initialized", .{}) catch {};
+        globalObject.throw("Telemetry not initialized", .{}) catch {};
         return .js_undefined;
     };
 
     const instrument_obj = arguments.ptr[0];
 
-    const id = telemetry.attach(instrument_obj, global) catch |err| {
+    const id = telemetry.attach(instrument_obj, globalObject) catch |err| {
         switch (err) {
-            error.InvalidInstrument => global.throw("Instrument must be an object", .{}) catch {},
-            error.MissingType => global.throw("Instrument must have a 'type' property", .{}) catch {},
-            error.InvalidType => global.throw("Instrument 'type' must be a valid InstrumentKind", .{}) catch {},
-            error.NoHooksProvided => global.throw("Instrument must provide at least one hook function", .{}) catch {},
-            else => global.throw("Failed to attach instrument", .{}) catch {},
+            error.InvalidInstrument => globalObject.throw("Instrument must be an object", .{}) catch {},
+            error.MissingType => globalObject.throw("Instrument must have a 'type' property", .{}) catch {},
+            error.InvalidType => globalObject.throw("Instrument 'type' must be a valid InstrumentKind", .{}) catch {},
+            error.NoHooksProvided => globalObject.throw("Instrument must provide at least one hook function", .{}) catch {},
+            else => globalObject.throw("Failed to attach instrument", .{}) catch {},
         }
         return .js_undefined;
     };
 
-    return JSValue.jsNumber(@as(f64, @floatFromInt(id)));
+    // Create InstrumentRef object with { id, [Symbol.dispose] }
+    const ref_obj = JSValue.createEmptyObject(globalObject, 2);
+
+    // Set the id property
+    ref_obj.put(globalObject, "id", JSValue.jsNumber(@as(f64, @floatFromInt(id))));
+
+    // Create the dispose function and bind it to ref_obj
+    const dispose_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("dispose"), 0, jsInstrumentRefDispose, false);
+    const bound_dispose = dispose_fn.bind(globalObject, ref_obj, &bun.String.static("dispose"), 0, &.{}) catch return .js_undefined;
+
+    // Get Symbol.dispose from VM
+    const dispose_symbol = JSC__JSGlobalObject__getDisposeSymbol(globalObject);
+
+    // Set Symbol.dispose (required for `using` statement)
+    ref_obj.putToPropertyKey(globalObject, dispose_symbol, bound_dispose) catch {};
+
+    // Also set .dispose() for manual cleanup compatibility
+    ref_obj.put(globalObject, "dispose", bound_dispose);
+
+    return ref_obj;
 }
 
-/// Bun.telemetry.detach(id: number): boolean
+// Forward declaration of C++ function to get Symbol.dispose
+extern fn JSC__JSGlobalObject__getDisposeSymbol(globalObject: *jsc.JSGlobalObject) JSValue;
+
+/// Bun.telemetry.detach(idOrRef: number | InstrumentRef): boolean
+/// Accepts either a raw number (backward compatibility) or an InstrumentRef object
 pub fn jsDetach(
-    _: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     callframe: *CallFrame,
 ) callconv(.C) JSValue {
     const arguments = callframe.arguments_old(1);
@@ -626,16 +711,36 @@ pub fn jsDetach(
 
     const telemetry = getGlobalTelemetry() orelse return JSValue.jsBoolean(false);
 
-    const id_value = arguments.ptr[0];
-    if (!id_value.isNumber()) {
+    const arg = arguments.ptr[0];
+
+    // Extract ID from either InstrumentRef object or raw number
+    var id: u32 = 0;
+
+    if (arg.isNumber()) {
+        // Backward compatibility: accept raw number
+        const num = arg.asNumber();
+        if (num < 0 or num > std.math.maxInt(u32)) {
+            return JSValue.jsBoolean(false);
+        }
+        id = @as(u32, @intFromFloat(num));
+    } else if (arg.isObject()) {
+        // Accept InstrumentRef object with id property
+        const maybe_id_value = arg.get(globalObject, "id") catch return JSValue.jsBoolean(false);
+        const id_value = maybe_id_value orelse return JSValue.jsBoolean(false);
+        if (!id_value.isNumber()) {
+            return JSValue.jsBoolean(false);
+        }
+
+        const num = id_value.asNumber();
+        if (num < 0 or num > std.math.maxInt(u32)) {
+            return JSValue.jsBoolean(false);
+        }
+        id = @as(u32, @intFromFloat(num));
+    } else {
+        // Invalid argument type
         return JSValue.jsBoolean(false);
     }
 
-    const num = id_value.asNumber();
-    if (num < 0 or num > std.math.maxInt(u32)) {
-        return JSValue.jsBoolean(false);
-    }
-    const id = @as(u32, @intFromFloat(num));
     const removed = telemetry.detach(id);
 
     return JSValue.jsBoolean(removed);
@@ -671,12 +776,12 @@ pub fn jsIsEnabledFor(
 
 /// Bun.telemetry.listInstruments(kind?: InstrumentKind): InstrumentInfo[]
 pub fn jsListInstruments(
-    global: *JSGlobalObject,
+    globalObject: *JSGlobalObject,
     callframe: *CallFrame,
 ) callconv(.C) JSValue {
     const arguments = callframe.arguments_old(1);
     const telemetry = getGlobalTelemetry() orelse {
-        return JSValue.createEmptyArray(global, 0) catch .js_undefined;
+        return JSValue.createEmptyArray(globalObject, 0) catch .js_undefined;
     };
 
     var maybe_kind: ?InstrumentKind = null;
@@ -688,7 +793,7 @@ pub fn jsListInstruments(
         }
     }
 
-    return telemetry.listInstruments(maybe_kind, global) catch .js_undefined;
+    return telemetry.listInstruments(maybe_kind, globalObject) catch .js_undefined;
 }
 
 /// Bun.telemetry.nativeHooks.notifyStart(kind: number, id: number, attributes: object): void
@@ -790,48 +895,139 @@ pub fn jsNotifyOperationError(
     return .js_undefined;
 }
 
-/// Bun.telemetry.nativeHooks.getCaptureHeadersServerRequest(): string[]
-/// Returns configured request headers to capture for HTTP server instrumentation
+/// Bun.telemetry.nativeHooks.notifyProgress(kind: number, id: number, attributes: object): void
 /// Internal API for TypeScript telemetry bridges
-pub fn jsGetCaptureHeadersServerRequest(
+pub fn jsNotifyOperationProgress(
     _: *JSGlobalObject,
-    _: *CallFrame,
+    callframe: *CallFrame,
 ) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return .js_undefined;
+    }
+
     const telemetry = getGlobalTelemetry() orelse return .js_undefined;
-    return telemetry.http_capture_headers_server_request_js;
+
+    const kind_value = arguments.ptr[0];
+    const id_value = arguments.ptr[1];
+    const attributes = arguments.ptr[2];
+
+    if (!kind_value.isNumber() or !id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const kind_num = kind_value.asInt32();
+    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+        return .js_undefined;
+    }
+
+    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    telemetry.notifyOperationProgress(kind, id, attributes);
+    return .js_undefined;
 }
 
-/// Bun.telemetry.nativeHooks.getCaptureHeadersServerResponse(): string[]
-/// Returns configured response headers to capture for HTTP server instrumentation
+/// Bun.telemetry.nativeHooks.notifyInject(kind: number, id: number, data: object): object
 /// Internal API for TypeScript telemetry bridges
-pub fn jsGetCaptureHeadersServerResponse(
+/// Returns merged injected data from all registered instruments
+pub fn jsNotifyOperationInject(
     _: *JSGlobalObject,
-    _: *CallFrame,
+    callframe: *CallFrame,
 ) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(3);
+    if (arguments.len < 3) {
+        return .js_undefined;
+    }
+
     const telemetry = getGlobalTelemetry() orelse return .js_undefined;
-    return telemetry.http_capture_headers_server_response_js;
+
+    const kind_value = arguments.ptr[0];
+    const id_value = arguments.ptr[1];
+    const data = arguments.ptr[2];
+
+    if (!kind_value.isNumber() or !id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const kind_num = kind_value.asInt32();
+    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+        return .js_undefined;
+    }
+
+    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    return telemetry.notifyOperationInject(kind, id, data);
 }
 
-/// Bun.telemetry.nativeHooks.getCaptureHeadersFetchRequest(): string[]
-/// Returns configured request headers to capture for fetch client instrumentation
+/// Bun.telemetry.nativeHooks.getConfigurationProperty(propertyId: number): any
+/// Returns the configuration property value for the given ID
 /// Internal API for TypeScript telemetry bridges
-pub fn jsGetCaptureHeadersFetchRequest(
+pub fn jsGetConfigurationProperty(
     _: *JSGlobalObject,
-    _: *CallFrame,
+    callframe: *CallFrame,
 ) callconv(.C) JSValue {
+    const arguments = callframe.arguments_old(1);
+    if (arguments.len < 1) {
+        return .js_undefined;
+    }
+
     const telemetry = getGlobalTelemetry() orelse return .js_undefined;
-    return telemetry.http_capture_headers_fetch_request_js;
+
+    const property_id_value = arguments.ptr[0];
+    if (!property_id_value.isNumber()) {
+        return .js_undefined;
+    }
+
+    const property_id = property_id_value.asInt32();
+    if (property_id < 0 or property_id >= ConfigurationProperty.COUNT) {
+        return .js_undefined;
+    }
+
+    return telemetry.getConfigurationProperty(@as(u8, @intCast(property_id)));
 }
 
-/// Bun.telemetry.nativeHooks.getCaptureHeadersFetchResponse(): string[]
-/// Returns configured response headers to capture for fetch client instrumentation
-/// Internal API for TypeScript telemetry bridges
-pub fn jsGetCaptureHeadersFetchResponse(
-    _: *JSGlobalObject,
-    _: *CallFrame,
+/// Bun.telemetry.nativeHooks.setConfigurationProperty(propertyId: number, value: any): void
+/// Sets a configuration property value, keeping JS and native arrays in sync
+/// Internal API for TypeScript telemetry configuration
+pub fn jsSetConfigurationProperty(
+    globalObject: *JSGlobalObject,
+    callframe: *CallFrame,
 ) callconv(.C) JSValue {
-    const telemetry = getGlobalTelemetry() orelse return .js_undefined;
-    return telemetry.http_capture_headers_fetch_response_js;
+    const arguments = callframe.arguments_old(2);
+    if (arguments.len < 2) {
+        globalObject.throw("setConfigurationProperty requires 2 arguments (propertyId, value)", .{}) catch {};
+        return .js_undefined;
+    }
+
+    const telemetry = getGlobalTelemetry() orelse {
+        globalObject.throw("Telemetry not initialized", .{}) catch {};
+        return .js_undefined;
+    };
+
+    const property_id_value = arguments.ptr[0];
+    if (!property_id_value.isNumber()) {
+        globalObject.throw("Property ID must be a number", .{}) catch {};
+        return .js_undefined;
+    }
+
+    const property_id = property_id_value.asInt32();
+    if (property_id < 0 or property_id >= ConfigurationProperty.COUNT) {
+        globalObject.throw("Invalid property ID", .{}) catch {};
+        return .js_undefined;
+    }
+
+    const value = arguments.ptr[1];
+    telemetry.setConfigurationProperty(@as(u8, @intCast(property_id)), value) catch |err| {
+        switch (err) {
+            error.InvalidProperty => globalObject.throw("Cannot set RESERVED property", .{}) catch {},
+            else => globalObject.throw("Failed to set configuration property", .{}) catch {},
+        }
+        return .js_undefined;
+    };
+
+    return .js_undefined;
 }
 
 /// Bun.telemetry.getActiveSpan(): { traceId: string, spanId: string } | null
@@ -856,10 +1052,10 @@ comptime {
         @export(&jsNotifyOperationStart, .{ .name = "Bun__Telemetry__nativeHooks__notifyStart" });
         @export(&jsNotifyOperationEnd, .{ .name = "Bun__Telemetry__nativeHooks__notifyEnd" });
         @export(&jsNotifyOperationError, .{ .name = "Bun__Telemetry__nativeHooks__notifyError" });
-        @export(&jsGetCaptureHeadersServerRequest, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersServerRequest" });
-        @export(&jsGetCaptureHeadersServerResponse, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersServerResponse" });
-        @export(&jsGetCaptureHeadersFetchRequest, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersFetchRequest" });
-        @export(&jsGetCaptureHeadersFetchResponse, .{ .name = "Bun__Telemetry__nativeHooks__getCaptureHeadersFetchResponse" });
+        @export(&jsNotifyOperationProgress, .{ .name = "Bun__Telemetry__nativeHooks__notifyProgress" });
+        @export(&jsNotifyOperationInject, .{ .name = "Bun__Telemetry__nativeHooks__notifyInject" });
+        @export(&jsGetConfigurationProperty, .{ .name = "Bun__Telemetry__nativeHooks__getConfigurationProperty" });
+        @export(&jsSetConfigurationProperty, .{ .name = "Bun__Telemetry__nativeHooks__setConfigurationProperty" });
         @export(&initGlobalTelemetryC, .{ .name = "Bun__Telemetry__init" });
         @export(&deinitGlobalTelemetryC, .{ .name = "Bun__Telemetry__deinit" });
     }

@@ -117,26 +117,28 @@ class JSCallback {
 
 class CString extends String {
   constructor(ptr, byteOffset?, byteLength?) {
+    byteOffset ??= 0;
+
+    const hasLength = typeof byteLength === "number" && Number.isSafeInteger(byteLength);
+    const hasPtr = typeof ptr === "number" && ptr !== 0;
+
     super(
-      ptr
-        ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
-          ? BunCString(ptr, byteOffset || 0, byteLength)
-          : BunCString(ptr, byteOffset || 0)
+      hasPtr
+        ? hasLength
+          ? BunCString(ptr, byteOffset, byteLength)
+          : BunCString(ptr, byteOffset)
         : "",
     );
-    this.ptr = typeof ptr === "number" ? ptr : 0;
-    if (typeof byteOffset !== "undefined") {
-      this.byteOffset = byteOffset;
-    }
-    if (typeof byteLength !== "undefined") {
-      this.byteLength = byteLength;
-    }
+
+    this.#cachedByteLength = hasPtr ? (hasLength ? byteLength : undefined) : 0;
+    this.byteOffset = byteOffset;
+    this.ptr = hasPtr ? ptr : 0;
   }
 
   ptr;
   byteOffset;
-  byteLength;
   #cachedArrayBuffer;
+  #cachedByteLength;
 
   get arrayBuffer() {
     if (this.#cachedArrayBuffer) {
@@ -148,6 +150,10 @@ class CString extends String {
     }
 
     return (this.#cachedArrayBuffer = toArrayBuffer(this.ptr, this.byteOffset, this.byteLength));
+  }
+
+  get byteLength() {
+    return (this.#cachedByteLength ??= Buffer.byteLength(super.valueOf(), 'utf-8'));
   }
 }
 Object.defineProperty(globalThis, "__GlobalBunCString", {

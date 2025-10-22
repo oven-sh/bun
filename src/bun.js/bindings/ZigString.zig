@@ -602,7 +602,7 @@ pub const ZigString = extern struct {
         this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62)));
     }
 
-    pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: ZigString, writer: *std.Io.Writer) !void {
         if (self.isUTF8()) {
             try writer.writeAll(self.slice());
             return;

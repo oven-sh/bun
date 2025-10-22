@@ -514,8 +514,8 @@ pub const String = extern struct {
         return String.init(ZigString.fromBytes(value));
     }
 
-    pub fn format(self: String, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toZigString().format(fmt, opts, writer);
+    pub fn format(self: String, writer: *std.Io.Writer) !void {
+        try self.toZigString().format(writer);
     }
 
     pub fn fromJS(value: bun.jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!String {

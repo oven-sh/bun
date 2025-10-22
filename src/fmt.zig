@@ -1780,7 +1780,7 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         field_name: []const u8,
         msg: []const u8 = "",
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.field_name.len > 0) {
                 try writer.writeAll("The value of \"");
                 try writer.writeAll(self.field_name);

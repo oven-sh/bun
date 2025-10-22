@@ -958,7 +958,7 @@ pub const Expect = struct {
         globalThis: *JSGlobalObject,
         matcher_fn: JSValue,
 
-        pub fn format(this: CustomMatcherParamsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: CustomMatcherParamsFormatter, writer: *std.Io.Writer) !void {
             // try to detect param names from matcher_fn (user function) source code
             if (jsc.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
                 const source_slice = source_str.toUTF8(this.globalThis.allocator());

@@ -184,9 +184,19 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
 }
 
 pub fn memoryCost(this: *const ByteBlobLoader) usize {
-    // ReadableStreamSource covers @sizeOf(FileReader)
+    // ReadableStreamSource covers @sizeOf(ByteBlobLoader)
     if (this.store) |store| {
-        return store.memoryCost();
+        // The Store only reports its memory cost when it has exactly one reference.
+        // When there are multiple references, one holder needs to report it.
+        // Since ByteBlobLoader is actively using the data, it reports the cost.
+        if (!store.hasOneRef()) {
+            // Report the actual data size, not store.size() which returns max_size for files
+            return switch (store.data) {
+                .bytes => |bytes| bytes.len,
+                .file => 0, // Files are backed by disk, not heap memory
+                .s3 => |s3| s3.estimatedSize(),
+            };
+        }
     }
     return 0;
 }

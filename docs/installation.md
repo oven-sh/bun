@@ -167,6 +167,17 @@ $ bun upgrade
 
 {% /callout %}
 
+{% details summary="Seeing `HTTPError`?" %}
+If you've set `GITHUB_TOKEN` or `GITHUB_ACCESS_TOKEN` as a shell variable, you may see an `HTTPError`.
+
+To fix this, make sure the secret is still valid or unset it in the command's environment:
+
+```sh
+$ GITHUB_TOKEN= bun upgrade
+```
+
+{% /details %}
+
 ## Canary builds
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:

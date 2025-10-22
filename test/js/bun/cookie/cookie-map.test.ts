@@ -341,5 +341,5 @@ describe("invalid delete usage", () => {
       // @ts-ignore
       v2.delete(v2);
     }).toThrow("Cookie name is required");
-  })
+  });
 });

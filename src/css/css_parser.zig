@@ -3490,8 +3490,8 @@ pub const StyleAttribute = struct {
         // );
 
         var symbols = bun.ast.Symbol.Map{};
-        var dest = ArrayList(u8){};
-        const writer = dest.writer(allocator);
+        var dest = std.Io.Writer.Allocating.init(allocator);
+        const writer = &dest.writer;
         var printer = Printer(@TypeOf(writer)).new(
             allocator,
             std.array_list.Managed(u8).init(allocator),
@@ -3507,7 +3507,7 @@ pub const StyleAttribute = struct {
 
         return ToCssResult{
             .dependencies = printer.dependencies,
-            .code = dest.items,
+            .code = dest.written(),
             .exports = null,
             .references = null,
         };
@@ -7000,9 +7000,9 @@ pub const to_css = struct {
         local_names: ?*const LocalsResultsMap,
         symbols: *const bun.ast.Symbol.Map,
     ) PrintErr![]const u8 {
-        var s = ArrayList(u8){};
-        errdefer s.deinit(allocator);
-        const writer = s.writer(allocator);
+        var s = std.Io.Writer.Allocating.init(allocator);
+        errdefer s.deinit();
+        const writer = &s.writer;
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
         var printer = Printer(W).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
@@ -7011,7 +7011,7 @@ pub const to_css = struct {
             CSSString => try CSSStringFns.toCss(this, W, &printer),
             else => try this.toCss(W, &printer),
         }
-        return s.items;
+        return s.written();
     }
 
     pub fn fromList(comptime T: type, this: []const T, comptime W: type, dest: *Printer(W)) PrintErr!void {

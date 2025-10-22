@@ -19,7 +19,7 @@ pub const CSSNumberFns = struct {
         return input.expectNumber();
     }
 
-    pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer) PrintErr!void {
+    pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const number: f32 = this.*;
         if (number != 0.0 and @abs(number) < 1.0) {
             var dtoa_buf: [129]u8 = undefined;

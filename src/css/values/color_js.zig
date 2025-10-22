@@ -409,7 +409,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
             const writer = &dest.writer;
 
             const symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer.new(
+            var printer = css.Printer(*std.Io.Writer).new(
                 allocator,
                 std.array_list.Managed(u8).init(allocator),
                 writer,
@@ -423,7 +423,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                 return globalThis.throw("color() internal error: {s}", .{@errorName(err)});
             };
 
-            return bun.String.createUTF8ForJS(globalThis, dest.items);
+            return bun.String.createUTF8ForJS(globalThis, dest.written());
         },
     }
 }

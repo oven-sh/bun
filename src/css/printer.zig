@@ -95,7 +95,7 @@ pub const ImportInfo = struct {
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub fn Printer(comptime Writer: type) type {
-    comptime if (Writer != *std.Io.Writer) @compileError("Writer must be a *std.Io.Writer");
+    comptime if (Writer != *std.Io.Writer and Writer != *bun.js_printer.BufferWriter) @compileError("Writer must be a *std.Io.Writer or *bun.js_printer.BufferWriter; got " ++ @typeName(Writer));
     return struct {
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
@@ -159,9 +159,13 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         inline fn getWrittenAmt(writer: Writer) usize {
-            return switch (writer.vtable) {
-                std.Io.Writer.Allocating.vtable => return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len,
-                else => @panic("css: got bad writer type"),
+            return switch (Writer) {
+                *bun.js_printer.BufferWriter => writer.written.len,
+                *std.Io.Writer => switch (writer.vtable) {
+                    std.Io.Writer.Allocating.init(undefined).writer.vtable => return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len,
+                    else => @panic("css: got bad writer type"),
+                },
+                else => @compileError("css: got bad writer type: " ++ @typeName(Writer)),
             };
         }
 

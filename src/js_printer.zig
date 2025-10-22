@@ -5521,6 +5521,7 @@ pub const BufferWriter = struct {
     pub fn writeByteNTimes(ctx: *BufferWriter, byte: u8, n: usize) anyerror!void {
         try ctx.buffer.appendCharNTimes(byte, n);
     }
+    pub const splatByteAll = writeByteNTimes;
 
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);

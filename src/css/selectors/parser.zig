@@ -906,14 +906,14 @@ pub const PseudoClass = union(enum) {
     }
 
     pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        var s = ArrayList(u8){};
+        var s = std.Io.Writer.Allocating.init(dest.allocator);
         // PERF(alloc): I don't like making these little allocations
-        const writer = s.writer(dest.allocator);
+        const writer = &s.writer;
         const W2 = @TypeOf(writer);
         const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
         var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoClass(this, W2, &printer, null);
-        return dest.writeStr(s.items);
+        return dest.writeStr(s.written());
     }
 
     pub fn eql(lhs: *const PseudoClass, rhs: *const PseudoClass) bool {
@@ -2513,14 +2513,14 @@ pub const PseudoElement = union(enum) {
     }
 
     pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        var s = ArrayList(u8){};
+        var s = std.Io.Writer.Allocating.init(dest.allocator);
         // PERF(alloc): I don't like making small allocations here for the string.
-        const writer = s.writer(dest.allocator);
+        const writer = &s.writer;
         const W2 = @TypeOf(writer);
         const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
         var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoElement(this, W2, &printer, null);
-        return dest.writeStr(s.items);
+        return dest.writeStr(s.written());
     }
 };
 

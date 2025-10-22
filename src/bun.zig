@@ -1189,7 +1189,7 @@ pub const SignalCode = enum(u8) {
     const Fmt = struct {
         signal: SignalCode,
         enable_ansi_colors: bool,
-        pub fn format(this: Fmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Fmt, writer: *std.Io.Writer) !void {
             const signal = this.signal;
             switch (this.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {

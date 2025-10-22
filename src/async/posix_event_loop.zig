@@ -201,7 +201,7 @@ pub const FilePoll = struct {
         poll.flags = flags;
     }
 
-    pub fn format(poll: *const FilePoll, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(poll: *const FilePoll, writer: *std.Io.Writer) !void {
         try writer.print("FilePoll(fd={}, generation_number={d}) = {}", .{ poll.fd, poll.generation_number, Flags.Formatter{ .data = poll.flags } });
     }
 

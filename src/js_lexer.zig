@@ -3370,7 +3370,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
 const InvalidEscapeSequenceFormatter = struct {
     code_point: i32,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         switch (self.code_point) {
             '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
             '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),

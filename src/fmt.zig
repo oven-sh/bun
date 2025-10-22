@@ -214,7 +214,7 @@ pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatSt
 const JSONFormatter = struct {
     input: []const u8,
 
-    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: JSONFormatter, writer: *std.Io.Writer) !void {
         try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
     }
 };
@@ -227,7 +227,7 @@ const JSONFormatterUTF8 = struct {
         quote: bool = true,
     };
 
-    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: JSONFormatterUTF8, writer: *std.Io.Writer) !void {
         if (self.opts.quote) {
             try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
         } else {
@@ -488,7 +488,7 @@ pub const URLFormatter = struct {
         abstract,
     };
 
-    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: URLFormatter, writer: *std.Io.Writer) !void {
         try writer.print("{s}://", .{switch (this.proto) {
             .http => "http",
             .https => "https",
@@ -526,7 +526,7 @@ pub const HostFormatter = struct {
     port: ?u16 = null,
     is_https: bool = false,
 
-    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(formatter: HostFormatter, writer: *std.Io.Writer) !void {
         if (strings.indexOfChar(formatter.host, ':') != null) {
             try writer.writeAll(formatter.host);
             return;
@@ -554,7 +554,7 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 /// This will always allocate
 pub const FormatValidIdentifier = struct {
     name: string,
-    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: FormatValidIdentifier, writer: *std.Io.Writer) !void {
         var iterator = strings.CodepointIterator.init(self.name);
         var cursor = strings.CodepointIterator.Cursor{};
 
@@ -661,7 +661,7 @@ pub fn githubActionWriter(writer: anytype, self: string) !void {
 pub const GithubActionFormatter = struct {
     text: string,
 
-    pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
         try githubActionWriter(writer, this.text);
     }
 };
@@ -686,7 +686,7 @@ pub fn quotedWriter(writer: anytype, self: string) !void {
 pub const QuotedFormatter = struct {
     text: []const u8,
 
-    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: QuotedFormatter, writer: *std.Io.Writer) !void {
         try quotedWriter(writer, this.text);
     }
 };
@@ -1571,7 +1571,7 @@ fn TrimmedPrecisionFormatter(comptime precision: usize) type {
         num: f64,
         precision: usize,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const whole = @trunc(self.num);
             try writer.print("{d}", .{whole});
             const rem = self.num - whole;

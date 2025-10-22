@@ -715,7 +715,7 @@ pub const MovableIfWindowsFd = union(enum) {
         return result;
     }
 
-    pub fn format(self: *const Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
         if (comptime bun.Environment.isPosix) {
             try writer.print("{}", .{self.get().?});
             return;

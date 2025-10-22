@@ -332,7 +332,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(formatter: Formatter, writer: *std.Io.Writer) @TypeOf(writer).Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 

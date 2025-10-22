@@ -1030,7 +1030,7 @@ pub const Formatter = struct {
         value: JSValue,
 
         pub const WriteError = error{UhOh};
-        pub fn format(self: ZigFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: ZigFormatter, writer: *std.Io.Writer) !void {
             self.formatter.remaining_values = &[_]JSValue{self.value};
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};

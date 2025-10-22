@@ -28,7 +28,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Expansion,
 });
 
-pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Subshell, writer: *std.Io.Writer) !void {
     try writer.print("Subshell(0x{x})", .{@intFromPtr(this)});
 }
 

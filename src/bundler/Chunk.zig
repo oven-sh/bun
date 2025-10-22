@@ -572,7 +572,7 @@ pub const Chunk = struct {
             inner: *const CssImportOrder,
             ctx: *LinkerContext,
 
-            pub fn format(this: *const CssImportOrderDebug, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const CssImportOrderDebug, writer: *std.Io.Writer) !void {
                 try writer.print("{s} = ", .{@tagName(this.inner.kind)});
                 switch (this.inner.kind) {
                     .layers => |layers| {

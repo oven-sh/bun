@@ -26,7 +26,7 @@ pub const ChildPtr = StatePtrUnion(.{
     CondExpr,
 });
 
-pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Async, writer: *std.Io.Writer) !void {
     try writer.print("Async(0x{x}, child={s})", .{ @intFromPtr(this), @tagName(this.node.*) });
 }
 

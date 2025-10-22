@@ -2035,7 +2035,7 @@ pub const Chunk = struct {
 pub const DebugIDFormatter = struct {
     id: u64 = 0,
 
-    pub fn format(self: DebugIDFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: DebugIDFormatter, writer: *std.Io.Writer) !void {
         // The RFC asks for a UUID, which is 128 bits (32 hex chars). Our hashes are only 64 bits.
         // We fill the end of the id with "bun!bun!" hex encoded
         var buf: [32]u8 = undefined;

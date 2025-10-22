@@ -308,7 +308,7 @@ pub const PasswordObject = struct {
 pub const JSPasswordObject = struct {
     const PascalToUpperUnderscoreCaseFormatter = struct {
         input: []const u8,
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             for (self.input) |c| {
                 if (std.ascii.isUpper(c)) {
                     try writer.writeByte('_');

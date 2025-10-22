@@ -504,7 +504,7 @@ pub const ZigString = extern struct {
     pub const GithubActionFormatter = struct {
         text: ZigString,
 
-        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
             var bytes = this.text.toSlice(bun.default_allocator);
             defer bytes.deinit();
             try bun.fmt.githubActionWriter(writer, bytes.slice());

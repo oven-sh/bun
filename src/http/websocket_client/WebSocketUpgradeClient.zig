@@ -629,7 +629,7 @@ const NonUTF8Headers = struct {
     names: []const jsc.ZigString,
     values: []const jsc.ZigString,
 
-    pub fn format(self: NonUTF8Headers, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: NonUTF8Headers, writer: *std.Io.Writer) !void {
         const count = self.names.len;
         var i: usize = 0;
         while (i < count) : (i += 1) {

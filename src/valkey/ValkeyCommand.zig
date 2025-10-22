@@ -35,7 +35,7 @@ pub fn write(this: *const Command, writer: anytype) !void {
     }
 }
 
-pub fn format(this: Command, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: Command, writer: *std.Io.Writer) !void {
     try this.write(writer);
 }
 

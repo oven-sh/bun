@@ -614,7 +614,7 @@ pub const IniTestingAPIs = struct {
 pub const ToStringFormatter = struct {
     d: js_ast.Expr.Data,
 
-    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
         switch (this.d) {
             .e_array => {
                 const last = this.d.e_array.items.len -| 1;
@@ -731,7 +731,7 @@ pub const ConfigIterator = struct {
             return try allocator.dupe(u8, this.value);
         }
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
         }
 

@@ -262,7 +262,7 @@ const Writer = struct {
     written: usize = 0,
     bytelist: ?*bun.ByteList = null,
 
-    pub fn format(this: Writer, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: Writer, writer: *std.Io.Writer) !void {
         try writer.print("Writer(0x{x}, {s})", .{ this.ptr.ptr.repr._ptr, @tagName(this.ptr.ptr.tag()) });
     }
 

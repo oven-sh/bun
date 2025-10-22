@@ -130,7 +130,7 @@ pub const Ref = packed struct(u64) {
         return this.tag == .symbol;
     }
 
-    pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(ref: Ref, writer: *std.Io.Writer) !void {
         try writer.print(
             "Ref[inner={d}, src={d}, .{s}]",
             .{

@@ -47,7 +47,7 @@ pub const ShellErr = union(enum) {
         };
     }
 
-    pub fn format(this: *const ShellErr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const ShellErr, writer: *std.Io.Writer) !void {
         return switch (this.*) {
             .sys => |e| writer.print("bun: {s}: {}", .{ e.message, e.path }),
             .custom => |msg| writer.print("bun: {s}", .{msg}),
@@ -3740,7 +3740,7 @@ pub const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -3748,7 +3748,7 @@ pub const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -4269,7 +4269,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             return this;
         }
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             const slc = this.slice();
             try writer.print("{}", .{slc});
         }

@@ -206,7 +206,7 @@ pub const FSWatcher = struct {
                 }
             }
 
-            pub fn format(this: *const StringOrBytesToDecode, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const StringOrBytesToDecode, writer: *std.Io.Writer) !void {
                 switch (this.*) {
                     .string => |str| try writer.print("{}", .{str}),
                     .bytes_to_free => |utf8| try writer.print("{s}", .{utf8}),

@@ -62,7 +62,7 @@ pub fn VersionType(comptime IntType: type) type {
             version: This,
             input: string,
 
-            pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: Formatter, writer: *std.Io.Writer) !void {
                 const self = formatter.version;
                 try writer.print("{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
 

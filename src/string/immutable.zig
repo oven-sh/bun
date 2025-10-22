@@ -2129,7 +2129,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
     return struct {
         data: []const u8,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
         }
     };

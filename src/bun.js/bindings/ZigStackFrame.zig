@@ -45,7 +45,7 @@ pub const ZigStackFrame = extern struct {
         remapped: bool = false,
         root_path: string = "",
 
-        pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: SourceURLFormatter, writer: *std.Io.Writer) !void {
             if (this.enable_color) {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
@@ -140,7 +140,7 @@ pub const ZigStackFrame = extern struct {
         enable_color: bool,
         is_async: bool,
 
-        pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: NameFormatter, writer: *std.Io.Writer) !void {
             const name = this.function_name;
 
             switch (this.code_type) {

@@ -112,7 +112,7 @@ pub const Result = union(enum) {
     }
 };
 
-pub fn format(this: *const Expansion, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Expansion, writer: *std.Io.Writer) !void {
     try writer.print("Expansion(0x{x})", .{@intFromPtr(this)});
 }
 

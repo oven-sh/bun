@@ -2088,7 +2088,7 @@ pub const FFI = struct {
         const EnumMapFormatter = struct {
             name: []const u8,
             entry: ABIType,
-            pub fn format(self: EnumMapFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(self: EnumMapFormatter, writer: *std.Io.Writer) !void {
                 try writer.writeAll("['");
                 // these are not all valid identifiers
                 try writer.writeAll(self.name);
@@ -2136,7 +2136,7 @@ pub const FFI = struct {
             tag: ABIType,
             exact: bool = false,
 
-            pub fn format(self: ToCFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(self: ToCFormatter, writer: *std.Io.Writer) !void {
                 switch (self.tag) {
                     .void => {
                         return;
@@ -2199,7 +2199,7 @@ pub const FFI = struct {
             symbol: []const u8,
             tag: ABIType,
 
-            pub fn format(self: ToJSFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(self: ToJSFormatter, writer: *std.Io.Writer) !void {
                 switch (self.tag) {
                     .void => {},
                     .bool => {

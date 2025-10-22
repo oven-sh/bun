@@ -17,7 +17,7 @@ pub const Fallback = struct {
     const Base64FallbackMessage = struct {
         msg: *const api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
-        pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Base64FallbackMessage, writer: *std.Io.Writer) !void {
             var bb = std.array_list.Managed(u8).init(this.allocator);
             defer bb.deinit();
             const bb_writer = bb.writer();

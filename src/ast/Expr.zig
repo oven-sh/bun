@@ -1531,7 +1531,7 @@ pub const Tag = enum {
         };
     }
 
-    pub fn format(tag: Tag, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(tag: Tag, writer: *std.Io.Writer) !void {
         try switch (tag) {
             .e_string => writer.writeAll("string"),
             .e_array => writer.writeAll("array"),

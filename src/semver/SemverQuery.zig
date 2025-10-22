@@ -18,7 +18,7 @@ next: ?*Query = null,
 const Formatter = struct {
     query: *const Query,
     buffer: []const u8,
-    pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(formatter: Formatter, writer: *std.Io.Writer) !void {
         const this = formatter.query;
 
         if (this.next) |ptr| {
@@ -50,7 +50,7 @@ pub const List = struct {
     const Formatter = struct {
         list: *const List,
         buffer: []const u8,
-        pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
             const this = formatter.list;
 
             if (this.next) |ptr| {
@@ -143,7 +143,7 @@ pub const Group = struct {
         group: *const Group,
         buf: string,
 
-        pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
             const this = formatter.group;
 
             if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {

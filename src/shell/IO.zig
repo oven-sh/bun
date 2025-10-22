@@ -5,7 +5,7 @@ stdin: InKind,
 stdout: OutKind,
 stderr: OutKind,
 
-pub fn format(this: IO, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: IO, writer: *std.Io.Writer) !void {
     try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
 }
 
@@ -45,7 +45,7 @@ pub const InKind = union(enum) {
     fd: *Interpreter.IOReader,
     ignore,
 
-    pub fn format(this: InKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: InKind, writer: *std.Io.Writer) !void {
         switch (this) {
             .fd => try writer.print("fd: {}", .{this.fd.fd}),
             .ignore => try writer.print("ignore", .{}),
@@ -125,7 +125,7 @@ pub const OutKind = union(enum) {
     }
 
     // fn dupeForSubshell(this: *ShellExecEnv,
-    pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: OutKind, writer: *std.Io.Writer) !void {
         switch (this) {
             .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
             .pipe => try writer.print("pipe", .{}),

@@ -169,7 +169,7 @@ pub const ErrorLocation = struct {
         };
     }
 
-    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
         try writer.print("{s}:{d}:{d}", .{ this.filename, this.line, this.column });
     }
 
@@ -201,7 +201,7 @@ pub const PrinterErrorKind = union(enum) {
     invalid_css_modules_pattern_in_grid,
     no_import_records,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .ambiguous_url_in_custom_property => |data| writer.print("Ambiguous relative URL '{s}' in custom property declaration", .{data.url}),
             .fmt_error => writer.writeAll("Formatting error occurred"),
@@ -252,7 +252,7 @@ pub const ParserError = union(enum) {
         received: []const u8,
     },
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .at_rule_body_invalid => writer.writeAll("Invalid at-rule body"),
             .at_rule_prelude_invalid => writer.writeAll("Invalid at-rule prelude"),
@@ -345,7 +345,7 @@ pub const SelectorError = union(enum) {
     unexpected_selector_after_pseudo_element: css.Token,
     ambiguous_css_module_class: []const u8,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .dangling_combinator => try writer.writeAll("Found a dangling combinator with no selector"),
             .empty_selector => try writer.writeAll("Empty selector is not allowed"),

@@ -87,7 +87,7 @@ pub const CrashReason = union(enum) {
 
     out_of_memory,
 
-    pub fn format(reason: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(reason: CrashReason, writer: *std.Io.Writer) !void {
         switch (reason) {
             .panic => |message| try writer.print("{s}", .{message}),
             .@"unreachable" => try writer.writeAll("reached unreachable code"),
@@ -127,7 +127,7 @@ pub const Action = union(enum) {
 
     dlopen: []const u8,
 
-    pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(act: Action, writer: *std.Io.Writer) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
@@ -1280,7 +1280,7 @@ const StackLine = struct {
         try VLQ.encode(known.address).writeTo(writer);
     }
 
-    pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(line: StackLine, writer: *std.Io.Writer) !void {
         try writer.print("0x{x}{s}{s}", .{
             if (bun.Environment.isMac) @as(u64, line.address) + 0x100000000 else line.address,
             if (line.object != null) " @ " else "",
@@ -1309,7 +1309,7 @@ const TraceString = struct {
         view_trace,
     };
 
-    pub fn format(self: TraceString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: TraceString, writer: *std.Io.Writer) !void {
         encodeTraceString(self, writer) catch return;
     }
 };

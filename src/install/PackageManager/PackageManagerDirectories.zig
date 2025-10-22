@@ -729,7 +729,7 @@ const CacheVersion = struct {
     pub const Formatter = struct {
         version_number: ?usize = null,
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             if (this.version_number) |version| {
                 try writer.print("@@@{d}", .{version});
             }
@@ -740,7 +740,7 @@ const CacheVersion = struct {
 const PatchHashFmt = struct {
     hash: ?u64 = null,
 
-    pub fn format(this: *const PatchHashFmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const PatchHashFmt, writer: *std.Io.Writer) !void {
         if (this.hash) |h| {
             try writer.print("_patch_hash={x}", .{h});
         }

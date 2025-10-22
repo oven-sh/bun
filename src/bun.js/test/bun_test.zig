@@ -9,7 +9,7 @@ pub const js_fns = struct {
     pub const Signature = union(enum) {
         scope_functions: *const ScopeFunctions,
         str: []const u8,
-        pub fn format(this: Signature, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Signature, writer: *std.Io.Writer) !void {
             switch (this) {
                 .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
                 .str => try writer.print("{s}", .{this.str}),
@@ -292,7 +292,7 @@ pub const BunTest = struct {
             return the_sequence.active_entry;
         }
 
-        pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const RefDataValue, writer: *std.Io.Writer) !void {
             switch (this.*) {
                 .start => try writer.print("start", .{}),
                 .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),

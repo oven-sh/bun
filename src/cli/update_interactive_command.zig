@@ -11,7 +11,7 @@ pub const TerminalHyperlink = struct {
         };
     }
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         if (this.enabled) {
             const ESC = "\x1b";
             const OSC8 = ESC ++ "]8;;";

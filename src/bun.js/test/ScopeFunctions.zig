@@ -408,7 +408,7 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: ScopeFunctions, writer: *std.Io.Writer) !void {
     try writer.print("{s}", .{@tagName(this.mode)});
     switch (this.cfg.self_concurrent) {
         .yes => try writer.print(".concurrent", .{}),

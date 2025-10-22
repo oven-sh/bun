@@ -1910,7 +1910,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             return css.implementEql(This, lhs, rhs);
         }
 
-        pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const This, writer: *std.Io.Writer) !void {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
                 .combinator => return try writer.print("combinator='{}'", .{this.combinator}),
@@ -2253,7 +2253,7 @@ pub const Combinator = enum {
         };
     }
 
-    pub fn format(this: *const Combinator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const Combinator, writer: *std.Io.Writer) !void {
         return switch (this.*) {
             .child => writer.print(">", .{}),
             .descendant => writer.print("`descendant` (space)", .{}),
@@ -2477,7 +2477,7 @@ pub const PseudoElement = union(enum) {
         };
     }
 
-    pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const PseudoElement, writer: *std.Io.Writer) !void {
         try writer.print("{s}", .{@tagName(this.*)});
     }
 

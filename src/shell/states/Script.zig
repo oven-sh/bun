@@ -29,7 +29,7 @@ pub const ChildPtr = struct {
     }
 };
 
-pub fn format(this: *const Script, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Script, writer: *std.Io.Writer) !void {
     try writer.print("Script(0x{x}, stmts={d})", .{ @intFromPtr(this), this.node.stmts.len });
 }
 

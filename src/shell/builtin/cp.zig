@@ -25,7 +25,7 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Cp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Cp, writer: *std.Io.Writer) !void {
     try writer.print("Cp(0x{x})", .{@intFromPtr(this)});
 }
 

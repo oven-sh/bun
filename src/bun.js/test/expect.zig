@@ -2011,7 +2011,7 @@ pub const mock = struct {
         calls: JSValue,
         formatter: *jsc.ConsoleObject.Formatter,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             var printed_once = false;
 
             const calls_count = @as(u32, @intCast(try self.calls.getLength(self.globalThis)));
@@ -2045,7 +2045,7 @@ pub const mock = struct {
         returns: JSValue,
         formatter: *jsc.ConsoleObject.Formatter,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             var printed_once = false;
 
             var num_returns: i32 = 0;
@@ -2081,7 +2081,7 @@ pub const mock = struct {
         successful_returns: *const std.array_list.Managed(JSValue),
         formatter: *jsc.ConsoleObject.Formatter,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const len = self.successful_returns.items.len;
             if (len == 0) return;
 

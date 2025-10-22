@@ -40,7 +40,7 @@ graph: *const Graph,
 chunks: []Chunk,
 linker_graph: *const LinkerGraph,
 
-pub fn format(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+pub fn format(this: HTMLImportManifest, writer: *std.Io.Writer) bun.OOM!void {
     return write(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
         error.NoSpaceLeft => unreachable,

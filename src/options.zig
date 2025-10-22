@@ -2535,7 +2535,7 @@ pub const PathTemplate = struct {
         }
     }
 
-    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathTemplate, writer: *std.Io.Writer) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
             try writeReplacingSlashesOnWindows(writer, remain[0..j]);

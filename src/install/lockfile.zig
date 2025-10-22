@@ -814,7 +814,7 @@ pub fn cleanWithLogger(
 pub const MetaHashFormatter = struct {
     meta_hash: *const MetaHash,
 
-    pub fn format(this: MetaHashFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: MetaHashFormatter, writer: *std.Io.Writer) !void {
         var remain: []const u8 = this.meta_hash[0..];
 
         try writer.print(

@@ -375,7 +375,7 @@ pub const DiffKind = enum {
     delete,
     equal,
 
-    pub fn format(value: DiffKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(value: DiffKind, writer: *std.Io.Writer) !void {
         return switch (value) {
             .insert => writer.writeByte('+'),
             .delete => writer.writeByte('-'),
@@ -395,7 +395,7 @@ pub fn Diff(comptime T: type) type {
         }
 
         /// pub fn format(value: ?, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void
-        pub fn format(value: anytype, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: anytype, writer: *std.Io.Writer) !void {
             const specifier = switch (T) {
                 u8 => "c",
                 u32 => "u",

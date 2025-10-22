@@ -79,7 +79,7 @@ pub fn init(
     return condexpr;
 }
 
-pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const CondExpr, writer: *std.Io.Writer) !void {
     try writer.print("CondExpr(0x{x}, op={s})", .{ @intFromPtr(this), @tagName(this.node.op) });
 }
 

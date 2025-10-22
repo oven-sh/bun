@@ -34,7 +34,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Stmt,
 });
 
-pub fn format(this: *const If, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const If, writer: *std.Io.Writer) !void {
     try writer.print("If(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 

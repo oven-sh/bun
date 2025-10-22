@@ -609,7 +609,7 @@ fn updatePackageJSONAndInstallAndCLI(
                         const ShellPathFormatter = struct {
                             folder: []const u8,
 
-                            pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                            pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                                 var remaining = instructions.folder;
                                 while (bun.strings.indexOfChar(remaining, ' ')) |space| {
                                     try writer.print(
@@ -633,7 +633,7 @@ fn updatePackageJSONAndInstallAndCLI(
                             }
                         };
 
-                        pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                        pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                             const path = ShellPathFormatter{ .folder = instructions.folder };
                             switch (instructions.shell) {
                                 .unknown => {

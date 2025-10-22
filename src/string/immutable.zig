@@ -10,6 +10,19 @@ pub const Encoding = enum {
     utf16,
 };
 
+pub const AsciiStatus = enum {
+    unknown,
+    all_ascii,
+    non_ascii,
+
+    pub fn fromBool(is_all_ascii: ?bool) AsciiStatus {
+        return if (is_all_ascii orelse return .unknown)
+            .all_ascii
+        else
+            .non_ascii;
+    }
+};
+
 /// Returned by classification functions that do not discriminate between utf8 and ascii.
 pub const EncodingNonAscii = enum {
     utf8,

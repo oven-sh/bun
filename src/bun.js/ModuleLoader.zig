@@ -2085,6 +2085,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
             defer file.close();
+            var file_buffer: [1024]u8 = undefined;
+            var file_writer = file.writerStreaming(&file_buffer);
+            const w = &file_writer.interface;
 
             const source_file = parent.readFileAlloc(
                 bun.default_allocator,
@@ -2093,8 +2096,6 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             ) catch "";
             defer bun.default_allocator.free(source_file);
 
-            var bufw = bun.deprecated.bufferedWriter(file.writer());
-            const w = bufw.writer();
             try w.print(
                 \\{{
                 \\  "version": 3,
@@ -2111,7 +2112,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
-            try bufw.flush();
+            try w.flush();
         }
     } else {
         dir.writeFile(.{

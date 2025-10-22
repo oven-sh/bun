@@ -707,13 +707,11 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     };
 
     var file = tmpfile.file();
-    const file_writer = file.writer();
-    var buffered_writer = bun.deprecated.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer)){
-        .unbuffered_writer = file_writer,
-    };
-    const writer = buffered_writer.writer();
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer = file.writerStreaming(&file_buffer);
+    const writer = &file_writer.interface;
     try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
-    try buffered_writer.flush();
+    try writer.flush();
 
     if (comptime Environment.isPosix) {
         _ = bun.c.fchmod(

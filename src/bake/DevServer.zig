@@ -3566,15 +3566,16 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
 
     const file = try inner_dir.createFile(bun.path.basename(name), .{});
     defer file.close();
-
-    var bufw = bun.deprecated.bufferedWriter(file.writer());
+    var file_buffer: [1024]u8 = undefined;
+    var file_writer = file.writerStreaming(&file_buffer);
+    const bufw = &file_writer.interface;
 
     if (!bun.strings.hasSuffixComptime(rel_path, ".map")) {
-        try bufw.writer().print("// {s} bundled for {s}\n", .{
+        try bufw.print("// {s} bundled for {s}\n", .{
             bun.fmt.quote(rel_path),
             @tagName(graph),
         });
-        try bufw.writer().print("// Bundled at {d}, Bun " ++ bun.Global.package_json_version_with_canary ++ "\n", .{
+        try bufw.print("// Bundled at {d}, Bun " ++ bun.Global.package_json_version_with_canary ++ "\n", .{
             std.time.nanoTimestamp(),
         });
     }
@@ -3583,12 +3584,12 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
     // are never executable on their own as they contain only a single module.
 
     if (wrap)
-        try bufw.writer().writeAll("({\n");
+        try bufw.writeAll("({\n");
 
-    try bufw.writer().writeAll(chunk);
+    try bufw.writeAll(chunk);
 
     if (wrap)
-        try bufw.writer().writeAll("});\n");
+        try bufw.writeAll("});\n");
 
     try bufw.flush();
 }

@@ -481,7 +481,7 @@ pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string 
         else => return null,
     }
 }
-pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) OOM!?u64 {
+pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.@"inline") u64) OOM!?u64 {
     switch (expr.data) {
         .e_string => |str| {
             if (str.isUTF8()) return hash_fn(str.data);

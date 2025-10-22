@@ -61,7 +61,7 @@ pub fn getOwner(failure: SerializedFailure) Owner {
 /// This is okay since SerializedFailure can contain more than one error.
 pub const ArrayHashContextViaOwner = struct {
     pub fn hash(_: ArrayHashContextViaOwner, k: SerializedFailure) u32 {
-        return std.hash.uint32(@bitCast(k.getOwner().encode()));
+        return std.hash.int(@as(u32, @bitCast(k.getOwner().encode())));
     }
 
     pub fn eql(_: ArrayHashContextViaOwner, a: SerializedFailure, b: SerializedFailure, _: usize) bool {
@@ -71,7 +71,7 @@ pub const ArrayHashContextViaOwner = struct {
 
 pub const ArrayHashAdapter = struct {
     pub fn hash(_: ArrayHashAdapter, own: Owner) u32 {
-        return std.hash.uint32(@bitCast(own.encode()));
+        return std.hash.int(@as(u32, @bitCast(own.encode())));
     }
 
     pub fn eql(_: ArrayHashAdapter, a: Owner, b: SerializedFailure, _: usize) bool {

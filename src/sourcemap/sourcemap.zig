@@ -986,7 +986,7 @@ pub const ParsedSourceMap = struct {
             if (current_line != gen.lines.zeroBased()) {
                 assert(gen.lines.zeroBased() > current_line);
                 const inc = gen.lines.zeroBased() - current_line;
-                try writer.writeByteNTimes(';', @intCast(inc));
+                try writer.splatByteAll(';', @intCast(inc));
                 current_line = gen.lines.zeroBased();
                 last_col = 0;
             } else if (i != 0) {

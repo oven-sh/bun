@@ -293,11 +293,11 @@ pub fn promptForWarnings() bool {
     Output.flush();
 
     var stdin = std.fs.File.stdin();
-    const unbuffered_reader = stdin.reader();
-    var buffered = bun.deprecated.bufferedReader(unbuffered_reader);
-    var reader = buffered.reader();
+    var reader_buffer: [1024]u8 = undefined;
+    var buffered = stdin.readerStreaming(&reader_buffer);
+    const reader = &buffered.interface;
 
-    const first_byte = reader.readByte() catch {
+    const first_byte = reader.takeByte() catch {
         Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
         return false;
     };
@@ -305,19 +305,19 @@ pub fn promptForWarnings() bool {
     const should_continue = switch (first_byte) {
         '\n' => false,
         '\r' => blk: {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 break :blk false;
             };
             break :blk next_byte == '\n' and false;
         },
         'y', 'Y' => blk: {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 break :blk false;
             };
             if (next_byte == '\n') {
                 break :blk true;
             } else if (next_byte == '\r') {
-                const second_byte = reader.readByte() catch {
+                const second_byte = reader.takeByte() catch {
                     break :blk false;
                 };
                 break :blk second_byte == '\n';
@@ -325,7 +325,7 @@ pub fn promptForWarnings() bool {
             break :blk false;
         },
         else => blk: {
-            while (reader.readByte()) |b| {
+            while (reader.takeByte()) |b| {
                 if (b == '\n' or b == '\r') break;
             } else |_| {}
             break :blk false;

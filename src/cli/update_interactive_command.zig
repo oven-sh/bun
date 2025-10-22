@@ -1638,7 +1638,10 @@ pub const UpdateInteractiveCommand = struct {
             Output.flush();
 
             // Read input
-            const byte = std.fs.File.stdin().reader().readByte() catch return state.selected;
+            var reader_buffer: [1]u8 = undefined;
+            var reader_file = std.fs.File.stdin().readerStreaming(&reader_buffer);
+            const reader = &reader_file.interface;
+            const byte = reader.takeByte() catch return state.selected;
 
             switch (byte) {
                 '\n', '\r' => return state.selected,
@@ -1702,9 +1705,9 @@ pub const UpdateInteractiveCommand = struct {
                     state.toggle_all = false;
                 },
                 27 => { // escape sequence
-                    const seq = std.fs.File.stdin().reader().readByte() catch continue;
+                    const seq = reader.takeByte() catch continue;
                     if (seq == '[') {
-                        const arrow = std.fs.File.stdin().reader().readByte() catch continue;
+                        const arrow = reader.takeByte() catch continue;
                         switch (arrow) {
                             'A' => { // up arrow
                                 if (state.cursor > 0) {
@@ -1731,7 +1734,7 @@ pub const UpdateInteractiveCommand = struct {
                                 state.selected[state.cursor] = true;
                             },
                             '5' => { // Page Up
-                                const tilde = std.fs.File.stdin().reader().readByte() catch continue;
+                                const tilde = reader.takeByte() catch continue;
                                 if (tilde == '~') {
                                     // Move up by viewport height
                                     if (state.cursor >= state.viewport_height) {
@@ -1743,7 +1746,7 @@ pub const UpdateInteractiveCommand = struct {
                                 }
                             },
                             '6' => { // Page Down
-                                const tilde = std.fs.File.stdin().reader().readByte() catch continue;
+                                const tilde = reader.takeByte() catch continue;
                                 if (tilde == '~') {
                                     // Move down by viewport height
                                     if (state.cursor + state.viewport_height < state.packages.len) {
@@ -1759,7 +1762,7 @@ pub const UpdateInteractiveCommand = struct {
                                 var buffer: [32]u8 = undefined;
                                 var buf_idx: usize = 0;
                                 while (buf_idx < buffer.len) : (buf_idx += 1) {
-                                    const c = std.fs.File.stdin().reader().readByte() catch break;
+                                    const c = reader.takeByte() catch break;
                                     if (c == 'M' or c == 'm') {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down

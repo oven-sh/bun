@@ -464,8 +464,16 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
           );
         }
 
-        // unrelated error to do with url parsing, we should re-throw. This is a real user error
-        throw e;
+        // Handle special case: mysql://user:pass@/database?socket=/path
+        // This is a common pattern for Unix socket connections where hostname is omitted
+        if (typeof urlToProcess === "string" && /@\//.test(urlToProcess)) {
+          // Replace @/ with @localhost/ to make it a valid URL
+          urlToProcess = new URL(urlToProcess.replace(/@\//, "@localhost/"));
+          protocol = urlToProcess.protocol.replace(/:$/, "");
+        } else {
+          // unrelated error to do with url parsing, we should re-throw. This is a real user error
+          throw e;
+        }
       }
     } else {
       // Add protocol if missing
@@ -582,7 +590,8 @@ function parseOptions(
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
+      } else if (key.toLowerCase() === "path" || key.toLowerCase() === "socket") {
+        // Support both 'path' and 'socket' query parameters for Unix socket connections
         path = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid

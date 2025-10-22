@@ -223,8 +223,6 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
-
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;

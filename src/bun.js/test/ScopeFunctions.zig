@@ -298,32 +298,37 @@ const ParseArgumentsResult = struct {
 pub const CallbackMode = enum { require, allow };
 
 fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
-    const is_valid_description =
-        description.isClass(globalThis) or
-        (description.isFunction() and !description.getName(globalThis).isEmpty()) or
-        description.isNumber() or
-        description.isString();
-
-    if (!is_valid_description) {
-        return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
-    }
-
     if (description == .zero) {
         return "";
     }
 
     if (description.isClass(globalThis)) {
-        return if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
-            try description.getName(globalThis).toOwnedSlice(gpa)
-        else
-            try (try description.className(globalThis)).toOwnedSlice(gpa);
+        var description_class_name = try description.className(globalThis);
+
+        if (description_class_name.len > 0) {
+            return description_class_name.toOwnedSlice(gpa);
+        }
+
+        var description_name = description.getName(globalThis);
+        if (description_name.length() > 0) {
+            return description_name.toOwnedSlice(gpa);
+        }
     }
+
     if (description.isFunction()) {
-        return try description.getName(globalThis).toOwnedSlice(gpa);
+        const func_name = description.getName(globalThis);
+        if (func_name.length() > 0) {
+            return func_name.toOwnedSlice(gpa);
+        }
     }
-    var slice = try description.toSlice(globalThis, gpa);
-    defer slice.deinit();
-    return try gpa.dupe(u8, slice.slice());
+
+    if (description.isNumber() or description.isString()) {
+        var slice = try description.toSlice(globalThis, gpa);
+        defer slice.deinit();
+        return try gpa.dupe(u8, slice.slice());
+    }
+
+    return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
 }
 
 pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {

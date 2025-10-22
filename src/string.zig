@@ -74,7 +74,7 @@ pub const String = extern struct {
         return BunString__transferToJS(this, globalThis);
     }
 
-    pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) OOM![]u8 {
         const bytes, _ = try this.toOwnedSliceReturningAllASCII(allocator);
         return bytes;
     }

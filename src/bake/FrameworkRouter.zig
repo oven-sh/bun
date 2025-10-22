@@ -1233,14 +1233,12 @@ pub const JSFrameworkRouter = struct {
     }
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *jsc.CallFrame) !JSValue {
-        const path_js = callframe.argumentsAsArray(1)[0];
-        var path_str = try path_js.toBunString(global);
-        defer path_str.deref();
-        const path_slice = path_str.toSlice(bun.default_allocator);
-        defer path_slice.deinit();
+        const path_value = callframe.argumentsAsArray(1)[0];
+        const path = try path_value.toSlice(global, bun.default_allocator);
+        defer path.deinit();
 
         var params_out: MatchedParams = undefined;
-        if (jsfr.router.matchSlow(path_slice.slice(), &params_out)) |index| {
+        if (jsfr.router.matchSlow(path.slice(), &params_out)) |index| {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 

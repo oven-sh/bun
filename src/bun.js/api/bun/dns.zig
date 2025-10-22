@@ -3240,24 +3240,21 @@ pub const Resolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!c_int {
-        var str = try value.toBunString(globalThis);
-        defer str.deref();
+        var str = try value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-        const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.handleOom(bun.default_allocator.alloc(u8, slice.len + 1));
-        defer bun.default_allocator.free(buffer);
-        _ = strings.copy(buffer[0..], slice);
-        buffer[slice.len] = 0;
+        const slice = try str.intoOwnedSliceZ(bun.default_allocator);
+        defer bun.default_allocator.free(slice);
 
         var addr: [16]u8 = undefined;
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET, slice.ptr, &addr) == 1) {
             const ip = std.mem.readInt(u32, addr[0..4], .big);
             c_ares.ares_set_local_ip4(channel, ip);
             return c_ares.AF.INET;
         }
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET6, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET6, slice.ptr, &addr) == 1) {
             c_ares.ares_set_local_ip6(channel, &addr);
             return c_ares.AF.INET6;
         }

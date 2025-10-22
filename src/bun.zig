@@ -3770,6 +3770,12 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
     };
 }
 
+const Unadapted = struct { new_interface: std.Io.Writer };
+pub fn maybeAdaptWriter(writer: anytype) if (@TypeOf(writer) == *std.Io.Writer) *Unadapted else @TypeOf(writer).Adapter {
+    if (@TypeOf(writer) == *std.Io.Writer) return @fieldParentPtr("new_interface", writer);
+    return writer.adaptToNewApi(&.{});
+}
+
 pub const safety = @import("./safety.zig");
 pub const deprecated = @import("./deprecated.zig");
 

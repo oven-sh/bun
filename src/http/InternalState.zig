@@ -179,8 +179,11 @@ pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *
 
         this.decompressor.readAll(this.isDone()) catch |err| {
             if (this.isDone() or error.ShortRead != err) {
-                Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
-                Output.flush();
+                if (shouldLogDecompressionErrorsToStderr()) {
+                    Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                    Output.flush();
+                }
+
                 return err;
             }
         };
@@ -206,8 +209,11 @@ pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_c
         else => {
             if (!body_out_str.owns(buffer.list.items)) {
                 body_out_str.append(buffer.list.items) catch |err| {
-                    Output.prettyErrorln("<r><red>Failed to append to body buffer: {s}<r>", .{bun.asByteSlice(@errorName(err))});
-                    Output.flush();
+                    if (shouldLogDecompressionErrorsToStderr()) {
+                        Output.prettyErrorln("<r><red>Failed to append to body buffer: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                        Output.flush();
+                    }
+
                     return err;
                 };
             }
@@ -218,6 +224,16 @@ pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_c
 }
 
 const log = Output.scoped(.HTTPInternalState, .hidden);
+
+// Doing this has caught bugs.
+// But we should generally not do this.
+// For now, we can leave it in for non-runtime usage of Bun.
+fn shouldLogDecompressionErrorsToStderr() bool {
+    return switch (bun.cli.Cli.cmd orelse .AutoCommand) {
+        .RunCommand, .AutoCommand => false,
+        else => true,
+    };
+}
 
 const HTTPStage = enum {
     pending,

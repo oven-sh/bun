@@ -309,14 +309,14 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
             return description_class_name.toOwnedSlice(gpa);
         }
 
-        var description_name = description.getName(globalThis);
+        var description_name = try description.getName(globalThis);
         if (description_name.length() > 0) {
             return description_name.toOwnedSlice(gpa);
         }
     }
 
     if (description.isFunction()) {
-        const func_name = description.getName(globalThis);
+        const func_name = try description.getName(globalThis);
         if (func_name.length() > 0) {
             return func_name.toOwnedSlice(gpa);
         }

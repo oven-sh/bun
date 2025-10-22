@@ -1128,7 +1128,7 @@ pub const Expect = struct {
         // so now execute the symmetric matching
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = try matcher_fn.getName(globalThis);
 
         const matcher_params = CustomMatcherParamsFormatter{
             .colors = Output.enable_ansi_colors,
@@ -1688,7 +1688,9 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         }
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = matcher_fn.getName(globalThis) catch {
+            return false;
+        };
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher

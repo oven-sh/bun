@@ -674,7 +674,7 @@ pub const Stringifier = struct {
         pkg_map: *const PkgMap(void),
         relative_path: string,
         path_buf: []u8,
-    ) OOM!void {
+    ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
         try writer.writeByte('{');

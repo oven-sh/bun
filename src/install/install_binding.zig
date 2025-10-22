@@ -51,9 +51,7 @@ pub const bun_install_js_bindings = struct {
             .whitespace = .indent_2,
             .emit_null_optional_fields = true,
             .emit_nonportable_numbers_as_strings = true,
-        })})) catch |err| {
-            return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
-        };
+        })}));
         defer allocator.free(stringified);
 
         var str = bun.String.cloneUTF8(stringified);

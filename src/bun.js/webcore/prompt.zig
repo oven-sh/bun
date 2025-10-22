@@ -47,9 +47,11 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
     var stdin = std.fs.File.stdin();
-    var reader = stdin.reader();
+    var stdin_buf: [1]u8 = undefined;
+    var stdin_reader = stdin.reader(&stdin_buf);
+    const reader = &stdin_reader.interface;
     while (true) {
-        const byte = reader.readByte() catch break;
+        const byte = reader.takeByte() catch break;
         if (byte == '\n') break;
     }
 
@@ -95,11 +97,11 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     // 6. Pause until the user responds either positively or negatively.
     var stdin = std.fs.File.stdin();
-    const unbuffered_reader = stdin.reader();
-    var buffered = bun.deprecated.bufferedReader(unbuffered_reader);
-    var reader = buffered.reader();
+    var stdin_buf: [1024]u8 = undefined;
+    var stdin_reader = stdin.reader(&stdin_buf);
+    const reader = &stdin_reader.interface;
 
-    const first_byte = reader.readByte() catch {
+    const first_byte = reader.takeByte() catch {
         return .false;
     };
 
@@ -110,7 +112,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     switch (first_byte) {
         '\n' => return .false,
         '\r' => {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
                 return .false;
             };
@@ -119,7 +121,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             }
         },
         'y', 'Y' => {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
 
                 return .false;
@@ -131,7 +133,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                 return .true;
             } else if (next_byte == '\r') {
                 //Check Windows style
-                const second_byte = reader.readByte() catch {
+                const second_byte = reader.takeByte() catch {
                     return .false;
                 };
                 if (second_byte == '\n') {
@@ -142,7 +144,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         else => {},
     }
 
-    while (reader.readByte()) |b| {
+    while (reader.takeByte()) |b| {
         if (b == '\n' or b == '\r') break;
     } else |_| {}
 

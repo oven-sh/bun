@@ -388,8 +388,14 @@ fn readFloat(
     comptime Reader: type,
     reader: Reader,
 ) !FloatType {
-    const bytes = try reader.readBoundedBytes(@sizeOf(FloatType));
-    return @bitCast(bytes.slice()[0..@sizeOf(FloatType)].*);
+    var bytes_buf: [@sizeOf(FloatType)]u8 = undefined;
+    if (Reader == *std.Io.Reader) {
+        try reader.readSliceAll(&bytes_buf);
+    } else {
+        const len = try reader.readAll(&bytes_buf);
+        if (len < @sizeOf(FloatType)) return error.EndOfStream;
+    }
+    return @bitCast(bytes_buf);
 }
 
 fn readSlice(

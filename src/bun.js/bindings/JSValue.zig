@@ -832,7 +832,7 @@ pub const JSValue = enum(i64) {
             return std.math.minInt(T);
         }
 
-        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+        if (num >= @as(f64, @as(comptime_float, std.math.maxInt(T))) or std.math.isPositiveInf(num)) {
             return std.math.maxInt(T);
         }
 

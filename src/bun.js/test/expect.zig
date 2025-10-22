@@ -747,7 +747,7 @@ pub const Expect = struct {
             if (bun.detectCI()) |_| {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.", .{});
                 }
             }
             var buntest_strong = this.bunTest() orelse {
@@ -961,7 +961,7 @@ pub const Expect = struct {
         pub fn format(this: CustomMatcherParamsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             // try to detect param names from matcher_fn (user function) source code
             if (jsc.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
-                var source_slice = source_str.toSlice(this.globalThis.allocator());
+                const source_slice = source_str.toUTF8(this.globalThis.allocator());
                 defer source_slice.deinit();
 
                 var source: string = source_slice.slice();
@@ -1128,7 +1128,7 @@ pub const Expect = struct {
         // so now execute the symmetric matching
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = try matcher_fn.getName(globalThis);
 
         const matcher_params = CustomMatcherParamsFormatter{
             .colors = Output.enable_ansi_colors,
@@ -1688,7 +1688,9 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         }
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = matcher_fn.getName(globalThis) catch {
+            return false;
+        };
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher

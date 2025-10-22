@@ -55,9 +55,19 @@ pub const NapiEnv = opaque {
         return null;
     }
 
+    pub fn ref(self: *NapiEnv) void {
+        NapiEnv__ref(self);
+    }
+
+    pub fn deref(self: *NapiEnv) void {
+        NapiEnv__deref(self);
+    }
+
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
     extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
     extern fn napi_internal_get_version(*NapiEnv) u32;
+    extern fn NapiEnv__deref(*NapiEnv) void;
+    extern fn NapiEnv__ref(*NapiEnv) void;
 };
 
 fn envIsNull() napi_status {
@@ -943,11 +953,11 @@ pub export fn napi_resolve_deferred(env_: napi_env, deferred: napi_deferred, res
     const env = env_ orelse {
         return envIsNull();
     };
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
     const resolution = resolution_.get();
     var prom = deferred.get();
-    prom.resolve(env.toJS(), resolution);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    prom.resolve(env.toJS(), resolution) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, rejection_: napi_value) napi_status {
@@ -955,11 +965,11 @@ pub export fn napi_reject_deferred(env_: napi_env, deferred: napi_deferred, reje
     const env = env_ orelse {
         return envIsNull();
     };
+    defer bun.default_allocator.destroy(deferred);
+    defer deferred.deinit();
     const rejection = rejection_.get();
     var prom = deferred.get();
-    prom.reject(env.toJS(), rejection);
-    deferred.deinit();
-    bun.default_allocator.destroy(deferred);
+    prom.reject(env.toJS(), rejection) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub export fn napi_is_promise(env_: napi_env, value_: napi_value, is_promise_: ?*bool) napi_status {
@@ -1579,7 +1589,7 @@ pub const ThreadSafeFunction = struct {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSExecutionTerminated!void {
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSTerminated!void {
         const env = this.env;
         if (!is_first) {
             try this.event_loop.drainMicrotasks();
@@ -1660,6 +1670,7 @@ pub const ThreadSafeFunction = struct {
 
         this.callback.deinit();
         this.queue.deinit();
+        this.env.deref();
         bun.destroy(this);
     }
 
@@ -1757,6 +1768,7 @@ pub export fn napi_create_threadsafe_function(
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);
+    function.env.ref();
 
     result.* = function;
     return env.ok();

@@ -33,11 +33,9 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
 
     // Structure* structure = globalObject->FFIFunctionStructure();
     Structure* structure = JSWrappingFunction::createStructure(vm, globalObject, globalObject->objectPrototype());
-    JSWrappingFunction* function = new (NotNull, allocateCell<JSWrappingFunction>(vm)) JSWrappingFunction(vm, executable, globalObject, structure);
+    JSWrappingFunction* function = new (NotNull, allocateCell<JSWrappingFunction>(vm)) JSWrappingFunction(vm, executable, globalObject, structure, wrappedFn);
     ASSERT(function->structure()->globalObject());
     function->finishCreation(vm, executable, 0, nameStr);
-
-    function->m_wrappedFn.set(vm, globalObject, wrappedFn);
 
     return function;
 }

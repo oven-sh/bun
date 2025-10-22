@@ -9,14 +9,124 @@ pub const Source = union(enum) {
     const Pipe = uv.Pipe;
     const Tty = uv.uv_tty_t;
 
+    /// File source for async file I/O operations using libuv.
+    ///
+    /// Manages a single `uv_fs_t` through a state machine that ensures:
+    /// - Only one operation uses the `fs` field at a time
+    /// - The `fs` is properly deinitialized before reuse
+    /// - Cancellation is only attempted when an operation is in-flight
+    ///
+    /// Typical usage pattern:
+    /// 1. Check `canStart()` - returns true if ready for a new operation
+    /// 2. Call `prepare()` - marks fs as in-use
+    /// 3. Set up buffer and call `uv_fs_read()` or `uv_fs_write()`
+    /// 4. In callback, call `complete()` first to clean up
+    /// 5. Process the result
+    ///
+    /// Cancellation:
+    /// - Call `stop()` to cancel an in-flight operation
+    /// - The callback will still fire with UV_ECANCELED
+    /// - Always call `complete()` in the callback regardless of cancellation
+    ///
+    /// Cleanup:
+    /// - Call `detach()` if parent is destroyed before operation completes
+    /// - File will automatically close itself after the operation finishes
     pub const File = struct {
+        /// The fs_t for I/O operations (reads/writes) and state-machine-managed closes.
+        /// State machine ensures this is only used for one operation at a time.
         fs: uv.fs_t,
-        // we need a new fs_t to close the file
-        // the current one is used for write/reading/canceling
-        // we dont wanna to free any data that is being used in uv loop
-        close_fs: uv.fs_t,
+
+        /// Buffer descriptor for the current read operation (unused by writers).
         iov: uv.uv_buf_t,
+
+        /// The file descriptor.
         file: uv.uv_file,
+
+        /// Current state of the fs_t request.
+        state: enum(u8) {
+            deinitialized, // fs.deinit() called, ready for next operation
+            operating, // read or write operation in progress
+            canceling, // cancel requested, waiting for callback
+            closing, // close operation in progress
+        } = .deinitialized,
+
+        /// When true, file will close itself when the current operation completes.
+        close_after_operation: bool = false,
+
+        /// Get the File struct from an fs_t pointer using field offset.
+        pub fn fromFS(fs: *uv.fs_t) *File {
+            return @fieldParentPtr("fs", fs);
+        }
+
+        /// Returns true if ready to start a new operation.
+        pub fn canStart(this: *const File) bool {
+            return this.state == .deinitialized and this.fs.data != null;
+        }
+
+        /// Mark the file as in-use for an operation.
+        /// Must only be called when canStart() returns true.
+        pub fn prepare(this: *File) void {
+            bun.assert(this.state == .deinitialized);
+            bun.assert(this.fs.data != null);
+            this.state = .operating;
+            this.close_after_operation = false;
+        }
+
+        /// Request cancellation of the current operation.
+        /// If successful, the callback will fire with UV_ECANCELED.
+        /// If cancel fails, the operation completes normally.
+        pub fn stop(this: *File) void {
+            if (this.state != .operating) return;
+
+            const cancel_result = uv.uv_cancel(@ptrCast(&this.fs));
+            if (cancel_result == 0) {
+                this.state = .canceling;
+            }
+        }
+
+        /// Detach from parent and schedule automatic cleanup.
+        /// If an operation is in progress, it will complete and then close the file.
+        /// If idle, closes the file immediately.
+        pub fn detach(this: *File) void {
+            this.fs.data = null;
+            this.close_after_operation = true;
+            this.stop();
+
+            if (this.state == .deinitialized) {
+                this.close_after_operation = false;
+                this.startClose();
+            }
+        }
+
+        /// Mark the operation as complete and clean up.
+        /// Must be called first in the callback before processing data.
+        pub fn complete(this: *File, was_canceled: bool) void {
+            bun.assert(this.state == .operating or this.state == .canceling);
+            if (was_canceled) {
+                bun.assert(this.state == .canceling);
+            }
+
+            this.fs.deinit();
+            this.state = .deinitialized;
+
+            if (this.close_after_operation) {
+                this.close_after_operation = false;
+                this.startClose();
+            }
+        }
+
+        fn startClose(this: *File) void {
+            bun.assert(this.state == .deinitialized);
+            this.state = .closing;
+            _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
+        }
+
+        fn onCloseComplete(fs: *uv.fs_t) callconv(.C) void {
+            const file = File.fromFS(fs);
+            bun.assert(file.state == .closing);
+            fs.deinit();
+            bun.default_allocator.destroy(file);
+        }
     };
 
     pub fn isClosed(this: Source) bool {

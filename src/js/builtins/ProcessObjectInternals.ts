@@ -111,6 +111,8 @@ export function getStdinStream(
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
+    source?.setFlowing?.(true);
+
     shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -120,6 +122,7 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+    source?.setFlowing?.(false);
 
     if (reader) {
       try {
@@ -183,13 +186,11 @@ export function getStdinStream(
 
   const originalPause = stream.pause;
   stream.pause = function () {
-    $debug("pause();");
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
-    $debug("resume();");
     own();
     return originalResume.$call(this);
   };

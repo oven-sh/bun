@@ -7,6 +7,6 @@ Syntax reminders:
 
 Conventions:
 
-- Prefer `@import` at the **bottom** of the file.
-- It's `@import("bun")` not `@import("root").bun`
+- Prefer `@import` at the **bottom** of the file, but the auto formatter will move them so you don't need to worry about it.
+- Prefer `@import("bun")`. Not `@import("root").bun` or `@import("../bun.zig")`.
 - You must be patient with the build.

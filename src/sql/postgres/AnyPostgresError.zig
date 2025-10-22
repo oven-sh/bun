@@ -14,6 +14,7 @@ pub const AnyPostgresError = error{
     InvalidServerSignature,
     InvalidTimeFormat,
     JSError,
+    JSTerminated,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
     OutOfMemory,
@@ -110,6 +111,9 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.UnknownFormatCode => "ERR_POSTGRES_UNKNOWN_FORMAT_CODE",
         error.JSError => {
             return globalObject.takeException(error.JSError);
+        },
+        error.JSTerminated => {
+            return globalObject.takeException(error.JSTerminated);
         },
         error.OutOfMemory => {
             // TODO: add binding for creating an out of memory error?

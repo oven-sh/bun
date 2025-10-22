@@ -206,6 +206,10 @@ const json = struct {
                     globalThis.clearException();
                     return IPCDecodeError.InvalidFormat;
                 },
+                error.JSTerminated => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
                 error.OutOfMemory => return bun.outOfMemory(),
             };
 
@@ -1138,7 +1142,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
-                error.InvalidFormat, error.JSError => {
+                error.InvalidFormat, error.JSError, error.JSTerminated => {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
@@ -1171,7 +1175,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 log("hit NotEnoughBytes2", .{});
                 return;
             },
-            error.InvalidFormat, error.JSError => {
+            error.InvalidFormat, error.JSError, error.JSTerminated => {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },
@@ -1332,7 +1336,7 @@ pub const IPCHandlers = struct {
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat, error.JSError => {
+                    error.InvalidFormat, error.JSError, error.JSTerminated => {
                         send_queue.closeSocket(.failure, .user);
                         return;
                     },

@@ -95,7 +95,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -516,7 +516,7 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         this.deinit();
     }
 
@@ -932,7 +932,7 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1013,7 +1013,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result);
+            promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
@@ -1108,7 +1108,7 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1987,7 +1987,7 @@ pub const Resolver = struct {
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
-    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) void {
         defer {
             vm.timer.incrementTimerRef(-1);
             this.deref();
@@ -1998,13 +1998,9 @@ pub const Resolver = struct {
         if (this.getChannelOrError(vm.global)) |channel| {
             if (this.anyRequestsPending()) {
                 c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
-                if (this.addTimer(now)) {
-                    return .{ .rearm = this.event_loop_timer.next };
-                }
+                _ = this.addTimer(now);
             }
         } else |_| {}
-
-        return .disarm;
     }
 
     fn anyRequestsPending(this: *Resolver) bool {
@@ -2746,6 +2742,7 @@ pub const Resolver = struct {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
+                    error.JSTerminated => |e| e,
 
                     // more information with these errors
                     error.InvalidOptions,
@@ -3243,24 +3240,21 @@ pub const Resolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!c_int {
-        const str = try value.toBunString(globalThis);
-        defer str.deref();
+        var str = try value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-        const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.handleOom(bun.default_allocator.alloc(u8, slice.len + 1));
-        defer bun.default_allocator.free(buffer);
-        _ = strings.copy(buffer[0..], slice);
-        buffer[slice.len] = 0;
+        const slice = try str.intoOwnedSliceZ(bun.default_allocator);
+        defer bun.default_allocator.free(slice);
 
         var addr: [16]u8 = undefined;
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET, slice.ptr, &addr) == 1) {
             const ip = std.mem.readInt(u32, addr[0..4], .big);
             c_ares.ares_set_local_ip4(channel, ip);
             return c_ares.AF.INET;
         }
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET6, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET6, slice.ptr, &addr) == 1) {
             c_ares.ares_set_local_ip6(channel, &addr);
             return c_ares.AF.INET6;
         }

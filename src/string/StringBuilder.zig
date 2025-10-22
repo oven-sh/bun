@@ -40,7 +40,7 @@ pub fn count16(this: *StringBuilder, slice: []const u16) void {
 }
 
 pub fn count16Z(this: *StringBuilder, slice: [:0]const u16) void {
-    const result = bun.strings.elementLengthUTF16IntoUTF8([:0]const u16, slice);
+    const result = bun.strings.elementLengthUTF16IntoUTF8(slice);
     this.cap += result + 1;
 }
 
@@ -59,7 +59,7 @@ pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: st
         return buf[0..result.count :0];
     } else {
         var list = std.ArrayList(u8).init(fallback_allocator);
-        var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice, false) catch return null;
+        var out = bun.strings.toUTF8ListWithTypeBun(&list, slice, false) catch return null;
         out.append(0) catch return null;
         return out.items[0 .. out.items.len - 1 :0];
     }

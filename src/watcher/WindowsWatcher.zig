@@ -217,7 +217,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
-            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], []const u16, event.filename);
+            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], event.filename);
             const eventpath = buf[0 .. base_idx + convert_res.written];
 
             log("watcher update event: (filename: {s}, action: {s}", .{ eventpath, @tagName(event.action) });
@@ -293,6 +293,7 @@ fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
+    this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
 
     return .success;

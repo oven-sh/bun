@@ -628,7 +628,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type(input, self.ctx) catch {
                         self.failed = true;
                     };
                 }
@@ -644,7 +644,7 @@ pub const JestPrettyFormat = struct {
             var buf = [_]u8{' '} ** 64;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @min(32, total_remain);
+                const written: usize = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -999,7 +999,7 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);
@@ -2117,7 +2117,7 @@ pub const JestPrettyFormat = struct {
                 const flags = instance.flags;
                 const args_value = expect.ExpectCustomAsymmetricMatcher.js.capturedArgsGetCached(value) orelse return true;
                 const matcher_fn = expect.ExpectCustomAsymmetricMatcher.js.matcherFnGetCached(value) orelse return true;
-                const matcher_name = matcher_fn.getName(this.globalThis);
+                const matcher_name = try matcher_fn.getName(this.globalThis);
 
                 printAsymmetricMatcherPromisePrefix(flags, this, writer);
                 if (flags.not) {

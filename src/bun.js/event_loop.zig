@@ -89,7 +89,7 @@ pub fn exit(this: *EventLoop) void {
     this.entered_event_loop_count -= 1;
 }
 
-pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) bun.JSExecutionTerminated!void {
+pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) bun.JSTerminated!void {
     const count = this.entered_event_loop_count;
     log("exit() = {d}", .{count - 1});
 
@@ -121,18 +121,16 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
 
 const DrainMicrotasksResult = enum(u8) {
     success = 0,
-    JSExecutionTerminated = 1,
+    JSTerminated = 1,
 };
 extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
-pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
+pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSTerminated!void {
     jsc.markBinding(@src());
     jsc_vm.releaseWeakRefs();
 
     switch (JSC__JSGlobalObject__drainMicrotasks(globalObject)) {
         .success => {},
-        .JSExecutionTerminated => {
-            return error.JSExecutionTerminated;
-        },
+        .JSTerminated => return error.JSTerminated,
     }
 
     this.virtual_machine.is_inside_deferred_task_queue = true;
@@ -144,7 +142,7 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalOb
     }
 }
 
-pub fn drainMicrotasks(this: *EventLoop) bun.JSExecutionTerminated!void {
+pub fn drainMicrotasks(this: *EventLoop) bun.JSTerminated!void {
     try this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm);
 }
 
@@ -215,7 +213,9 @@ pub fn runCallbackWithResult(this: *EventLoop, callback: jsc.JSValue, globalObje
 }
 
 fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
-    return this.tickQueueWithCount(virtual_machine);
+    var counter: u32 = 0;
+    this.tickQueueWithCount(virtual_machine, &counter) catch {};
+    return counter;
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {

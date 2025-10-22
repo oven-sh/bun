@@ -152,11 +152,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper)
     : Base(vm, structure)
     , m_identifier(WTFMove(identifier))
+    , m_context(context && context.isObject() ? asObject(context) : nullptr, JSC::WriteBarrierEarlyInit)
     , m_moduleWrapper(vm, this, moduleWrapper)
 {
-    if (context.isObject()) {
-        m_context.set(vm, this, asObject(context));
-    }
 }
 
 void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)

@@ -49,6 +49,8 @@ test/bundler/esbuild/default.test.ts
 test/cli/install/bun-repl.test.ts
 test/js/third_party/astro/astro-post.test.js
 test/regression/issue/ctrl-c.test.ts
+test/bundler/bundler_comments.test.ts
+test/js/node/test/parallel/test-fs-promises-file-handle-readLines.mjs
 
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js

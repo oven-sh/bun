@@ -1620,7 +1620,7 @@ pub const Formatter = struct {
     }
 
     pub fn WrappedWriter(comptime Writer: type) type {
-        if (@hasDecl(Writer, "is_wrapped_writer")) {
+        if (Writer != *std.Io.Writer and @hasDecl(Writer, "is_wrapped_writer")) {
             @compileError("Do not nest WrappedWriter");
         }
 

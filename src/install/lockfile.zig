@@ -318,17 +318,15 @@ pub fn loadFromDir(
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.
 
-                var writer_buf = MutableString.initEmpty(allocator);
-                var buffered_writer = writer_buf.bufferedWriter();
-                const writer = buffered_writer.writer();
+                var writer_allocating = std.Io.Writer.Allocating.init(allocator);
+                defer writer_allocating.deinit();
+                const writer = &writer_allocating.writer;
 
                 TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.handleOom(buffered_writer.flush());
-
-                const text_lockfile_bytes = writer_buf.list.items;
+                const text_lockfile_bytes = bun.handleOom(writer_allocating.toOwnedSlice());
 
                 const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
@@ -1231,7 +1229,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
                 error.WriteFailed => bun.outOfMemory(),
             };
 
-            break :bytes writer_allocating.toOwnedSlice();
+            break :bytes bun.handleOom(writer_allocating.toOwnedSlice());
         }
 
         var bytes = std.array_list.Managed(u8).init(bun.default_allocator);

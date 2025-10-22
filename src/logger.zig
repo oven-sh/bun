@@ -256,7 +256,7 @@ pub const Data = struct {
 
     pub fn writeFormat(
         this: *const Data,
-        to: anytype,
+        to: *std.Io.Writer,
         kind: Kind,
         redact_sensitive_information: bool,
         comptime enable_ansi_colors: bool,
@@ -304,7 +304,7 @@ pub const Data = struct {
                         .redact_sensitive_information = redact_sensitive_information,
                     })});
 
-                    try to.writeByteNTimes(' ', line_offset_for_second_line);
+                    try to.splatByteAll(' ', line_offset_for_second_line);
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
                         try to.writeAll(message_color);
                         try to.writeAll(color_name);
@@ -338,7 +338,7 @@ pub const Data = struct {
         if (this.location) |*location| {
             if (location.file.len > 0) {
                 try to.writeAll("\n");
-                try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
+                try to.splatByteAll(' ', (kind.string().len + ": ".len) - "at ".len);
 
                 try to.print(comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,

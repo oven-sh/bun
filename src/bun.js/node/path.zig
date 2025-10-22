@@ -2325,9 +2325,9 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    var fromZigSlice = fromZigStr.toSlice(allocator);
+    var fromZigSlice = fromZigStr.toSlice(globalObject, allocator);
     defer fromZigSlice.deinit();
-    var toZigSlice = toZigStr.toSlice(allocator);
+    var toZigSlice = toZigStr.toSlice(globalObject, allocator);
     defer toZigSlice.deinit();
     return relativeJS_T(u8, globalObject, allocator, isWindows, fromZigSlice.slice(), toZigSlice.slice());
 }

@@ -1142,3 +1142,17 @@ it("pipeThrough doesn't cause unhandled rejections on readable errors", async ()
 
   expect(unhandledRejectionCaught).toBe(false);
 });
+
+it("ReadableStream.getReader with invalid mode should show correct error message", () => {
+  const stream = new ReadableStream();
+
+  // Test with invalid mode value
+  try {
+    stream.getReader({ mode: "invalid" });
+    expect.unreachable("Should have thrown an error");
+  } catch (error) {
+    expect(error.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(error.message).toContain("must be 'byob'");
+    expect(error.message).toContain("mode");
+  }
+});

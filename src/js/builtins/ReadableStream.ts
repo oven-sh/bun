@@ -395,7 +395,7 @@ export function getReader(this, options) {
     return new ReadableStreamBYOBReader(this);
   }
 
-  throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+  throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be 'byob'");
 }
 
 export function pipeThrough(this, streams, options) {

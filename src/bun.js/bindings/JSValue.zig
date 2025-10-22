@@ -1187,12 +1187,25 @@ pub const JSValue = enum(i64) {
     pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, global);
         defer str.deref();
-
         return str.toUTF8(allocator);
     }
 
     pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
         return getZigString(this, global).toSliceZ(allocator);
+    }
+
+    /// The returned slice is always owned by `allocator`.
+    pub fn toOwnedSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
+        const str: bun.String = try .fromJS(this, global);
+        defer str.deref();
+        return str.toUTF8Owned(allocator);
+    }
+
+    /// The returned slice is always owned by `allocator`.
+    pub fn toUTF8Bytes(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError![]u8 {
+        const str: bun.String = try .fromJS(this, global);
+        defer str.deref();
+        return str.toUTF8Bytes(allocator);
     }
 
     pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
@@ -1242,7 +1255,7 @@ pub const JSValue = enum(i64) {
         allocator: std.mem.Allocator,
     ) ?ZigString.Slice {
         var str = this.toJSString(globalThis) catch return null;
-        return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
+        return str.toSliceClone(globalThis, allocator) catch {
             globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
         };

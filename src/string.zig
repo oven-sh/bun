@@ -107,7 +107,7 @@ pub const String = extern struct {
                 else
                     .unknown; // string was 16-bit; may or may not be all ascii
 
-                const owned_slice = try utf8_slice.cloneIfNeeded(allocator);
+                const owned_slice = try utf8_slice.cloneIfBorrowed(allocator);
                 // `owned_slice.allocator` is guaranteed to be `allocator`.
                 break :blk .{ owned_slice.mut(), ascii_status };
             },
@@ -766,6 +766,16 @@ pub const String = extern struct {
         }
 
         return ZigString.Slice.empty;
+    }
+
+    /// Equivalent to calling `toUTF8WithoutRef` followed by `cloneIfBorrowed`.
+    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+        return bun.handleOom(this.toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator));
+    }
+
+    /// The returned slice is always allocated by `allocator`.
+    pub fn toUTF8Bytes(this: String, allocator: std.mem.Allocator) []u8 {
+        return this.toUTF8Owned(allocator).mut();
     }
 
     /// use `byteSlice` to get a `[]const u8`.

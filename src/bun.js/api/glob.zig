@@ -18,20 +18,24 @@ const ScanOpts = struct {
     error_on_broken_symlinks: bool,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
-        const cwd_str_raw = try cwdVal.toSlice(globalThis, allocator);
-        if (cwd_str_raw.len == 0) return "";
+        const cwd_string: bun.String = try .fromJS(cwdVal, globalThis);
+        defer cwd_string.deref();
+        if (cwd_string.isEmpty()) return "";
 
-        const cwd_str = cwd_str: {
+        const cwd_str: []const u8 = cwd_str: {
+            const cwd_utf8 = cwd_string.toUTF8WithoutRef(allocator);
+            defer cwd_utf8.deinit();
+
             // If its absolute return as is
-            if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                const cwd_str = try cwd_str_raw.cloneIfNeeded(allocator);
-                break :cwd_str cwd_str.ptr[0..cwd_str.len];
+            if (ResolvePath.Platform.auto.isAbsolute(cwd_utf8.slice())) {
+                break :cwd_str (try cwd_utf8.cloneIfBorrowed(allocator)).slice();
             }
 
             var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
             if (!absolute) {
-                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
+                const parts: []const []const u8 = &.{cwd_utf8.slice()};
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, parts, .auto);
                 break :cwd_str try allocator.dupe(u8, cwd_str);
             }
 
@@ -47,9 +51,8 @@ const ScanOpts = struct {
 
             const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{
                 cwd,
-                cwd_str_raw.slice(),
+                cwd_utf8.slice(),
             }, .auto);
-
             break :cwd_str try allocator.dupe(u8, cwd_str);
         };
 

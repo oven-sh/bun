@@ -194,6 +194,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     .{
                         .exact_versions = manager.options.enable.exact_versions,
                         .before_install = true,
+                        // Don't set catalog_name here - we want normal versions for resolution
+                        // We'll set catalog references after installation in the second edit
                     },
                 );
             } else if (subcommand == .update) {
@@ -339,6 +341,63 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
     try manager.installWithManager(ctx, root_package_json_path, original_cwd);
 
+    // If using --catalog, update the root package.json's catalog with resolved versions
+    if (manager.options.catalog_name != null and (subcommand == .add)) {
+        const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        ).unwrap() catch |err| {
+            Output.err(err, "failed to read/parse root package.json at '{s}'", .{root_package_json_path});
+            Global.exit(1);
+        };
+
+        try PackageJSONEditor.editCatalog(
+            manager,
+            &root_package_json_entry.root,
+            updates.*,
+            manager.options.catalog_name,
+        );
+
+        // Write updated root package.json
+        var root_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try root_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json_entry.source.contents.len + 1);
+        root_buffer_writer.append_newline = root_package_json_entry.source.contents.len > 0 and
+            root_package_json_entry.source.contents[root_package_json_entry.source.contents.len - 1] == '\n';
+        var root_package_json_writer = JSPrinter.BufferPrinter.init(root_buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&root_package_json_writer),
+            &root_package_json_writer,
+            root_package_json_entry.root,
+            &root_package_json_entry.source,
+            .{
+                .indent = root_package_json_entry.indentation,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.prettyErrorln("root package.json failed to write due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        const root_package_json_source = try manager.allocator.dupe(u8, root_package_json_writer.ctx.writtenWithoutTrailingZero());
+
+        // Write root package.json to disk
+        if (manager.options.do.write_package_json) {
+            const root_package_json_file = (try bun.sys.File.openat(
+                .cwd(),
+                root_package_json_path,
+                bun.O.RDWR,
+                0,
+            ).unwrap()).handle.stdFile();
+
+            try root_package_json_file.pwriteAll(root_package_json_source, 0);
+            std.posix.ftruncate(root_package_json_file.handle, root_package_json_source.len) catch {};
+            root_package_json_file.close();
+        }
+    }
+
     if (subcommand == .update or subcommand == .add or subcommand == .link) {
         for (updates.*) |request| {
             if (request.failed) {
@@ -373,6 +432,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 .{
                     .exact_versions = manager.options.enable.exact_versions,
                     .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
+                    .catalog_name = manager.options.catalog_name,
                 },
             );
         }

@@ -9,7 +9,98 @@ pub const EditOptions = struct {
     exact_versions: bool = false,
     add_trusted_dependencies: bool = false,
     before_install: bool = false,
+    catalog_name: ?string = null,
 };
+
+pub fn editCatalog(
+    manager: *PackageManager,
+    package_json: *Expr,
+    updates: []UpdateRequest,
+    catalog_name: ?string,
+) !void {
+    const allocator = manager.allocator;
+
+    if (catalog_name) |name| {
+        if (name.len > 0) {
+            // Named catalog: catalogs.<name>
+            var catalogs = brk: {
+                if (package_json.asProperty("catalogs")) |query| {
+                    if (query.expr.data == .e_object)
+                        break :brk query.expr.data.e_object.*;
+                }
+                break :brk E.Object{};
+            };
+
+            var named_catalog = brk: {
+                for (catalogs.properties.slice()) |prop| {
+                    if (prop.key) |key| {
+                        if (key.data == .e_string and strings.eqlLong(key.data.e_string.data, name, true)) {
+                            if (prop.value) |val| {
+                                if (val.data == .e_object) {
+                                    break :brk val.data.e_object.*;
+                                }
+                            }
+                        }
+                    }
+                }
+                break :brk E.Object{};
+            };
+
+            // Add packages to named catalog
+            const resolutions = manager.lockfile.packages.items(.resolution);
+            for (updates) |request| {
+                if (request.package_id < resolutions.len and resolutions[request.package_id].tag == .npm) {
+                    const version_str = try std.fmt.allocPrint(
+                        allocator,
+                        "^{}",
+                        .{resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items)},
+                    );
+                    const version_expr = try Expr.init(E.String, E.String{ .data = version_str }, logger.Loc.Empty).clone(allocator);
+                    try named_catalog.put(allocator, request.getResolvedName(manager.lockfile), version_expr);
+                }
+            }
+
+            // Update catalogs.<name>
+            const named_catalog_expr = try Expr.init(E.Object, named_catalog, logger.Loc.Empty).clone(allocator);
+            try catalogs.put(allocator, name, named_catalog_expr);
+
+            try package_json.data.e_object.put(
+                allocator,
+                "catalogs",
+                try Expr.init(E.Object, catalogs, logger.Loc.Empty).clone(allocator),
+            );
+        } else {
+            // Default catalog
+            var catalog = brk: {
+                if (package_json.asProperty("catalog")) |query| {
+                    if (query.expr.data == .e_object)
+                        break :brk query.expr.data.e_object.*;
+                }
+                break :brk E.Object{};
+            };
+
+            // Add packages to catalog
+            const resolutions = manager.lockfile.packages.items(.resolution);
+            for (updates) |request| {
+                if (request.package_id < resolutions.len and resolutions[request.package_id].tag == .npm) {
+                    const version_str = try std.fmt.allocPrint(
+                        allocator,
+                        "^{}",
+                        .{resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items)},
+                    );
+                    const version_expr = try Expr.init(E.String, E.String{ .data = version_str }, logger.Loc.Empty).clone(allocator);
+                    try catalog.put(allocator, request.getResolvedName(manager.lockfile), version_expr);
+                }
+            }
+
+            try package_json.data.e_object.put(
+                allocator,
+                "catalog",
+                try Expr.init(E.Object, catalog, logger.Loc.Empty).clone(allocator),
+            );
+        }
+    }
+}
 
 pub fn editPatchedDependencies(
     manager: *PackageManager,
@@ -677,6 +768,15 @@ pub fn edit(
     const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
     for (updates.*) |*request| {
         if (request.e_string) |e_string| {
+            // If catalog is specified, use catalog reference
+            if (options.catalog_name) |catalog| {
+                e_string.data = if (catalog.len == 0)
+                    try allocator.dupe(u8, "catalog:")
+                else
+                    try std.fmt.allocPrint(allocator, "catalog:{s}", .{catalog});
+                continue;
+            }
+
             if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
                 e_string.data = uninitialized: {
                     if (manager.subcommand == .update and manager.options.do.update_to_latest) {

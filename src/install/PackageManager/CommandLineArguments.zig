@@ -101,6 +101,7 @@ pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
     clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
+    clap.parseParam("--catalog <STR>?                Use catalog for version (optionally specify catalog name)") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
 });
 
@@ -213,6 +214,8 @@ peer: bool = false,
 omit: ?Omit = null,
 
 exact: bool = false,
+
+catalog_name: ?string = null,
 
 concurrent_scripts: ?usize = null,
 
@@ -1024,6 +1027,9 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.exact = args.flag("--exact");
         cli.analyze = args.flag("--analyze");
         cli.only_missing = args.flag("--only-missing");
+        if (comptime subcommand == .add) {
+            cli.catalog_name = args.option("--catalog");
+        }
     }
 
     if (args.option("--concurrent-scripts")) |concurrency| {

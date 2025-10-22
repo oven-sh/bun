@@ -85,6 +85,9 @@ cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
+/// Catalog name for bun add --catalog
+catalog_name: ?string = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -565,6 +568,8 @@ pub fn load(
         if (cli.minimum_release_age_ms) |min_age_ms| {
             this.minimum_release_age_ms = min_age_ms;
         }
+
+        this.catalog_name = cli.catalog_name;
 
         this.lockfile_only = cli.lockfile_only;
 

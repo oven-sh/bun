@@ -71,12 +71,30 @@ type PendingHmrScript = {
   size: number;
   url: string;
 };
-const scriptTags: Map<string, PendingHmrScript> =
-  (globalThis as any)[pendingScriptSymbol] ?? new Map<string, PendingHmrScript>();
+type PendingHmrQueue = PendingHmrScript[];
+const scriptTags: Map<string, PendingHmrQueue> =
+  ((globalThis as any)[pendingScriptSymbol] as Map<string, PendingHmrQueue> | undefined) ??
+  new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
-  const entry = scriptTags.get(id);
+  const queue = scriptTags.get(id);
+  let entry = queue?.shift() ?? null;
+  if (queue && queue.length === 0) {
+    scriptTags.delete(id);
+  }
+
+  if (!entry) {
+    const currentScript = document.currentScript as HTMLScriptElement | null;
+    if (currentScript && currentScript.dataset?.bunHmrSourceMapId === id) {
+      entry = {
+        script: currentScript,
+        size: Number(currentScript.dataset.bunHmrSourceMapSize ?? "0") || 0,
+        url: currentScript.dataset.bunHmrSourceMapUrl ?? currentScript.src,
+      };
+    }
+  }
+
   if (!entry) {
     console.error("Unknown HMR script: " + id);
     fullReload();
@@ -196,11 +214,20 @@ const handlers = {
       const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       const script = document.createElement("script");
-      scriptTags.set(sourceMapId, {
+      script.dataset.bunHmrSourceMapId = sourceMapId;
+      script.dataset.bunHmrSourceMapSize = String(sourceMapSize);
+      script.dataset.bunHmrSourceMapUrl = url;
+      const pendingScripts = scriptTags.get(sourceMapId);
+      const entry: PendingHmrScript = {
         script,
         size: sourceMapSize,
         url,
-      });
+      };
+      if (pendingScripts) {
+        pendingScripts.push(entry);
+      } else {
+        scriptTags.set(sourceMapId, [entry]);
+      }
       script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;

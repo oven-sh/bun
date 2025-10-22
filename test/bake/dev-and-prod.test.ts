@@ -219,3 +219,35 @@ devTest("hmr keeps pending scripts across consecutive edits", {
     await client.expectMessage("render 3");
   },
 });
+devTest("hmr handles rapid consecutive edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": hmrSelfAcceptingModule("render 1"),
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("render 1");
+
+    await client.js`
+      (() => {
+        const originalAppendChild = document.head.appendChild;
+        document.head.appendChild = function (element) {
+          if (element && typeof element.src === "string" && element.src.startsWith("blob:")) {
+            const target = this;
+            setTimeout(() => originalAppendChild.call(target, element), 50);
+            return element;
+          }
+          return originalAppendChild.call(this, element);
+        };
+      })();
+    `;
+
+    await dev.write("index.ts", hmrSelfAcceptingModule("render 2"));
+    await dev.write("index.ts", hmrSelfAcceptingModule("render 3"));
+
+    await client.expectMessage("render 2");
+    await client.expectMessage("render 3");
+  },
+});

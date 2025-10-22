@@ -218,9 +218,9 @@ const LibUVBackend = struct {
 
         var hints = query.options.toLibC();
         var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
-        port_buf[port.len] = 0;
-        const portZ = port_buf[0..port.len :0];
+        const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
+        port_buf[port_len] = 0;
+        const portZ = port_buf[0..port_len :0];
         var hostname: bun.PathBuffer = undefined;
         _ = strings.copy(hostname[0..], query.name);
         hostname[query.name.len] = 0;
@@ -750,9 +750,9 @@ pub const GetAddrInfoRequest = struct {
                     defer bun.default_allocator.free(@constCast(query.name));
                     var hints = query.options.toLibC();
                     var port_buf: [128]u8 = undefined;
-                    const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
-                    port_buf[port.len] = 0;
-                    const portZ = port_buf[0..port.len :0];
+                    const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
+                    port_buf[port_len] = 0;
+                    const portZ = port_buf[0..port_len :0];
                     var hostname: bun.PathBuffer = undefined;
                     _ = strings.copy(hostname[0..], query.name);
                     hostname[query.name.len] = 0;
@@ -761,13 +761,13 @@ pub const GetAddrInfoRequest = struct {
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,
-                        if (port.len > 0) portZ.ptr else null,
+                        if (port_len > 0) portZ.ptr else null,
                         if (hints) |*hint| hint else null,
                         &addrinfo,
                     );
                     bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
                         query.name,
-                        port,
+                        portZ,
                         err,
                         debug_timer,
                     });

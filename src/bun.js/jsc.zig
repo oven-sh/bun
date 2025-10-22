@@ -9,7 +9,7 @@
 pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else
-    std.builtin.CallingConvention.C;
+    std.builtin.CallingConvention.c;
 
 /// Web Template Framework
 pub const wtf = @import("./bindings/WTF.zig").WTF;

@@ -4558,7 +4558,7 @@ pub const TestingAPIs = struct {
             try test_tokens.append(test_tok);
         }
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -4616,7 +4616,7 @@ pub const TestingAPIs = struct {
             return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(script_ast, .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         return bun.String.createUTF8ForJS(globalThis, str);

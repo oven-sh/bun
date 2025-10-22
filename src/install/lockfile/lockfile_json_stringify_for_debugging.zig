@@ -387,7 +387,8 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
-            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
+            const len = std.fmt.printInt(&buf, k, 10, .lower, .{});
+            try w.objectField(buf[0..len]);
             try w.write(v.slice(sb));
         }
     }
@@ -397,7 +398,8 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
-            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
+            const len = std.fmt.printInt(&buf, k, 10, .lower, .{});
+            try w.objectField(buf[0..len]);
             try w.print("\"{}\"", .{v.fmt(sb)});
         }
     }

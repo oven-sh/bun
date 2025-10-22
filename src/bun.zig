@@ -2469,7 +2469,7 @@ pub const MakePath = struct {
         }
     }
 
-    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
         if (comptime Environment.isWindows) {
             return makeOpenPathAccessMaskW(
                 self,
@@ -2907,7 +2907,7 @@ pub fn runtimeEmbedFile(
                 abs_path,
                 std.math.maxInt(usize),
                 null,
-                @alignOf(u8),
+                .fromByteUnits(@alignOf(u8)),
                 '\x00',
             ) catch |e| {
                 Output.panic(

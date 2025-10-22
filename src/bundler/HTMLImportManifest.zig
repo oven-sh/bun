@@ -104,11 +104,11 @@ pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const Li
     try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
 }
 
-fn escapedJSONFormatter(this: HTMLImportManifest, writer: *std.Io.Writer) bun.OOM!void {
+fn escapedJSONFormatter(this: HTMLImportManifest, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     return writeEscapedJSON(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
-        error.NoSpaceLeft => unreachable,
-        error.OutOfMemory => return error.OutOfMemory,
+        error.WriteFailed => unreachable,
+        error.OutOfMemory => return error.WriteFailed,
         else => unreachable,
     };
 }

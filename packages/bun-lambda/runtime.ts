@@ -231,7 +231,7 @@ type LambdaResponse = {
   readonly cookies?: string[];
 };
 
-async function formatResponse(response: Response): Promise<LambdaResponse> {
+async function formatResponse(response: Response, event: any): Promise<LambdaResponse> {
   const statusCode = response.status;
   const headers = response.headers.toJSON();
   if (statusCode === 101) {
@@ -261,16 +261,24 @@ async function formatResponse(response: Response): Promise<LambdaResponse> {
       body,
     };
   }
-  return {
-    statusCode,
-    headers,
-    cookies,
-    multiValueHeaders: {
-      "Set-Cookie": cookies,
-    },
-    isBase64Encoded,
-    body,
-  };
+
+  if (isHttpEventV2(event)) {
+    return {
+      statusCode,
+      headers,
+      cookies,
+      isBase64Encoded,
+      body,
+    };
+  } else {
+    return {
+      statusCode,
+      headers,
+      multiValueHeaders: { "Set-Cookie": cookies },
+      isBase64Encoded,
+      body,
+    };
+  }
 }
 
 async function sendResponse(response: unknown): Promise<void> {
@@ -536,7 +544,7 @@ class LambdaServer implements Server {
     if (!isHttpEvent(event.event)) {
       return response.text();
     }
-    return formatResponse(response);
+    return formatResponse(response, event.event);
   }
 
   async #acceptWebSocket(event: WebSocketEvent): Promise<void> {
@@ -592,8 +600,8 @@ class LambdaServer implements Server {
       typeof options.port === "number"
         ? options.port
         : typeof options.port === "string"
-          ? parseInt(options.port)
-          : this.port;
+        ? parseInt(options.port)
+        : this.port;
     this.hostname = options.hostname ?? this.hostname;
     this.development = options.development ?? this.development;
   }

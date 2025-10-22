@@ -28,7 +28,7 @@
   "scripts": {
     "test": "bun test",
     "format": "prettier --write \"**/*.ts\"",
-    "generate:semconv": "bun run scripts/generate_semconv.ts"
+    "generate:semconv": "bun run scripts/generate-semconv.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

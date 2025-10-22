@@ -113,12 +113,16 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
       name: this.instrumentationName,
       version: this.instrumentationVersion,
       captureAttributes: this._config.captureAttributes,
+      injectHeaders: {
+        request: ["traceparent", "tracestate"],
+      },
 
       onOperationStart: (id: number, attributes: Record<string, any>) => {
-        // Extract span name from URL (use full URL as fallback)
-        const url = attributes["url.full"] || "fetch";
+        // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
+        // Incorrect: "GET https://api.example.com" (high cardinality, causes metric explosions)
+        // Correct: "GET" (low cardinality, URL captured in attributes)
         const method = attributes["http.request.method"] || "GET";
-        const spanName = `${method} ${url}`;
+        const spanName = method;
 
         // Create CLIENT span
         const span = tracer.startSpan(spanName, {

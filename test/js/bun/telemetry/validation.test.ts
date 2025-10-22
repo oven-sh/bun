@@ -178,6 +178,7 @@ describe("Bun.telemetry.detach() validation", () => {
   });
 
   test("handles negative IDs gracefully", () => {
+    // @ts-expect-error - testing error case
     const result = Bun.telemetry.detach(-1);
     expect(result).toBe(false);
   });

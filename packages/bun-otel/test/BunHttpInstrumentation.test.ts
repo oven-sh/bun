@@ -29,6 +29,7 @@ describe("BunHttpInstrumentation", () => {
   using _globalConfig = new TempConfig({
     [ConfigurationProperty.http_capture_headers_server_request]: ["user-agent", "x-request-id"],
     [ConfigurationProperty.http_capture_headers_server_response]: ["content-type", "x-trace-id"],
+    [ConfigurationProperty.http_propagate_headers_server_response]: ["traceparent", "tracestate"],
   });
 
   beforeAll(async () => {

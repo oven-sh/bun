@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
+const jsc = bun.jsc;
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -185,6 +186,11 @@ fn captureJSValueHeaders(
     comptime config_property: telemetry.ConfigurationProperty,
     comptime is_request: bool,
 ) void {
+    // Set up exception handling FIRST, before any JavaScript operations
+    var catch_scope: jsc.CatchScope = undefined;
+    catch_scope.init(globalObject, @src());
+    defer catch_scope.deinit();
+
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
     // Get configured header names from telemetry config
@@ -195,26 +201,49 @@ fn captureJSValueHeaders(
     const header_names_len = header_names_js.getLength(globalObject) catch return;
     if (header_names_len == 0) return;
 
-    // FetchHeaders has a .get(name) method we can call
-    const get_method = headers_jsvalue.get(globalObject, "get") catch return;
-    if (get_method == null or !get_method.?.isCallable()) return;
+    // Headers can be either FetchHeaders (has .get() method) or a plain object
+    if (headers_jsvalue.isUndefined() or headers_jsvalue.isNull()) return;
+
+    // Try FetchHeaders fast path first (has .get() method)
+    const get_method = headers_jsvalue.get(globalObject, "get") catch blk: {
+        _ = catch_scope.clearException();
+        break :blk null;
+    };
+
+    const use_fetch_headers = if (get_method) |method| method.isCallable() else false;
 
     // Iterate through configured header names
     var i: u32 = 0;
     while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch {
+            _ = catch_scope.clearException();
+            continue;
+        };
         if (!header_name_js.isString()) continue;
 
-        // Call headers.get(headerName)
-        const args = [_]JSValue{header_name_js};
-        const header_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch continue;
+        // Convert header name to ZigString (used by both paths)
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+
+        // Get header value using appropriate method
+        const header_value_js = if (use_fetch_headers) blk: {
+            // Fast path: FetchHeaders with .get() method
+            const args = [_]JSValue{header_name_js};
+            break :blk get_method.?.callWithGlobalThis(globalObject, &args) catch {
+                _ = catch_scope.clearException();
+                continue;
+            };
+        } else blk: {
+            // Slow path: Plain object property access
+            const value = headers_jsvalue.get(globalObject, header_name_zig.slice()) catch {
+                _ = catch_scope.clearException();
+                continue;
+            };
+            break :blk value orelse continue;
+        };
 
         if (header_value_js.isNull() or header_value_js.isUndefined()) continue;
         if (!header_value_js.isString()) continue;
-
-        // Convert header name to string
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
         const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
         defer header_name_slice.deinit();
 
@@ -239,14 +268,28 @@ fn extractTraceparent(
     headers_jsvalue: JSValue,
     globalObject: *JSGlobalObject,
 ) void {
+    // Set up exception handling for JavaScript operations
+    var catch_scope: jsc.CatchScope = undefined;
+    catch_scope.init(globalObject, @src());
+    defer catch_scope.deinit();
+
+    // Check if headers is valid
+    if (headers_jsvalue.isUndefined() or headers_jsvalue.isNull()) return;
+
     // Get the headers.get method
-    const get_method = headers_jsvalue.get(globalObject, "get") catch return;
+    const get_method = headers_jsvalue.get(globalObject, "get") catch {
+        _ = catch_scope.clearException();
+        return;
+    };
     if (get_method == null or !get_method.?.isCallable()) return;
 
     // Call headers.get("traceparent")
     const traceparent_key = ZigString.init("traceparent").toJS(globalObject);
     const args = [_]JSValue{traceparent_key};
-    const traceparent_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch return;
+    const traceparent_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch {
+        _ = catch_scope.clearException();
+        return;
+    };
 
     if (traceparent_value_js.isNull() or traceparent_value_js.isUndefined()) return;
     if (!traceparent_value_js.isString()) return;
@@ -385,6 +428,11 @@ pub inline fn addPropagationHeaders(
     headers: *bun.webcore.FetchHeaders,
     globalObject: *JSGlobalObject,
 ) void {
+    // Set up exception handling FIRST, before any JavaScript operations
+    var catch_scope: jsc.CatchScope = undefined;
+    catch_scope.init(globalObject, @src());
+    defer catch_scope.deinit();
+
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(kind)) return;
 
@@ -410,7 +458,10 @@ pub inline fn addPropagationHeaders(
     // Iterate through configured header names
     var i: u32 = 0;
     while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch {
+            _ = catch_scope.clearException();
+            continue;
+        };
         if (!header_name_js.isString()) continue;
 
         // Convert header name to ZigString
@@ -421,7 +472,10 @@ pub inline fn addPropagationHeaders(
         // Using linear concatenation: iterate through all injected objects
         var j: u32 = 0;
         while (j < injected_values_len) : (j += 1) {
-            const injected_obj = injected_values.getIndex(globalObject, j) catch continue;
+            const injected_obj = injected_values.getIndex(globalObject, j) catch {
+                _ = catch_scope.clearException();
+                continue;
+            };
             if (!injected_obj.isObject()) continue;
 
             // Get the header value from this injected object
@@ -449,6 +503,11 @@ pub inline fn renderInjectedTraceHeadersToUWSResponse(
     resp: anytype, // uws Response
     globalObject: *JSGlobalObject,
 ) void {
+    // Set up exception handling FIRST, before any JavaScript operations
+    var catch_scope: jsc.CatchScope = undefined;
+    catch_scope.init(globalObject, @src());
+    defer catch_scope.deinit();
+
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(kind)) return;
 
@@ -476,7 +535,10 @@ pub inline fn renderInjectedTraceHeadersToUWSResponse(
     // Iterate through configured header names
     var i: u32 = 0;
     while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch {
+            _ = catch_scope.clearException();
+            continue;
+        };
         if (!header_name_js.isString()) continue;
 
         // Copy header name to stack buffer
@@ -490,7 +552,10 @@ pub inline fn renderInjectedTraceHeadersToUWSResponse(
         // Iterate through all injected value objects (linear concatenation)
         var j: u32 = 0;
         while (j < injected_values_len) : (j += 1) {
-            const injected_obj = injected_values.getIndex(globalObject, j) catch continue;
+            const injected_obj = injected_values.getIndex(globalObject, j) catch {
+                _ = catch_scope.clearException();
+                continue;
+            };
             if (!injected_obj.isObject()) continue;
 
             const header_value_js_opt = injected_obj.get(globalObject, header_name_zig.slice()) catch continue;

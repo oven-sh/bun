@@ -122,6 +122,9 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       name: this.instrumentationName,
       version: this.instrumentationVersion,
       captureAttributes: this._config.captureAttributes,
+      injectHeaders: {
+        response: ["traceparent", "tracestate"],
+      },
 
       onOperationStart: (id: number, attributes: Record<string, any>) => {
         // Extract span name from HTTP method and path

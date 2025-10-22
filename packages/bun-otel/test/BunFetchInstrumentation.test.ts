@@ -26,6 +26,7 @@ describe("BunFetchInstrumentation", () => {
   using _globalConfig = new TempConfig({
     [ConfigurationProperty.http_capture_headers_fetch_request]: ["content-type", "x-custom-header"],
     [ConfigurationProperty.http_capture_headers_fetch_response]: ["content-type", "x-response-header"],
+    [ConfigurationProperty.http_propagate_headers_fetch_request]: ["traceparent", "tracestate"],
   });
 
   beforeAll(() => {
@@ -185,7 +186,7 @@ describe("BunFetchInstrumentation", () => {
     expect(errorSpan?.status.code).toBe(SpanStatusCode.ERROR);
   });
 
-  test("span name follows 'METHOD URL' pattern", async () => {
+  test("span name is HTTP method only (OTel v1.23.0 spec)", async () => {
     await using echoServer = new EchoServer();
     await echoServer.start();
 
@@ -200,8 +201,10 @@ describe("BunFetchInstrumentation", () => {
     const spans = exporter.getFinishedSpans();
     const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
 
-    expect(fetchSpan?.name).toMatch(/^GET /);
-    expect(fetchSpan?.name).toContain("/api/users");
+    // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
+    // URL is captured in attributes instead to prevent cardinality explosions
+    expect(fetchSpan?.name).toBe("GET");
+    expect(fetchSpan?.attributes["url.full"]).toContain("/api/users");
   });
 
   test("disable() detaches instrumentation", () => {

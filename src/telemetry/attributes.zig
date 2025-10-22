@@ -14,34 +14,60 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const ZigString = jsc.ZigString;
 
 /// Import generated semantic conventions (will be created by codegen)
-/// For now, we define a minimal set manually
-pub const AttributeKey = enum(u8) {
-    // HTTP attributes (0-19)
-    http_request_method = 0,
-    http_response_status_code = 1,
-    http_request_body_size = 2,
-    http_response_body_size = 3,
+///
+/// AttributeKey ID allocation strategy using u16 namespace prefixes:
+///
+/// ID ranges:
+/// - 0x00xx (0-255): OpenTelemetry semantic convention attributes
+/// - 0x01xx (256-511): Reserved for future semconv expansion
+/// - 0x02xx (512-767): HTTP server REQUEST headers
+///   - Low byte aligns with WebCore HTTPHeaderName for fast lookup
+///   - Example: user-agent = 0x0200 | 120 = 0x0278
+/// - 0x03xx (768-1023): HTTP server RESPONSE headers
+///   - Low byte aligns with WebCore HTTPHeaderName for fast lookup
+///   - Example: content-type = 0x0300 | 61 = 0x033D
+/// - 0x04xx (1024-1279): Reserved
+/// - 0x05xx (1280-1535): HTTP fetch REQUEST headers
+///   - Low byte aligns with WebCore HTTPHeaderName for fast lookup
+/// - 0x06xx (1536-1791): Reserved
+/// - 0x07xx (1792-2047): HTTP fetch RESPONSE headers
+///   - Low byte aligns with WebCore HTTPHeaderName for fast lookup
+/// - 0x08xx+ (2048+): Reserved for future contexts
+///
+/// This design enables:
+/// 1. O(1) header lookup: header_id = context_prefix | HTTPHeaderName
+/// 2. Clear separation of request/response and server/fetch contexts
+/// 3. ~256 slots for core semantic conventions (plenty for OTel)
+/// 4. Room for expansion without tight packing
+pub const AttributeKey = enum(u16) {
+    // 0x00xx: OpenTelemetry semantic convention attributes
 
-    // URL attributes (20-29)
-    url_path = 20,
-    url_query = 21,
-    url_scheme = 22,
-    url_full = 23,
+    // HTTP method and status
+    http_request_method = 0x0000,
+    http_response_status_code = 0x0001,
+    http_request_body_size = 0x0002,
+    http_response_body_size = 0x0003,
 
-    // Server attributes (30-39)
-    server_address = 30,
-    server_port = 31,
+    // URL attributes
+    url_path = 0x0004,
+    url_query = 0x0005,
+    url_scheme = 0x0006,
+    url_full = 0x0007,
 
-    // Network attributes (40-49)
-    network_peer_address = 40,
-    network_peer_port = 41,
+    // Server attributes
+    server_address = 0x0008,
+    server_port = 0x0009,
 
-    // User agent (50-59)
-    user_agent_original = 50,
+    // Network attributes
+    network_peer_address = 0x000A,
+    network_peer_port = 0x000B,
 
-    // Error attributes (60-69)
-    error_type = 60,
-    error_message = 61,
+    // User agent
+    user_agent_original = 0x000C,
+
+    // Error attributes
+    error_type = 0x000D,
+    error_message = 0x000E,
 
     pub const COUNT = @typeInfo(AttributeKey).@"enum".fields.len;
 

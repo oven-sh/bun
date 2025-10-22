@@ -57,7 +57,7 @@ static const DOMException::Description descriptions[] = {
     { "QuotaExceededError"_s, "The quota has been exceeded."_s, 22 },
     { "TimeoutError"_s, "The operation timed out."_s, 23 },
     { "InvalidNodeTypeError"_s, "The supplied node is incorrect or has an incorrect ancestor for this operation."_s, 24 },
-    { "DataCloneError"_s, "The object can not be cloned."_s, 25 },
+    { "DataCloneError"_s, "The object could not be cloned."_s, 25 }, // TODO: This should include an inspection of the object (e.g. "DOMException [DataCloneError]: hello () {} could not be cloned.")
     { "EncodingError"_s, "The encoding operation (either encoded or decoding) failed."_s, 0 },
     { "NotReadableError"_s, "The I/O read operation failed."_s, 0 },
     { "UnknownError"_s, "The operation failed for an unknown transient reason (e.g. out of memory)."_s, 0 },

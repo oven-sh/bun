@@ -1,4 +1,5 @@
 // import type { Readable, Writable } from "node:stream";
+
 // import type { WorkerOptions } from "node:worker_threads";
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
@@ -225,14 +226,18 @@ function moveMessagePortToContext() {
 
 const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
 
-class Worker extends EventEmitter {
+class Worker extends EventEmitter implements AsyncDisposable {
   #worker: WebWorker;
   #performance;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
-  #onExitPromise: Promise<number> | number | undefined = undefined;
+  #onExitResolvers = Promise.withResolvers<number | void>();
   #urlToRevoke = "";
+
+  async [Symbol.asyncDispose]() {
+    await this.terminate();
+  }
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -319,7 +324,13 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback?: unknown): Promise<number | void> {
+    // threadId = -1 signifies the worker was closed already. Node returns PromiseResolve() in this case
+    // https://github.com/nodejs/node/blob/61601089f7f2f0e5e7abe8240f198585f585704c/lib/internal/worker.js#L390
+    if (this.threadId === -1) {
+      return Promise.resolve<void>();
+    }
+
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
@@ -329,12 +340,8 @@ class Worker extends EventEmitter {
       this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
     }
 
-    const onExitPromise = this.#onExitPromise;
-    if (onExitPromise) {
-      return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(onExitPromise);
-    }
+    const { resolve, promise } = this.#onExitResolvers;
 
-    const { resolve, promise } = Promise.withResolvers();
     this.#worker.addEventListener(
       "close",
       event => {
@@ -342,12 +349,13 @@ class Worker extends EventEmitter {
       },
       { once: true },
     );
+
     this.#worker.terminate();
 
-    return (this.#onExitPromise = promise);
+    return promise;
   }
 
-  postMessage(...args: [any, any]) {
+  postMessage(...args: Parameters<Bun.Worker["postMessage"]>) {
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
@@ -356,8 +364,8 @@ class Worker extends EventEmitter {
     return stringPromise.then(s => new HeapSnapshotStream(s));
   }
 
-  #onClose(e) {
-    this.#onExitPromise = e.code;
+  #onClose(e: Event & { code: number }) {
+    this.#onExitResolvers.resolve(e.code);
     this.emit("exit", e.code);
   }
 

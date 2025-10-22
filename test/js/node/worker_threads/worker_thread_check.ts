@@ -6,7 +6,7 @@ import { Worker, isMainThread, workerData } from "worker_threads";
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const actions = {
-  async ["Bun.connect"](port) {
+  async ["Bun.connect"](port: number) {
     await Bun.connect({
       hostname: "localhost",
       port,
@@ -19,7 +19,7 @@ const actions = {
       },
     });
   },
-  async ["Bun.listen"](port) {
+  async ["Bun.listen"](port: number) {
     const server = Bun.listen({
       hostname: "localhost",
       port: 0,
@@ -32,7 +32,7 @@ const actions = {
       },
     });
   },
-  async ["fetch"](port) {
+  async ["fetch"](port: number) {
     const resp = await fetch("http://localhost:" + port);
     await resp.blob();
   },
@@ -65,12 +65,10 @@ if (isMainThread) {
       const { promise, resolve, reject } = Promise.withResolvers();
       promises.push(promise);
 
-      worker.on("online", () => {
-        sleep(1)
-          .then(() => {
-            return worker.terminate();
-          })
-          .finally(resolve);
+      worker.once("online", async () => {
+        await sleep(1);
+        await worker.terminate();
+        resolve();
       });
       worker.on("error", e => reject(e));
     }

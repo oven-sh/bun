@@ -94,7 +94,7 @@ describe("web worker", () => {
     };
   });
 
-  test("worker-env", done => {
+  test("worker-env without a lot of properties", done => {
     const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
       env: {
         // Verify that we use putDirectMayBeIndex instead of putDirect
@@ -342,12 +342,12 @@ describe("worker_threads", () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
-    await Bun.sleep(200);
-    const code = await worker.terminate();
-    expect(code).toBe(2);
+    const [exitCode] = await once(worker, "exit");
+    expect<number | undefined>(await worker.terminate()).toBe(undefined);
+    expect<number | undefined>(exitCode).toBe(2);
   });
 
-  test.todo("worker terminating forcefully properly interrupts", async () => {
+  test("worker terminating forcefully properly interrupts", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
     await new Promise<void>(done => {
       worker.on("message", () => done());

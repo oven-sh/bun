@@ -1,3 +1,7 @@
+.cursor/rules/vibe-tools.mdc
+vibe-tools.config.json
+.repomix-output.txt
+repomix.config.json
 .claude/settings.local.json
 .DS_Store
 .env

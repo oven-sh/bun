@@ -4,21 +4,22 @@ import { bunEnv, nodeExe } from "harness";
 import { join } from "path";
 
 const fixtureDir = join(import.meta.dirname, "fixtures");
-function postNodeFormData(port) {
-  const result = Bun.spawnSync({
+async function postNodeFormData(port) {
+  const result = Bun.spawn({
     cmd: [nodeExe(), join(fixtureDir, "node-form-data.fetch.fixture.js"), port?.toString()],
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
   });
-  expect(result.exitCode).toBe(0);
+  expect(await result.exited).toBe(0);
 }
-function postNodeAction(port) {
-  const result = Bun.spawnSync({
+async function postNodeAction(port) {
+  const result = Bun.spawn({
     cmd: [nodeExe(), join(fixtureDir, "node-action.fetch.fixture.js"), port?.toString()],
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
   });
-  expect(result.exitCode).toBe(0);
+
+  expect(await result.exited).toBe(0);
 }
 
 describe("astro", async () => {
@@ -66,7 +67,7 @@ describe("astro", async () => {
   });
 
   test("is able todo a POST request to an astro action using node", async () => {
-    postNodeAction(previewServer.port);
+    await postNodeAction(previewServer.port);
   });
 
   test("is able to post form data to an astro using bun", async () => {
@@ -89,6 +90,6 @@ describe("astro", async () => {
     });
   });
   test("is able to post form data to an astro using node", async () => {
-    postNodeFormData(previewServer.port);
+    await postNodeFormData(previewServer.port);
   });
 });

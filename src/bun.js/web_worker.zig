@@ -1,6 +1,10 @@
 //! Shared implementation of Web and Node `Worker`
 
 const WebWorker = @This();
+const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
+pub const new = bun.TrivialNew(@This());
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 const log = Output.scoped(.Worker, .hidden);
 
@@ -8,10 +12,12 @@ const log = Output.scoped(.Worker, .hidden);
 vm: ?*jsc.VirtualMachine = null,
 status: std.atomic.Value(Status) = .init(.start),
 /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
-requested_terminate: std.atomic.Value(bool) = .init(false),
 execution_context_id: u32 = 0,
 parent_context_id: u32 = 0,
 parent: *jsc.VirtualMachine,
+
+ref_count: RefCount,
+lifecycle_handle: *WebWorkerLifecycleHandle,
 
 /// To be resolved on the Worker thread at startup, in spin().
 unresolved_specifier: []const u8,
@@ -58,14 +64,11 @@ export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
 }
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-    return this.requested_terminate.load(.monotonic);
+    return this.lifecycle_handle.worker.load(.acquire) == null;
 }
 
-pub fn setRequestedTerminate(this: *WebWorker) bool {
-    return this.requested_terminate.swap(true, .release);
-}
-
-export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
+export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaque) bool {
+    const worker = handle.worker.load(.acquire).?;
     worker.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
@@ -73,7 +76,7 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        worker.deinit();
+        worker.destroy();
         return false;
     };
     thread.detach();
@@ -203,6 +206,7 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    lifecycle_handle: *WebWorkerLifecycleHandle,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -233,8 +237,9 @@ pub fn create(
         }
     }
 
-    var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
-    worker.* = WebWorker{
+    var worker = bun.new(WebWorker, WebWorker{
+        .lifecycle_handle = lifecycle_handle,
+        .ref_count = .init(),
         .cpp_worker = cpp_worker,
         .parent = parent,
         .parent_context_id = parent_context_id,
@@ -254,10 +259,10 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
-    };
+    });
 
     worker.parent_poll_ref.ref(parent);
-
+    worker.ref();
     return worker;
 }
 
@@ -273,6 +278,7 @@ pub fn startWithErrorHandling(
 pub fn start(
     this: *WebWorker,
 ) anyerror!void {
+    errdefer this.deref();
     if (this.name.len > 0) {
         Output.Source.configureNamedThread(this.name);
     } else {
@@ -373,7 +379,10 @@ fn deinit(this: *WebWorker) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
-    bun.default_allocator.destroy(this);
+}
+
+fn destroy(this: *WebWorker) void {
+    bun.destroy(this);
 }
 
 fn flushLogs(this: *WebWorker) void {
@@ -408,7 +417,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
 
     var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
-    var worker = vm.worker orelse @panic("Assertion failure: no worker");
+    const worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
@@ -442,9 +451,12 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
     if (vm.worker) |worker_| {
-        _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
-        worker_.exitAndDeinit();
+        // During unhandled rejection, we're already holding the API lock - now
+        // is the right time to set exit_called to true so that
+        // notifyNeedTermination uses vm.global.requestTermination() instead of
+        // vm.jsc.notifyNeedTermination() which avoid VMTraps assertion failures
+        worker_.exit_called = true;
+        worker_.lifecycle_handle.requestTermination();
     }
 }
 
@@ -452,6 +464,10 @@ fn setStatus(this: *WebWorker, status: Status) void {
     log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
     this.status.store(status, .release);
+}
+
+fn unhandledError(this: *WebWorker, _: anyerror) void {
+    this.flushLogs();
 }
 
 fn spin(this: *WebWorker) void {
@@ -545,12 +561,14 @@ fn spin(this: *WebWorker) void {
 }
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
-pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
-        return;
-    }
+pub fn setRef(handle: *WebWorkerLifecycleHandle, value: bool) callconv(.c) void {
+    if (handle.worker.load(.acquire)) |worker| {
+        if (worker.hasRequestedTerminate()) {
+            return;
+        }
 
-    this.setRefInternal(value);
+        worker.setRefInternal(value);
+    }
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
@@ -564,26 +582,30 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
-    this.notifyNeedTermination();
+    this.lifecycle_handle.requestTermination();
 }
 
 /// Request a terminate from any thread.
-pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
+fn notifyNeedTermination(this: *WebWorker) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
     }
-    if (this.setRequestedTerminate()) {
-        return;
-    }
+
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
-    }
 
-    // TODO(@190n) delete
-    this.setRefInternal(false);
+        if (this.exit_called) {
+            // For process.exit() called from JavaScript, use JSC's termination
+            // exception mechanism to interrupt ongoing JS execution
+            vm.global.requestTermination();
+        } else {
+            // For external terminate requests (e.g worker.terminate() from parent thread),
+            // use VM traps system
+            vm.jsc_vm.notifyNeedTermination();
+        }
+    }
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
@@ -596,6 +618,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;
+
     var exit_code: i32 = 0;
     var globalObject: ?*jsc.JSGlobalObject = null;
     var vm_to_deinit: ?*jsc.VirtualMachine = null;
@@ -610,31 +633,100 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
-
+    this.lifecycle_handle.deref();
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
+    bun.uws.onThreadExit();
     this.deinit();
 
     if (vm_to_deinit) |vm| {
-        vm.gc_controller.deinit();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
+
     if (arena) |*arena_| {
         arena_.deinit();
     }
 
+    this.deref();
     bun.exitThread();
 }
 
+pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
+    if (handle) |h| {
+        h.requestTermination();
+    }
+}
+
+pub export fn WebWorkerLifecycleHandle__release(handle: ?*WebWorkerLifecycleHandle) void {
+    if (handle) |h| {
+        h.deref();
+    }
+}
+
+/// Manages the complex timing surrounding web worker creation and destruction
+const WebWorkerLifecycleHandle = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", WebWorkerLifecycleHandle.deinit, .{});
+    pub const ref = WebWorkerLifecycleHandle.RefCount.ref;
+    pub const deref = WebWorkerLifecycleHandle.RefCount.deref;
+
+    worker: std.atomic.Value(?*WebWorker),
+    ref_count: WebWorkerLifecycleHandle.RefCount,
+
+    pub const new = bun.TrivialNew(WebWorkerLifecycleHandle);
+
+    pub fn createWebWorker(
+        cpp_worker: *void,
+        parent: *jsc.VirtualMachine,
+        name_str: bun.String,
+        specifier_str: bun.String,
+        error_message: *bun.String,
+        parent_context_id: u32,
+        this_context_id: u32,
+        mini: bool,
+        default_unref: bool,
+        eval_mode: bool,
+        argv_ptr: ?[*]WTFStringImpl,
+        argv_len: usize,
+        inherit_execArgv: bool,
+        execArgv_ptr: ?[*]WTFStringImpl,
+        execArgv_len: usize,
+        preload_modules_ptr: ?[*]bun.String,
+        preload_modules_len: usize,
+    ) callconv(.c) *WebWorkerLifecycleHandle {
+        const handle = WebWorkerLifecycleHandle.new(.{
+            .worker = .init(null),
+            .ref_count = .init(),
+        });
+
+        const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len, handle).?;
+
+        handle.worker.store(worker, .release);
+
+        // Worker.cpp holds a reference to this
+        handle.ref();
+
+        return handle;
+    }
+
+    pub fn deinit(this: *WebWorkerLifecycleHandle) void {
+        bun.destroy(this);
+    }
+
+    pub fn requestTermination(self: *WebWorkerLifecycleHandle) void {
+        const worker = self.worker.swap(null, .acq_rel) orelse return;
+
+        worker.notifyNeedTermination();
+        worker.deref();
+    }
+};
+
 comptime {
-    @export(&create, .{ .name = "WebWorker__create" });
-    @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
+    @export(&WebWorkerLifecycleHandle.createWebWorker, .{ .name = "WebWorkerLifecycleHandle__createWebWorker" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
-    _ = WebWorker__updatePtr;
 }
 
 const std = @import("std");

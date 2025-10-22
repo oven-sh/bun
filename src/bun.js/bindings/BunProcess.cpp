@@ -3437,7 +3437,10 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        throwVMError(globalObject, scope, "Faild to call nextTick"_s);
+        return;
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());

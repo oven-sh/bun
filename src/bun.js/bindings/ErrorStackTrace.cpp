@@ -637,9 +637,14 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
             if (!slot.isAccessor()) {
                 JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
                 if (functionNameValue && functionNameValue.isString()) {
-                    name = functionNameValue.toWTFString(lexicalGlobalObject);
-                    if (!name.isEmpty()) {
-                        return name;
+                    // Additional safety check: verify the cell is actually a JSString
+                    if (JSString* jsString = jsDynamicCast<JSString*>(functionNameValue)) {
+                        name = jsString->value(lexicalGlobalObject);
+                        if (catchScope.exception()) [[unlikely]] {
+                            catchScope.clearException();
+                        } else if (!name.isEmpty()) {
+                            return name;
+                        }
                     }
                 }
             }

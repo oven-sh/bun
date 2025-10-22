@@ -717,23 +717,27 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         if (name_value) {
             if (name_value.isString()) {
                 auto name_str = name_value.toWTFString(global);
-                except.name = Bun::toStringRef(name_str);
-                if (name_str == "Error"_s) {
-                    except.type = JSErrorCodeError;
-                } else if (name_str == "EvalError"_s) {
-                    except.type = JSErrorCodeEvalError;
-                } else if (name_str == "RangeError"_s) {
-                    except.type = JSErrorCodeRangeError;
-                } else if (name_str == "ReferenceError"_s) {
-                    except.type = JSErrorCodeReferenceError;
-                } else if (name_str == "SyntaxError"_s) {
-                    except.type = JSErrorCodeSyntaxError;
-                } else if (name_str == "TypeError"_s) {
-                    except.type = JSErrorCodeTypeError;
-                } else if (name_str == "URIError"_s) {
-                    except.type = JSErrorCodeURIError;
-                } else if (name_str == "AggregateError"_s) {
-                    except.type = JSErrorCodeAggregateError;
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                } else {
+                    except.name = Bun::toStringRef(name_str);
+                    if (name_str == "Error"_s) {
+                        except.type = JSErrorCodeError;
+                    } else if (name_str == "EvalError"_s) {
+                        except.type = JSErrorCodeEvalError;
+                    } else if (name_str == "RangeError"_s) {
+                        except.type = JSErrorCodeRangeError;
+                    } else if (name_str == "ReferenceError"_s) {
+                        except.type = JSErrorCodeReferenceError;
+                    } else if (name_str == "SyntaxError"_s) {
+                        except.type = JSErrorCodeSyntaxError;
+                    } else if (name_str == "TypeError"_s) {
+                        except.type = JSErrorCodeTypeError;
+                    } else if (name_str == "URIError"_s) {
+                        except.type = JSErrorCodeURIError;
+                    } else if (name_str == "AggregateError"_s) {
+                        except.type = JSErrorCodeAggregateError;
+                    }
                 }
             }
         }
@@ -744,7 +748,12 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         }
         if (message) {
             if (message.isString()) {
-                except.message = Bun::toStringRef(message.toWTFString(global));
+                auto message_str = message.toWTFString(global);
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                } else {
+                    except.message = Bun::toStringRef(message_str);
+                }
             }
         }
 
@@ -755,8 +764,13 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (sourceURL) {
                 if (sourceURL.isString()) {
-                    except.stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL.toWTFString(global));
-                    except.stack.frames_len = 1;
+                    auto sourceURL_str = sourceURL.toWTFString(global);
+                    if (scope.exception()) [[unlikely]] {
+                        scope.clearExceptionExceptTermination();
+                    } else {
+                        except.stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL_str);
+                        except.stack.frames_len = 1;
+                    }
                 }
             }
 
@@ -809,13 +823,28 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             return;
         }
+        case JSC::HeapBigIntType: {
+            // HeapBigInt can be safely converted to string
+            auto str = value.toWTFString(global);
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
+                except.message = Bun::toStringRef("[BigInt]"_s);
+                return;
+            }
+            except.message = Bun::toStringRef(str);
+            return;
+        }
 
         default: {
-            break;
+            // For other cell types that might not have a valid toString implementation,
+            // use a generic error message instead of risking an assertion failure
+            except.message = Bun::toStringRef("[Object]"_s);
+            return;
         }
         }
     }
 
+    // Only primitive values should reach here (null, undefined, boolean, number)
     auto str = value.toWTFString(global);
     if (scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();

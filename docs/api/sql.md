@@ -126,7 +126,9 @@ new SQL("mysql2://user:pass@localhost:3306/database");
 // With query parameters
 new SQL("mysql://user:pass@localhost/db?ssl=true");
 
-// Unix socket connection
+// Unix socket connection (hostname is ignored when socket is provided)
+new SQL("mysql://user:pass@localhost/database?socket=/var/run/mysqld/mysqld.sock");
+// Hostname can also be omitted:
 new SQL("mysql://user:pass@/database?socket=/var/run/mysqld/mysqld.sock");
 ```
 

@@ -355,8 +355,10 @@ pub fn log(self: *Progress, comptime format: []const u8, args: anytype) void {
         (std.debug).print(format, args);
         return;
     };
+    var file_writer = file.writerStreaming(&.{});
+    const writer = &file_writer.interface;
     self.refresh();
-    file.writer().print(format, args) catch {
+    writer.print(format, args) catch {
         self.terminal = null;
         return;
     };

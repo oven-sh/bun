@@ -138,7 +138,7 @@ fn packages(
                 try writer.writeAll(name);
                 try writer.writeByte('@');
                 if (version_name.len == 0) {
-                    try std.fmt.format(writer, "^{any}", .{version_formatter});
+                    try writer.print("^{any}", .{version_formatter});
                 } else {
                     try writer.writeAll(version_name);
                 }

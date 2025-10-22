@@ -498,7 +498,7 @@ pub const Number = struct {
     }
 
     pub fn to(self: Number, comptime T: type) T {
-        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T)))));
+        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), @as(f64, @as(comptime_float, std.math.maxInt(T)))))));
     }
 
     pub fn jsonStringify(self: *const Number, writer: anytype) !void {

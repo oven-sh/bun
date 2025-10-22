@@ -922,7 +922,8 @@ pub fn parse(
     const input_value = callFrame.argumentsAsArray(1)[0];
 
     const input: jsc.Node.BlobOrStringOrBuffer = try jsc.Node.BlobOrStringOrBuffer.fromJS(global, arena.allocator(), input_value) orelse input: {
-        const str = try input_value.toBunString(global);
+        var str = try input_value.toBunString(global);
+        defer str.deref();
         break :input .{ .string_or_buffer = .{ .string = str.toSlice(arena.allocator()) } };
     };
     defer input.deinit();

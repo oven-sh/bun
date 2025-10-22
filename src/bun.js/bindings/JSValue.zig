@@ -253,7 +253,7 @@ pub const JSValue = enum(i64) {
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
             if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
                 loop.debug.last_fn_name.deref();
-                loop.debug.last_fn_name = function.getName(global);
+                loop.debug.last_fn_name = try function.getName(global);
             }
             // Do not assert that the function is callable here.
             // The Bun__JSValue__call function will already assert that, and
@@ -1054,9 +1054,9 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getName(jsc.JSValue, *jsc.JSGlobalObject, *bun.String) void;
-    pub fn getName(this: JSValue, global: *JSGlobalObject) bun.String {
+    pub fn getName(this: JSValue, global: *JSGlobalObject) JSError!bun.String {
         var ret = bun.String.empty;
-        JSC__JSValue__getName(this, global, &ret);
+        try bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getName, .{ this, global, &ret });
         return ret;
     }
 

@@ -4,9 +4,12 @@ const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
-const telemetry = @import("telemetry.zig");
+const telemetry = @import("main.zig");
 const AttributeMap = telemetry.AttributeMap;
 const AttributeKey = telemetry.AttributeKey;
+const http = @import("../http.zig");
+const Method = http.Method;
+const simple_url_parser = @import("simple_url_parser.zig");
 
 /// Build fetch request start attributes following OpenTelemetry semantic conventions
 ///
@@ -29,7 +32,7 @@ pub fn buildFetchStartAttributes(
     request_id: u64,
     method: []const u8,
     url: []const u8,
-    headers: ?JSValue,
+    headers: *const http.Headers,
 ) AttributeMap {
     var attrs = AttributeMap.init(globalObject);
 
@@ -46,24 +49,26 @@ pub fn buildFetchStartAttributes(
     // URL components
     attrs.set("url.full", ZigString.init(url).toJS(globalObject));
 
-    // Parse URL to extract components
-    if (parseURL(url)) |url_parts| {
-        if (url_parts.path.len > 0) {
-            attrs.fastSet(.url_path, ZigString.init(url_parts.path).toJS(globalObject));
-        }
-        if (url_parts.query.len > 0) {
-            attrs.fastSet(.url_query, ZigString.init(url_parts.query).toJS(globalObject));
-        }
-        attrs.set("url.scheme", ZigString.init(url_parts.scheme).toJS(globalObject));
-        attrs.fastSet(.server_address, ZigString.init(url_parts.host).toJS(globalObject));
-        if (url_parts.port) |port| {
-            attrs.fastSet(.server_port, JSValue.jsNumber(@as(f64, @floatFromInt(port))));
-        }
+    // Parse URL (handles both full URLs from fetch)
+    const parsed = simple_url_parser.parseURL(url);
+    if (parsed.path.len > 0) {
+        attrs.fastSet(.url_path, ZigString.init(parsed.path).toJS(globalObject));
+    }
+    if (parsed.query.len > 0) {
+        attrs.fastSet(.url_query, ZigString.init(parsed.query).toJS(globalObject));
+    }
+    if (parsed.scheme.len > 0) {
+        attrs.set("url.scheme", ZigString.init(parsed.scheme).toJS(globalObject));
+    }
+    if (parsed.host.len > 0) {
+        attrs.fastSet(.server_address, ZigString.init(parsed.host).toJS(globalObject));
+    }
+    if (parsed.port) |port| {
+        attrs.fastSet(.server_port, JSValue.jsNumber(@as(f64, @floatFromInt(port))));
     }
 
-    // Outgoing request headers (if provided)
-    // TODO: Implement header iteration when JSValue API is available
-    _ = headers; // Suppress unused variable warning
+    // Outgoing request headers (capture configured headers)
+    captureRequestHeaders(&attrs, headers, globalObject, .http_capture_headers_fetch_request);
 
     return attrs;
 }
@@ -80,13 +85,13 @@ pub fn buildFetchStartAttributes(
 pub fn buildFetchEndAttributes(
     globalObject: *JSGlobalObject,
     start_timestamp_ns: u64,
-    status_code: u16,
+    metadata: ?http.HTTPResponseMetadata,
     content_length: u64,
-    headers: ?JSValue,
 ) AttributeMap {
     var attrs = AttributeMap.init(globalObject);
 
     // HTTP response status
+    const status_code: u16 = if (metadata) |m| @truncate(m.response.status_code) else 200;
     attrs.fastSet(.http_response_status_code, JSValue.jsNumber(@as(f64, @floatFromInt(status_code))));
 
     // Response body size
@@ -97,9 +102,10 @@ pub fn buildFetchEndAttributes(
     const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
     attrs.set("operation.duration", JSValue.jsNumber(@as(f64, @floatFromInt(duration_ns))));
 
-    // Response headers (if provided and configured)
-    // TODO: Implement header iteration when JSValue API is available
-    _ = headers; // Suppress unused variable warning
+    // Response headers (capture configured headers from picohttp response)
+    if (metadata) |m| {
+        capturePicohttpResponseHeaders(&attrs, &m.response.headers, globalObject, .http_capture_headers_fetch_response);
+    }
 
     return attrs;
 }
@@ -145,97 +151,137 @@ pub fn buildFetchErrorAttributes(
     return attrs;
 }
 
-/// Parse a URL string into components
-/// Simple parser for extracting scheme, host, port, path, query
-fn parseURL(url: []const u8) ?URLParts {
-    // Look for scheme
-    var scheme: []const u8 = "http";
-    var remainder = url;
+// ============================================================================
+// Header Capture Helpers
+// ============================================================================
 
-    if (std.mem.indexOf(u8, url, "://")) |scheme_end| {
-        scheme = url[0..scheme_end];
-        remainder = url[scheme_end + 3 ..];
-    }
+/// Capture configured request headers and add to attributes map
+/// Reads the configuration property to get the list of header names to capture
+fn captureRequestHeaders(
+    attrs: *AttributeMap,
+    headers_obj: *const http.Headers,
+    globalObject: *JSGlobalObject,
+    comptime config_property: telemetry.ConfigurationProperty,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Find the start of the path (first /)
-    const path_start = std.mem.indexOf(u8, remainder, "/") orelse remainder.len;
-    const host_and_port = remainder[0..path_start];
-    const path_and_query = if (path_start < remainder.len) remainder[path_start..] else "/";
+    // Get configured header names from telemetry config
+    const config_property_id = @intFromEnum(config_property);
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
 
-    // Parse host and port
-    var host = host_and_port;
-    var port: ?u16 = null;
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    if (header_names_len == 0) return;
 
-    if (std.mem.lastIndexOf(u8, host_and_port, ":")) |port_colon| {
-        host = host_and_port[0..port_colon];
-        const port_str = host_and_port[port_colon + 1 ..];
-        port = std.fmt.parseInt(u16, port_str, 10) catch null;
-    }
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
 
-    // Set default port if not specified
-    if (port == null) {
-        if (std.mem.eql(u8, scheme, "https")) {
-            port = 443;
-        } else {
-            port = 80;
+        // Convert header name to string
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
+        defer header_name_slice.deinit();
+
+        // Get header value from HTTP headers
+        if (headers_obj.get(header_name_slice.slice())) |header_value| {
+            // Build attribute key: "http.request.header.{name}"
+            var attr_key_buf: [256]u8 = undefined;
+            const attr_key = std.fmt.bufPrint(&attr_key_buf, "http.request.header.{s}", .{header_name_slice.slice()}) catch continue;
+
+            // Add to attributes
+            attrs.set(attr_key, ZigString.init(header_value).toJS(globalObject));
         }
     }
+}
 
-    // Parse path and query
-    var path = path_and_query;
-    var query: []const u8 = "";
+/// Capture configured response headers from http.Headers and add to attributes map
+fn captureResponseHeaders(
+    attrs: *AttributeMap,
+    headers_obj: *const http.Headers,
+    globalObject: *JSGlobalObject,
+    comptime config_property: telemetry.ConfigurationProperty,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    if (std.mem.indexOf(u8, path_and_query, "?")) |query_start| {
-        path = path_and_query[0..query_start];
-        query = path_and_query[query_start + 1 ..];
+    // Get configured header names from telemetry config
+    const config_property_id = @intFromEnum(config_property);
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    if (header_names_len == 0) return;
+
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
+
+        // Convert header name to string
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
+        defer header_name_slice.deinit();
+
+        // Get header value from HTTP headers
+        if (headers_obj.get(header_name_slice.slice())) |header_value| {
+            // Build attribute key: "http.response.header.{name}"
+            var attr_key_buf: [256]u8 = undefined;
+            const attr_key = std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
+
+            // Add to attributes
+            attrs.set(attr_key, ZigString.init(header_value).toJS(globalObject));
+        }
     }
-
-    return URLParts{
-        .scheme = scheme,
-        .host = host,
-        .port = port,
-        .path = path,
-        .query = query,
-    };
 }
 
-const URLParts = struct {
-    scheme: []const u8,
-    host: []const u8,
-    port: ?u16,
-    path: []const u8,
-    query: []const u8,
-};
+/// Capture configured response headers from picohttp response and add to attributes map
+fn capturePicohttpResponseHeaders(
+    attrs: *AttributeMap,
+    pico_headers: *const bun.picohttp.Header.List,
+    globalObject: *JSGlobalObject,
+    comptime config_property: telemetry.ConfigurationProperty,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-// Test helpers
-test "parseURL basic" {
-    const url1 = "http://api.example.com:8080/v1/users?page=2";
-    const parts1 = parseURL(url1).?;
+    // Get configured header names from telemetry config
+    const config_property_id = @intFromEnum(config_property);
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
 
-    try std.testing.expectEqualStrings("http", parts1.scheme);
-    try std.testing.expectEqualStrings("api.example.com", parts1.host);
-    try std.testing.expectEqual(@as(u16, 8080), parts1.port.?);
-    try std.testing.expectEqualStrings("/v1/users", parts1.path);
-    try std.testing.expectEqualStrings("page=2", parts1.query);
-}
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    if (header_names_len == 0) return;
 
-test "parseURL https default port" {
-    const url = "https://secure.example.com/api";
-    const parts = parseURL(url).?;
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
 
-    try std.testing.expectEqualStrings("https", parts.scheme);
-    try std.testing.expectEqualStrings("secure.example.com", parts.host);
-    try std.testing.expectEqual(@as(u16, 443), parts.port.?);
-    try std.testing.expectEqualStrings("/api", parts.path);
-    try std.testing.expectEqual(@as(usize, 0), parts.query.len);
+        // Convert header name to string
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
+        defer header_name_slice.deinit();
+
+        // Get header value from picohttp headers (case-insensitive lookup)
+        if (pico_headers.get(header_name_slice.slice())) |header_value| {
+            // Build attribute key: "http.response.header.{name}"
+            var attr_key_buf: [256]u8 = undefined;
+            const attr_key = std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
+
+            // Add to attributes
+            attrs.set(attr_key, ZigString.init(header_value).toJS(globalObject));
+        }
+    }
 }
 
 // ============================================================================
 // High-level helpers for minimal fetch.zig integration
 // ============================================================================
-
-const http = @import("../http.zig");
-const Method = http.Method;
 
 /// Notify telemetry of fetch operation start. Returns request_id if telemetry enabled, null otherwise.
 /// Call from fetch.zig queue() function - single-line integration point.
@@ -244,14 +290,13 @@ pub fn notifyFetchStart(
     globalObject: *JSGlobalObject,
     method: Method,
     url: []const u8,
-    headers: ?JSValue,
-    request_headers: *http.Headers, // NEW: mutable headers for injection
+    request_headers: *http.Headers, // Mutable headers for injection and capture
 ) ?u64 {
     if (telemetry.getGlobalTelemetry()) |telemetry_instance| {
         if (telemetry_instance.isEnabledFor(.fetch)) {
             const request_id = telemetry_instance.generateRequestId();
             const method_str = @tagName(method);
-            var start_attrs = buildFetchStartAttributes(globalObject, request_id, method_str, url, headers);
+            var start_attrs = buildFetchStartAttributes(globalObject, request_id, method_str, url, request_headers);
             telemetry_instance.notifyOperationStart(.fetch, request_id, start_attrs.toJS());
 
             // Inject propagation headers (e.g., traceparent, tracestate)
@@ -335,9 +380,8 @@ pub fn notifyFetchEnd(
 ) void {
     if (request_id == 0) return;
     if (telemetry.getGlobalTelemetry()) |telemetry_instance| {
-        const status_code: u16 = if (metadata) |m| @truncate(m.response.status_code) else 200;
         const content_length: u64 = if (body) |b| b.list.items.len else 0;
-        var end_attrs = buildFetchEndAttributes(globalObject, start_time_ns, status_code, content_length, null);
+        var end_attrs = buildFetchEndAttributes(globalObject, start_time_ns, metadata, content_length);
         telemetry_instance.notifyOperationEnd(.fetch, request_id, end_attrs.toJS());
     }
 }

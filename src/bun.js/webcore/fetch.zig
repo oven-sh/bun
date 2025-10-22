@@ -858,7 +858,7 @@ pub const FetchTasklet = struct {
         };
 
         // OpenTelemetry: Notify operation error
-        bun.telemetry_fetch.notifyFetchError(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.fail, fetch_error.message, this.result.metadata);
+        bun.telemetry.fetch.notifyFetchError(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.fail, fetch_error.message, this.result.metadata);
         this.telemetry_request_id = 0;
 
         return .{ .SystemError = fetch_error };
@@ -1044,7 +1044,7 @@ pub const FetchTasklet = struct {
         this.native_response = response.ref();
 
         // OpenTelemetry: Notify operation end
-        bun.telemetry_fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.metadata, this.result.body);
+        bun.telemetry.fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.metadata, this.result.body);
         this.telemetry_request_id = 0;
 
         return response_js;
@@ -1328,7 +1328,7 @@ pub const FetchTasklet = struct {
         // MUST happen before get() so headers are included in AsyncHTTP.init()
         var telemetry_request_id: u64 = 0;
         var telemetry_start_time_ns: u64 = 0;
-        if (bun.telemetry_fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, null, @constCast(&fetch_options.headers))) |request_id| {
+        if (bun.telemetry.fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, @constCast(&fetch_options.headers))) |request_id| {
             telemetry_request_id = request_id;
             telemetry_start_time_ns = @intCast(std.time.nanoTimestamp());
         }

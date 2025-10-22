@@ -14,11 +14,12 @@
   "types": "./index.ts",
   "exports": {
     ".": "./index.ts",
-    "./instrumentations": "./instruments/index.ts",
-    "./logging": "./instruments/logging/index.ts"
+    "./instrumentations": "./src/instruments/index.ts",
+    "./logging": "./src/instruments/logging/index.ts"
   },
   "files": [
     "*.ts",
+    "src/**/*.ts",
     "instruments/**/*.ts",
     "context/**/*.ts",
     "README.md",
@@ -26,7 +27,8 @@
   ],
   "scripts": {
     "test": "bun test",
-    "format": "prettier --write \"**/*.ts\""
+    "format": "prettier --write \"**/*.ts\"",
+    "generate:semconv": "bun run scripts/generate_semconv.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

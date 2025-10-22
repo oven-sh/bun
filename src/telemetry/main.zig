@@ -6,9 +6,15 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
 const ZigString = jsc.ZigString;
 
-const telemetry_config = @import("./telemetry_config.zig");
+const telemetry_config = @import("config.zig");
 pub const ConfigurationProperty = telemetry_config.ConfigurationProperty;
 const TelemetryConfig = telemetry_config.TelemetryConfig;
+
+/// HTTP server telemetry support
+pub const http = @import("http.zig");
+
+/// Fetch client telemetry support
+pub const fetch = @import("fetch.zig");
 
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
 /// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
@@ -82,26 +88,53 @@ pub const InstrumentRecord = struct {
             return error.NoHooksProvided;
         }
 
-        // Parse injectHeaders configuration if present
+        // Parse injectHeaders and captureAttributes configuration if present
         var instrument_config: ?TelemetryConfig = null;
+
         const inject_headers = try instrument_obj.get(globalObject, "injectHeaders") orelse .js_undefined;
-        if (inject_headers.isObject()) {
+        const capture_attrs = try instrument_obj.get(globalObject, "captureAttributes") orelse .js_undefined;
+
+        if (inject_headers.isObject() or capture_attrs.isObject()) {
             // Create a minimal TelemetryConfig just for this instrument's headers
             var config = try TelemetryConfig.init(allocator, globalObject);
             errdefer config.deinit();
 
-            // Parse request headers (for fetch client)
-            const request_headers = try inject_headers.get(globalObject, "request") orelse .js_undefined;
-            if (request_headers.isArray()) {
-                // TelemetryConfig.set() will protect the JSValue
-                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request), request_headers);
+            // Parse injectHeaders
+            if (inject_headers.isObject()) {
+                // Parse request headers (for fetch client)
+                const request_headers = try inject_headers.get(globalObject, "request") orelse .js_undefined;
+                if (request_headers.isArray()) {
+                    try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request), request_headers);
+                }
+
+                // Parse response headers (for HTTP server)
+                const response_headers = try inject_headers.get(globalObject, "response") orelse .js_undefined;
+                if (response_headers.isArray()) {
+                    try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_server_response), response_headers);
+                }
             }
 
-            // Parse response headers (for HTTP server)
-            const response_headers = try inject_headers.get(globalObject, "response") orelse .js_undefined;
-            if (response_headers.isArray()) {
-                // TelemetryConfig.set() will protect the JSValue
-                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_server_response), response_headers);
+            // Parse captureAttributes
+            if (capture_attrs.isObject()) {
+                // Parse request headers (applies to both fetch and HTTP)
+                const request_headers = try capture_attrs.get(globalObject, "requestHeaders") orelse .js_undefined;
+                if (request_headers.isArray()) {
+                    if (kind == .fetch) {
+                        try config.set(@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request), request_headers);
+                    } else if (kind == .http) {
+                        try config.set(@intFromEnum(ConfigurationProperty.http_capture_headers_server_request), request_headers);
+                    }
+                }
+
+                // Parse response headers
+                const response_headers = try capture_attrs.get(globalObject, "responseHeaders") orelse .js_undefined;
+                if (response_headers.isArray()) {
+                    if (kind == .fetch) {
+                        try config.set(@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response), response_headers);
+                    } else if (kind == .http) {
+                        try config.set(@intFromEnum(ConfigurationProperty.http_capture_headers_server_response), response_headers);
+                    }
+                }
             }
 
             instrument_config = config;

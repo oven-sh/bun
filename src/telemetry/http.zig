@@ -4,9 +4,11 @@ const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
-const telemetry = @import("telemetry.zig");
+const telemetry = @import("main.zig");
 const AttributeMap = telemetry.AttributeMap;
 const AttributeKey = telemetry.AttributeKey;
+const traceparent = @import("traceparent.zig");
+const simple_url_parser = @import("simple_url_parser.zig");
 
 /// Context for tracking HTTP request telemetry state
 pub const HttpTelemetryContext = struct {
@@ -62,24 +64,32 @@ pub fn buildHttpStartAttributes(
     // URL components
     attrs.set("url.full", ZigString.init(url).toJS(globalObject));
 
-    // Parse URL to extract components
-    if (parseURL(url)) |url_parts| {
-        if (url_parts.path.len > 0) {
-            attrs.fastSet(.url_path, ZigString.init(url_parts.path).toJS(globalObject));
-        }
-        if (url_parts.query.len > 0) {
-            attrs.fastSet(.url_query, ZigString.init(url_parts.query).toJS(globalObject));
-        }
-        attrs.set("url.scheme", ZigString.init(url_parts.scheme).toJS(globalObject));
-        attrs.fastSet(.server_address, ZigString.init(url_parts.host).toJS(globalObject));
-        if (url_parts.port) |port| {
-            attrs.fastSet(.server_port, JSValue.jsNumber(@as(f64, @floatFromInt(port))));
-        }
+    // Parse URL (handles both full URLs and path-only from HTTP server)
+    const parsed = simple_url_parser.parseURL(url);
+    if (parsed.path.len > 0) {
+        attrs.fastSet(.url_path, ZigString.init(parsed.path).toJS(globalObject));
+    }
+    if (parsed.query.len > 0) {
+        attrs.fastSet(.url_query, ZigString.init(parsed.query).toJS(globalObject));
+    }
+    if (parsed.scheme.len > 0) {
+        attrs.set("url.scheme", ZigString.init(parsed.scheme).toJS(globalObject));
+    }
+    if (parsed.host.len > 0) {
+        attrs.fastSet(.server_address, ZigString.init(parsed.host).toJS(globalObject));
+    }
+    if (parsed.port) |port| {
+        attrs.fastSet(.server_port, JSValue.jsNumber(@as(f64, @floatFromInt(port))));
     }
 
-    // Request headers (if provided)
-    // TODO: Implement header iteration when JSValue API is available
-    _ = headers; // Suppress unused variable warning
+    // Request headers capture and traceparent extraction
+    if (headers) |headers_jsvalue| {
+        // Capture configured request headers
+        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_request, true);
+
+        // Extract traceparent header for distributed tracing
+        extractTraceparent(&attrs, headers_jsvalue, globalObject);
+    }
 
     return attrs;
 }
@@ -113,9 +123,10 @@ pub fn buildHttpEndAttributes(
     const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
     attrs.set("operation.duration", JSValue.jsNumber(@as(f64, @floatFromInt(duration_ns))));
 
-    // Response headers (if provided and configured)
-    // TODO: Implement header iteration when JSValue API is available
-    _ = headers; // Suppress unused variable warning
+    // Response headers capture
+    if (headers) |headers_jsvalue| {
+        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_response, false);
+    }
 
     return attrs;
 }
@@ -161,89 +172,98 @@ pub fn buildHttpErrorAttributes(
     return attrs;
 }
 
-/// Parse a URL string into components
-/// Simple parser for extracting scheme, host, port, path, query
-fn parseURL(url: []const u8) ?URLParts {
-    // Look for scheme
-    var scheme: []const u8 = "http";
-    var remainder = url;
+// ============================================================================
+// Header Capture and Traceparent Extraction Helpers
+// ============================================================================
 
-    if (std.mem.indexOf(u8, url, "://")) |scheme_end| {
-        scheme = url[0..scheme_end];
-        remainder = url[scheme_end + 3 ..];
+/// Capture configured headers from JSValue (FetchHeaders object) and add to attributes map
+/// @param is_request - true for request headers ("http.request.header.*"), false for response ("http.response.header.*")
+fn captureJSValueHeaders(
+    attrs: *AttributeMap,
+    headers_jsvalue: JSValue,
+    globalObject: *JSGlobalObject,
+    comptime config_property: telemetry.ConfigurationProperty,
+    comptime is_request: bool,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+
+    // Get configured header names from telemetry config
+    const config_property_id = @intFromEnum(config_property);
+    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
+    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+
+    const header_names_len = header_names_js.getLength(globalObject) catch return;
+    if (header_names_len == 0) return;
+
+    // FetchHeaders has a .get(name) method we can call
+    const get_method = headers_jsvalue.get(globalObject, "get") catch return;
+    if (get_method == null or !get_method.?.isCallable()) return;
+
+    // Iterate through configured header names
+    var i: u32 = 0;
+    while (i < header_names_len) : (i += 1) {
+        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
+        if (!header_name_js.isString()) continue;
+
+        // Call headers.get(headerName)
+        const args = [_]JSValue{header_name_js};
+        const header_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch continue;
+
+        if (header_value_js.isNull() or header_value_js.isUndefined()) continue;
+        if (!header_value_js.isString()) continue;
+
+        // Convert header name to string
+        var header_name_zig: ZigString = ZigString.Empty;
+        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
+        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
+        defer header_name_slice.deinit();
+
+        // Build attribute key
+        var attr_key_buf: [256]u8 = undefined;
+        const attr_key = if (is_request)
+            std.fmt.bufPrint(&attr_key_buf, "http.request.header.{s}", .{header_name_slice.slice()}) catch continue
+        else
+            std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
+
+        // Add to attributes
+        attrs.set(attr_key, header_value_js);
     }
-
-    // Find the start of the path (first /)
-    const path_start = std.mem.indexOf(u8, remainder, "/") orelse remainder.len;
-    const host_and_port = remainder[0..path_start];
-    const path_and_query = if (path_start < remainder.len) remainder[path_start..] else "/";
-
-    // Parse host and port
-    var host = host_and_port;
-    var port: ?u16 = null;
-
-    if (std.mem.lastIndexOf(u8, host_and_port, ":")) |port_colon| {
-        host = host_and_port[0..port_colon];
-        const port_str = host_and_port[port_colon + 1 ..];
-        port = std.fmt.parseInt(u16, port_str, 10) catch null;
-    }
-
-    // Set default port if not specified
-    if (port == null) {
-        if (std.mem.eql(u8, scheme, "https")) {
-            port = 443;
-        } else {
-            port = 80;
-        }
-    }
-
-    // Parse path and query
-    var path = path_and_query;
-    var query: []const u8 = "";
-
-    if (std.mem.indexOf(u8, path_and_query, "?")) |query_start| {
-        path = path_and_query[0..query_start];
-        query = path_and_query[query_start + 1 ..];
-    }
-
-    return URLParts{
-        .scheme = scheme,
-        .host = host,
-        .port = port,
-        .path = path,
-        .query = query,
-    };
 }
 
-const URLParts = struct {
-    scheme: []const u8,
-    host: []const u8,
-    port: ?u16,
-    path: []const u8,
-    query: []const u8,
-};
+/// Extract traceparent header and parse W3C Trace Context into attributes
+/// Sets attributes: trace.parent.trace_id, trace.parent.span_id, trace.parent.trace_flags
+///
+/// Uses the W3C spec-compliant parser from ../telemetry/traceparent.zig
+fn extractTraceparent(
+    attrs: *AttributeMap,
+    headers_jsvalue: JSValue,
+    globalObject: *JSGlobalObject,
+) void {
+    // Get the headers.get method
+    const get_method = headers_jsvalue.get(globalObject, "get") catch return;
+    if (get_method == null or !get_method.?.isCallable()) return;
 
-// Test helpers (for native tests in test/js/bun/telemetry/)
-test "parseURL basic" {
-    const url1 = "http://localhost:3000/api/users?limit=10";
-    const parts1 = parseURL(url1).?;
+    // Call headers.get("traceparent")
+    const traceparent_key = ZigString.init("traceparent").toJS(globalObject);
+    const args = [_]JSValue{traceparent_key};
+    const traceparent_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch return;
 
-    try std.testing.expectEqualStrings("http", parts1.scheme);
-    try std.testing.expectEqualStrings("localhost", parts1.host);
-    try std.testing.expectEqual(@as(u16, 3000), parts1.port.?);
-    try std.testing.expectEqualStrings("/api/users", parts1.path);
-    try std.testing.expectEqualStrings("limit=10", parts1.query);
-}
+    if (traceparent_value_js.isNull() or traceparent_value_js.isUndefined()) return;
+    if (!traceparent_value_js.isString()) return;
 
-test "parseURL no query" {
-    const url = "https://example.com/path";
-    const parts = parseURL(url).?;
+    // Convert to Zig string
+    var traceparent_zig: ZigString = ZigString.Empty;
+    traceparent_value_js.toZigString(&traceparent_zig, globalObject) catch return;
+    const traceparent_slice = traceparent_zig.toSlice(bun.default_allocator);
+    defer traceparent_slice.deinit();
 
-    try std.testing.expectEqualStrings("https", parts.scheme);
-    try std.testing.expectEqualStrings("example.com", parts.host);
-    try std.testing.expectEqual(@as(u16, 443), parts.port.?);
-    try std.testing.expectEqualStrings("/path", parts.path);
-    try std.testing.expectEqual(@as(usize, 0), parts.query.len);
+    // Parse using W3C spec-compliant parser
+    const ctx = traceparent.TraceContext.parse(traceparent_slice.slice()) orelse return;
+
+    // Set attributes for distributed tracing
+    attrs.set("trace.parent.trace_id", ZigString.init(&ctx.trace_id).toJS(globalObject));
+    attrs.set("trace.parent.span_id", ZigString.init(&ctx.span_id).toJS(globalObject));
+    attrs.set("trace.parent.trace_flags", JSValue.jsNumber(@as(f64, @floatFromInt(ctx.trace_flags))));
 }
 
 // ============================================================================

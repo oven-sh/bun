@@ -94,9 +94,9 @@ pub const ImportInfo = struct {
 ///
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
-pub const Printer = blk: {
-    break :blk struct {
-        const Writer = *std.Io.Writer;
+pub fn Printer(comptime Writer: type) type {
+    comptime if (Writer != *std.Io.Writer) @compileError("Writer must be a *std.Io.Writer");
+    return struct {
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
         dest: Writer,
@@ -159,10 +159,9 @@ pub const Printer = blk: {
         }
 
         inline fn getWrittenAmt(writer: Writer) usize {
-            return switch (Writer) {
-                ArrayList(u8).Writer => writer.context.self.items.len,
-                *bun.js_printer.BufferWriter => writer.written.len,
-                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
+            return switch (writer.vtable) {
+                std.Io.Writer.Allocating.vtable => return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len,
+                else => @panic("css: got bad writer type"),
             };
         }
 
@@ -574,7 +573,7 @@ pub const Printer = blk: {
             }
         }
     };
-};
+}
 
 const bun = @import("bun");
 const sourcemap = @import("./sourcemap.zig");

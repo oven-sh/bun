@@ -13,14 +13,11 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-const Channel = @import("../../queue/channel.zig").Channel;
 const Job = @import("../../queue/job.zig").Job;
 const JobOptions = @import("../../queue/job.zig").JobOptions;
 const JobStatus = @import("../../queue/job.zig").JobStatus;
 const QueueImpl = @import("../../queue/queue.zig").Queue;
 const QueueSettings = @import("../../queue/queue.zig").QueueSettings;
-const WorkerPool = @import("../../queue/worker_pool.zig").WorkerPool;
-const JobResult = @import("../../queue/worker_pool.zig").JobResult;
 
 const Queue = @This();
 
@@ -86,72 +83,73 @@ pub fn constructor(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSErr
     var args = ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
-    const name_arg = args.nextEat() orelse {
-        return globalThis.throw("Queue constructor requires a name as the first argument", .{});
+    const first_arg = args.nextEat() orelse {
+        return globalThis.throw("Queue constructor requires at least a namespace", .{});
     };
 
-    if (!name_arg.isString()) {
-        return globalThis.throw("Queue name must be a string", .{});
-    }
-
-    const name_slice = try name_arg.toSlice(globalThis, bun.default_allocator);
-    defer name_slice.deinit();
-    const name = name_slice.slice();
-
     var settings = QueueSettings{};
-    if (args.nextEat()) |options_arg| {
-        if (!options_arg.isUndefinedOrNull()) {
-            if (!options_arg.isObject()) {
+    var namespace_provided = false;
+    var options_arg: JSValue = .zero;
+
+    if (first_arg.isString()) {
+        const ns_slice = try first_arg.toSlice(globalThis, bun.default_allocator);
+        defer ns_slice.deinit();
+        settings.namespace = try bun.default_allocator.dupe(u8, ns_slice.slice());
+        namespace_provided = true;
+
+        // Check for second argument (options)
+        if (args.nextEat()) |second| {
+            if (!second.isObject()) {
                 return globalThis.throw("Queue options must be an object", .{});
             }
-
-            if (try options_arg.getTruthy(globalThis, "concurrency")) |concurrency_val| {
-                if (!concurrency_val.isNumber()) {
-                    return globalThis.throw("Concurrency option must be a number", .{});
-                }
-                const concurrency_num = concurrency_val.asNumber();
-                if (concurrency_num < 1 or concurrency_num > 100) {
-                    return globalThis.throw("Concurrency must be between 1 and 100", .{});
-                }
-                settings.concurrency = @intFromFloat(concurrency_num);
+            options_arg = second;
+        }
+    } else if (first_arg.isObject()) {
+        // First argument is options object
+        options_arg = first_arg;
+        if (try first_arg.getTruthy(globalThis, "namespace")) |ns_val| {
+            if (ns_val.isString()) {
+                const ns_slice = try ns_val.toSlice(globalThis, bun.default_allocator);
+                defer ns_slice.deinit();
+                settings.namespace = try bun.default_allocator.dupe(u8, ns_slice.slice());
+                namespace_provided = true;
             }
+        }
+    } else {
+        return globalThis.throw("First argument must be a namespace string or options object", .{});
+    }
 
-            if (try options_arg.getTruthy(globalThis, "isWorker")) |worker_val| {
-                if (worker_val.isBoolean()) {
-                    settings.is_worker = worker_val.asBoolean();
-                }
-            }
+    if (!namespace_provided) {
+        return globalThis.throw("Queue constructor requires a namespace", .{});
+    }
 
-            if (try options_arg.getTruthy(globalThis, "activateDelayedJobs")) |delayed_val| {
-                if (delayed_val.isBoolean()) {
-                    settings.activate_delayed_jobs = delayed_val.asBoolean();
-                }
-            }
+    // Process options if provided
+    if (!options_arg.isEmptyOrUndefinedOrNull()) {
+        if (try options_arg.getTruthy(globalThis, "redis")) |redis_val| {
+            settings.redis = redis_val.asEncoded().asPtr;
+        }
 
-            if (try options_arg.getTruthy(globalThis, "stallInterval")) |stall_val| {
-                if (stall_val.isNumber()) {
-                    const stall_num = stall_val.asNumber();
-                    if (stall_num > 0) {
-                        settings.stall_interval = @intFromFloat(stall_num);
-                    }
-                }
+        if (try options_arg.getTruthy(globalThis, "namespace")) |ns_val| {
+            if (ns_val.isString()) {
+                const ns_slice = try ns_val.toSlice(globalThis, bun.default_allocator);
+                defer ns_slice.deinit();
+                settings.namespace = try bun.default_allocator.dupe(u8, ns_slice.slice());
             }
+        }
 
-            if (try options_arg.getTruthy(globalThis, "removeOnSuccess")) |remove_val| {
-                if (remove_val.isBoolean()) {
-                    settings.remove_on_success = remove_val.asBoolean();
-                }
+        if (try options_arg.getTruthy(globalThis, "concurrency")) |concurrency_val| {
+            if (!concurrency_val.isNumber()) {
+                return globalThis.throw("Concurrency option must be a number", .{});
             }
-
-            if (try options_arg.getTruthy(globalThis, "removeOnFailure")) |remove_val| {
-                if (remove_val.isBoolean()) {
-                    settings.remove_on_failure = remove_val.asBoolean();
-                }
+            const concurrency_num = concurrency_val.asNumber();
+            if (concurrency_num < 1 or concurrency_num > 100) {
+                return globalThis.throw("Concurrency must be between 1 and 100", .{});
             }
+            settings.concurrency = @intFromFloat(concurrency_num);
         }
     }
 
-    var queue = QueueImpl.init(bun.default_allocator, name, settings) catch {
+    var queue = QueueImpl.init(bun.default_allocator, settings) catch {
         return globalThis.throw("Failed to create queue", .{});
     };
 
@@ -205,7 +203,7 @@ pub fn hasPendingActivity(this: *Self) callconv(.C) bool {
 }
 
 pub fn add(this: *Self, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments_old(2).slice();
     var args = ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
@@ -233,88 +231,22 @@ pub fn add(this: *Self, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.
 
     const data = json_str.byteSlice();
 
-    var job_options: ?JobOptions = null;
-    if (args.nextEat()) |options_arg| {
-        if (!options_arg.isUndefinedOrNull() and options_arg.isObject()) {
-            var options = JobOptions.init(bun.default_allocator);
-            job_options = options;
+    // use name as group_id for now, default order_ms to current time, max_attempts to 3
+    const current_time = std.time.milliTimestamp();
 
-            if (try options_arg.getTruthy(globalThis, "retries")) |retries_val| {
-                if (retries_val.isNumber()) {
-                    const retries_num = retries_val.asNumber();
-                    if (retries_num >= 0) {
-                        options.retries = @intFromFloat(retries_num);
-                    }
-                }
-            }
-
-            if (try options_arg.getTruthy(globalThis, "delay")) |delay_val| {
-                if (delay_val.isNumber()) {
-                    const delay_num = delay_val.asNumber();
-                    if (delay_num > 0) {
-                        options.delay = @intFromFloat(delay_num);
-                    }
-                }
-            }
-
-            if (try options_arg.getTruthy(globalThis, "timeout")) |timeout_val| {
-                if (timeout_val.isNumber()) {
-                    const timeout_num = timeout_val.asNumber();
-                    if (timeout_num > 0) {
-                        options.timeout = @intFromFloat(timeout_num);
-                    }
-                }
-            }
-        }
-    }
-    defer if (job_options) |*opts| opts.deinit(bun.default_allocator);
-
-    const job_id = this.queue.add(name, data, job_options) catch {
+    const job_id = this.queue.add(.{
+        .group_id = name,
+        .data = data,
+        .order_ms = current_time,
+        .max_attempts = 3,
+    }) catch {
         return globalThis.throw("Failed to add job to queue", .{});
     };
 
-    const promise = JSValue.createInternalPromise(globalThis);
-    const promise_ptr = promise.asPromise() orelse {
-        return globalThis.throw("Failed to create promise", .{});
-    };
-
-    this.job_promises.put(job_id, promise_ptr) catch {
-        return globalThis.throw("Failed to store job promise", .{});
-    };
-
-    if (!this.worker_callback.isEmptyOrUndefinedOrNull()) {
-        const job = this.queue.getJob(job_id) orelse {
-            return globalThis.throw("Job not found after adding", .{});
-        };
-
-        const job_js = this.jobToJS(globalThis, job) catch {
-            promise_ptr.reject(globalThis, .zero);
-            return promise;
-        };
-
-        const result = this.worker_callback.call(globalThis, .zero, &.{job_js}) catch |err| {
-            const error_value = switch (err) {
-                error.JSError => globalThis.takeException(err),
-                else => bun.String.static("Job processing failed").toJS(globalThis),
-            };
-            promise_ptr.reject(globalThis, error_value);
-            // TODO: emit event asynchronously to avoid deadlock
-            // this.queue.emitEvent("job failed", job_id, error_name);
-            return promise;
-        };
-
-        promise_ptr.resolve(globalThis, result);
-        // TODO: Emit event asynchronously to avoid deadlock
-        // this.queue.emitEvent("job completed", job_id, null);
-    } else {
-        // No processor, resolve immediately with job ID
-        promise_ptr.resolve(globalThis, JSValue.jsNumber(job_id));
-    }
-
-    return promise;
+    return JSValue.jsNumber(job_id);
 }
 
-pub fn process(this: *Self, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+pub fn worker(this: *Self, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
     var args = ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
@@ -324,7 +256,7 @@ pub fn process(this: *Self, globalThis: *JSGlobalObject, callframe: *CallFrame) 
     };
 
     if (!callback_arg.isCallable()) {
-        return globalThis.throw("Worker callback must be a function", .{});
+        return globalThis.throw("worker() callback must be a function", .{});
     }
 
     var concurrency: ?u32 = null;
@@ -559,21 +491,20 @@ fn stopWorker(this: *Self) void {
 }
 
 fn jobToJS(_: *Self, globalThis: *JSGlobalObject, job: *Job) !JSValue {
-    const job_obj = jsc.JSValue.createEmptyObject(globalThis, 6);
+    const job_obj = jsc.JSValue.createEmptyObject(globalThis, 7);
 
     if (job.id) |id| {
         job_obj.put(globalThis, "id", jsc.JSValue.jsNumber(id));
     }
 
-    const name_str = bun.String.init(job.name);
-    job_obj.put(globalThis, "name", name_str.toJS(globalThis));
+    if (job.group_id) |gid| {
+        const gid_str = bun.String.init(gid);
+        job_obj.put(globalThis, "groupId", gid_str.toJS(globalThis));
+    }
 
     var data_str = bun.String.init(job.data);
     const data_js = data_str.toJSByParseJSON(globalThis) catch .js_undefined;
     job_obj.put(globalThis, "data", data_js);
-
-    const status_str = bun.String.init(job.status.toString());
-    job_obj.put(globalThis, "status", status_str.toJS(globalThis));
 
     job_obj.put(globalThis, "progress", jsc.JSValue.jsNumber(job.progress));
 
@@ -615,9 +546,19 @@ fn workerFunction(job: *Job, ctx: ?*anyopaque) anyerror!void {
         return error.NoWorkerCallback;
     }
 
-    const worker_task = WorkerTask.create(self, job);
+    const global = self.global;
+    const job_js = self.jobToJS(global, job) catch {
+        return;
+    };
 
-    self.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(&worker_task.task)));
+    const done_fn = jsc.JSFunction.create(global, "done", jobDoneCallback, 0, .{
+        .implementation_visibility = .public,
+        .intrinsic = .none,
+        .constructor = null,
+    });
+    job_js.put(global, "done", done_fn);
+
+    _ = self.worker_callback.call(global, global.toJSValue(), &.{job_js}) catch {};
 }
 
 fn jobDoneCallback(global: *JSGlobalObject, callframe: *CallFrame) !JSValue {

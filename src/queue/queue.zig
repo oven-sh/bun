@@ -22,20 +22,13 @@ pub const QueueError = error{
 };
 
 pub const QueueSettings = struct {
-    stall_interval: u64 = 30000,
-    max_stalled_count: u32 = 3,
-    near_term_window: u64 = 1200000,
-    delayed_debounce: u64 = 1000,
-    activate_delayed_jobs: bool = true,
-    get_events: bool = true,
-    send_events: bool = true,
-    store_jobs: bool = true,
+    redis: ?*anyopaque = null, // *RedisClient
+    namespace: []const u8 = "bq",
+    concurrency: u32 = 1,
+    is_worker: bool = false,
     remove_on_success: bool = false,
     remove_on_failure: bool = false,
-    is_worker: bool = false,
-    ensure_scripts: bool = true,
-    concurrency: u32 = 1,
-    redis_scan_count: u32 = 100,
+    stall_interval: u64 = 5000,
 };
 
 pub const QueueStats = struct {
@@ -55,16 +48,15 @@ pub const EventCallback = *const fn (event_type: []const u8, job_id: u64, data: 
 pub const WorkerFunction = *const fn (job: *Job, ctx: ?*anyopaque) anyerror!void;
 
 pub const Queue = struct {
-    name: []const u8,
     settings: QueueSettings,
     allocator: Allocator,
 
     jobs: JobMap,
-    active_jobs: ActiveJobSet,
     waiting_jobs: ArrayList(u64),
+    delayed_jobs: ArrayList(DelayedJob),
+    active_jobs: ActiveJobSet,
     failed_jobs: ArrayList(u64),
     completed_jobs: ArrayList(u64),
-    delayed_jobs: ArrayList(DelayedJob),
     stalled_jobs: ArrayList(u64),
 
     mutex: Mutex,
@@ -73,17 +65,15 @@ pub const Queue = struct {
     next_job_id: Atomic(u64),
     is_closed: Atomic(bool),
     is_paused: Atomic(bool),
-    is_ready: Atomic(bool),
 
-    worker_function: ?WorkerFunction,
-    worker_context: ?*anyopaque,
-    worker_threads: ArrayList(std.Thread),
+    worker_function: ?WorkerFunction = null,
+    worker_context: ?*anyopaque = null,
     running_workers: Atomic(u32),
 
-    delayed_timer: ?EagerTimer,
+    event_callback: ?EventCallback = null,
+    event_context: ?*anyopaque = null,
 
-    event_callback: ?EventCallback,
-    event_context: ?*anyopaque,
+    delayed_timer: ?*EagerTimer = null,
 
     const Self = @This();
 
@@ -92,44 +82,24 @@ pub const Queue = struct {
         execute_at: i64,
     };
 
-    pub fn init(allocator: Allocator, name: []const u8, settings: QueueSettings) !Self {
-        var queue = Self{
-            .name = try allocator.dupe(u8, name),
+    pub fn init(allocator: Allocator, settings: QueueSettings) !Self {
+        const queue = Self{
             .settings = settings,
             .allocator = allocator,
             .jobs = JobMap.init(allocator),
+            .waiting_jobs = ArrayList(u64).init(allocator),
+            .delayed_jobs = ArrayList(DelayedJob).init(allocator),
             .active_jobs = ActiveJobSet.init(allocator),
-            .waiting_jobs = undefined,
-            .failed_jobs = undefined,
-            .completed_jobs = undefined,
-            .delayed_jobs = undefined,
-            .stalled_jobs = undefined,
+            .failed_jobs = ArrayList(u64).init(allocator),
+            .completed_jobs = ArrayList(u64).init(allocator),
+            .stalled_jobs = ArrayList(u64).init(allocator),
             .mutex = Mutex{},
             .condition = Condition{},
             .next_job_id = Atomic(u64).init(1),
             .is_closed = Atomic(bool).init(false),
             .is_paused = Atomic(bool).init(false),
-            .is_ready = Atomic(bool).init(false),
-            .worker_function = null,
-            .worker_context = null,
-            .worker_threads = undefined,
             .running_workers = Atomic(u32).init(0),
-            .delayed_timer = null,
-            .event_callback = null,
-            .event_context = null,
         };
-
-        queue.waiting_jobs = ArrayList(u64).init(allocator);
-        queue.failed_jobs = ArrayList(u64).init(allocator);
-        queue.completed_jobs = ArrayList(u64).init(allocator);
-        queue.delayed_jobs = ArrayList(DelayedJob).init(allocator);
-        queue.stalled_jobs = ArrayList(u64).init(allocator);
-        queue.worker_threads = ArrayList(std.Thread).init(allocator);
-
-        if (settings.activate_delayed_jobs) {
-            queue.delayed_timer = try EagerTimer.init(allocator, settings.near_term_window);
-            queue.delayed_timer.?.onTrigger(delayedTimerCallback, &queue);
-        }
 
         return queue;
     }
@@ -140,10 +110,6 @@ pub const Queue = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.delayed_timer) |*timer| {
-            timer.deinit();
-        }
-
         var job_iterator = self.jobs.iterator();
         while (job_iterator.next()) |entry| {
             entry.value_ptr.*.deinit();
@@ -151,29 +117,16 @@ pub const Queue = struct {
         }
         self.jobs.deinit();
 
-        self.active_jobs.deinit();
         self.waiting_jobs.deinit();
+        self.delayed_jobs.deinit();
+        self.active_jobs.deinit();
         self.failed_jobs.deinit();
         self.completed_jobs.deinit();
-        self.delayed_jobs.deinit();
         self.stalled_jobs.deinit();
-        self.worker_threads.deinit();
-
-        self.allocator.free(self.name);
     }
 
-    pub fn connect(self: *Self) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (self.is_ready.load(.seq_cst)) return;
-
-        if (self.delayed_timer) |*timer| {
-            try timer.start();
-        }
-
-        self.is_ready.store(true, .seq_cst);
-        self.emitEvent("ready", 0, null);
+    pub fn connect(_: *Self) !void {
+        // Nothing to do for now
     }
 
     pub fn isRunning(self: *Self) bool {
@@ -188,7 +141,7 @@ pub const Queue = struct {
         return job;
     }
 
-    pub fn add(self: *Self, name: []const u8, data: []const u8, options: ?JobOptions) !u64 {
+    pub fn add(self: *Self, job_data: struct { group_id: []const u8, data: []const u8, order_ms: i64, max_attempts: u32 }) !u64 {
         if (self.is_closed.load(.seq_cst)) return QueueError.QueueClosed;
 
         self.mutex.lock();
@@ -198,29 +151,27 @@ pub const Queue = struct {
         const job = try self.allocator.create(Job);
         errdefer self.allocator.destroy(job);
 
-        job.* = try Job.init(self.allocator, name, data, options);
+        var options = JobOptions.init(self.allocator);
+        options.group_id = try self.allocator.dupe(u8, job_data.group_id);
+        options.timestamp = job_data.order_ms;
+        options.retries = job_data.max_attempts;
+
+        job.* = try Job.init(self.allocator, "", job_data.data, options);
         _ = job.setId(job_id);
 
         try self.jobs.put(job_id, job);
 
-        if (job.options.delay) |delay| {
-            job.status = .delayed;
-            try self.delayed_jobs.append(DelayedJob{
-                .job_id = job_id,
-                .execute_at = delay,
-            });
+        job.status = .waiting;
+        try self.waiting_jobs.append(job_id);
 
-            if (self.delayed_timer) |*timer| {
-                timer.schedule(delay);
-            }
-        } else {
-            job.status = .waiting;
-            try self.waiting_jobs.append(job_id);
-
-            self.condition.signal();
+        // If this is a worker queue with a worker function, process the job immediately
+        if (self.settings.is_worker and self.worker_function != null) {
+            job.status = .active;
+            job.markRunning();
+            try self.active_jobs.put(job_id, {});
+            self.worker_function.?(job, self.worker_context) catch {};
         }
 
-        self.emitEvent("job added", job_id, name);
         return job_id;
     }
 
@@ -278,9 +229,9 @@ pub const Queue = struct {
 
         return QueueStats{
             .waiting = @intCast(self.waiting_jobs.items.len),
-            .active = @intCast(self.active_jobs.count()),
-            .completed = @intCast(self.completed_jobs.items.len),
-            .failed = @intCast(self.failed_jobs.items.len),
+            .active = 0,
+            .completed = 0,
+            .failed = 0,
             .delayed = @intCast(self.delayed_jobs.items.len),
             .newest_job = if (self.next_job_id.load(.seq_cst) > 1) self.next_job_id.load(.seq_cst) - 1 else 0,
         };
@@ -350,32 +301,8 @@ pub const Queue = struct {
     }
 
     pub fn close(self: *Self, timeout_ms: u64) !void {
-        if (self.is_closed.load(.seq_cst)) return;
-
-        self.is_paused.store(true, .seq_cst);
+        _ = timeout_ms;
         self.is_closed.store(true, .seq_cst);
-
-        if (self.delayed_timer) |*timer| {
-            timer.stop();
-        }
-
-        self.mutex.lock();
-        self.condition.broadcast();
-        self.mutex.unlock();
-
-        const start_time = std.time.milliTimestamp();
-        while (self.running_workers.load(.seq_cst) > 0) {
-            const elapsed = std.time.milliTimestamp() - start_time;
-            if (elapsed > timeout_ms) break;
-            std.Thread.sleep(10 * std.time.ns_per_ms);
-        }
-
-        for (self.worker_threads.items) |thread| {
-            thread.join();
-        }
-        self.worker_threads.clearRetainingCapacity();
-
-        self.emitEvent("closed", 0, null);
     }
 
     pub fn onEvent(self: *Self, callback: EventCallback, context: ?*anyopaque) void {
@@ -397,6 +324,18 @@ pub const Queue = struct {
             callback(event_type, job_id, data, self.event_context);
         }
     }
+
+    // pub fn getNextJob(self: *Self) ?*Job {
+    //     self.mutex.lock();
+    //     defer self.mutex.unlock();
+
+    //     if (self.waiting_jobs.items.len == 0) return null;
+
+    //     const job_id = self.waiting_jobs.swapRemove(0);
+    //     const job = self.jobs.get(job_id) orelse return null;
+
+    //     return job;
+    // }
 
     fn getNextJob(self: *Self) ?*Job {
         self.mutex.lock();
@@ -556,9 +495,28 @@ pub const Queue = struct {
             }
         }
     }
+};
 
-    fn delayedTimerCallback(ctx: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
-        self.activateDelayedJobs();
+pub const Worker = struct {
+    queue: *Queue,
+    concurrency: u32,
+    handler: *const fn (*Job) anyerror!void,
+
+    pub fn init(queue: *Queue, concurrency: u32, handler: *const fn (*Job) anyerror!void) Worker {
+        return Worker{
+            .queue = queue,
+            .concurrency = concurrency,
+            .handler = handler,
+        };
+    }
+
+    pub fn run(self: *Worker) !void {
+        while (!self.queue.is_closed.load(.seq_cst)) {
+            if (self.queue.getNextJob()) |job| {
+                try self.handler(job);
+            } else {
+                std.Thread.sleep(100 * std.time.ns_per_ms);
+            }
+        }
     }
 };

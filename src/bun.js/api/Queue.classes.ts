@@ -14,9 +14,9 @@ export default [
         fn: "add",
         length: 3,
       },
-      process: {
-        fn: "process",
-        length: 2,
+      worker: {
+        fn: "worker",
+        length: 1,
       },
       getJob: {
         fn: "getJob",

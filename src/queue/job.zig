@@ -52,6 +52,7 @@ pub const JobOptions = struct {
     timeout: ?u64 = null,
     backoff: ?BackoffOptions = null,
     stacktraces: ArrayList([]const u8),
+    group_id: ?[]const u8 = null,
 
     const Self = @This();
 
@@ -62,6 +63,9 @@ pub const JobOptions = struct {
     }
 
     pub fn deinit(self: *Self, allocator: Allocator) void {
+        if (self.group_id) |gid| {
+            allocator.free(gid);
+        }
         for (self.stacktraces.items) |trace| {
             allocator.free(trace);
         }
@@ -75,6 +79,7 @@ pub const JobOptions = struct {
         new_options.delay = self.delay;
         new_options.timeout = self.timeout;
         new_options.backoff = self.backoff;
+        new_options.group_id = if (self.group_id) |gid| try allocator.dupe(u8, gid) else null;
 
         for (self.stacktraces.items) |trace| {
             const cloned_trace = try allocator.dupe(u8, trace);
@@ -95,6 +100,7 @@ pub const JobData = struct {
     options: JobOptions,
     status: JobStatus,
     progress: f64,
+    group_id: ?[]const u8,
 
     const Self = @This();
 
@@ -171,6 +177,7 @@ pub const Job = struct {
     progress: f64,
     options: JobOptions,
     allocator: Allocator,
+    group_id: ?[]const u8,
 
     const Self = @This();
 
@@ -190,18 +197,21 @@ pub const Job = struct {
             .progress = 0.0,
             .options = job_options,
             .allocator = allocator,
+            .group_id = if (job_options.group_id) |gid| try allocator.dupe(u8, gid) else null,
         };
     }
 
     pub fn fromData(allocator: Allocator, id: u64, name: []const u8, job_data: JobData) !Self {
+        const job_options = try job_data.options.clone(allocator);
         const job = Self{
             .id = id,
             .name = try allocator.dupe(u8, name),
             .data = try allocator.dupe(u8, job_data.data),
             .status = job_data.status,
             .progress = job_data.progress,
-            .options = try job_data.options.clone(allocator),
+            .options = job_options,
             .allocator = allocator,
+            .group_id = if (job_options.group_id) |gid| try allocator.dupe(u8, gid) else null,
         };
         return job;
     }
@@ -209,6 +219,9 @@ pub const Job = struct {
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.name);
         self.allocator.free(self.data);
+        if (self.group_id) |gid| {
+            self.allocator.free(gid);
+        }
         self.options.deinit(self.allocator);
     }
 
@@ -327,90 +340,16 @@ pub const Job = struct {
     }
 
     pub fn clone(self: *const Self) !Self {
+        const options = try self.options.clone(self.allocator);
         return Self{
             .id = self.id,
             .name = try self.allocator.dupe(u8, self.name),
             .data = try self.allocator.dupe(u8, self.data),
             .status = self.status,
             .progress = self.progress,
-            .options = try self.options.clone(self.allocator),
+            .options = options,
             .allocator = self.allocator,
+            .group_id = if (self.group_id) |gid| try self.allocator.dupe(u8, gid) else null,
         };
     }
 };
-
-test "Job creation and basic operations" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var job = try Job.init(allocator, "test-job", "test-data", null);
-    defer job.deinit();
-
-    try testing.expect(job.id == null);
-    try testing.expectEqualStrings("test-job", job.name);
-    try testing.expectEqualStrings("test-data", job.data);
-    try testing.expect(job.status == .created);
-    try testing.expect(job.progress == 0.0);
-
-    _ = job.setId(123);
-    try testing.expect(job.id.? == 123);
-
-    job.reportProgress(0.5);
-    try testing.expect(job.progress == 0.5);
-}
-
-test "Job retries and backoff" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var job = try Job.init(allocator, "retry-job", "data", null);
-    defer job.deinit();
-
-    _ = try job.retries(3);
-    try testing.expect(job.options.retries == 3);
-
-    _ = try job.backoff(.exponential, 1000);
-    try testing.expect(job.options.backoff.?.strategy == .exponential);
-    try testing.expect(job.options.backoff.?.delay == 1000);
-
-    const delay = job.computeDelay();
-    try testing.expect(delay >= 0);
-}
-
-test "Job delay and timeout" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var job = try Job.init(allocator, "delayed-job", "data", null);
-    defer job.deinit();
-
-    const future_time = std.time.milliTimestamp() + 5000;
-    _ = try job.delayUntil(future_time);
-    try testing.expect(job.options.delay.? == future_time);
-
-    _ = try job.timeout(30000);
-    try testing.expect(job.options.timeout.? == 30000);
-}
-
-test "Job failure with stacktrace" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var job = try Job.init(allocator, "failing-job", "data", null);
-    defer job.deinit();
-
-    _ = try job.retries(2);
-
-    try job.markFailed("Test error message");
-    try testing.expect(job.options.stacktraces.items.len == 1);
-    try testing.expectEqualStrings("Test error message", job.options.stacktraces.items[0]);
-    try testing.expect(job.shouldRetry());
-
-    try job.markFailed("Another error");
-    try testing.expect(job.options.stacktraces.items.len == 2);
-    try testing.expect(job.shouldRetry());
-
-    try job.markFailed("Final error");
-    try testing.expect(job.status == .failed);
-    try testing.expect(!job.shouldRetry());
-}

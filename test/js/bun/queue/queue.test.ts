@@ -1,230 +1,217 @@
 import { test, expect } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
-test("Bun.Queue constructor", () => {
-  const queue = new Bun.Queue("test-queue");
-  expect(queue).toBeDefined();
-});
-
-test("Bun.Queue constructor with options", () => {
-  const queue = new Bun.Queue("test-queue", {
-    storage: "memory",
-    concurrency: 1,
-  });
-  expect(queue).toBeDefined();
-});
-
-test("Bun.Queue constructor with invalid storage", () => {
-  expect(() => {
-    new Bun.Queue("test-queue", {
-      storage: "sqlite" as any,
-    });
-  }).toThrow("SQLite storage is not yet implemented");
-});
-
-test("Bun.Queue constructor with invalid options", () => {
-  expect(() => {
-    new Bun.Queue("test-queue", "invalid" as any);
-  }).toThrow("Queue options must be an object");
-
-  expect(() => {
-    new Bun.Queue("test-queue", {
-      storage: 123 as any,
-    });
-  }).toThrow("Storage option must be a string");
-
-  expect(() => {
-    new Bun.Queue("test-queue", {
-      concurrency: "invalid" as any,
-    });
-  }).toThrow("Concurrency option must be a number");
-
-  expect(() => {
-    new Bun.Queue("test-queue", {
-      concurrency: 0,
-    });
-  }).toThrow("Concurrency must be between 1 and 100");
-});
-
-test("Bun.Queue add job", async () => {
-  const queue = new Bun.Queue("test-queue");
-  const jobId = await queue.add("test-job", { message: "hello world" });
-  expect(typeof jobId).toBe("number");
-  expect(jobId).toBeGreaterThan(0);
-});
-
-test("Bun.Queue add job with invalid arguments", async () => {
-  const queue = new Bun.Queue("test-queue");
-
-  expect(() => queue.add()).toThrow("add() requires a job name as the first argument");
-  expect(() => queue.add(123 as any)).toThrow("Job name must be a string");
-  expect(() => queue.add("test-job")).toThrow("add() requires job data as the second argument");
-});
-
-test("Bun.Queue worker with invalid callback", () => {
-  const queue = new Bun.Queue("test-queue");
-
-  expect(() => queue.worker()).toThrow("worker() requires a callback function");
-  expect(() => queue.worker("not a function" as any)).toThrow("Worker callback must be a function");
-});
-
-test("Bun.Queue basic job processing", async () => {
-  const queue = new Bun.Queue("test-queue");
-  let processedJob: any = null;
-  let processingComplete = false;
+test("Bun.Queue concurrency control", async () => {
+  const queue = new Bun.Queue("concurrency-queue", { concurrency: 2 });
+  const processingJobs = new Set<number>();
+  const maxConcurrent = { current: 0, max: 0 };
 
   queue.worker(async job => {
-    processedJob = job;
-    processingComplete = true;
+    processingJobs.add(job.id);
+    maxConcurrent.current = processingJobs.size;
+    maxConcurrent.max = Math.max(maxConcurrent.max, processingJobs.size);
+
+    // Simulate async work
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    processingJobs.delete(job.id);
   });
 
-  const jobId = await queue.add("test-job", { message: "hello world" });
-
-  await new Promise<void>(resolve => {
-    const checkProcessing = () => {
-      if (processingComplete) {
-        resolve();
-      } else {
-        setTimeout(checkProcessing, 10);
-      }
-    };
-    checkProcessing();
-  });
-
-  expect(processedJob).toBeDefined();
-  expect(processedJob.id).toBe(jobId);
-  expect(processedJob.name).toBe("test-job");
-  expect(processedJob.data).toEqual({ message: "hello world" });
-  expect(typeof processedJob.done).toBe("function");
-  expect(typeof processedJob.retry).toBe("function");
-});
-
-test("Bun.Queue worker error handling", async () => {
-  const queue = new Bun.Queue("test-queue");
-  let jobCount = 0;
-  let lastJob: any = null;
-
-  queue.worker(async job => {
-    jobCount++;
-    lastJob = job;
-    if (jobCount === 1) {
-      throw new Error("Simulated job failure");
-    }
-  });
-
-  const jobId = await queue.add("failing-job", { attempt: 1 });
-
-  await new Promise<void>(resolve => {
-    const checkRetry = () => {
-      if (jobCount >= 2) {
-        resolve();
-      } else {
-        setTimeout(checkRetry, 20);
-      }
-    };
-    setTimeout(checkRetry, 50);
-  });
-
-  expect(jobCount).toBeGreaterThanOrEqual(2);
-  expect(lastJob.id).toBe(jobId);
-});
-
-test("Bun.Queue multiple jobs in sequence", async () => {
-  const queue = new Bun.Queue("test-queue");
-  const processedJobs: any[] = [];
-
-  queue.worker(async job => {
-    processedJobs.push({
-      id: job.id,
-      name: job.name,
-      data: job.data,
-    });
-  });
-
+  // Add multiple jobs
   const jobIds = [];
-  for (let i = 0; i < 3; i++) {
-    const jobId = await queue.add(`job-${i}`, { index: i });
+  for (let i = 0; i < 5; i++) {
+    const jobId = await queue.add(`concurrent-job-${i}`, { index: i });
     jobIds.push(jobId);
   }
 
+  // Wait for all jobs to complete
   await new Promise<void>(resolve => {
-    const checkProcessing = () => {
-      if (processedJobs.length >= 3) {
+    const checkCompletion = () => {
+      if (processingJobs.size === 0 && maxConcurrent.max >= 2) {
         resolve();
       } else {
-        setTimeout(checkProcessing, 10);
+        setTimeout(checkCompletion, 10);
       }
     };
-    setTimeout(checkProcessing, 50);
+    setTimeout(checkCompletion, 100);
   });
 
-  expect(processedJobs).toHaveLength(3);
-  for (let i = 0; i < 3; i++) {
-    const processed = processedJobs.find(job => job.name === `job-${i}`);
-    expect(processed).toBeDefined();
-    expect(processed.data.index).toBe(i);
-    expect(jobIds).toContain(processed.id);
-  }
+  // Should have processed jobs with concurrency of 2
+  expect(maxConcurrent.max).toBe(2);
+  expect(jobIds).toHaveLength(5);
 });
 
-test("Bun.Queue with async worker", async () => {
-  const queue = new Bun.Queue("async-queue");
-  let processedJob: any = null;
+test("Bun.Queue pause and resume", async () => {
+  const queue = new Bun.Queue("pause-queue");
+  const processedJobs: number[] = [];
 
   queue.worker(async job => {
+    processedJobs.push(job.id);
     await new Promise(resolve => setTimeout(resolve, 10));
-    processedJob = job;
   });
 
-  const jobId = await queue.add("async-job", { async: true });
+  // Add first job
+  const jobId1 = await queue.add("pause-test-1", { order: 1 });
+
+  // Wait a bit then pause
+  await new Promise(resolve => setTimeout(resolve, 5));
+  queue.pause();
+
+  // Add second job while paused
+  const jobId2 = await queue.add("pause-test-2", { order: 2 });
+
+  // Wait to ensure second job isn't processed
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(processedJobs).toContain(jobId1);
+  expect(processedJobs).not.toContain(jobId2);
+
+  // Resume and wait for second job
+  queue.resume();
 
   await new Promise<void>(resolve => {
-    const checkProcessing = () => {
-      if (processedJob) {
+    const checkCompletion = () => {
+      if (processedJobs.includes(jobId2)) {
         resolve();
       } else {
-        setTimeout(checkProcessing, 5);
+        setTimeout(checkCompletion, 10);
       }
     };
-    setTimeout(checkProcessing, 30);
+    setTimeout(checkCompletion, 50);
   });
 
-  expect(processedJob).toBeDefined();
-  expect(processedJob.id).toBe(jobId);
-  expect(processedJob.data.async).toBe(true);
+  expect(processedJobs).toEqual([jobId1, jobId2]);
 });
 
-test("Bun.Queue serialization of complex data", async () => {
-  const queue = new Bun.Queue("data-queue");
-  let processedData: any = null;
+test("Bun.Queue statistics", async () => {
+  const queue = new Bun.Queue("stats-queue");
 
+  // Initially empty
+  let stats = queue.getStats();
+  expect(stats.waiting).toBe(0);
+  expect(stats.active).toBe(0);
+  expect(stats.completed).toBe(0);
+  expect(stats.failed).toBe(0);
+
+  // Add jobs
+  const jobId1 = await queue.add("stats-job-1", { test: true });
+  const jobId2 = await queue.add("stats-job-2", { test: true });
+
+  stats = queue.getStats();
+  expect(stats.waiting).toBe(2);
+
+  // Process jobs with one succeeding, one failing
+  let jobsProcessed = 0;
   queue.worker(async job => {
-    processedData = job.data;
+    jobsProcessed++;
+    if (job.name === "stats-job-1") {
+      // Success
+    } else {
+      throw new Error("Intentional failure");
+    }
   });
 
-  const complexData = {
-    string: "hello",
-    number: 42,
-    boolean: true,
-    null: null,
-    array: [1, 2, 3],
-    nested: {
-      prop: "value",
-    },
-  };
-
-  await queue.add("complex-job", complexData);
-
+  // Wait for processing
   await new Promise<void>(resolve => {
-    const checkProcessing = () => {
-      if (processedData) {
+    const checkStats = () => {
+      stats = queue.getStats();
+      if (jobsProcessed >= 2) {
         resolve();
       } else {
-        setTimeout(checkProcessing, 10);
+        setTimeout(checkStats, 10);
       }
     };
-    setTimeout(checkProcessing, 30);
+    setTimeout(checkStats, 50);
   });
 
-  expect(processedData).toEqual(complexData);
+  stats = queue.getStats();
+  expect(stats.completed).toBe(1);
+  expect(stats.failed).toBe(1);
+  expect(stats.waiting).toBe(0);
+});
+
+test("Bun.Queue event handling", async () => {
+  const queue = new Bun.Queue("event-queue");
+  const events: string[] = [];
+
+  queue.on("job completed", (job, result) => {
+    events.push(`completed:${job.id}`);
+  });
+
+  queue.on("job failed", (job, error) => {
+    events.push(`failed:${job.id}`);
+  });
+
+  queue.worker(async job => {
+    if (job.name === "success-job") {
+      // Success
+    } else {
+      throw new Error("Test failure");
+    }
+  });
+
+  const successJobId = await queue.add("success-job", {});
+  const failJobId = await queue.add("fail-job", {});
+
+  await new Promise<void>(resolve => {
+    const checkEvents = () => {
+      if (events.length >= 2) {
+        resolve();
+      } else {
+        setTimeout(checkEvents, 10);
+      }
+    };
+    setTimeout(checkEvents, 100);
+  });
+
+  expect(events).toContain(`completed:${successJobId}`);
+  expect(events).toContain(`failed:${failJobId}`);
+});
+
+test("Bun.Queue job retrieval methods", async () => {
+  const queue = new Bun.Queue("retrieval-queue");
+
+  // Add jobs
+  const jobId1 = await queue.add("retrieve-job-1", { priority: 1 });
+  const jobId2 = await queue.add("retrieve-job-2", { priority: 2 });
+
+  // Get specific job
+  const job = queue.getJob(jobId1);
+  expect(job).toBeDefined();
+  expect(job.id).toBe(jobId1);
+  expect(job.data.priority).toBe(1);
+
+  // Get non-existent job
+  const nonExistent = queue.getJob(99999);
+  expect(nonExistent).toBeNull();
+
+  // Get jobs by type
+  const waitingJobs = queue.getJobs("waiting", 0, 10);
+  expect(waitingJobs).toHaveLength(2);
+
+  // Remove job
+  queue.removeJob(jobId1);
+  const removedJob = queue.getJob(jobId1);
+  expect(removedJob).toBeNull();
+});
+
+test("Bun.Queue close functionality", async () => {
+  const queue = new Bun.Queue("close-queue");
+
+  queue.worker(async job => {
+    // Worker that takes time
+    await new Promise(resolve => setTimeout(resolve, 100));
+  });
+
+  const jobId = await queue.add("close-test", {});
+
+  // Close with timeout
+  await new Promise<void>(resolve => {
+    queue
+      .close(200)
+      .then(() => resolve())
+      .catch(() => resolve());
+  });
+
+  // Queue should be closed
+  expect(() => queue.add("after-close", {})).toThrow();
 });

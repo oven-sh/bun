@@ -2318,9 +2318,9 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, to_ptr, "to", .{});
 
-    const fromZigStr = try from_ptr.getZigString(globalObject);
-    const toZigStr = try to_ptr.getZigString(globalObject);
-    if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
+    const fromZigStr = try from_ptr.toJSString(globalObject);
+    const toZigStr = try to_ptr.toJSString(globalObject);
+    if (fromZigStr.length() == 0 and toZigStr.length() == 0) return from_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -2772,6 +2772,15 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
     var paths_buf = try allocator.alloc(string, args_len);
     defer allocator.free(paths_buf);
+
+    var slices = try std.ArrayList(jsc.ZigString.Slice).initCapacity(allocator, args_len);
+    defer {
+        for (slices.items) |*slice| {
+            slice.deinit();
+        }
+        slices.deinit();
+    }
+
     var paths_offset: usize = args_len;
     var resolved_root = false;
 
@@ -2785,18 +2794,20 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
         const path = args_ptr[i];
         try validateString(globalObject, path, "paths[{d}]", .{i});
-        const path_str = try path.toBunString(globalObject);
-        defer path_str.deref();
+        const path_str = try path.toJSString(globalObject);
 
         if (path_str.length() == 0) {
             continue;
         }
 
         paths_offset -= 1;
-        paths_buf[paths_offset] = try path_str.toOwnedSlice(allocator);
+        // This lets us avoid joining substring internally when possible.
+        const slice = path_str.toSlice(globalObject, allocator);
+        slices.appendAssumeCapacity(slice);
+        paths_buf[paths_offset] = slice.slice();
 
         if (!isWindows) {
-            if (path_str.charAt(0) == CHAR_FORWARD_SLASH) {
+            if (slice.slice()[0] == CHAR_FORWARD_SLASH) {
                 resolved_root = true;
             }
         }
@@ -2926,14 +2937,13 @@ pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args
     //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    const len = pathZStr.len;
-    if (len == 0) return path_ptr;
+    const path_jsstring = try path_ptr.toJSString(globalObject);
+    if (path_jsstring.length() == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = path_jsstring.toSlice(globalObject, allocator);
     defer pathZSlice.deinit();
     return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }

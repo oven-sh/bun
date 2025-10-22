@@ -48,6 +48,19 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "test");
     }
 
+    pub fn getSuffixFromEnv(this: *const Loader) DotEnvFileSuffix {
+        const bun_env = this.get("BUN_ENV");
+        const node_env = this.get("NODE_ENV");
+        const env_value = bun_env orelse node_env orelse "production";
+
+        if (strings.eqlComptime(env_value, "development")) {
+            return .development;
+        } else if (strings.eqlComptime(env_value, "test")) {
+            return .@"test";
+        }
+        return .production;
+    }
+
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);
@@ -631,6 +644,58 @@ pub const Loader = struct {
             try this.loadEnvFile(dir_handle, ".env", false, value_buffer);
             analytics.Features.dotenv += 1;
         }
+    }
+
+    fn loadDefaultFilesRuntime(
+        this: *Loader,
+        dir: *Fs.FileSystem.DirEntry,
+        suffix: DotEnvFileSuffix,
+        value_buffer: *std.ArrayList(u8),
+    ) !void {
+        _ = dir; // dir is not used
+        const dir_handle: std.fs.Dir = std.fs.cwd();
+
+        // Load files in order of precedence (highest first)
+        switch (suffix) {
+            .development => try this.loadEnvFile(dir_handle, ".env.development.local", false, value_buffer),
+            .production => try this.loadEnvFile(dir_handle, ".env.production.local", false, value_buffer),
+            .@"test" => try this.loadEnvFile(dir_handle, ".env.test.local", false, value_buffer),
+        }
+
+        if (suffix != .@"test") {
+            try this.loadEnvFile(dir_handle, ".env.local", false, value_buffer);
+        }
+
+        switch (suffix) {
+            .development => try this.loadEnvFile(dir_handle, ".env.development", false, value_buffer),
+            .production => try this.loadEnvFile(dir_handle, ".env.production", false, value_buffer),
+            .@"test" => try this.loadEnvFile(dir_handle, ".env.test", false, value_buffer),
+        }
+
+        try this.loadEnvFile(dir_handle, ".env", false, value_buffer);
+    }
+
+    pub fn loadRuntime(
+        this: *Loader,
+        dir: *Fs.FileSystem.DirEntry,
+        env_files: []const []const u8,
+        suffix: DotEnvFileSuffix,
+        skip_default_env: bool,
+    ) !void {
+        const start = std.time.nanoTimestamp();
+
+        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+        var value_buffer = std.ArrayList(u8).init(stack_fallback.get());
+        defer value_buffer.deinit();
+
+        if (env_files.len > 0) {
+            try this.loadExplicitFiles(env_files, &value_buffer);
+        } else {
+            if (!skip_default_env)
+                try this.loadDefaultFilesRuntime(dir, suffix, &value_buffer);
+        }
+
+        if (!this.quiet) this.printLoaded(start);
     }
 
     pub fn printLoaded(this: *Loader, start: i128) void {

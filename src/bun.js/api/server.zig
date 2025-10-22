@@ -1614,6 +1614,37 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.on_clienterror.deinit();
             if (this.app) |app| {
                 this.app = null;
+
+                // Clear routes for all domains to avoid dangling pointers when using SNI
+                if (comptime ssl_enabled) {
+                    // Clear routes for each SNI domain
+                    if (this.config.ssl_config) |*ssl_config| {
+                        if (ssl_config.server_name) |server_name_ptr| {
+                            const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                            if (server_name.len > 0) {
+                                app.domain(server_name);
+                                app.clearRoutes();
+                                app.removeServerName(server_name_ptr);
+                            }
+                        }
+                    }
+                    if (this.config.sni) |*sni| {
+                        for (sni.slice()) |*sni_ssl_config| {
+                            if (sni_ssl_config.server_name) |server_name_ptr| {
+                                const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                                if (server_name.len > 0) {
+                                    app.domain(server_name);
+                                    app.clearRoutes();
+                                    app.removeServerName(server_name_ptr);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Clear routes for default domain
+                app.clearRoutes();
+
                 app.destroy();
             }
 

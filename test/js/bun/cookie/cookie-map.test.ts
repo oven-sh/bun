@@ -333,8 +333,7 @@ describe("iterator", () => {
 
   test("delete with invalid constructor args should not crash", () => {
     // Regression test for null pointer deref when calling delete with invalid args
-    const CookieMapConstructor = Bun.CookieMap;
-    const cookieMap = new CookieMapConstructor(CookieMapConstructor, CookieMapConstructor, Bun, CookieMapConstructor);
+    const cookieMap = new Bun.CookieMap(Bun.CookieMap, Bun.CookieMap, Bun, Bun.CookieMap);
     // Should throw TypeError instead of crashing with null pointer dereference
     expect(() => cookieMap.delete(cookieMap)).toThrow(new TypeError("Cookie name is required"));
   });

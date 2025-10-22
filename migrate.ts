@@ -65,6 +65,8 @@ for (const file of files) {
     if (!file.endsWith(".zig")) {
       console.warn("non-zig file changed: " + path);
     }
+    const replaceAgain = replacements(replaced);
+    if (replaceAgain !== replaced) throw new Error("replacements problem");
     await Bun.write(path, replaced);
   }
 }

@@ -3,33 +3,40 @@
 import { expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
 
-test("Buffer.isEncoding('') should return false", () => {
+test.concurrent("Buffer.isEncoding('') should return false", () => {
   expect(Buffer.isEncoding("")).toBe(false);
 });
 
-test("Buffer.isEncoding() should match Node.js behavior", () => {
-  // Valid encodings should return true
-  expect(Buffer.isEncoding("utf8")).toBe(true);
-  expect(Buffer.isEncoding("utf-8")).toBe(true);
-  expect(Buffer.isEncoding("hex")).toBe(true);
-  expect(Buffer.isEncoding("base64")).toBe(true);
-  expect(Buffer.isEncoding("ascii")).toBe(true);
-  expect(Buffer.isEncoding("latin1")).toBe(true);
-  expect(Buffer.isEncoding("binary")).toBe(true);
-  expect(Buffer.isEncoding("ucs2")).toBe(true);
-  expect(Buffer.isEncoding("ucs-2")).toBe(true);
-  expect(Buffer.isEncoding("utf16le")).toBe(true);
-  expect(Buffer.isEncoding("utf-16le")).toBe(true);
+const validEncodings = [
+  "utf8",
+  "utf-8",
+  "hex",
+  "base64",
+  "ascii",
+  "latin1",
+  "binary",
+  "ucs2",
+  "ucs-2",
+  "utf16le",
+  "utf-16le",
+];
+const invalidEncodings = ["invalid", "utf32", "something"];
+const nonStringValues = [
+  { value: 123, name: "number" },
+  { value: null, name: "null" },
+  { value: undefined, name: "undefined" },
+  { value: {}, name: "object" },
+  { value: [], name: "array" },
+];
 
-  // Invalid encodings should return false
-  expect(Buffer.isEncoding("invalid")).toBe(false);
-  expect(Buffer.isEncoding("utf32")).toBe(false);
-  expect(Buffer.isEncoding("something")).toBe(false);
+test.concurrent.each(validEncodings)("Buffer.isEncoding('%s') should return true", encoding => {
+  expect(Buffer.isEncoding(encoding)).toBe(true);
+});
 
-  // Non-string values should return false
-  expect(Buffer.isEncoding(123 as any)).toBe(false);
-  expect(Buffer.isEncoding(null as any)).toBe(false);
-  expect(Buffer.isEncoding(undefined as any)).toBe(false);
-  expect(Buffer.isEncoding({} as any)).toBe(false);
-  expect(Buffer.isEncoding([] as any)).toBe(false);
+test.concurrent.each(invalidEncodings)("Buffer.isEncoding('%s') should return false", encoding => {
+  expect(Buffer.isEncoding(encoding)).toBe(false);
+});
+
+test.concurrent.each(nonStringValues)("Buffer.isEncoding($name) should return false for non-string", ({ value }) => {
+  expect(Buffer.isEncoding(value as any)).toBe(false);
 });

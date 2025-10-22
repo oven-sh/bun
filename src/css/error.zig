@@ -419,10 +419,8 @@ pub const MinifyErrorKind = union(enum) {
 };
 
 const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const logger = bun.logger;
 const Log = logger.Log;
-
-const std = @import("std");
-const ArrayList = std.ArrayListUnmanaged;
-const Allocator = std.mem.Allocator;

@@ -2011,6 +2011,18 @@ pub fn getStream(
     return stream;
 }
 
+extern fn blobObjectLinesCodeGenerator(*jsc.VM) *jsc.FunctionExecutable;
+
+pub fn getLines(
+    _: *Blob,
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    const thisValue = callframe.this();
+    const lines_fn = jsc.JSFunction.create(globalThis, "lines", blobObjectLinesCodeGenerator(globalThis.vm()), 0, .{});
+    return lines_fn.callWithThis(globalThis, thisValue, &.{});
+}
+
 pub fn toStreamWithOffset(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,

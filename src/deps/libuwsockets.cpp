@@ -55,6 +55,35 @@ extern "C"
     }
   }
 
+  // Helper function to clear routes for all SNI domains and optionally remove them
+  // This prevents dangling pointers when stopping/reloading servers with SNI
+  void uws_app_clear_sni_routes(int ssl, uws_app_t *app,
+                                 const char **server_names,
+                                 size_t server_name_count,
+                                 int should_remove_server_names)
+  {
+    if (!ssl || !app || !server_names) {
+      return;
+    }
+
+    uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+
+    // Clear routes for each SNI domain
+    for (size_t i = 0; i < server_name_count; i++) {
+      if (server_names[i] && server_names[i][0] != '\0') {
+        uwsApp->domain(server_names[i]);
+        uwsApp->clearRoutes();
+
+        if (should_remove_server_names) {
+          uwsApp->removeServerName(server_names[i]);
+        }
+      }
+    }
+
+    // Clear routes for default domain
+    uwsApp->clearRoutes();
+  }
+
   void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);

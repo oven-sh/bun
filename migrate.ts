@@ -8,6 +8,7 @@ function replacements(content: string): string {
     .replaceAll("std.fifo.LinearFifo", "bun.LinearFifo")
     .replaceAll("bun.LinearFifoBufferType.Dynamic", ".Dynamic")
     .replaceAll(/\bstd\.ArrayList\b/g, "std.array_list.Managed")
+    .replaceAll(/\bstd\.ArrayListAligned\b/g, "std.array_list.AlignedManaged")
     .replaceAll("std.io.Writer(", "std.Io.GenericWriter(")
     .replaceAll("std.io.Reader(", "std.Io.GenericReader(")
     .replaceAll("std.io.BufferedWriter(", "bun.deprecated.BufferedWriter(")

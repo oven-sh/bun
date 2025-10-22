@@ -1033,15 +1033,15 @@ pub fn printMetadata(writer: anytype) !void {
             system_msecs,
         });
 
-        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}", .{
-            std.fmt.fmtIntSizeDec(current_rss),
-            std.fmt.fmtIntSizeDec(peak_rss),
-            std.fmt.fmtIntSizeDec(current_commit),
+        try writer.print("RSS: {B:<3.2} | Peak: {B:<3.2} | Commit: {B:<3.2} | Faults: {d}", .{
+            current_rss,
+            peak_rss,
+            current_commit,
             page_faults,
         });
 
         if (Bun__reported_memory_size > 0) {
-            try writer.print(" | Machine: {:<3.2}", .{std.fmt.fmtIntSizeDec(Bun__reported_memory_size)});
+            try writer.print(" | Machine: {B:<3.2}", .{Bun__reported_memory_size});
         }
 
         try writer.writeAll("\n");

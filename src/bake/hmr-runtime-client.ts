@@ -65,13 +65,25 @@ async function performRouteReload() {
 // HMR payloads are script tags that call this internal function.
 // A previous version of this runtime used `eval`, but browser support around
 // mapping stack traces of eval'd frames is poor (the case the error overlay).
-const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
+const pendingScriptSymbol = Symbol.for("bun:hmr:pendingScripts");
+type PendingHmrScript = {
+  script: HTMLScriptElement;
+  size: number;
+  url: string;
+};
+const scriptTags: Map<string, PendingHmrScript> =
+  (globalThis as any)[pendingScriptSymbol] ?? new Map<string, PendingHmrScript>();
+(globalThis as any)[pendingScriptSymbol] = scriptTags;
+
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const entry = scriptTags.get(id);
-  if (!entry) throw new Error("Unknown HMR script: " + id);
-  const [script, size] = entry;
+  if (!entry) {
+    console.error("Unknown HMR script: " + id);
+    fullReload();
+    return;
+  }
+  const { script, size, url } = entry;
   scriptTags.delete(id);
-  const url = script.src;
   const map: SourceMapURL = {
     id,
     url,
@@ -184,7 +196,11 @@ const handlers = {
       const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       const script = document.createElement("script");
-      scriptTags.set(sourceMapId, [script, sourceMapSize]);
+      scriptTags.set(sourceMapId, {
+        script,
+        size: sourceMapSize,
+        url,
+      });
       script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;

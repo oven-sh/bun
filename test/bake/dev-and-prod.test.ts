@@ -1,6 +1,13 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
 
+const hmrSelfAcceptingModule = (label: string) => `
+  console.log(${JSON.stringify(label)});
+  if (import.meta.hot) {
+    import.meta.hot.accept();
+  }
+`;
+
 devAndProductionTest("define config via bunfig.toml", {
   files: {
     "index.html": emptyHtmlFile({
@@ -192,5 +199,23 @@ devTest("using runtime import", {
           ]
         : []),
     );
+  },
+});
+devTest("hmr keeps pending scripts across consecutive edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": hmrSelfAcceptingModule("render 1"),
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("render 1");
+
+    await dev.write("index.ts", hmrSelfAcceptingModule("render 2"));
+    await client.expectMessage("render 2");
+
+    await dev.write("index.ts", hmrSelfAcceptingModule("render 3"));
+    await client.expectMessage("render 3");
   },
 });

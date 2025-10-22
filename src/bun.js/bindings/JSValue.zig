@@ -1195,13 +1195,6 @@ pub const JSValue = enum(i64) {
     }
 
     /// The returned slice is always owned by `allocator`.
-    pub fn toOwnedSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
-        const str: bun.String = try .fromJS(this, global);
-        defer str.deref();
-        return str.toUTF8Owned(allocator);
-    }
-
-    /// The returned slice is always owned by `allocator`.
     pub fn toUTF8Bytes(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError![]u8 {
         const str: bun.String = try .fromJS(this, global);
         defer str.deref();

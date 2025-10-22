@@ -194,13 +194,7 @@ pub const Jest = struct {
 
     fn createMockObjects(globalObject: *JSGlobalObject, module: JSValue) void {
         const setSystemTime = jsc.host_fn.NewFunction(globalObject, ZigString.static("setSystemTime"), 0, JSMock__jsSetSystemTime, false);
-        module.put(
-            globalObject,
-            ZigString.static("setSystemTime"),
-            setSystemTime,
-        );
-        const useFakeTimers = jsc.host_fn.NewFunction(globalObject, ZigString.static("useFakeTimers"), 0, JSMock__jsUseFakeTimers, false);
-        const useRealTimers = jsc.host_fn.NewFunction(globalObject, ZigString.static("useRealTimers"), 0, JSMock__jsUseRealTimers, false);
+        module.put(globalObject, ZigString.static("setSystemTime"), setSystemTime);
 
         const mockFn = jsc.host_fn.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
         const spyOn = jsc.host_fn.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
@@ -212,49 +206,31 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
         mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 10);
+        const jest = JSValue.createEmptyObject(globalObject, 9 + bun_test.FakeTimers.timerFnsCount);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("mock"), mockModuleFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         jest.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
-        jest.put(
-            globalObject,
-            ZigString.static("setSystemTime"),
-            setSystemTime,
-        );
-        jest.put(
-            globalObject,
-            ZigString.static("useFakeTimers"),
-            useFakeTimers,
-        );
-        jest.put(
-            globalObject,
-            ZigString.static("useRealTimers"),
-            useRealTimers,
-        );
+        jest.put(globalObject, ZigString.static("setSystemTime"), setSystemTime);
         jest.put(globalObject, ZigString.static("now"), jsc.host_fn.NewFunction(globalObject, ZigString.static("now"), 0, JSMock__jsNow, false));
         jest.put(globalObject, ZigString.static("setTimeout"), jsc.host_fn.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetDefaultTimeout, false));
 
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
-        module.put(
-            globalObject,
-            ZigString.static("expect"),
-            Expect.js.getConstructor(globalObject),
-        );
+        module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
 
-        const vi = JSValue.createEmptyObject(globalObject, 8);
+        const vi = JSValue.createEmptyObject(globalObject, 6 + bun_test.FakeTimers.timerFnsCount);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         vi.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
         vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
-        vi.put(globalObject, ZigString.static("useFakeTimers"), useFakeTimers);
-        vi.put(globalObject, ZigString.static("useRealTimers"), useRealTimers);
         module.put(globalObject, ZigString.static("vi"), vi);
+
+        bun_test.FakeTimers.putTimersFns(globalObject, jest, vi);
     }
 
     extern fn Bun__Jest__testModuleObject(*JSGlobalObject) JSValue;
@@ -265,8 +241,6 @@ pub const Jest = struct {
     extern fn JSMock__jsRestoreAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsClearAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
-    extern fn JSMock__jsUseFakeTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
-    extern fn JSMock__jsUseRealTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     pub fn call(
         globalObject: *JSGlobalObject,

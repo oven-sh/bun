@@ -998,6 +998,8 @@ pub const RunOneResult = union(enum) {
     },
 };
 
+pub const FakeTimers = @import("./timers/FakeTimers.zig");
+
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");
 

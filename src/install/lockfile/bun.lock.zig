@@ -27,7 +27,7 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) std.Io.Writer.Error!void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;

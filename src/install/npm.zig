@@ -584,7 +584,7 @@ pub fn Negatable(comptime T: type) type {
         }
 
         /// writes to a one line json array with a trailing comma and space, or writes a string
-        pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn toJson(field: T, writer: anytype) std.Io.Writer.Error!void {
             if (field == .none) {
                 // [] means everything, so unrecognized value
                 try writer.writeAll(

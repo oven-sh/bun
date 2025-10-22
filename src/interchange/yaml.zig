@@ -41,7 +41,7 @@ pub fn parse(comptime encoding: Encoding, allocator: std.mem.Allocator, input: [
     return .success(stream, &parser);
 }
 
-pub fn print(comptime encoding: Encoding, allocator: std.mem.Allocator, stream: Parser(encoding).Stream, writer: anytype) @TypeOf(writer).Error!void {
+pub fn print(comptime encoding: Encoding, allocator: std.mem.Allocator, stream: Parser(encoding).Stream, writer: anytype) std.Io.Writer.Error!void {
     var printer: Parser(encoding).Printer(@TypeOf(writer)) = .{
         .input = stream.input,
         .stream = stream,

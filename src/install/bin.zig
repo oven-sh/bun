@@ -215,8 +215,8 @@ pub const Bin = extern struct {
         buf: string,
         extern_strings: []const ExternalString,
         writer: anytype,
-        writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
-    ) @TypeOf(writer).Error!void {
+        writeIndent: *const fn (anytype, *u32) std.Io.Writer.Error!void,
+    ) std.Io.Writer.Error!void {
         bun.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {
             switch (this.tag) {

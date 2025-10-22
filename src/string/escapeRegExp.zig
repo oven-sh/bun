@@ -1,6 +1,6 @@
 const special_characters = "|\\{}()[]^$+*?.-";
 
-pub fn escapeRegExp(input: []const u8, writer: anytype) @TypeOf(writer).Error!void {
+pub fn escapeRegExp(input: []const u8, writer: anytype) std.Io.Writer.Error!void {
     var remain = input;
 
     while (strings.indexOfAny(remain, special_characters)) |i| {
@@ -36,7 +36,7 @@ pub fn escapeRegExp(input: []const u8, writer: anytype) @TypeOf(writer).Error!vo
 }
 
 /// '*' becomes '.*' instead of '\\*'
-pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: anytype) @TypeOf(writer).Error!void {
+pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: anytype) std.Io.Writer.Error!void {
     var remain = input;
 
     while (strings.indexOfAny(remain, special_characters)) |i| {

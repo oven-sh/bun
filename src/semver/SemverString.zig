@@ -135,7 +135,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, writer: *std.Io.Writer) @TypeOf(writer).Error!void {
+        pub fn format(formatter: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -159,7 +159,7 @@ pub const String = extern struct {
             quote: bool = true,
         };
 
-        pub fn format(formatter: JsonFormatter, writer: *std.Io.Writer) @TypeOf(writer).Error!void {
+        pub fn format(formatter: JsonFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
         }
     };
@@ -175,7 +175,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
             for (this.str.slice(this.buf)) |c| {
                 const n = switch (c) {
                     '/' => '+',

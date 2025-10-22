@@ -285,7 +285,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             string_buf: string,
             // opts: String.StorePathFormatter.Options,
 
-            pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
                 const string_buf = this.string_buf;
                 const res = this.res.value;
                 switch (this.res.tag) {
@@ -379,7 +379,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 
             buf: []const u8,
 
-            pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
                 const buf = formatter.buf;
                 const value = formatter.resolution.value;
                 switch (formatter.resolution.tag) {
@@ -402,7 +402,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             buf: []const u8,
             path_sep: bun.fmt.PathFormatOptions.Sep,
 
-            pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
                 const buf = formatter.buf;
                 const value = formatter.resolution.value;
                 switch (formatter.resolution.tag) {

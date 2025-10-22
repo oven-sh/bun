@@ -1219,19 +1219,19 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     const bytes = bytes: {
         if (save_format == .text) {
-            var writer_buf = MutableString.initEmpty(bun.default_allocator);
-            var buffered_writer = writer_buf.bufferedWriter();
-            const writer = buffered_writer.writer();
+            var writer_allocating = std.Io.Writer.Allocating.init(bun.default_allocator);
+            defer writer_allocating.deinit();
+            const writer = &writer_allocating.writer;
 
             TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            buffered_writer.flush() catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+            writer.flush() catch |err| switch (err) {
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            break :bytes writer_buf.list.items;
+            break :bytes writer_allocating.toOwnedSlice();
         }
 
         var bytes = std.array_list.Managed(u8).init(bun.default_allocator);

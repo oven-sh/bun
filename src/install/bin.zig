@@ -214,8 +214,8 @@ pub const Bin = extern struct {
         indent: if (style == .multi_line) *u32 else void,
         buf: string,
         extern_strings: []const ExternalString,
-        writer: anytype,
-        writeIndent: *const fn (anytype, *u32) std.Io.Writer.Error!void,
+        writer: *std.Io.Writer,
+        writeIndent: *const fn (*std.Io.Writer, *u32) std.Io.Writer.Error!void,
     ) std.Io.Writer.Error!void {
         bun.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {

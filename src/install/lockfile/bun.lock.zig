@@ -27,7 +27,10 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) std.Io.Writer.Error!void {
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return bun.handleOom(saveFromBinary_inner(allocator, lockfile, load_result, writer));
+    }
+    pub fn saveFromBinary_inner(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: *std.Io.Writer) !void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
@@ -659,7 +662,7 @@ pub const Stringifier = struct {
     /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageInfoObject(
-        writer: anytype,
+        writer: *std.Io.Writer,
         dep_behavior: Dependency.Behavior,
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
@@ -814,7 +817,7 @@ pub const Stringifier = struct {
         pkg_map: *const PkgMap(void),
         relative_path: string,
         path_buf: []u8,
-    ) OOM!void {
+    ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
         // any - have any properties been written
         var any = false;
@@ -954,20 +957,20 @@ pub const Stringifier = struct {
         try writer.writeAll("},");
     }
 
-    fn writeIndent(writer: anytype, indent: *const u32) OOM!void {
+    fn writeIndent(writer: *std.Io.Writer, indent: *const u32) std.Io.Writer.Error!void {
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);
         }
     }
 
-    fn incIndent(writer: anytype, indent: *u32) OOM!void {
+    fn incIndent(writer: *std.Io.Writer, indent: *u32) std.Io.Writer.Error!void {
         indent.* += 1;
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);
         }
     }
 
-    fn decIndent(writer: anytype, indent: *u32) OOM!void {
+    fn decIndent(writer: *std.Io.Writer, indent: *u32) std.Io.Writer.Error!void {
         indent.* -= 1;
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);

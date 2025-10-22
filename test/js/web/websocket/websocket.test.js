@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, tls, tempDir } from "harness";
+import { bunEnv, bunExe, gc, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";

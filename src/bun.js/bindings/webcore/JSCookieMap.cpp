@@ -455,8 +455,12 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         auto* options = optionsArg.getObject();
 
         // Extract name
-        if (nameValue.isUndefined()) nameValue = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
-        RETURN_IF_EXCEPTION(throwScope, {});
+        if (nameValue.isUndefined()) {
+            auto nameValueFromOptions = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (nameValueFromOptions)
+                nameValue = nameValueFromOptions;
+        }
 
         // Extract optional domain
         auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());

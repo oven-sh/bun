@@ -13,7 +13,7 @@ describeWithContainer(
   container => {
     // Use a getter to avoid reading port/host at define time
     const getOptions = () => ({
-      url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
+      url: `mysql://root:${encodeURIComponent("bun123456@#$%^&*()")}@${container.host}:${container.port}/bun_sql_test`,
       max: 1,
       bigint: true,
     });

@@ -34,20 +34,20 @@
 
 ### Native Runtime Core (Zig)
 
-- [ ] T007 Refactor src/bun.js/telemetry.zig to replace configure() API with attach/detach model per contracts/bun-telemetry-api.md and data-model.md
-- [ ] T008 [P] Implement InstrumentKind enum in src/bun.js/telemetry.zig (custom=0, http=1, fetch=2, sql=3, redis=4, s3=5)
-- [ ] T009 [P] Implement InstrumentRecord struct in src/bun.js/telemetry.zig (id, kind, protected JSValues, cached function pointers)
-- [ ] T010 Implement Telemetry singleton in src/bun.js/telemetry.zig (instrument_table array indexed by InstrumentKind, atomic ID generation)
-- [ ] T011 Implement Bun.telemetry.attach(instrument) in src/bun.js/telemetry.zig (validate functions, protect JSValues, return ID)
-- [ ] T012 [P] Implement Bun.telemetry.detach(id) in src/bun.js/telemetry.zig (unprotect JSValues, remove from registry)
-- [ ] T013 [P] Implement Bun.telemetry.nativeHooks.isEnabledFor(kind) in src/bun.js/telemetry.zig (O(1) array length check)
+- [ ] T007 Refactor src/telemetry/main.zig to replace configure() API with attach/detach model per contracts/bun-telemetry-api.md and data-model.md
+- [ ] T008 [P] Implement InstrumentKind enum in src/telemetry/main.zig (custom=0, http=1, fetch=2, sql=3, redis=4, s3=5)
+- [ ] T009 [P] Implement InstrumentRecord struct in src/telemetry/main.zig (id, kind, protected JSValues, cached function pointers)
+- [ ] T010 Implement Telemetry singleton in src/telemetry/main.zig (instrument_table array indexed by InstrumentKind, atomic ID generation)
+- [ ] T011 Implement Bun.telemetry.attach(instrument) in src/telemetry/main.zig (validate functions, protect JSValues, return ID)
+- [ ] T012 [P] Implement Bun.telemetry.detach(id) in src/telemetry/main.zig (unprotect JSValues, remove from registry)
+- [ ] T013 [P] Implement Bun.telemetry.nativeHooks.isEnabledFor(kind) in src/telemetry/main.zig (O(1) array length check)
 
 ### AttributeMap MVP Implementation (Zig)
 
-- [ ] T014 Create AttributeKey enum in src/bun.js/telemetry.zig for semantic convention attributes (http_request_method, http_response_status_code, url_path, url_query, server_address, server_port)
-- [ ] T015 [P] Implement AttributeMap struct in src/bun.js/telemetry.zig wrapping JSValue with fastSet/fastGet methods
-- [ ] T016 [P] Implement attributeKeyToString() helper in src/bun.js/telemetry.zig for enum-to-string conversion
-- [ ] T017 Implement AttributeMap.toJS() in src/bun.js/telemetry.zig returning plain JSValue object
+- [ ] T014 Create AttributeKey enum in src/telemetry/main.zig for semantic convention attributes (http_request_method, http_response_status_code, url_path, url_query, server_address, server_port)
+- [ ] T015 [P] Implement AttributeMap struct in src/telemetry/main.zig wrapping JSValue with fastSet/fastGet methods
+- [ ] T016 [P] Implement attributeKeyToString() helper in src/telemetry/main.zig for enum-to-string conversion
+- [ ] T017 Implement AttributeMap.toJS() in src/telemetry/main.zig returning plain JSValue object
 
 ### Native Hook Tests (NO @opentelemetry/* imports)
 
@@ -76,11 +76,11 @@
 
 ### HTTP Server Native Hooks (Zig)
 
-- [ ] T021 Create src/bun.js/telemetry_http.zig for HTTP-specific instrumentation logic
-- [ ] T022 [P] Implement buildHttpStartAttributes() in src/bun.js/telemetry_http.zig (method, url, headers per captureAttributes config)
-- [ ] T023 [P] Implement buildHttpEndAttributes() in src/bun.js/telemetry_http.zig (status_code, content_length, response headers)
-- [ ] T024 [P] Implement buildHttpErrorAttributes() in src/bun.js/telemetry_http.zig (error_type, error_message, stack_trace)
-- [ ] T025 [P] Implement header filtering in src/bun.js/telemetry_http.zig (deny-by-default security model with blocklist enforcement)
+- [ ] T021 Create src/telemetry/http.zig for HTTP-specific instrumentation logic
+- [ ] T022 [P] Implement buildHttpStartAttributes() in src/telemetry/http.zig (method, url, headers per captureAttributes config)
+- [ ] T023 [P] Implement buildHttpEndAttributes() in src/telemetry/http.zig (status_code, content_length, response headers)
+- [ ] T024 [P] Implement buildHttpErrorAttributes() in src/telemetry/http.zig (error_type, error_message, stack_trace)
+- [ ] T025 [P] Implement header filtering in src/telemetry/http.zig (deny-by-default security model with blocklist enforcement)
 - [ ] T026 Add telemetry fields to src/bun.js/api/server/RequestContext.zig (telemetry_request_id: u64, request_start_time_ns: u64)
 - [ ] T027 Integrate Telemetry hooks into src/bun.js/api/server.zig AFTER ensureURL(), BEFORE onRequest handler (invokeStart with HTTP attributes, set ctx.telemetry_request_id)
 - [ ] T028 [P] Integrate Telemetry hook into src/bun.js/api/server/RequestContext.zig finalize() method (invokeEnd + exitContext for AsyncLocalStorage cleanup, set telemetry_request_id = 0)
@@ -91,9 +91,9 @@
 
 ### Fetch Client Native Hooks (Zig)
 
-- [ ] T033 Implement buildFetchStartAttributes() in src/bun.js/telemetry_http.zig (method, url, outgoing headers)
-- [ ] T034 [P] Implement buildFetchEndAttributes() in src/bun.js/telemetry_http.zig (status_code, response headers, content_length)
-- [ ] T035 [P] Implement buildFetchErrorAttributes() in src/bun.js/telemetry_http.zig (NetworkError, TimeoutError, DNSError, TLSError)
+- [ ] T033 Implement buildFetchStartAttributes() in src/telemetry/http.zig (method, url, outgoing headers)
+- [ ] T034 [P] Implement buildFetchEndAttributes() in src/telemetry/http.zig (status_code, response headers, content_length)
+- [ ] T035 [P] Implement buildFetchErrorAttributes() in src/telemetry/http.zig (NetworkError, TimeoutError, DNSError, TLSError)
 - [ ] T036 Integrate Telemetry hooks into src/bun.js/http/fetch.zig before fetch (invokeInject for trace propagation, invokeStart)
 - [ ] T037 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig after fetch completes (invokeEnd with response attributes)
 - [ ] T038 [P] Integrate Telemetry hooks into src/bun.js/http/fetch.zig on fetch error (invokeError with error attributes)
@@ -158,9 +158,9 @@
 
 ### Native Metrics Hooks (Zig)
 
-- [ ] T066 [US2] Implement onOperationProgress hook invocation in src/bun.js/telemetry.zig (called on configurable poll interval after event loop flush)
-- [ ] T067 [P] [US2] Implement buildRuntimeMetricsAttributes() in src/bun.js/telemetry.zig (process.runtime.bun.memory.heap_used, process.runtime.bun.memory.rss, process.runtime.bun.event_loop.lag, process.runtime.bun.gc.*)
-- [ ] T068 [P] [US2] Implement runtime namespace detection in src/bun.js/telemetry.zig (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.*)
+- [ ] T066 [US2] Implement onOperationProgress hook invocation in src/telemetry/main.zig (called on configurable poll interval after event loop flush)
+- [ ] T067 [P] [US2] Implement buildRuntimeMetricsAttributes() in src/telemetry/main.zig (process.runtime.bun.memory.heap_used, process.runtime.bun.memory.rss, process.runtime.bun.event_loop.lag, process.runtime.bun.gc.*)
+- [ ] T068 [P] [US2] Implement runtime namespace detection in src/telemetry/main.zig (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.*)
 - [ ] T069 Integrate periodic metrics sampling into src/bun.js/event_loop.zig (call onOperationProgress on configured interval)
 
 ### Native Metrics Tests
@@ -202,7 +202,7 @@
 
 ### Low-Level Trace Context API (Zig)
 
-- [ ] T081 [P] [US3] Implement Bun.telemetry.getActiveSpan() in src/bun.js/telemetry.zig (returns {traceId, spanId} from AsyncLocalStorage context or null)
+- [ ] T081 [P] [US3] Implement Bun.telemetry.getActiveSpan() in src/telemetry/main.zig (returns {traceId, spanId} from AsyncLocalStorage context or null)
 - [ ] T082 [P] [US3] Create test/js/bun/telemetry/get-active-span.test.ts verifying getActiveSpan() returns correct context within request handler
 
 ### High-Level Logger Integrations (TypeScript)
@@ -323,10 +323,10 @@
 
 ```bash
 # After Phase 2 Foundational complete, launch HTTP server native hooks together:
-Task: "Implement buildHttpStartAttributes() in src/bun.js/telemetry_http.zig"
-Task: "Implement buildHttpEndAttributes() in src/bun.js/telemetry_http.zig"
-Task: "Implement buildHttpErrorAttributes() in src/bun.js/telemetry_http.zig"
-Task: "Implement header filtering in src/bun.js/telemetry_http.zig"
+Task: "Implement buildHttpStartAttributes() in src/telemetry/http.zig"
+Task: "Implement buildHttpEndAttributes() in src/telemetry/http.zig"
+Task: "Implement buildHttpErrorAttributes() in src/telemetry/http.zig"
+Task: "Implement header filtering in src/telemetry/http.zig"
 
 # Launch TypeScript instrumentations together:
 Task: "Implement BunHttpInstrumentation class in packages/bun-otel/src/instruments/BunHttpInstrumentation.ts"

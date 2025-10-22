@@ -90,7 +90,7 @@ Bun.telemetry.getActiveSpan(): { traceId: string, spanId: string } | null
 **Structure**:
 
 ```
-src/bun.js/telemetry*.zig          → Bun core (no OTel deps)
+src/telemetry*.zig          → Bun core (no OTel deps)
 packages/bun-otel/                 → npm package (@opentelemetry/* deps OK)
 test/js/bun/telemetry/             → Core tests (NO OTel deps)
 packages/bun-otel/test/            → Package tests (OTel deps OK)
@@ -504,7 +504,7 @@ async function waitForCondition(
 
 **Core Runtime** (Zig):
 
-- `src/bun.js/telemetry.zig` - Current configure() API (needs refactor)
+- `src/telemetry.zig` - Current configure() API (needs refactor)
 - `src/bun.js/api/server/RequestContext.zig` - Bun.serve() integration
 - `src/js/node/_http_server.ts` - Node.js http hooks
 

@@ -25,7 +25,7 @@ Currently, `onOperationInject` hooks return header values, but these are **never
 
 #### Task 1.1: Add InjectConfig Struct
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 **Add struct definition**:
 ```zig
@@ -75,7 +75,7 @@ pub const InjectConfig = struct {
 
 #### Task 1.2: Add Configuration Array to Telemetry
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 **Modify `Telemetry` struct**:
 ```zig
@@ -141,7 +141,7 @@ pub fn deinit(self: *Telemetry) void {
 
 #### Task 1.3: Add InjectHeaders Fields to InstrumentRecord
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 **Modify `InstrumentRecord` struct**:
 ```zig
@@ -220,7 +220,7 @@ pub const InstrumentRecord = struct {
 
 #### Task 1.4: Implement rebuildInjectConfig()
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 **Add to `Telemetry` impl**:
 ```zig
@@ -277,7 +277,7 @@ fn rebuildInjectConfig(self: *Telemetry, kind: InstrumentKind) !void {
 
 #### Task 1.5: Call rebuildInjectConfig() on Attach/Detach
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 **Update `attach()`**:
 ```zig
@@ -362,7 +362,7 @@ bun bd test test/js/bun/telemetry/header-injection-config.test.ts
 
 #### Task 2.1: Add Helper to Get Inject Config
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 ```zig
 /// Get inject configuration for a specific kind
@@ -589,7 +589,7 @@ describe("fetch client header injection", () => {
 
 #### Task 4.1: Add Blocked Header Validation
 
-**File**: `src/bun.js/telemetry.zig`
+**File**: `src/telemetry/main.zig`
 
 ```zig
 const BLOCKED_INJECT_HEADERS = [_][]const u8{

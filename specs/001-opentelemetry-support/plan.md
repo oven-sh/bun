@@ -185,9 +185,15 @@ specs/[###-feature]/
 
 ```
 # Native Runtime Integration (Zig + Internal TypeScript Bridge)
-src/bun.js/
-├── telemetry.zig                    # Core attach/detach API, InstrumentKind enum
-├── telemetry_http.zig               # Calls registerInstrument/unregisterInstrument on attach/detach
+src/
+├── telemetry/
+│   ├── main.zig                      # Main telemetry API (attach/detach, InstrumentKind enum)
+│   ├── http.zig                      # HTTP server telemetry hooks
+│   ├── fetch.zig                     # Fetch client telemetry hooks
+│   ├── config.zig                    # Configuration management
+│   ├── semconv.zig                   # Semantic conventions
+│   ├── traceparent.zig              # W3C Trace Context parser
+│   └── simple_url_parser.zig        # URL parsing for telemetry
 ├── api/
 │   ├── server.zig                   # Bun.serve() integration: notifyRequestStart AFTER ensureURL(), BEFORE onRequest
 │   └── server/RequestContext.zig    # Bun.serve() touchpoints:
@@ -388,7 +394,7 @@ test/integration/opentelemetry/
 
 This is a **runtime extension** pattern combining native Zig code with a TypeScript instrumentation package. The structure follows Bun's established patterns:
 
-1. **Native Layer** (`src/bun.js/telemetry*.zig`): Core lifecycle hooks, InstrumentKind registry, attach/detach API - builds on existing work in `feat/opentelemetry-server-hooks` branch
+1. **Native Layer** (`src/telemetry/*.zig`): Core lifecycle hooks, InstrumentKind registry, attach/detach API - builds on existing work in `feat/opentelemetry-server-hooks` branch
 
 2. **Instrumentation Package** (`packages/bun-otel`):
    - Self-contained TypeScript package with its own tests

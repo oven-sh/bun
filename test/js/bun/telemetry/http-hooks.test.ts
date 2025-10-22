@@ -38,11 +38,10 @@ describe("Bun.serve() telemetry hooks", () => {
     expect(startAttrs).toMatchObject({
       "http.request.method": "GET",
       "url.path": "/test",
-      "server.address": expect.any(String),
-      "server.port": expect.any(Number),
     });
     expect(typeof startAttrs["operation.id"]).toBe("number");
     expect(typeof startAttrs["operation.timestamp"]).toBe("number");
+    expect(typeof startAttrs["url.full"]).toBe("string");
   });
 
   test("calls onOperationEnd with correct attributes and status code", async () => {

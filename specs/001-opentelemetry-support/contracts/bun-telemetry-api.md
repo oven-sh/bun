@@ -220,7 +220,7 @@ export enum InstrumentKind {
 }
 ```
 
-**Zig Definition** (src/bun.js/telemetry.zig):
+**Zig Definition** (src/telemetry/main.zig):
 
 ```zig
 pub const InstrumentKind = enum(u8) {

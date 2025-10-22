@@ -556,7 +556,7 @@ export function handleOutgoingFetch(url: string, init: RequestInit) {
 
 **Implementation**:
 ```zig
-// src/bun.js/telemetry.zig
+// src/telemetry/main.zig
 pub fn notifyOperationStart(self: *Telemetry, kind: InstrumentKind, id: u64, info: JSValue) void {
     const kind_index = @intFromEnum(kind);
     for (self.instrument_table[kind_index].items) |*record| {
@@ -700,8 +700,10 @@ test("notifyStart invokes all registered instruments", () => {
 ### File Locations
 
 **Zig Implementation**:
-- `src/bun.js/telemetry.zig` - Main telemetry registry
-- `src/bun.js/telemetry_config.zig` - Configuration management
+- `src/telemetry/main.zig` - Main telemetry registry
+- `src/telemetry/config.zig` - Configuration management
+- `src/telemetry/http.zig` - HTTP server telemetry hooks
+- `src/telemetry/fetch.zig` - Fetch client telemetry hooks
 - `src/bun.js/bindings/BunObject.cpp` - C++ bindings for nativeHooks
 
 **TypeScript Bridges**:

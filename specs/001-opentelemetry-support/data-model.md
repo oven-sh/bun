@@ -219,7 +219,7 @@ onOperationStart(id: number, info: { method: string; url: string; ... }) {
 ```
 
 ```zig
-// Zig layer (src/bun.js/telemetry_http.zig): Sees fastSet/fastGet
+// Zig layer (src/telemetry/http.zig): Sees fastSet/fastGet
 pub fn buildHttpInfo(request: *Request) AttributeMap {
     var attrs = AttributeMap.init(global);
     attrs.fastSet(.http_request_method, request.method.toJS());

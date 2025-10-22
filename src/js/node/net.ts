@@ -1151,11 +1151,13 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
+      // TODO: node calls this _handle method .reset, should we? investigate any difference
       const err = this._handle.close();
-      setImmediate(() => {
+      // TODO: node passes this function as a callback to reset, should we? but our implementation is sync
+      setTimeout(() => {
         $debug("emit close");
         this.emit("close", isException);
-      });
+      }, 0);
       if (err) this.emit("error", new ErrnoException(err, "reset"));
     } else if (this._closeAfterHandlingError) {
       // Enqueue closing the socket as a microtask, so that the socket can be
@@ -2625,7 +2627,8 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending, !!self._handle);
   if (self._handle) {
     self._handle.close();
-    setImmediate(() => {
+    // TODO: node passes this function as a callback to close, should we? but our implementation is sync
+    setTimeout(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);
       if (isCleanupPending) {
@@ -2633,7 +2636,7 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
         self._handle = null;
         self._sockname = null;
       }
-    });
+    }, 0);
   }
 }
 

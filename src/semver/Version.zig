@@ -64,7 +64,7 @@ pub fn VersionType(comptime IntType: type) type {
 
             pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 const self = formatter.version;
-                try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
+                try writer.print("{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
 
                 if (self.tag.hasPre()) {
                     const pre = self.tag.pre.slice(formatter.input);

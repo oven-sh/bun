@@ -538,8 +538,7 @@ pub fn BabyList(comptime Type: type) type {
             writer: anytype,
         ) !void {
             _ = .{ fmt, options };
-            return std.fmt.format(
-                writer,
+            return writer.print(
                 "BabyList({s}){{{any}}}",
                 .{ @typeName(Type), this.list() },
             );

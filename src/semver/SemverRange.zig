@@ -18,9 +18,9 @@ pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, wri
     }
 
     if (this.right.op == .unset) {
-        try std.fmt.format(writer, "{}", .{this.left});
+        try writer.print("{}", .{this.left});
     } else {
-        try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        try writer.print("{} {}", .{ this.left, this.right });
     }
 }
 
@@ -124,9 +124,9 @@ pub const Formatter = struct {
         }
 
         if (this.range.right.op == .unset) {
-            try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            try writer.print("{}", .{this.range.left.fmt(this.buffer)});
         } else {
-            try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            try writer.print("{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
         }
     }
 };
@@ -161,7 +161,7 @@ pub const Comparator = struct {
                 .gte => try writer.writeAll(">="),
             }
 
-            try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            try writer.print("{}", .{this.comparator.version.fmt(this.buffer)});
         }
     };
 

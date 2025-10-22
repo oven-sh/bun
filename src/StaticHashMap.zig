@@ -30,7 +30,7 @@ pub fn StaticHashMap(comptime K: type, comptime V: type, comptime Context: type,
             pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 _ = layout;
                 _ = options;
-                try std.fmt.format(writer, "(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
+                try writer.prints("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
 
@@ -82,7 +82,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime Context: type, compt
             pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 _ = layout;
                 _ = options;
-                try std.fmt.format(writer, "(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
+                try writer.print("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
 
@@ -358,7 +358,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
             pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
                 _ = layout;
                 _ = options;
-                try std.fmt.format(writer, "(hash: {x}, value: {})", .{ mem.asBytes(&self.hash), self.value });
+                try writer.print("(hash: {x}, value: {})", .{ mem.asBytes(&self.hash), self.value });
             }
         };
 

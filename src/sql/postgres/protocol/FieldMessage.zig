@@ -21,7 +21,7 @@ pub const FieldMessage = union(FieldType) {
     pub fn format(this: FieldMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (this) {
             inline else => |str| {
-                try std.fmt.format(writer, "{}", .{str});
+                try writer.print("{}", .{str});
             },
         }
     }

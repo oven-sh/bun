@@ -113,8 +113,7 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
 }
 
 pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-    try std.fmt.format(
-        writer,
+    try writer.print(
         // bun-darwin-x64-baseline-v1.0.0
         // This doesn't match up 100% with npm, but that's okay.
         "bun-{s}-{s}{}{}-v{d}.{d}.{d}",

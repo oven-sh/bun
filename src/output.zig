@@ -718,7 +718,7 @@ pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
         try source.stream.writer().print(fmt, args);
         root.console_error(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+        source.stream.writer().print(fmt, args) catch unreachable;
     }
 }
 
@@ -750,16 +750,16 @@ pub inline fn _debug(comptime fmt: string, args: anytype) void {
 pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.auto) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
-        std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+        source.stream.writer().print(fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
         bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
-            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch {};
+            source.buffered_stream.writer().print(fmt, args) catch {};
         } else {
-            std.fmt.format(writer(), fmt, args) catch {};
+            writer().print(fmt, args) catch {};
         }
     }
 }
@@ -1122,9 +1122,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
     } else {
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe
         if (enable_buffering)
-            std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
+            source.buffered_error_stream.writer().print(fmt, args) catch {}
         else
-            std.fmt.format(source.error_stream.writer(), fmt, args) catch {};
+            source.error_stream.writer().print(fmt, args) catch {};
     }
 }
 

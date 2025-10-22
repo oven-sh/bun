@@ -633,7 +633,7 @@ const NonUTF8Headers = struct {
         const count = self.names.len;
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            try std.fmt.format(writer, "{any}: {any}\r\n", .{ self.names[i], self.values[i] });
+            try writer.print("{any}: {any}\r\n", .{ self.names[i], self.values[i] });
         }
     }
 
@@ -744,7 +744,7 @@ fn buildRequestBody(
         {
             continue;
         }
-        try std.fmt.format(writer, "{any}: {any}\r\n", .{ name, value });
+        try writer.print("{any}: {any}\r\n", .{ name, value });
     }
 
     // Build request with user overrides

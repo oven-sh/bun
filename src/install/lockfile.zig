@@ -817,8 +817,7 @@ pub const MetaHashFormatter = struct {
     pub fn format(this: MetaHashFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain: []const u8 = this.meta_hash[0..];
 
-        try std.fmt.format(
-            writer,
+        try writer.print(
             "{X}-{x}-{X}-{x}",
             .{
                 remain[0..8],

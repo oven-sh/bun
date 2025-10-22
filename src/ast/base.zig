@@ -131,8 +131,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try std.fmt.format(
-            writer,
+        try writer.print(
             "Ref[inner={d}, src={d}, .{s}]",
             .{
                 ref.innerIndex(),
@@ -151,8 +150,7 @@ pub const Ref = packed struct(u64) {
 
     const DumpImplData = struct { ref: Ref, symbol: *ast.Symbol };
     fn dumpImpl(data: DumpImplData, writer: *std.Io.Writer) !void {
-        try std.fmt.format(
-            writer,
+        try writer.print(
             "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
             .{
                 data.ref.inner_index,

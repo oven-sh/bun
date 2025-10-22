@@ -320,7 +320,7 @@ pub const ShellLsTask = struct {
         if (!this.opts.list_directories) {
             if (this.print_directory) {
                 const writer = this.output.writer();
-                bun.handleOom(std.fmt.format(writer, "{s}:\n", .{this.path}));
+                bun.handleOom(writer.print("{s}:\n", .{this.path}));
             }
 
             var iterator = DirIterator.iterate(fd, .u8);
@@ -348,7 +348,7 @@ pub const ShellLsTask = struct {
         }
 
         const writer = this.output.writer();
-        bun.handleOom(std.fmt.format(writer, "{s}\n", .{this.path}));
+        bun.handleOom(writer.print("{s}\n", .{this.path}));
         return;
     }
 

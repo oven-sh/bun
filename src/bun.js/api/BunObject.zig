@@ -1984,7 +1984,7 @@ pub const JSZstd = struct {
 //             .enable_colors = true,
 //             .check_for_unhighlighted_write = false,
 //         });
-//         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+//         writer.writer().print("{}", .{formatter}) catch |err| {
 //             return globalThis.throwError(err, "Error formatting code");
 //         };
 

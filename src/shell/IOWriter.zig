@@ -257,7 +257,7 @@ const Writer = struct {
     bytelist: ?*bun.ByteList = null,
 
     pub fn format(this: Writer, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try std.fmt.format(writer, "Writer(0x{x}, {s})", .{ this.ptr.ptr.repr._ptr, @tagName(this.ptr.ptr.tag()) });
+        try writer.print("Writer(0x{x}, {s})", .{ this.ptr.ptr.repr._ptr, @tagName(this.ptr.ptr.tag()) });
     }
 
     pub fn wroteEverything(this: *const Writer) bool {

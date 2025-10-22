@@ -293,7 +293,7 @@ pub const WhyCommand = struct {
 
                 var dep_version_buf = std.array_list.Managed(u8).init(arena_allocator);
                 defer dep_version_buf.deinit();
-                try std.fmt.format(dep_version_buf.writer(), "{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
+                try dep_version_buf.writer().print("{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
                 const dep_pkg_version = try arena_allocator.dupe(u8, dep_version_buf.items);
 
                 const spec = try arena_allocator.dupe(u8, dependency.version.literal.slice(string_bytes));
@@ -323,7 +323,7 @@ pub const WhyCommand = struct {
 
             var version_buf = std.array_list.Managed(u8).init(ctx.allocator);
             defer version_buf.deinit();
-            try std.fmt.format(version_buf.writer(), "{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
+            try version_buf.writer().print("{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
             const version = try ctx.allocator.dupe(u8, version_buf.items);
 
             if (!glob.matchesVersion(version)) continue;

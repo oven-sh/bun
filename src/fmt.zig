@@ -1752,12 +1752,12 @@ pub const js_bindings = struct {
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
-                std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+                writer.writer().print("{}", .{formatter}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
             .escape_powershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
+                writer.writer().print("{}", .{escapePowershell(code)}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
@@ -1797,11 +1797,11 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
+                try writer.print(">= {d} and <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, ">= {d}.", .{min});
+                try writer.print(">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "<= {d}.", .{max});
+                try writer.print("<= {d}.", .{max});
             } else if (msg.len > 0) {
                 try writer.writeAll(msg);
                 try writer.writeByte('.');
@@ -1812,11 +1812,11 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received {}", .{double(self.value)});
+                try writer.print(" Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received {s}", .{self.value});
+                try writer.print(" Received {s}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received {d}", .{self.value});
+                try writer.print(" Received {d}", .{self.value});
             }
         }
     };

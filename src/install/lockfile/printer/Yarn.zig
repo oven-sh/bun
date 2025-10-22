@@ -157,18 +157,18 @@ fn packages(
             try writer.writeAll("  version ");
 
             // Version is always quoted
-            try std.fmt.format(writer, "\"{any}\"\n", .{version_formatter});
+            try writer.print("\"{any}\"\n", .{version_formatter});
 
             try writer.writeAll("  resolved ");
 
             const url_formatter = resolution.fmtURL(string_buf);
 
             // Resolved URL is always quoted
-            try std.fmt.format(writer, "\"{any}\"\n", .{url_formatter});
+            try writer.print("\"{any}\"\n", .{url_formatter});
 
             if (meta.integrity.tag != .unknown) {
                 // Integrity is...never quoted?
-                try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
+                try writer.print("  integrity {any}\n", .{&meta.integrity});
             }
 
             if (dependencies.len > 0) {

@@ -136,8 +136,8 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
                 &symbols,
             )) {
                 .result => |result| result,
-                .err => |err| {
-                    return err.toJSString(alloc, globalThis);
+                .err => |*err| {
+                    return globalThis.throwValue(try err.toErrorInstance(globalThis));
                 },
             };
 

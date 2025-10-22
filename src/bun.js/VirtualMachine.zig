@@ -2958,7 +2958,7 @@ fn printErrorInstance(
         const int_size = std.fmt.count("{d}", .{display_line});
         const pad = max_line_number_pad - int_size;
         last_pad = pad;
-        try writer.writeByteNTimes(' ', pad);
+        try writer.splatByteAll(' ', pad);
 
         const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
         const clamped = trimmed[0..@min(trimmed.len, max_line_length)];
@@ -3053,7 +3053,7 @@ fn printErrorInstance(
             const display_line = source.line + 1;
             const int_size = std.fmt.count("{d}", .{display_line});
             const pad = max_line_number_pad - int_size;
-            try writer.writeByteNTimes(' ', pad);
+            try writer.splatByteAll(' ', pad);
             defer source.text.deinit();
             const text = source.text.slice();
             const trimmed = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
@@ -3082,7 +3082,7 @@ fn printErrorInstance(
                 if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
                     const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
 
-                    try writer.writeByteNTimes(' ', indent);
+                    try writer.splatByteAll(' ', indent);
                     try writer.print(comptime Output.prettyFmt(
                         "<red><b>^<r>\n",
                         allow_ansi_color,
@@ -3167,7 +3167,7 @@ fn printErrorInstance(
 
                 const pad_left = longest_name -| field.length();
                 is_first_property = false;
-                try writer.writeByteNTimes(' ', pad_left);
+                try writer.splatByteAll(' ', pad_left);
 
                 try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
 
@@ -3207,7 +3207,7 @@ fn printErrorInstance(
         if (code) |code_str| {
             const pad_left = longest_name -| "code".len;
             is_first_property = false;
-            try writer.writeByteNTimes(' ', pad_left);
+            try writer.splatByteAll(' ', pad_left);
 
             try writer.print(comptime Output.prettyFmt(" code<r><d>:<r> <green>{}<r>\n", allow_ansi_color), .{
                 bun.fmt.quote(code_str),

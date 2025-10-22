@@ -569,7 +569,7 @@ pub fn Printer(comptime Writer: type) type {
             bun.debugAssert(!this.minify);
             if (this.indent_amt > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
-                this.dest.writeByteNTimes(' ', this.indent_amt) catch return this.addFmtError();
+                this.dest.splatByteAll(' ', this.indent_amt) catch return this.addFmtError();
             }
         }
     };

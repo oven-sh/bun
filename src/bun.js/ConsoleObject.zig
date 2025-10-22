@@ -402,7 +402,7 @@ pub const TablePrinter = struct {
 
     fn writeStringNTimes(comptime Writer: type, writer: Writer, comptime str: []const u8, n: usize) !void {
         if (comptime str.len == 1) {
-            try writer.writeByteNTimes(str[0], n);
+            try writer.splatByteAll(str[0], n);
             return;
         }
 
@@ -429,12 +429,12 @@ pub const TablePrinter = struct {
             const needed = columns.items[0].width -| len;
 
             // Right-align the number column
-            try writer.writeByteNTimes(' ', needed + PADDING);
+            try writer.splatByteAll(' ', needed + PADDING);
             switch (row_key) {
                 .str => |value| try writer.print("{}", .{value}),
                 .num => |value| try writer.print("{d}", .{value}),
             }
-            try writer.writeByteNTimes(' ', PADDING);
+            try writer.splatByteAll(' ', PADDING);
         }
 
         for (1..columns.items.len) |col_idx| {
@@ -456,11 +456,11 @@ pub const TablePrinter = struct {
             }
 
             if (value == .zero) {
-                try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
+                try writer.splatByteAll(' ', col.width + (PADDING * 2));
             } else {
                 const len: u32 = try this.getWidthForValue(value);
                 const needed = col.width -| len;
-                try writer.writeByteNTimes(' ', PADDING);
+                try writer.splatByteAll(' ', PADDING);
                 const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
@@ -486,7 +486,7 @@ pub const TablePrinter = struct {
                     enable_ansi_colors,
                 );
 
-                try writer.writeByteNTimes(' ', needed + PADDING);
+                try writer.splatByteAll(' ', needed + PADDING);
             }
         }
         try writer.writeAll("│\n");
@@ -587,7 +587,7 @@ pub const TablePrinter = struct {
                 if (i > 0) try writer.writeAll("│");
                 const len = col.name.visibleWidthExcludeANSIColors(false);
                 const needed = col.width -| len;
-                try writer.writeByteNTimes(' ', 1);
+                try writer.splatByteAll(' ', 1);
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r><b>", true));
                 }
@@ -595,7 +595,7 @@ pub const TablePrinter = struct {
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r>", true));
                 }
-                try writer.writeByteNTimes(' ', needed + PADDING);
+                try writer.splatByteAll(' ', needed + PADDING);
             }
 
             try writer.writeAll("│\n├");

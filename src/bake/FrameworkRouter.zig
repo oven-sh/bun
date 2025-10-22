@@ -925,7 +925,7 @@ pub const TinyLog = struct {
             after[@min(log.cursor_len, after.len)..],
         });
         const w = bun.Output.errorWriterBuffered();
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         if (bun.Output.enable_ansi_colors_stderr) {
             const symbols = bun.fmt.TableSymbols.unicode;
             bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
@@ -936,11 +936,11 @@ pub const TinyLog = struct {
             if (log.cursor_len <= 1) {
                 w.writeAll("|") catch return;
             } else {
-                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+                w.splatByteAll('-', log.cursor_len - 1) catch return;
             }
         }
         w.writeByte('\n') catch return;
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         w.writeAll(log.msg.slice()) catch return;
         bun.Output.prettyError("<r>\n", .{});
         bun.Output.flush();

@@ -82,7 +82,7 @@ pub const Report = struct {
             }
 
             try writer.writeAll(filename);
-            try writer.writeByteNTimes(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
+            try writer.splatByteAll(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
             try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
             if (comptime enable_colors) {

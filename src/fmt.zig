@@ -146,7 +146,7 @@ pub const RedactedSourceFormatter = struct {
             if (strings.startsWithSecret(this.text[i..])) |secret| {
                 const offset, const len = secret;
                 try writer.writeAll(this.text[i..][0..offset]);
-                try writer.writeByteNTimes('*', len);
+                try writer.splatByteAll('*', len);
                 i += offset + len;
                 continue;
             }
@@ -1065,10 +1065,10 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             if (i > 2 and text[i - 1] == char) {
                                 const len = text[0..i].len - 2;
                                 try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                try writer.writeByteNTimes('*', len);
+                                try writer.splatByteAll('*', len);
                                 try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                             } else {
-                                try writer.writeByteNTimes('*', text[0..i].len);
+                                try writer.splatByteAll('*', text[0..i].len);
                             }
                             text = text[i..];
                             continue;
@@ -1085,7 +1085,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                                 if (inner.len == 36 and strings.isUUID(inner)) {
                                     try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                    try writer.writeByteNTimes('*', 36);
+                                    try writer.splatByteAll('*', 36);
                                     try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
@@ -1094,7 +1094,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 const npm_secret_len = strings.startsWithNpmSecret(inner);
                                 if (npm_secret_len != 0) {
                                     try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                    try writer.writeByteNTimes('*', npm_secret_len);
+                                    try writer.splatByteAll('*', npm_secret_len);
                                     try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
@@ -1106,7 +1106,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                         char,
                                         inner[0..offset],
                                     });
-                                    try writer.writeByteNTimes('*', len);
+                                    try writer.splatByteAll('*', len);
                                     try writer.print(Output.prettyFmt("{s}{c}<r>", true), .{
                                         inner[offset + len ..],
                                         char,
@@ -1130,7 +1130,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1198,7 +1198,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1211,7 +1211,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1223,7 +1223,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1236,7 +1236,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1265,7 +1265,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1312,7 +1312,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }

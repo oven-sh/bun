@@ -1039,14 +1039,14 @@ pub const CommandLineReporter = struct {
 
         if (comptime reporters.text) {
             console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
-            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.splatByteAll('-', max_filepath_length + 2) catch return;
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
             console.writeAll("File") catch return;
-            console.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
+            console.splatByteAll(' ', max_filepath_length - "File".len + 1) catch return;
             // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
             console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
             console.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
-            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.splatByteAll('-', max_filepath_length + 2) catch return;
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         }
 
@@ -1208,7 +1208,7 @@ pub const CommandLineReporter = struct {
             console_buffer_buffer.flush() catch return;
             try console.writeAll(console_buffer.list.items);
             try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
-            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.splatByteAll('-', max_filepath_length + 2) catch return;
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
 
             opts.fractions.failing = failing;

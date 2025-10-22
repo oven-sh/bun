@@ -511,7 +511,7 @@ pub const BuildCommand = struct {
 
                 // Print summary
                 const padding_count = @max(2, @max(rel_path.len, max_path_len) - rel_path.len);
-                try writer.writeByteNTimes(' ', 2);
+                try writer.splatByteAll(' ', 2);
 
                 if (Output.enable_ansi_colors_stdout) try writer.writeAll(switch (f.output_kind) {
                     .@"entry-point" => Output.prettyFmt("<blue>", true),
@@ -536,9 +536,9 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try writer.writeByteNTimes(' ', padding_count);
+                try writer.splatByteAll(' ', padding_count);
                 try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
-                try writer.writeByteNTimes(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                try writer.splatByteAll(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
 
                 if (Output.enable_ansi_colors_stdout) {
                     try writer.writeAll("\x1b[2m");

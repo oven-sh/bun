@@ -3208,8 +3208,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
-            const writer = dest.writer(allocator);
+            var dest = std.Io.Writer.Allocating.initCapacity(allocator, 1) catch unreachable;
+            const writer = &dest.writer;
             const result = switch (toCssWithWriter(
                 this,
                 allocator,
@@ -3224,7 +3224,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             };
             return .{
                 .result = ToCssResult{
-                    .code = dest.items,
+                    .code = dest.written(),
                     .dependencies = result.dependencies,
                     .exports = result.exports,
                     .references = result.references,

@@ -405,12 +405,11 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
             }
 
             // Fallback to CSS string output
-            var dest = std.ArrayListUnmanaged(u8){};
-            defer dest.deinit(allocator);
-            const writer = dest.writer(allocator);
+            var dest = std.Io.Writer.Allocating.init(allocator);
+            const writer = &dest.writer;
 
             const symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer(@TypeOf(writer)).new(
+            var printer = css.Printer.new(
                 allocator,
                 std.array_list.Managed(u8).init(allocator),
                 writer,

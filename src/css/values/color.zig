@@ -112,7 +112,7 @@ pub const CssColor = union(enum) {
     pub fn toCss(
         this: *const This,
         comptime W: type,
-        dest: *Printer(W),
+        dest: *Printer,
     ) PrintErr!void {
         switch (this.*) {
             .current_color => try dest.writeStr("currentColor"),

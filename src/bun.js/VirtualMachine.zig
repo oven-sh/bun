@@ -1981,13 +1981,10 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
     this.had_errors = false;
     defer this.had_errors = prev_had_errors;
 
-    const error_writer = Output.errorWriter();
-    var buffered_writer = bun.deprecated.bufferedWriter(error_writer);
+    const writer = Output.errorWriterBuffered();
     defer {
-        buffered_writer.flush() catch {};
+        writer.flush() catch {};
     }
-
-    const writer = buffered_writer.writer();
 
     if (result.asException(this.jsc_vm)) |exception| {
         this.printException(
@@ -3352,10 +3349,9 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
     const allocator = bun.default_allocator;
     Output.flush();
 
-    var buffered_writer = bun.deprecated.bufferedWriter(Output.errorWriter());
-    var writer = buffered_writer.writer();
+    var writer = Output.errorWriterBuffered();
     defer {
-        buffered_writer.flush() catch {};
+        writer.flush() catch {};
     }
 
     var has_location = false;

@@ -65,7 +65,7 @@ pub const Report = struct {
             vals: Fraction,
             failing: Fraction,
             failed: bool,
-            writer: anytype,
+            writer: *std.Io.Writer,
             indent_name: bool,
             comptime enable_colors: bool,
         ) !void {
@@ -121,7 +121,7 @@ pub const Report = struct {
             max_filename_length: usize,
             fraction: *Fraction,
             base_path: []const u8,
-            writer: anytype,
+            writer: *std.Io.Writer,
             comptime enable_colors: bool,
         ) !void {
             const failing = fraction.*;
@@ -673,12 +673,11 @@ pub const ByteRangeMapping = struct {
 
         var coverage_fraction = Fraction{};
 
-        var mutable_str = bun.MutableString.initEmpty(bun.default_allocator);
-        defer mutable_str.deinit();
-        var buffered_writer = mutable_str.bufferedWriter();
-        var writer = buffered_writer.writer();
+        var allocating_writer = std.Io.Writer.Allocating.init(bun.default_allocator);
+        defer allocating_writer.deinit();
+        const buffered_writer = &allocating_writer.writer;
 
-        Report.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
+        Report.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", buffered_writer, false) catch {
             return globalThis.throwOutOfMemoryValue();
         };
 
@@ -686,7 +685,7 @@ pub const ByteRangeMapping = struct {
             return globalThis.throwOutOfMemoryValue();
         };
 
-        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice()) catch return .zero;
+        return bun.String.createUTF8ForJS(globalThis, allocating_writer.written()) catch return .zero;
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {

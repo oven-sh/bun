@@ -513,7 +513,7 @@ pub const Msg = struct {
 
     pub fn writeFormat(
         msg: *const Msg,
-        to: anytype,
+        to: *std.Io.Writer,
         comptime enable_ansi_colors: bool,
     ) !void {
         try msg.data.writeFormat(to, msg.kind, msg.redact_sensitive_information, enable_ansi_colors);
@@ -1290,7 +1290,7 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *const Log, to: anytype) !void {
+    pub fn print(self: *const Log, to: *std.Io.Writer) !void {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };

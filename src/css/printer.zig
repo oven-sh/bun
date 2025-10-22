@@ -94,8 +94,9 @@ pub const ImportInfo = struct {
 ///
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
-pub fn Printer(comptime Writer: type) type {
-    return struct {
+pub const Printer = blk: {
+    break :blk struct {
+        const Writer = *std.Io.Writer;
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
         dest: Writer,
@@ -573,7 +574,7 @@ pub fn Printer(comptime Writer: type) type {
             }
         }
     };
-}
+};
 
 const bun = @import("bun");
 const sourcemap = @import("./sourcemap.zig");

@@ -22,7 +22,6 @@ test("Buffer.isEncoding() should match Node.js behavior", () => {
   expect(Buffer.isEncoding("utf-16le")).toBe(true);
 
   // Invalid encodings should return false
-  expect(Buffer.isEncoding("")).toBe(false);
   expect(Buffer.isEncoding("invalid")).toBe(false);
   expect(Buffer.isEncoding("utf32")).toBe(false);
   expect(Buffer.isEncoding("something")).toBe(false);

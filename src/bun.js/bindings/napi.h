@@ -168,7 +168,7 @@ static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_ha
     } while (0)
 
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
-struct napi_env__ {
+struct napi_env__ : public RefCounted<napi_env__> {
 public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
@@ -506,6 +506,8 @@ private:
     }
 };
 
+using NapiEnv = WTF::RefPtr<napi_env__>;
+
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
@@ -659,9 +661,9 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
-        : env(env)
-        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
+    NapiRef(napi_env rawEnv, uint32_t count, Bun::NapiFinalizer finalizer)
+        : env(rawEnv)
+        , globalObject(JSC::Weak<JSC::JSGlobalObject>(rawEnv->globalObject()))
         , finalizer(WTFMove(finalizer))
         , refCount(count)
     {
@@ -708,14 +710,14 @@ public:
         // calling the finalizer
         Bun::NapiFinalizer saved_finalizer = this->finalizer;
         this->finalizer.clear();
-        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
+        saved_finalizer.call(env.get(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
         if (boundCleanup) {
-            boundCleanup->deactivate(env);
+            boundCleanup->deactivate(env.get());
             boundCleanup = nullptr;
         }
 
@@ -728,7 +730,7 @@ public:
         weakValueRef.clear();
     }
 
-    napi_env env = nullptr;
+    NapiEnv env = nullptr;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;

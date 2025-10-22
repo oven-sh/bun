@@ -1126,9 +1126,11 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
-        vm.heap.addFinalizer(object, [env, finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
+        // Capture env as RefPtr - automatically refs on capture, unrefs on destruction
+        NapiEnv envRef = env;
+        vm.heap.addFinalizer(object, [envRef = WTFMove(envRef), finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
             NAPI_LOG("finalizer %p", finalize_hint);
-            env->doFinalizer(finalize_cb, native_object, finalize_hint);
+            envRef->doFinalizer(finalize_cb, native_object, finalize_hint);
         });
     }
 

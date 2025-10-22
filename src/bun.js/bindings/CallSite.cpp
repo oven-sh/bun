@@ -126,28 +126,13 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     }
 
     String functionName;
-    if (myFunctionName) {
-        // Use try-catch around length() to avoid accessing corrupted memory
-        uint32_t len = 0;
-        auto lenResult = [&]() -> bool {
-            try {
-                len = myFunctionName->length();
-                return true;
-            } catch (...) {
-                return false;
-            }
-        }();
-
-        if (lenResult && len > 0) {
-            functionName = myFunctionName->getString(globalObject);
-            if (catchScope.exception()) [[unlikely]] {
-                catchScope.clearException();
-                functionName = "<error>"_s;
-            }
+    if (myFunctionName && myFunctionName->length() > 0) {
+        functionName = myFunctionName->getString(globalObject);
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+            functionName = "<error>"_s;
         }
-    }
-
-    if (functionName.isEmpty() && (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval)))) {
+    } else if (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval))) {
         functionName = "<anonymous>"_s;
     }
 

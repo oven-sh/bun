@@ -376,11 +376,15 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     if (value.isBigInt()) {
         auto str = value.toStringOrNull(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        auto view = str->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-        builder.append("type bigint ("_s);
-        builder.append(view);
-        builder.append("n)"_s);
+        if (str) {
+            auto view = str->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            builder.append("type bigint ("_s);
+            builder.append(view);
+            builder.append("n)"_s);
+        } else {
+            builder.append("type bigint"_s);
+        }
         return;
     }
 
@@ -668,8 +672,19 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
-    auto* jsString = val_arg_name.toString(globalObject);
+    // Safety: Use toStringOrNull which is safer and returns null on failure
+    auto* jsString = val_arg_name.toStringOrNull(globalObject);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+
+    // If toString failed, use a fallback name
+    if (!jsString) {
+        auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, "<argument>"_s, expected_type, val_actual_value);
+        RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+        throwScope.release();
+        return {};
+    }
+
     auto arg_name = jsString->view(globalObject);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
     auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);

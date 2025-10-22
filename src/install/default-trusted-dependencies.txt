@@ -40,6 +40,12 @@
 @ffprobe-installer/linux-ia32
 @ffprobe-installer/linux-x64
 @fingerprintjs/fingerprintjs-pro-react
+@foundry-rs/forge
+@foundry-rs/forge-darwin-arm64
+@foundry-rs/forge-darwin-amd64
+@foundry-rs/forge-linux-arm64
+@foundry-rs/forge-linux-amd64
+@foundry-rs/forge-win32-amd64
 @ghaiklor/x509
 @go-task/cli
 @injectivelabs/sdk-ts

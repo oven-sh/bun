@@ -43,12 +43,12 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 }
 
 pub const group = struct {
-    fn printIndent() void {
-        std.fs.File.stdout().writer().print("\x1b[90m", .{}) catch {};
+    fn printIndent(writer: *std.Io.Writer) void {
+        writer.print("\x1b[90m", .{}) catch {};
         for (0..indent) |_| {
-            std.fs.File.stdout().writer().print("│ ", .{}) catch {};
+            writer.print("│ ", .{}) catch {};
         }
-        std.fs.File.stdout().writer().print("\x1b[m", .{}) catch {};
+        writer.print("\x1b[m", .{}) catch {};
     }
     var indent: usize = 0;
     var last_was_start = false;
@@ -72,9 +72,14 @@ pub const group = struct {
     }
     pub fn beginMsg(comptime fmtt: []const u8, args: anytype) void {
         if (!getLogEnabled()) return;
-        printIndent();
-        std.fs.File.stdout().writer().print("\x1b[32m++ \x1b[0m", .{}) catch {};
-        std.fs.File.stdout().writer().print(fmtt ++ "\n", args) catch {};
+
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+
+        printIndent(&writer.interface);
+        writer.interface.print("\x1b[32m++ \x1b[0m", .{}) catch {};
+        writer.interface.print(fmtt ++ "\n", args) catch {};
+        writer.interface.flush() catch {};
         indent += 1;
         last_was_start = true;
     }
@@ -83,13 +88,20 @@ pub const group = struct {
         indent -= 1;
         defer last_was_start = false;
         if (last_was_start) return; //std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
-        printIndent();
-        std.fs.File.stdout().writer().print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
+
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+        printIndent(&writer.interface);
+        writer.interface.print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
+        writer.interface.flush() catch {};
     }
     pub fn log(comptime fmtt: []const u8, args: anytype) void {
         if (!getLogEnabled()) return;
-        printIndent();
-        std.fs.File.stdout().writer().print(fmtt ++ "\n", args) catch {};
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+        printIndent(&writer.interface);
+        writer.interface.print(fmtt ++ "\n", args) catch {};
+        writer.interface.flush() catch {};
         last_was_start = false;
     }
 };

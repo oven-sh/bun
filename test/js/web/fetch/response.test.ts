@@ -112,11 +112,11 @@ test("new Response(123, { method: 456 }) does not throw", () => {
 
 test("handle stack overflow", () => {
   function f0(a1, a2) {
-      const v4 = new Response();
-      // @ts-ignore
-      const v5 = v4.text(a2, a2, v4, f0, f0);
-      a1(a1);  // Recursive call causes stack overflow
-      return v5;
+    const v4 = new Response();
+    // @ts-ignore
+    const v5 = v4.text(a2, a2, v4, f0, f0);
+    a1(a1); // Recursive call causes stack overflow
+    return v5;
   }
   expect(() => {
     // @ts-ignore

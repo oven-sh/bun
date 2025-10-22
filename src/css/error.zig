@@ -34,11 +34,10 @@ pub fn Err(comptime T: type) type {
             @compileError("fmt not implemented for " ++ @typeName(T));
         }
 
-        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
-            var error_string = ArrayList(u8){};
-            defer error_string.deinit(allocator);
-            error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
-            return bun.String.fromBytes(error_string.items).toJS(globalThis);
+        pub fn toErrorInstance(this: *const @This(), globalThis: *bun.jsc.JSGlobalObject) !bun.jsc.JSValue {
+            var str = try bun.String.createFormat("{}", .{this.kind});
+            defer str.deref();
+            return str.toErrorInstance(globalThis);
         }
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {

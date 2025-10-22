@@ -1400,11 +1400,12 @@ pub const RunCommand = struct {
 
             // read from stdin
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.array_list.Managed(u8).init(stack_fallback.get());
+            var list = std.Io.Writer.Allocating.init(stack_fallback.get());
             errdefer list.deinit();
 
-            std.fs.File.stdin().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval.script = list.items;
+            var file_reader = std.fs.File.stdin().readerStreaming(&.{});
+            _ = file_reader.interface.streamRemaining(&list.writer) catch return false;
+            ctx.runtime_options.eval.script = list.written();
 
             const trigger = bun.pathLiteral("/[stdin]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;

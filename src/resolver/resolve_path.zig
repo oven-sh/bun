@@ -242,8 +242,8 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
                         }
                     }
                 }
-                if (index == min_length) index -= 1;
-                if (@call(bun.callmod_inline, isPathSeparator, .{input[0][index]})) {
+                if (index == min_length and index > 0) index -= 1;
+                if (index < input[0].len and @call(bun.callmod_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }

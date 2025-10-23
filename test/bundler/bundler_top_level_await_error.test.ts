@@ -63,7 +63,7 @@ describe("bundler", () => {
           console.log(result);
         }
 
-        main();
+        main().catch(console.error);
       `,
     },
     format: "cjs",

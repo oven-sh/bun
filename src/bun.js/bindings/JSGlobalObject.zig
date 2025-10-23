@@ -859,12 +859,6 @@ pub const JSGlobalObject = opaque {
         _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
     }
 
-    pub fn onCrash() callconv(.C) void {
-        jsc.markBinding(@src());
-        bun.Output.flush();
-        @panic("A C++ exception occurred");
-    }
-
     extern fn JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler: *anyopaque, bytes_ptr: [*]const u8, bytes_len: usize) void;
 
     fn getBodyStreamOrBytesForWasmStreaming(
@@ -993,7 +987,6 @@ pub const JSGlobalObject = opaque {
     comptime {
         @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
         @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
-        @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
         @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };

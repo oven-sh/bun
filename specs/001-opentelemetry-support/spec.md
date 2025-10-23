@@ -22,9 +22,9 @@
 
 ### Session 2025-10-21
 
-- Q: How should the Node.js http.createServer() compatibility layer integrate with native telemetry hooks? → A: Internal TypeScript module src/js/internal/telemetry_http.ts exposes registerInstrument/unregisterInstrument (called from Zig on attach/detach) and handleIncomingRequest/handleWriteHead (called from _http_server.ts on request/response), avoiding TS→Zig→TS roundtrip on every request - only happening once at setup/teardown
+- Q: How should the Node.js http.createServer() compatibility layer integrate with native telemetry hooks? → A: Node.js HTTP compatibility layer (`src/js/node/_http_server.ts`) calls `Bun.telemetry` native hooks directly at key lifecycle points (request arrival, writeHead, response end). TypeScript instrumentation packages (e.g., `packages/bun-otel/src/instruments/BunHttpInstrumentation.ts`) register via `Bun.telemetry.attach()` to receive these hooks. No internal TypeScript bridge module is required - instrumentation lives in user-loadable packages that only load when explicitly imported
 - Q: How should the system determine resource attributes (service.name, service.version, deployment.environment) that are attached to every telemetry event? → A: Use standard OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES environment variables with fallback to package.json
-- Q: How should the system test Node.js http.createServer() telemetry hooks separately from Bun.serve() hooks? → A: Separate test files with telemetry- prefix (telemetry-http-hooks.test.ts for Bun.serve, telemetry-node-http-hooks.test.ts for http.createServer)
+- Q: How should the system test Node.js http.createServer() telemetry hooks separately from Bun.serve() hooks? → A: Separate test files for each HTTP server implementation to ensure independent verification
 - Q: When a TypeScript instrumentation hook (onOperationStart, onOperationEnd, etc.) throws an exception during execution, how should the system handle it? → A: Catch exception, log to stderr with rate limiting to prevent log flooding, clear exception state, continue request processing normally
 - Q: For validating SC-003 (<5% overhead when enabled) and SC-004 (<0.1% overhead when disabled), what benchmarking methodology should be used? → A: oha or bombardier for HTTP load testing (per Bun repo recommendations in bench/express/README.md, avoiding autocannon due to node:http client performance limitations)
 
@@ -57,6 +57,8 @@ Developers building HTTP services with Bun can automatically capture distributed
 2. **Given** an HTTP request with a `traceparent` header (W3C TraceContext), **When** the request is processed, **Then** the created span is linked as a child of the incoming trace context
 3. **Given** a Bun application making outbound HTTP requests using `fetch()`, **When** those requests are made within an active trace context, **Then** trace context is propagated via `traceparent` header and spans are created for outbound requests
 4. **Given** an HTTP request that results in an error, **When** the error occurs, **Then** the trace span captures the error details and marks the span as errored
+
+**Implementation Note**: Automatic span creation for both `Bun.serve()` and Node.js `http.createServer()` is handled by instrumentation packages (e.g., `packages/bun-otel/src/instruments/BunHttpInstrumentation.ts`) which attach to native `Bun.telemetry` hooks. This approach ensures instrumentation code only loads when the telemetry package is explicitly imported, avoiding startup cost for applications not using telemetry. The instrumentation receives operation callbacks from the native layer and can access both native and Node.js request/response objects to extract attributes according to OpenTelemetry semantic conventions.
 
 ---
 
@@ -113,7 +115,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-004**: System MUST support standard OpenTelemetry semantic conventions for HTTP spans (method, URL, status code, user agent)
 - **FR-005**: System MUST allow developers to configure trace exporters (OTLP, Jaeger, Zipkin, Console)
 - **FR-006**: System MUST provide raw metric samples from native instrumentation for HTTP operations (request count, request duration, active requests) and fetch operations (client request count, duration), feeding data to standard @opentelemetry/sdk-metrics MeterProvider for aggregation and export
-- **FR-007**: System MUST provide raw metric samples from native Zig layer for runtime metrics (process memory heap used, process memory RSS, event loop lag, GC statistics) via onOperationProgress hook called on configurable poll interval (passed during attach), triggered after event loop flush, using runtime-detected namespace (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.* for Node.js compatibility), with collection/aggregation handled by @opentelemetry/sdk-metrics in TypeScript
+- **FR-007**: System MUST provide runtime metrics (process memory heap used, process memory RSS, event loop lag, GC statistics) with configurable collection intervals, using runtime-detected namespace (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.* for Node.js compatibility mode), with collection/aggregation handled by @opentelemetry/sdk-metrics in TypeScript
 - **FR-008**: System MUST allow developers to create custom metrics using standard OpenTelemetry Metrics API (@opentelemetry/api)
 - **FR-009**: System MUST support metric exporters compatible with OpenTelemetry protocol via standard @opentelemetry/sdk-metrics, following NodeSDK configuration pattern (metricReaders array with periodic export interval, timeout, and exporter settings)
 - **FR-010**: System MUST provide log correlation by injecting trace context into log records
@@ -126,28 +128,28 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-017**: System MUST implement bounded retry with exponential backoff (3 attempts) for failed telemetry exports, dropping data after retry exhaustion to prevent memory buildup
 - **FR-018**: System MUST provide Bun-specific instrumentations via packages/bun-otel for Bun-native APIs (http, fetch, sql, redis, s3) and system metrics, with standard OpenTelemetry API compatibility for manual instrumentation
 - **FR-019**: System MUST default to AlwaysOn (100%) sampling strategy, supporting configuration via standard opentelemetry-js TracerProvider sampler mechanisms (AlwaysOff, AlwaysOn, ParentBased, Probabilistic)
-- **FR-020**: System MUST provide both high-level logger integration helpers (BunSDK formatters for pino/winston) and low-level trace context access API (Bun.telemetry.getActiveSpan()) for log correlation
+- **FR-020**: System MUST provide both high-level logger integration helpers (provided by `packages/bun-otel` instrumentation package for pino/winston) and low-level trace context access API (provided by native `Bun.telemetry.getActiveSpan()`) for log correlation
 - **FR-021**: System MUST determine resource attributes (service.name, service.version, deployment.environment) using standard OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES environment variables, with fallback to package.json (name and version fields)
 - **FR-022**: System MUST implement defensive error handling for instrumentation hook exceptions - catch exceptions, log to stderr with rate limiting to prevent log flooding, clear exception state, and continue request processing normally without affecting application behavior
 - **FR-023**: System MUST enforce header validation rules (lowercase strings only, maximum 50 headers per list, sensitive headers always blocked, invalid headers logged and ignored non-fatally) as specified in Security Model section to prevent data leakage and denial-of-service attacks
-- **FR-024**: All memory allocations in telemetry native hooks MUST be annotated with `// TODO OTEL_MALLOC - REVIEW` unless explicitly justified with human-reviewed `// OTEL_MALLOC - <reason>` comments to ensure memory safety auditing
+- **FR-024**: System MUST minimize memory allocations in telemetry hooks to ensure predictable performance characteristics
 
 #### Telemetry Context API Requirements
 
-Performance requirements (see contracts/telemetry-context.md for API details):
+Performance requirements (superseded by SC-003 and SC-004):
 
-- **FR-025**: `enabled()` check MUST be inlined and compile to single boolean check
-- **FR-026**: When telemetry disabled, instrumentation blocks MUST be completely optimized out by compiler
-- **FR-027**: `notifyOperation*` functions MUST be inline functions (zero call overhead)
-- **FR-028**: AttributeMap operations MUST NOT allocate when telemetry disabled
+- **FR-025**: Requirement superseded by SC-004
+- **FR-026**: Requirement superseded by SC-004
+- **FR-027**: Requirement superseded by SC-003 and SC-004
+- **FR-028**: Requirement superseded by SC-004
 - **FR-029**: Header injection MUST support synchronous response from TypeScript (no async allowed at this layer)
 
-Memory management requirements:
+Memory management requirements (superseded by SC-003 and SC-004):
 
-- **FR-030**: TelemetryContext returned by `enabled()` MUST NOT require cleanup (no deinit)
-- **FR-031**: AttributeMap created by `createAttributeMap()` MUST be stack-allocated and not require cleanup
+- **FR-030**: Requirement superseded by SC-004
+- **FR-031**: Requirement superseded by SC-004
 - **FR-032**: Operation IDs (OpId/u64) MUST be monotonic and never reused within process lifetime
-- **FR-033**: AttributeMap passed to `notifyOperation*` methods MUST remain valid for the duration of the call only (no ownership transfer)
+- **FR-033**: Requirement superseded by SC-004
 
 Error handling requirements:
 
@@ -274,4 +276,4 @@ The telemetry system implements defense-in-depth security measures to prevent da
 
 ## Appendix
 
-- `REF_BUN_ZIG_CALLBAC_PATTERNS.md` : Research for when calling bun ts <--> zig
+_No appendix items at this time._

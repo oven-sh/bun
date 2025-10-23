@@ -23,10 +23,10 @@ The `notifyOperation*` methods all share a symmetric signature: `(self, comptime
 4. **Stack allocation**: AttributeMap stays on the stack at the insertion point; conversion to JSValue happens internally
 5. **GlobalObject independence**: Supports shadowRealm and multiple globalObject contexts - instrumentation may run in different realm than execution
 
-## OperationType
+## OperationStep
 
 ```zig
-pub const OperationType = enum {
+pub const OperationStep = enum {
     start = 0,
     progress = 1,
     end = 2,
@@ -74,7 +74,7 @@ pub const TelemetryContext = struct {
     /// @return JSValue (.js_undefined except for inject which returns injection data)
     pub inline fn notifyOperation(
         self: *TelemetryContext,
-        comptime op: OperationType,
+        comptime op: OperationStep,
         comptime kind: InstrumentKind,
         id: OpId,
         attrs: *AttributeMap
@@ -286,7 +286,7 @@ TypeScript instrumentation layer MUST implement:
 
 ```typescript
 // Internal API type - uses branded number for type safety
-export type OpId = number & { readonly __brand: 'OpId' };
+export type OpId = number & { readonly __brand: "OpId" };
 
 interface NativeInstrument {
   // Each instrument is registered for a specific InstrumentKind
@@ -298,30 +298,15 @@ interface NativeInstrument {
   onDetach?(): void;
 
   // Operation callbacks (required)
-  onOperationStart(
-    operationId: OpId,
-    attributes: Record<string, any>,
-  ): void;
+  onOperationStart(operationId: OpId, attributes: Record<string, any>): void;
 
-  onOperationProgress(
-    operationId: OpId,
-    attributes: Record<string, any>,
-  ): void;
+  onOperationProgress(operationId: OpId, attributes: Record<string, any>): void;
 
-  onOperationEnd(
-    operationId: OpId,
-    attributes: Record<string, any>,
-  ): void;
+  onOperationEnd(operationId: OpId, attributes: Record<string, any>): void;
 
-  onOperationError(
-    operationId: OpId,
-    attributes: Record<string, any>,
-  ): void;
+  onOperationError(operationId: OpId, attributes: Record<string, any>): void;
 
-  onOperationInject(
-    operationId: OpId,
-    context: Record<string, any>,
-  ): any; // Return value is instrument-specific (e.g., string[] for HTTP header values)
+  onOperationInject(operationId: OpId, context: Record<string, any>): any; // Return value is instrument-specific (e.g., string[] for HTTP header values)
 }
 ```
 

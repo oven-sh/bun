@@ -15,6 +15,7 @@ This document defines the data structures and lifecycle models for Bun's telemet
 **Purpose**: Categorizes operation types for routing telemetry data to appropriate handlers
 
 **Zig Definition**:
+
 ```zig
 pub const InstrumentKind = enum(u8) {
     custom = 0,
@@ -28,7 +29,8 @@ pub const InstrumentKind = enum(u8) {
 };
 ```
 
-**TypeScript Definition**:
+**Internal TypeScript Definition**:
+
 ```typescript
 export enum InstrumentKind {
   Custom = 0,
@@ -40,13 +42,34 @@ export enum InstrumentKind {
 }
 ```
 
+**External TypeScript Definition**:
+
+used for registering instruments only! translated by zig code.
+
+```typescript
+export type InstrumentKind = "http" | "fetch" | "sql" | "redis" | "s3";
+```
+
 **Lifecycle**: Compile-time constant
 
-### 2. InstrumentRecord (Zig Struct)
+### 2. OperationStep (Zig Enum)
+
+```zig
+pub const OperationStep = enum {
+    start = 0,
+    progress = 1,
+    end = 2,
+    error = 3,
+    inject = 4,
+};
+```
+
+### 3. InstrumentRecord (Zig Struct)
 
 **Purpose**: Stores registered instrumentation with cached function pointers for performance
 
 **Structure**:
+
 ```zig
 pub const InstrumentRecord = struct {
     id: u32,                              // Unique instrument ID
@@ -54,15 +77,12 @@ pub const InstrumentRecord = struct {
     native_instrument_object: JSValue,    // Full JS object (protected)
 
     // Cached function pointers (validated on attach)
-    on_op_start_fn: JSValue,
-    on_op_progress_fn: JSValue,
-    on_op_end_fn: JSValue,
-    on_op_error_fn: JSValue,
-    on_op_inject_fn: JSValue,
+    on_ops: JSValue[OpType.COUNT],
 };
 ```
 
 **Lifecycle**:
+
 1. **Creation**: `InstrumentRecord.init()` during `Bun.telemetry.attach()`
    - Validates function pointers exist and are callable
    - Protects JSValue references (prevents garbage collection)
@@ -71,6 +91,7 @@ pub const InstrumentRecord = struct {
    - Unprotects all JSValue references
 
 **Invariants**:
+
 - ID must be unique across all instruments
 - Function pointers validated before storage (only callable functions stored)
 - Protected JSValues must be unprotected on dispose
@@ -80,6 +101,7 @@ pub const InstrumentRecord = struct {
 **Purpose**: Global registry managing all registered instrumentations
 
 **Structure**:
+
 ```zig
 pub const Telemetry = struct {
     // Fixed-size array indexed by InstrumentKind
@@ -95,12 +117,14 @@ pub const Telemetry = struct {
 ```
 
 **Lifecycle**:
+
 1. **Initialization**: `Telemetry.init()` at Bun startup
 2. **Registration**: `attach()` adds InstrumentRecords to appropriate kind slot
 3. **Deregistration**: `detach()` removes and disposes InstrumentRecords
 4. **Cleanup**: `Telemetry.deinit()` at Bun shutdown
 
 **Invariants**:
+
 - instrument_table[kind] contains only instruments of that kind
 - IDs never reused (monotonic counter)
 - Request IDs unique per request
@@ -110,9 +134,10 @@ pub const Telemetry = struct {
 **Purpose**: User-facing API for registering instrumentations
 
 **Structure**:
+
 ```typescript
 // Internal API type - uses branded number for type safety
-export type OpId = number & { readonly __brand: 'OpId' };
+export type OpId = number & { readonly __brand: "OpId" };
 
 export interface NativeInstrument {
   type: InstrumentKind;
@@ -132,12 +157,14 @@ export interface NativeInstrument {
 ```
 
 **Lifecycle**:
+
 1. **Creation**: User creates object implementing this interface
 2. **Registration**: Passed to `Bun.telemetry.attach()` → creates InstrumentRecord
 3. **Invocation**: Hooks called during operation lifecycle
 4. **Deregistration**: `Bun.telemetry.detach(id)` → disposes InstrumentRecord
 
 **Invariants**:
+
 - At least one hook function must be provided
 - Hooks must not throw (wrapped in try/catch by Zig layer)
 - Hooks execute synchronously (no async/await)
@@ -149,6 +176,7 @@ export interface NativeInstrument {
 **See**: `specs/001-opentelemetry-support/contracts/attributes.md` for complete AttributeKey, AttributeMap, and AttributeList contracts
 
 **Structure**:
+
 ```zig
 pub const AttributeMap = struct {
     js_map: JSValue,  // Internal Record<string, JSValue>
@@ -168,6 +196,7 @@ pub const AttributeMap = struct {
 ```
 
 **AttributeKey Representation** (pointer-based):
+
 ```zig
 pub const AttributeKey = struct {
     id: u16,                    // Position in global list (0-1023)
@@ -198,6 +227,7 @@ pub const AttributeKeys = struct {
 ```
 
 **Usage Pattern**:
+
 ```zig
 // Access via TelemetryContext
 if (bun.telemetry.enabled()) |otel| {
@@ -209,21 +239,24 @@ if (bun.telemetry.enabled()) |otel| {
 ```
 
 **Lifecycle**:
+
 1. **Creation**: `otel.createAttributeMap()` - stack-allocated, no globalObject parameter needed
 2. **Population**: `set(key, value)` - pointer-based keys, automatic string copying
 3. **Handoff**: `&attrs` passed to `notifyOperation*` methods - internal toJS() conversion
 4. **No Cleanup**: Stack-allocated, no deinit required
 
 **Memory Management**:
+
 - AttributeMap: Stack-allocated, automatic cleanup
 - AttributeKeys: Global singleton, lazily initialized, live for process lifetime
 - Well-known keys: Code-generated, pointer stable
 - Uncommon keys: Dynamically allocated on attach/detach, max 1024 total
 
 **Invariants**:
+
 - AttributeKeys remain valid for process lifetime (no dangling pointers)
 - JSValue strings copied on set() (no dangling references to request/response objects)
-- AttributeMap passed by pointer to notifyOperation* (no premature conversion)
+- AttributeMap passed by pointer to notifyOperation\* (no premature conversion)
 - toJS() called internally by TelemetryContext (not by instrumentation code)
 
 ## Operation Lifecycle Model
@@ -231,6 +264,7 @@ if (bun.telemetry.enabled()) |otel| {
 ### HTTP Request Lifecycle
 
 **Phases**:
+
 ```
 1. onOperationStart(id, info)
    ├─ info.method: string
@@ -258,6 +292,7 @@ if (bun.telemetry.enabled()) |otel| {
 ```
 
 **State Machine**:
+
 ```
 START → onOperationStart
       → [Optional: onOperationProgress]
@@ -266,6 +301,7 @@ START → onOperationStart
 ```
 
 **Invariants**:
+
 - `onOperationStart` always called first
 - Either `onOperationEnd` OR `onOperationError` called (never both)
 - `onOperationInject` may be called multiple times (caching up to instrumentation)
@@ -273,6 +309,7 @@ START → onOperationStart
 ### Fetch Request Lifecycle
 
 Similar to HTTP but initiated from client side:
+
 ```
 1. onOperationStart(id, info)
    ├─ info.method: string
@@ -294,6 +331,7 @@ Similar to HTTP but initiated from client side:
 ## Data Flow Diagrams
 
 ### Attach Flow
+
 ```
 User Code                TypeScript                  Zig
    │                        │                         │
@@ -311,6 +349,7 @@ User Code                TypeScript                  Zig
 ```
 
 ### Operation Start Flow
+
 ```
 HTTP Request            Zig Runtime              Instrumentation
    │                        │                         │
@@ -334,23 +373,25 @@ HTTP Request            Zig Runtime              Instrumentation
 ### Trace Span Entity
 
 **OpenTelemetry Spec Fields** (not stored in Bun, created by packages/bun-otel):
+
 ```typescript
 interface Span {
-  traceId: string;          // 128-bit hex
-  spanId: string;           // 64-bit hex
+  traceId: string; // 128-bit hex
+  spanId: string; // 64-bit hex
   parentSpanId?: string;
-  name: string;             // Operation name
-  kind: SpanKind;           // SERVER | CLIENT | INTERNAL
-  startTime: HrTime;        // High-resolution timestamp
+  name: string; // Operation name
+  kind: SpanKind; // SERVER | CLIENT | INTERNAL
+  startTime: HrTime; // High-resolution timestamp
   endTime: HrTime;
-  status: SpanStatus;       // OK | ERROR
-  attributes: Attributes;   // Key-value pairs
-  events: TimeEvent[];      // Logs attached to span
-  links: Link[];            // Links to other spans
+  status: SpanStatus; // OK | ERROR
+  attributes: Attributes; // Key-value pairs
+  events: TimeEvent[]; // Logs attached to span
+  links: Link[]; // Links to other spans
 }
 ```
 
 **Bun Native Data → Span Attributes** (mapping performed by BunHttpInstrumentation):
+
 ```typescript
 // From onOperationStart(id, info)
 info.method         → span.attributes["http.request.method"]
@@ -373,6 +414,7 @@ onOperationError → span.recordException() + span.setStatus(ERROR) + span.end()
 **Purpose**: Propagate trace correlation across service boundaries
 
 **W3C TraceContext Header Format**:
+
 ```
 traceparent: 00-{traceId}-{spanId}-{flags}
 tracestate: vendor1=value1,vendor2=value2
@@ -382,6 +424,7 @@ traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 ```
 
 **Bun Handling**:
+
 - **Inbound**: `onOperationStart` receives parsed traceparent as `info.traceContext`
 - **Outbound**: `onOperationInject` returns headers to inject
 - **Propagation**: AsyncLocalStorage maintains context through async boundaries
@@ -393,6 +436,7 @@ traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 **Problem**: JavaScript objects passed to Zig must not be garbage collected while Zig holds references
 
 **Solution**: Protect/Unprotect pattern
+
 ```zig
 // On attach
 const obj = instrument_obj;
@@ -403,6 +447,7 @@ obj.unprotect();  // Decrements ref count, allows GC
 ```
 
 **Invariants**:
+
 - Every `protect()` must have matching `unprotect()`
 - Dispose methods must unprotect all protected values
 - Use `defer` in Zig for exception safety
@@ -410,6 +455,7 @@ obj.unprotect();  // Decrements ref count, allows GC
 ### Buffer Management
 
 **Request ID Map** (TypeScript):
+
 ```typescript
 // In BunHttpInstrumentation
 private spans = new Map<number, Span>();
@@ -427,6 +473,7 @@ onOperationEnd(id, result) {
 ```
 
 **Invariants**:
+
 - Spans removed from map after `onOperationEnd` or `onOperationError`
 - Map size should stay bounded (no indefinite growth)
 
@@ -437,12 +484,14 @@ onOperationEnd(id, result) {
 **Bun Runtime**: Single-threaded JavaScript execution, multi-threaded I/O
 
 **Atomic Counters**:
+
 ```zig
 next_instrument_id: std.atomic.Value(u32)  // Thread-safe ID generation
 next_request_id: std.atomic.Value(u64)     // Thread-safe request ID
 ```
 
 **No Locks Needed**:
+
 - Instrument registration happens on main thread
 - Operation lifecycle callbacks execute on request thread
 - No shared mutable state between requests
@@ -452,6 +501,7 @@ next_request_id: std.atomic.Value(u64)     // Thread-safe request ID
 **Challenge**: Maintain trace context through async operations
 
 **Solution**: AsyncLocalStorage (with Bun-specific workarounds)
+
 ```typescript
 // Context flows through:
 await Bun.sleep(100);     // ✅ Context preserved
@@ -490,11 +540,13 @@ context.with(() => {});   // ⚠️ Workaround in BunAsyncLocalStorageContextMan
 ### Overhead Targets
 
 **Telemetry Disabled** (no instruments attached):
+
 - `isEnabledFor(kind)` check: O(1), ~5ns
 - Early return before any work
 - **Target**: <0.1% latency impact
 
 **Telemetry Enabled** (instruments attached):
+
 - Instrument lookup: O(k) where k = number of instruments for kind (typically 1-3)
 - Function call overhead: ~100ns per hook
 - Attribute building: ~1μs for typical HTTP request
@@ -503,17 +555,20 @@ context.with(() => {});   // ⚠️ Workaround in BunAsyncLocalStorageContextMan
 ### Memory Usage
 
 **Per Instrument**:
+
 - InstrumentRecord: ~64 bytes
 - Protected JSValue: ~16 bytes each × 6 = 96 bytes
 - **Total**: ~160 bytes per instrument
 
 **Per Request** (with telemetry):
+
 - Request ID: 8 bytes
 - Span object (JavaScript): ~500 bytes
 - Attributes: ~200 bytes (typical HTTP span)
 - **Total**: ~700 bytes per in-flight request
 
 **Bounded Growth**:
+
 - Max instruments: Unlimited, but typically <10 total
 - Max in-flight requests: Bounded by HTTP server limits
 - Maps cleaned up on request completion
@@ -521,6 +576,7 @@ context.with(() => {});   // ⚠️ Workaround in BunAsyncLocalStorageContextMan
 ## Conclusion
 
 The data model is designed for:
+
 1. **Performance**: Fixed-size lookups, cached function pointers, early returns
 2. **Safety**: Protected JSValues, validation at attach time, defensive error handling
 3. **Extensibility**: InstrumentKind enum easily extended, generic operation lifecycle

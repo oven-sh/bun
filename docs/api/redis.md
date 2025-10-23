@@ -42,6 +42,7 @@ await client.incr("counter");
 By default, the client reads connection information from the following environment variables (in order of precedence):
 
 - `REDIS_URL`
+- `VALKEY_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
 ### Connection Lifecycle

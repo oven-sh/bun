@@ -81,11 +81,7 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
     {
         if (value.isUndefinedOrNull())
             return T::nullValue();
-        auto result = Bun::tryConvertIDL<T>(lexicalGlobalObject, value, ctx);
-        if (result.has_value()) {
-            return std::move(*result);
-        }
-        return std::nullopt;
+        return Bun::tryConvertIDL<T>(lexicalGlobalObject, value, ctx);
     }
 
     template<Bun::IDLConversionContext Ctx>

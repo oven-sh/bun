@@ -4144,6 +4144,8 @@ pub fn renameAtW(
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
 
+pub const env = @import("./windows/env.zig");
+
 const builtin = @import("builtin");
 const std = @import("std");
 

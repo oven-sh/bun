@@ -394,7 +394,7 @@ TN:
 SF:test.test.ts
 FNF:1
 FNH:1
-DA:2,60
+DA:2,40
 DA:3,41
 DA:4,39
 DA:6,42

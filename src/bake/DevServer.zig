@@ -3625,14 +3625,13 @@ pub fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     dev.publish(.incremental_visualizer, payload.items, .binary);
 }
 
-pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) EventLoopTimer.Arm {
-    if (!bun.FeatureFlags.bake_debugging_features) return .disarm;
+pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) void {
+    if (!bun.FeatureFlags.bake_debugging_features) return;
     const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
     timer.state = .FIRED;
     dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
-    return .disarm;
 }
 
 pub fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {

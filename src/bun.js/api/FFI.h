@@ -39,7 +39,7 @@ typedef _Bool bool;
 #define false 0
 
 #ifndef SRC_JS_NATIVE_API_TYPES_H_
-typedef struct napi_env__ *napi_env;
+typedef struct NapiEnv *napi_env;
 typedef int64_t napi_value;
 typedef enum {
   napi_ok,
@@ -67,7 +67,7 @@ typedef enum {
 } napi_status;
 BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
 BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
-BUN_FFI_IMPORT extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 

@@ -601,8 +601,6 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->is_writable = true;
         flags->has_error = false;
         flags->has_received_eof = false;
-        s->connect_state = NULL;
-        s->connect_next = NULL;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 

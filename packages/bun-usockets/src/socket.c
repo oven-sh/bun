@@ -367,26 +367,27 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length);
     }
 #endif
-    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s) || !s->flags.is_writable) {
         return 0;
     }
+
     int total_written = 0;
-    int slice_len = length;
+    int remaining = length;
     do {
-        int written = bsd_send(us_poll_fd(&s->p), data, slice_len);
+        int written = bsd_send(us_poll_fd(&s->p), data, remaining);
         
         if (written <= 0) {
             s->context->loop->data.last_write_failed = 1;
             s->flags.is_writable = false;
             int events = us_poll_events(&s->p);
             us_poll_change(&s->p, s->context->loop, events | LIBUS_SOCKET_WRITABLE);
-            return 0;
+            break;
         } else {
             data += written;
-            slice_len -= written;
+            remaining -= written;
             total_written += written;
         }
-    } while(total_written < length);
+    } while(remaining > 0);
 
     return total_written;
 }

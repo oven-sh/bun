@@ -704,58 +704,74 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 if (matching_packages.items.len == 1) {
                     matched_pkg_id = matching_packages.items[0];
                 } else {
-                    // Multiple versions exist - need to check actual version
-                    const installed_version = blk: {
-                        const pkg_json_bytes = pkg_dir.readFileAlloc(
-                            self.manager.allocator,
-                            "package.json",
-                            1024 * 1024, // 1MB max
-                        ) catch break :blk null;
-                        defer self.manager.allocator.free(pkg_json_bytes);
-
-                        const source = bun.logger.Source.initPathString("package.json", pkg_json_bytes);
-                        var log = bun.logger.Log.init(bun.default_allocator);
-                        defer log.deinit();
-                        const json = JSON.parsePackageJSONUTF8(&source, &log, self.manager.allocator) catch break :blk null;
-
-                        if (json.asProperty("version")) |version_prop| {
-                            if (version_prop.expr.asString(self.manager.allocator)) |version_str| {
-                                break :blk version_str;
+                    // Prefer non-npm resolutions (git/file/path) without version matching
+                    // In production, keep only if any candidate is reachable
+                    for (matching_packages.items) |pid| {
+                        if (self.package_resolutions[pid].tag != .npm) {
+                            if (!self.is_production or self.production_reachable_ids == null or
+                                self.production_reachable_ids.?.contains(pid))
+                            {
+                                matched_pkg_id = pid;
+                                break;
                             }
                         }
+                    }
 
-                        break :blk null;
-                    };
-                    defer if (installed_version) |v| self.manager.allocator.free(v);
+                    // Only attempt npm version disambiguation if no non-npm match found
+                    if (matched_pkg_id == null) {
+                        // Multiple versions exist - need to check actual version
+                        const installed_version = blk: {
+                            const pkg_json_bytes = pkg_dir.readFileAlloc(
+                                self.manager.allocator,
+                                "package.json",
+                                1024 * 1024, // 1MB max
+                            ) catch break :blk null;
+                            defer self.manager.allocator.free(pkg_json_bytes);
 
-                    if (installed_version) |inst_ver| {
-                        // Find package with matching version
-                        for (matching_packages.items) |pkg_id| {
-                            if (self.package_resolutions[pkg_id].tag == .npm) {
-                                const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
-                                const string_buf = self.manager.lockfile.buffers.string_bytes.items;
+                            const source = bun.logger.Source.initPathString("package.json", pkg_json_bytes);
+                            var log = bun.logger.Log.init(bun.default_allocator);
+                            defer log.deinit();
+                            const json = JSON.parsePackageJSONUTF8(&source, &log, self.manager.allocator) catch break :blk null;
 
-                                const lockfile_ver_str = std.fmt.allocPrint(
-                                    self.manager.allocator,
-                                    "{any}",
-                                    .{lockfile_version.fmt(string_buf)},
-                                ) catch continue;
-                                defer self.manager.allocator.free(lockfile_ver_str);
+                            if (json.asProperty("version")) |version_prop| {
+                                if (version_prop.expr.asString(self.manager.allocator)) |version_str| {
+                                    break :blk version_str;
+                                }
+                            }
 
-                                if (strings.eql(inst_ver, lockfile_ver_str)) {
-                                    matched_pkg_id = pkg_id;
-                                    break;
+                            break :blk null;
+                        };
+                        defer if (installed_version) |v| self.manager.allocator.free(v);
+
+                        if (installed_version) |inst_ver| {
+                            // Find package with matching version
+                            for (matching_packages.items) |pkg_id| {
+                                if (self.package_resolutions[pkg_id].tag == .npm) {
+                                    const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
+                                    const string_buf = self.manager.lockfile.buffers.string_bytes.items;
+
+                                    const lockfile_ver_str = std.fmt.allocPrint(
+                                        self.manager.allocator,
+                                        "{any}",
+                                        .{lockfile_version.fmt(string_buf)},
+                                    ) catch continue;
+                                    defer self.manager.allocator.free(lockfile_ver_str);
+
+                                    if (strings.eql(inst_ver, lockfile_ver_str)) {
+                                        matched_pkg_id = pkg_id;
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // If we couldn't determine the installed version, fall back to first match (graceful degradation)
-                    // But if we know the version and it doesn't match any lockfile version, treat as extraneous
-                    if (matched_pkg_id == null and installed_version == null) {
-                        matched_pkg_id = matching_packages.items[0];
-                    }
-                    // If installed_version != null and no match found, leave matched_pkg_id null so package is removed
+                        // If we couldn't determine the installed version, fall back to first match (graceful degradation)
+                        // But if we know the version and it doesn't match any lockfile version, treat as extraneous
+                        if (matched_pkg_id == null and installed_version == null) {
+                            matched_pkg_id = matching_packages.items[0];
+                        }
+                        // If installed_version != null and no match found, leave matched_pkg_id null so package is removed
+                    } // end npm version disambiguation
                 }
 
                 // If we found a match, check if it should be kept

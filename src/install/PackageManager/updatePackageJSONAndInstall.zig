@@ -750,27 +750,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         }
                     }
 
-                    // If we couldn't determine the installed version, fall back to first match
-                    // But if we know the version and it doesn't match, check if ANY matching package is needed
-                    if (matched_pkg_id == null) {
-                        if (installed_version == null) {
-                            // Can't read version, use fallback (graceful degradation)
-                            matched_pkg_id = matching_packages.items[0];
-                        } else if (self.is_production and self.production_reachable_ids != null) {
-                            // Version known but doesn't match - in production mode, check if ANY version is needed
-                            for (matching_packages.items) |pkg_id| {
-                                if (self.production_reachable_ids.?.contains(pkg_id)) {
-                                    // At least one version is needed, keep the installed one (install will fix version)
-                                    matched_pkg_id = pkg_id;
-                                    break;
-                                }
-                            }
-                            // If no version is needed in production, leave matched_pkg_id null (will be removed)
-                        } else {
-                            // Not in production mode and version doesn't match - use fallback
-                            matched_pkg_id = matching_packages.items[0];
-                        }
+                    // If we couldn't determine the installed version, fall back to first match (graceful degradation)
+                    // But if we know the version and it doesn't match any lockfile version, treat as extraneous
+                    if (matched_pkg_id == null and installed_version == null) {
+                        matched_pkg_id = matching_packages.items[0];
                     }
+                    // If installed_version != null and no match found, leave matched_pkg_id null so package is removed
                 }
 
                 // If we found a match, check if it should be kept
@@ -800,6 +785,9 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             name_to_ids.deinit();
         }
 
+        // Reserve capacity up-front to avoid repeated rehashing
+        try name_to_ids.ensureTotalCapacity(@intCast(name_hashes.len));
+
         for (name_hashes, 0..) |hash, idx| {
             const pkg_id = @as(PackageID, @intCast(idx));
 
@@ -813,7 +801,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
             const result = try name_to_ids.getOrPut(hash);
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayList(PackageID).init(manager.allocator);
+                // Initialize with small capacity to avoid repeated reallocations
+                result.value_ptr.* = try std.ArrayList(PackageID).initCapacity(manager.allocator, 2);
             }
             try result.value_ptr.append(pkg_id);
         }

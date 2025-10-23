@@ -627,7 +627,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
 
                             // Open package directory to check version
-                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
+                            // Note: openDir with iterate=false can fail on symlinks in isolated linker mode
+                            // so we retry with iterate=true if the first attempt fails
+                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch blk: {
+                                // Retry with iterate=true for symlinks (isolated linker mode)
+                                break :blk scope_dir.openDir(scoped_entry.name, .{ .iterate = true }) catch continue;
+                            };
                             defer scoped_pkg_dir.close();
 
                             const should_remove = self.shouldRemovePackage(scoped_name, scoped_pkg_dir);

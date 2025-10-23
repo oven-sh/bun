@@ -11,11 +11,11 @@ test("HTTP server injects headers from instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject(reqId: number, data: any) {
-      // Return headers to inject
-      return {
-        traceparent: "00-trace123-span456-01",
-        "x-custom-header": "custom-value",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-custom-header"]
+      return [
+        "00-trace123-span456-01", // traceparent
+        "custom-value", // x-custom-header
+      ];
     },
   });
 
@@ -44,7 +44,8 @@ test("HTTP server merges headers from multiple instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return { traceparent: "00-trace1-span1-01" };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      return ["00-trace1-span1-01"]; // traceparent
     },
   });
 
@@ -57,7 +58,8 @@ test("HTTP server merges headers from multiple instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return { "x-request-id": "req-123" };
+      // Return array of values matching injectHeaders.response order: ["x-request-id"]
+      return ["req-123"]; // x-request-id
     },
   });
 
@@ -85,8 +87,9 @@ test("HTTP server handles missing header values gracefully", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      // Only return one of the configured headers
-      return { traceparent: "00-trace-span-01" };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-missing"]
+      // Only provide value for first header (second will be missing/undefined)
+      return ["00-trace-span-01"]; // traceparent (x-missing not provided)
     },
   });
 
@@ -131,7 +134,8 @@ test("HTTP server allows duplicate header values (linear concatenation)", async 
     },
     onOperationStart() {},
     onOperationInject() {
-      return { "x-trace-id": "trace1" };
+      // Return array of values matching injectHeaders.response order: ["x-trace-id"]
+      return ["trace1"]; // x-trace-id
     },
   });
 
@@ -144,7 +148,8 @@ test("HTTP server allows duplicate header values (linear concatenation)", async 
     },
     onOperationStart() {},
     onOperationInject() {
-      return { "x-trace-id": "trace2" };
+      // Return array of values matching injectHeaders.response order: ["x-trace-id"]
+      return ["trace2"]; // x-trace-id
     },
   });
 

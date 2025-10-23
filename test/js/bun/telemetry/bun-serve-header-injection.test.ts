@@ -14,10 +14,11 @@ test("Bun.serve injects headers from instruments", async () => {
     onOperationStart() {},
     onOperationInject(opId: number, data: any) {
       injectCalled = true;
-      return {
-        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        "x-custom-trace": "bun-serve-test",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-custom-trace"]
+      return [
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // traceparent
+        "bun-serve-test", // x-custom-trace
+      ];
     },
   });
 
@@ -55,10 +56,11 @@ test("Bun.serve handles multiple instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-trace1-span1-01",
-        "x-trace-1": "value1",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-trace-1"]
+      return [
+        "00-trace1-span1-01", // traceparent
+        "value1", // x-trace-1
+      ];
     },
   });
 
@@ -71,10 +73,11 @@ test("Bun.serve handles multiple instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-trace2-span2-01",
-        "x-trace-2": "value2",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-trace-2"]
+      return [
+        "00-trace2-span2-01", // traceparent
+        "value2", // x-trace-2
+      ];
     },
   });
 
@@ -113,7 +116,8 @@ test("Bun.serve skips injection when no headers configured", async () => {
     onOperationStart() {},
     onOperationInject() {
       injectCalled = true;
-      return { traceparent: "should-not-appear" };
+      // Return array (but this shouldn't be called)
+      return ["should-not-appear"];
     },
   });
 
@@ -147,10 +151,12 @@ test("Bun.serve only injects configured headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-configured-01",
-        "x-not-configured": "should-not-appear",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      // Note: Extra values beyond configured headers should be ignored
+      return [
+        "00-configured-01", // traceparent (configured)
+        "should-not-appear", // x-not-configured (not configured, should be ignored)
+      ];
     },
   });
 
@@ -184,7 +190,8 @@ test("Bun.serve works with Response objects that have existing headers", async (
     },
     onOperationStart() {},
     onOperationInject() {
-      return { traceparent: "00-injected-trace-01" };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      return ["00-injected-trace-01"]; // traceparent
     },
   });
 

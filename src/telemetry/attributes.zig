@@ -14,381 +14,380 @@ const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 const ZigString = jsc.ZigString;
 
-/// Import generated semantic conventions with fast attribute system
+/// Import generated semantic conventions (string constants only)
 const semconv = @import("semconv.zig");
-pub const AttributeKey = semconv.AttributeKey;
-pub const HeaderNameList = semconv.HeaderNameList;
 
-/// Native attribute value types
-pub const NativeValue = union(enum) {
-    bool: bool,
-    int32: i32,
-    int64: i64,
-    double: f64,
-    string: bun.String,
+// ============================================================================
+// External C Function - HTTP Header Name Lookup
+// ============================================================================
 
-    pub fn deinit(self: *NativeValue) void {
-        switch (self.*) {
-            .string => |str| str.deref(),
-            else => {},
-        }
+/// Fast HTTP header name lookup using gperf-generated perfect hash table
+/// Returns HTTPHeaderName enum value (0-92) or 255 if not found
+/// Source: src/bun.js/bindings/webcore/HTTPHeaderNames.cpp:658
+extern "C" fn Bun__HTTPHeaderName__fromString(str: [*]const u8, len: usize) u8;
+
+/// Look up HTTPHeaderName ID from string (case-insensitive)
+/// Uses the existing WebCore::findHTTPHeaderName C++ function with gperf perfect hash
+/// Returns null if the header is not in the predefined list of 93 headers
+pub fn httpHeaderNameFromString(name: []const u8) ?u8 {
+    const result = Bun__HTTPHeaderName__fromString(name.ptr, name.len);
+    if (result == 255) return null; // Not found
+    return result;
+}
+
+// ============================================================================
+// AttributeKey - Pointer-based struct system per contract
+// ============================================================================
+
+/// AttributeKey represents a semantic convention attribute key.
+/// Each key has a unique ID for O(1) operations in attribute lists/maps.
+pub const AttributeKey = struct {
+    id: u16, // Position in global list (0-1023)
+    semconv_name: []const u8, // e.g. "http.request.header.content-type"
+    fast_header: ?u8, // HTTPHeaderNames enum (0-92) if applicable
+    http_header: ?[]const u8, // Naked header string e.g. "content-type"
+
+    pub fn isHttpHeader(self: *const AttributeKey) bool {
+        return self.http_header != null;
+    }
+
+    /// Get HTTP direction by checking semconv_name prefix
+    pub fn httpDirection(self: *const AttributeKey) ?enum { request, response } {
+        if (self.semconv_name.len < 8) return null;
+        if (!std.mem.startsWith(u8, self.semconv_name, "http.")) return null;
+        if (self.semconv_name[7] == 'q') return .request; // "http.request."
+        if (self.semconv_name[7] == 's') return .response; // "http.response."
+        return null;
     }
 };
 
-/// Attribute value with lazy JS<->Native conversion
-/// Stores both native and JS representations, converting lazily as needed
-pub const AttributeValue = struct {
-    native: ?NativeValue = null,
-    js: ?JSValue = null,
+/// AttributeKeys singleton - global registry of all AttributeKey pointers
+pub const AttributeKeys = struct {
+    // Well-known semconv attributes (core attributes used in http.zig and fetch.zig)
+    http_request_method: *AttributeKey,
+    http_response_status_code: *AttributeKey,
+    http_response_body_size: *AttributeKey,
+    http_route: *AttributeKey,
+    url_path: *AttributeKey,
+    url_query: *AttributeKey,
+    url_scheme: *AttributeKey,
+    url_full: *AttributeKey,
+    server_address: *AttributeKey,
+    server_port: *AttributeKey,
+    client_address: *AttributeKey,
+    client_port: *AttributeKey,
+    network_peer_address: *AttributeKey,
+    network_peer_port: *AttributeKey,
+    network_protocol_name: *AttributeKey,
+    network_protocol_version: *AttributeKey,
+    user_agent_original: *AttributeKey,
+    error_type: *AttributeKey,
+    error_message: *AttributeKey,
+    exception_type: *AttributeKey,
+    exception_message: *AttributeKey,
+    exception_stacktrace: *AttributeKey,
 
-    /// Create from native Zig value
-    pub fn fromNative(val: NativeValue) AttributeValue {
-        return .{ .native = val, .js = null };
-    }
+    // Operation-level attributes (not in OTel semconv but used internally)
+    operation_id: *AttributeKey,
+    operation_timestamp: *AttributeKey,
+    operation_duration: *AttributeKey,
 
-    /// Create from JavaScript value, extracting native representation if possible
-    pub fn fromJS(global: *JSGlobalObject, val: JSValue) AttributeValue {
-        // Try to extract native value for common types
-        if (val.isBoolean()) {
-            return .{ .native = .{ .bool = val.asBoolean() }, .js = val };
-        }
+    // Distributed tracing attributes (W3C Trace Context)
+    trace_parent_trace_id: *AttributeKey,
+    trace_parent_span_id: *AttributeKey,
+    trace_parent_trace_flags: *AttributeKey,
 
-        if (val.isNumber()) {
-            const num = val.asNumber();
-            // Store as int32 if it fits
-            if (@floor(num) == num and num >= std.math.minInt(i32) and num <= std.math.maxInt(i32)) {
-                return .{ .native = .{ .int32 = @intFromFloat(num) }, .js = val };
-            }
-            return .{ .native = .{ .double = num }, .js = val };
-        }
+    // Error attributes
+    error_stack_trace: *AttributeKey,
 
-        if (val.isString()) {
-            var zig_str: ZigString = ZigString.Empty;
-            val.toZigString(&zig_str, global) catch return .{ .native = null, .js = val };
-            const bun_str = bun.String.init(zig_str);
-            return .{ .native = .{ .string = bun_str }, .js = val };
-        }
-
-        // Other types (arrays, objects): just store JS
-        return .{ .native = null, .js = val };
-    }
-
-    /// Convert to JavaScript value, caching the result
-    pub fn toJS(self: *AttributeValue, global: *JSGlobalObject) JSValue {
-        // Return cached JS value if available
-        if (self.js) |js_val| return js_val;
-
-        // Convert native to JS and cache
-        if (self.native) |native_val| {
-            const js_val = switch (native_val) {
-                .bool => |v| JSValue.jsBoolean(v),
-                .int32 => |v| JSValue.jsNumber(@as(f64, @floatFromInt(v))),
-                .int64 => |v| JSValue.jsNumber(@as(f64, @floatFromInt(v))),
-                .double => |v| JSValue.jsNumber(v),
-                .string => |v| v.toJS(global),
-            };
-            self.js = js_val;
-            return js_val;
-        }
-
-        return .js_undefined;
-    }
-
-    /// Clean up resources
-    pub fn deinit(self: *AttributeValue) void {
-        if (self.native) |*native_val| {
-            native_val.deinit();
-        }
-    }
-};
-
-/// Optimized attribute map with semantic convention fast path
-pub const AttributeMap = struct {
-    /// Semantic attributes (fixed-size array, indexed by AttributeKey enum)
-    /// null means not set
-    semantic: [AttributeKey.COUNT]?AttributeValue,
-
-    /// Header attributes (bitpacked u16 keys: context | header_id)
-    /// Separate from semantic for efficient storage of dynamic headers
-    headers: std.AutoHashMap(u16, AttributeValue),
-
-    /// Custom attribute keys (not in semantic conventions or headers)
-    custom_keys: std.ArrayList(bun.String),
-
-    /// Custom attribute values (parallel to custom_keys)
-    custom_values: std.ArrayList(AttributeValue),
-
-    /// Map from custom key string to index in custom_keys/custom_values
-    custom_map: std.StringHashMap(u32),
-
+    // Global list of all AttributeKeys (well-known + dynamically allocated)
+    all: [1024]*AttributeKey,
+    len: u16,
     allocator: std.mem.Allocator,
+
+    /// Initialize the singleton with well-known attributes
+    pub fn init(allocator: std.mem.Allocator) !AttributeKeys {
+        var keys: AttributeKeys = undefined;
+        keys.allocator = allocator;
+        keys.len = 0;
+
+        // Allocate well-known semconv attributes using allocateAttribute helper
+        keys.http_request_method = try keys.allocateAttribute(semconv.ATTR_HTTP_REQUEST_METHOD);
+        keys.http_response_status_code = try keys.allocateAttribute(semconv.ATTR_HTTP_RESPONSE_STATUS_CODE);
+        keys.http_response_body_size = try keys.allocateAttribute("http.response.body.size");
+        keys.http_route = try keys.allocateAttribute(semconv.ATTR_HTTP_ROUTE);
+        keys.url_path = try keys.allocateAttribute(semconv.ATTR_URL_PATH);
+        keys.url_query = try keys.allocateAttribute(semconv.ATTR_URL_QUERY);
+        keys.url_scheme = try keys.allocateAttribute(semconv.ATTR_URL_SCHEME);
+        keys.url_full = try keys.allocateAttribute(semconv.ATTR_URL_FULL);
+        keys.server_address = try keys.allocateAttribute(semconv.ATTR_SERVER_ADDRESS);
+        keys.server_port = try keys.allocateAttribute(semconv.ATTR_SERVER_PORT);
+        keys.client_address = try keys.allocateAttribute(semconv.ATTR_CLIENT_ADDRESS);
+        keys.client_port = try keys.allocateAttribute(semconv.ATTR_CLIENT_PORT);
+        keys.network_peer_address = try keys.allocateAttribute(semconv.ATTR_NETWORK_PEER_ADDRESS);
+        keys.network_peer_port = try keys.allocateAttribute(semconv.ATTR_NETWORK_PEER_PORT);
+        keys.network_protocol_name = try keys.allocateAttribute(semconv.ATTR_NETWORK_PROTOCOL_NAME);
+        keys.network_protocol_version = try keys.allocateAttribute(semconv.ATTR_NETWORK_PROTOCOL_VERSION);
+        keys.user_agent_original = try keys.allocateAttribute(semconv.ATTR_USER_AGENT_ORIGINAL);
+        keys.error_type = try keys.allocateAttribute(semconv.ATTR_ERROR_TYPE);
+        keys.error_message = try keys.allocateAttribute("error.message");
+        keys.exception_type = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_TYPE);
+        keys.exception_message = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_MESSAGE);
+        keys.exception_stacktrace = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_STACKTRACE);
+
+        // Operation-level attributes (internal, not in OTel semconv)
+        keys.operation_id = try keys.allocateAttribute("operation.id");
+        keys.operation_timestamp = try keys.allocateAttribute("operation.timestamp");
+        keys.operation_duration = try keys.allocateAttribute("operation.duration");
+
+        // Distributed tracing attributes (W3C Trace Context)
+        keys.trace_parent_trace_id = try keys.allocateAttribute("trace.parent.trace_id");
+        keys.trace_parent_span_id = try keys.allocateAttribute("trace.parent.span_id");
+        keys.trace_parent_trace_flags = try keys.allocateAttribute("trace.parent.trace_flags");
+
+        // Error attributes
+        keys.error_stack_trace = try keys.allocateAttribute("error.stack_trace");
+
+        return keys;
+    }
+
+    /// Clean up all allocated AttributeKeys
+    pub fn deinit(self: *AttributeKeys) void {
+        for (self.all[0..self.len]) |key| {
+            self.allocator.destroy(key);
+        }
+    }
+
+    /// Look up an AttributeKey by semconv name (linear search, infrequent use)
+    pub fn lookupSemconv(self: *AttributeKeys, name: []const u8) ?*AttributeKey {
+        for (self.all[0..self.len]) |key| {
+            if (std.mem.eql(u8, key.semconv_name, name)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    /// Look up an HTTP header AttributeKey by direction and header name
+    pub fn lookupHeader(
+        self: *AttributeKeys,
+        direction: enum { request, response },
+        header: []const u8,
+    ) ?*AttributeKey {
+        // Search for header attribute matching direction and name
+        for (self.all[0..self.len]) |key| {
+            if (key.http_header) |key_header| {
+                if (std.mem.eql(u8, key_header, header)) {
+                    // Check direction matches
+                    if (key.httpDirection() == direction) {
+                        return key;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Allocate a new uncommon AttributeKey (internal helper)
+    /// Auto-detects HTTP headers and populates fast_header/http_header from semconv_name
+    fn allocateAttribute(
+        self: *AttributeKeys,
+        semconv_name: []const u8,
+    ) !*AttributeKey {
+        if (self.len >= 1024) return error.AttributePoolExhausted;
+
+        // Auto-detect HTTP headers and populate fast_header/http_header
+        var fast_header_opt: ?u8 = null;
+        var http_header_opt: ?[]const u8 = null;
+
+        if (std.mem.startsWith(u8, semconv_name, "http.request.header.") or
+            std.mem.startsWith(u8, semconv_name, "http.response.header."))
+        {
+            const header_start = if (std.mem.startsWith(u8, semconv_name, "http.request.header."))
+                "http.request.header.".len
+            else
+                "http.response.header.".len;
+
+            const header_name = semconv_name[header_start..];
+
+            // Try to match against HTTPHeaderName (0-92)
+            if (httpHeaderNameFromString(header_name)) |header_id| {
+                fast_header_opt = header_id;
+            }
+
+            // Store naked header name
+            http_header_opt = header_name;
+        }
+
+        const key = try self.allocator.create(AttributeKey);
+        key.* = .{
+            .id = self.len,
+            .semconv_name = semconv_name,
+            .fast_header = fast_header_opt,
+            .http_header = http_header_opt,
+        };
+        self.all[self.len] = key;
+        self.len += 1;
+        return key;
+    }
+
+    /// Create or retrieve an AttributeKey from a JavaScript string value
+    /// Validates semconv name format per FR03a and allocates from pool if needed
+    pub fn fromJS(self: *AttributeKeys, js_val: JSValue, global: *JSGlobalObject) ?*AttributeKey {
+        // Extract string from JSValue
+        if (!js_val.isString()) return null;
+
+        var zig_str: ZigString = ZigString.Empty;
+        js_val.toZigString(&zig_str, global) catch return null;
+        const name_slice = zig_str.toSlice(self.allocator);
+        defer name_slice.deinit();
+        const name = name_slice.slice();
+
+        // Validate semconv name format (FR03a):
+        // - Max 1024 characters
+        // - Lowercase letters and numbers only
+        // - Dots allowed (not at start/end)
+        // - Format: [a-z0-9]+([.][a-z0-9]+)*
+        if (name.len == 0 or name.len > 1024) return null;
+        if (name[0] == '.' or name[name.len - 1] == '.') return null;
+
+        var prev_was_dot = false;
+        for (name) |c| {
+            if (c == '.') {
+                if (prev_was_dot) return null; // consecutive dots not allowed
+                prev_was_dot = true;
+            } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
+                prev_was_dot = false;
+            } else {
+                return null; // invalid character
+            }
+        }
+
+        // Check if this key already exists
+        if (self.lookupSemconv(name)) |existing_key| {
+            return existing_key;
+        }
+
+        // Allocate new key - need to copy the string to allocator memory
+        const name_copy = self.allocator.dupe(u8, name) catch return null;
+
+        // Allocate the new attribute (allocateAttribute auto-detects HTTP headers)
+        const new_key = self.allocateAttribute(name_copy) catch return null;
+
+        return new_key;
+    }
+};
+
+/// Convert value to JSValue based on type
+fn convertToJSValue(global: *JSGlobalObject, val: anytype) JSValue {
+    const T = @TypeOf(val);
+    const type_info = @typeInfo(T);
+
+    // Handle different type categories
+    if (type_info == .pointer) {
+        const ptr_info = type_info.pointer;
+        if (ptr_info.size == .slice) {
+            if (ptr_info.child == u8) {
+                // []const u8 or []u8 - string slice
+                return ZigString.init(val).toJS(global);
+            }
+            @compileError("Unsupported slice type: " ++ @typeName(T));
+        } else if (ptr_info.size == .one) {
+            // Check if it's a pointer to an array of u8 (e.g., *const [N]u8)
+            const child_type_info = @typeInfo(ptr_info.child);
+            if (child_type_info == .array and child_type_info.array.child == u8) {
+                // *const [N]u8 - pointer to fixed-size array of bytes (string)
+                return ZigString.init(val).toJS(global);
+            }
+            @compileError("Unsupported pointer type: " ++ @typeName(T));
+        }
+        @compileError("Unsupported pointer type: " ++ @typeName(T));
+    }
+
+    // Try direct type matching
+    if (T == JSValue) return val;
+    if (T == ZigString) return val.toJS(global);
+    if (T == bun.String) return val.toJS(global);
+
+    // Numeric types
+    if (T == u64 or T == i64 or T == u32 or T == i32 or T == u16 or T == i16 or T == u8 or T == i8 or T == i128 or T == u128) {
+        return JSValue.jsNumber(@as(f64, @floatFromInt(val)));
+    }
+    if (T == f64 or T == f32) {
+        return JSValue.jsNumber(@as(f64, val));
+    }
+
+    // Boolean
+    if (T == bool) return JSValue.jsBoolean(val);
+
+    @compileError("Unsupported attribute value type: " ++ @typeName(T));
+}
+
+/// Optimized attribute map with single JSValue storage
+/// Contract: specs/001-opentelemetry-support/contracts/attributes.md (lines 196-232)
+pub const AttributeMap = struct {
+    js_map: JSValue, // Internal JS object storage
     global: *JSGlobalObject,
 
     /// Initialize empty attribute map
     pub fn init(global: *JSGlobalObject) AttributeMap {
         return .{
-            .semantic = [_]?AttributeValue{null} ** AttributeKey.COUNT,
-            .headers = std.AutoHashMap(u16, AttributeValue).init(bun.default_allocator),
-            .custom_keys = std.ArrayList(bun.String).init(bun.default_allocator),
-            .custom_values = std.ArrayList(AttributeValue).init(bun.default_allocator),
-            .custom_map = std.StringHashMap(u32).init(bun.default_allocator),
-            .allocator = bun.default_allocator,
+            .js_map = JSValue.createEmptyObject(global, 16), // Hint: typical ~16 attributes
             .global = global,
         };
     }
 
-    /// Clean up all resources
+    /// No explicit deinit needed - JSValue is GC-managed
     pub fn deinit(self: *AttributeMap) void {
-        // Clean up semantic attributes
-        for (&self.semantic) |*maybe_val| {
-            if (maybe_val.*) |*val| {
-                val.deinit();
-            }
-        }
-
-        // Clean up header attributes
-        var header_iter = self.headers.valueIterator();
-        while (header_iter.next()) |val_ptr| {
-            val_ptr.deinit();
-        }
-        self.headers.deinit();
-
-        // Clean up custom keys
-        for (self.custom_keys.items) |key| {
-            key.deref();
-        }
-        self.custom_keys.deinit();
-
-        // Clean up custom values
-        for (self.custom_values.items) |*val| {
-            val.deinit();
-        }
-        self.custom_values.deinit();
-
-        self.custom_map.deinit();
+        _ = self;
     }
 
-    /// Fast path: set semantic attribute by enum key (zero allocation)
-    pub fn fastSet(self: *AttributeMap, key: AttributeKey, value: JSValue) void {
-        const index = @intFromEnum(key);
-        // Clean up old value if present
-        if (self.semantic[index]) |*old_val| {
-            old_val.deinit();
-        }
-        self.semantic[index] = AttributeValue.fromJS(self.global, value);
+    /// Set an attribute value
+    /// Accepts AttributeKey pointer and various value types
+    /// Automatically converts non-JSValue types to JSValue
+    pub fn set(self: *AttributeMap, key: *const AttributeKey, val: anytype) void {
+        const js_val = convertToJSValue(self.global, val);
+        self.js_map.put(self.global, key.semconv_name, js_val);
     }
 
-    /// Fast path: get semantic attribute by enum key (zero allocation)
-    pub fn getFast(self: *const AttributeMap, key: AttributeKey) ?AttributeValue {
-        return self.semantic[@intFromEnum(key)];
-    }
-
-    /// Set header attribute using bitpacked key (context | header_id)
-    pub fn setHeader(self: *AttributeMap, header_key: u16, value: JSValue) !void {
-        const attr_val = AttributeValue.fromJS(self.global, value);
-        // Clean up old value if present
-        if (self.headers.fetchRemove(header_key)) |kv| {
-            var old_val = kv.value;
-            old_val.deinit();
-        }
-        try self.headers.put(header_key, attr_val);
-    }
-
-    /// Get header attribute by bitpacked key
-    pub fn getHeader(self: *const AttributeMap, header_key: u16) ?AttributeValue {
-        return self.headers.get(header_key);
-    }
-
-    /// Slow path: set attribute by string key (may allocate for custom attributes)
-    pub fn set(self: *AttributeMap, key: []const u8, value: JSValue) void {
-        // Try semantic lookup first (zero allocation)
-        if (semconv.stringToFastAttributeKey(key)) |semantic_key| {
-            self.fastSet(semantic_key, value);
-            return;
-        }
-
-        // Try header lookup (http.request.header.*, http.response.header.*)
-        // This is less common, so it's ok if it's slower
-        // For now, fall through to custom attributes
-
-        // Custom attribute - need to store the key string
-        const key_string = bun.String.fromBytes(key);
-        const key_slice = key_string.toUTF8(self.allocator);
-        defer key_slice.deinit();
-
-        if (self.custom_map.get(key_slice.slice())) |index| {
-            // Update existing custom attribute
-            self.custom_values.items[index].deinit();
-            self.custom_values.items[index] = AttributeValue.fromJS(self.global, value);
-        } else {
-            // Add new custom attribute
-            const index = @as(u32, @intCast(self.custom_values.items.len));
-            self.custom_keys.append(key_string) catch return;
-            self.custom_values.append(AttributeValue.fromJS(self.global, value)) catch return;
-            self.custom_map.put(key_slice.slice(), index) catch return;
-        }
-    }
-
-    /// Convert entire attribute map to JavaScript object
-    /// This is called when passing attributes to TypeScript instrumentation hooks
+    /// INTERNAL IMPLEMENTATION DETAIL - DO NOT CALL FROM APPLICATION CODE
+    /// This method is called internally by TelemetryContext.notifyOperation* methods
+    /// Application code should pass AttributeMap by pointer (&attrs), never call toJS() directly
     pub fn toJS(self: *AttributeMap) JSValue {
-        const total_count = blk: {
-            var count: usize = 0;
-            // Count semantic attributes
-            for (self.semantic) |maybe_val| {
-                if (maybe_val != null) count += 1;
-            }
-            // Count headers
-            count += self.headers.count();
-            // Count custom
-            count += self.custom_keys.items.len;
-            break :blk count;
-        };
-
-        const obj = JSValue.createEmptyObject(self.global, @intCast(total_count));
-
-        // Add semantic attributes (only iterate over valid array indices)
-        inline for (@typeInfo(AttributeKey).@"enum".fields) |field| {
-            const key_enum = @as(AttributeKey, @enumFromInt(field.value));
-            const index = @intFromEnum(key_enum);
-            // Only access semantic array for base attributes (index < COUNT)
-            if (index < AttributeKey.COUNT) {
-                if (self.semantic[index]) |*attr_val| {
-                    const key_str = comptime semconv.fastAttributeNameToString(key_enum);
-                    obj.put(self.global, key_str, attr_val.toJS(self.global));
-                }
-            }
-        }
-
-        // Add header attributes
-        var header_iter = self.headers.iterator();
-        while (header_iter.next()) |entry| {
-            const header_key_u16 = entry.key_ptr.*;
-            // Build header attribute name from bitpacked key
-            // Use a fake AttributeKey with the u16 value to get the string representation
-            const fake_key = @as(AttributeKey, @enumFromInt(header_key_u16));
-            const key_str = semconv.fastAttributeNameToString(fake_key);
-            var attr_val = entry.value_ptr;
-            obj.put(self.global, key_str, attr_val.toJS(self.global));
-        }
-
-        // Add custom attributes
-        for (self.custom_keys.items, 0..) |key, i| {
-            const key_slice = key.toUTF8(self.allocator);
-            defer key_slice.deinit();
-            var attr_val = &self.custom_values.items[i];
-            obj.put(self.global, key_slice.slice(), attr_val.toJS(self.global));
-        }
-
-        return obj;
+        return self.js_map;
     }
 
-    /// Extract headers from FetchHeaders object using HeaderNameList configuration
-    /// This is the fast path using FetchHeaders.get() method
+    /// Extract headers from FetchHeaders object using configured header list
+    /// Note: Header extraction is currently disabled - headers are not captured
+    /// This is a placeholder for future implementation when header capture is re-enabled
+    /// When implemented, use std.ArrayList(*const AttributeKey) for header_list
     pub fn extractHeadersFromFetchHeaders(
         self: *AttributeMap,
         headers_obj: JSValue,
-        header_list: *const HeaderNameList,
+        header_list: anytype,
         globalObject: *JSGlobalObject,
     ) void {
-        // Set up exception handling
-        var catch_scope: jsc.CatchScope = undefined;
-        catch_scope.init(globalObject, @src());
-        defer catch_scope.deinit();
-
-        // Get the headers.get method
-        const get_method = headers_obj.get(globalObject, "get") catch {
-            _ = catch_scope.clearException();
-            return;
-        };
-        if (get_method == null or !get_method.?.isCallable()) return;
-
-        // Fast path: Extract HTTPHeaderName headers via direct ID lookup
-        for (header_list.fast_headers.items) |header_id| {
-            const header_name = semconv.httpHeaderNameToString(header_id);
-            const header_name_js = ZigString.init(header_name).toJS(globalObject);
-            const args = [_]JSValue{header_name_js};
-
-            const header_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-
-            if (header_value_js.isNull() or header_value_js.isUndefined()) continue;
-            if (!header_value_js.isString()) continue;
-
-            // Build bitpacked key: context | header_id
-            const header_key = header_list.context | @as(u16, header_id);
-            self.setHeader(header_key, header_value_js) catch continue;
-        }
-
-        // Slow path: Extract OTel-specific headers (traceparent, etc.)
-        for (header_list.slow_header_names.items, 0..) |header_name_str, i| {
-            const header_id = header_list.slow_header_ids.items[i];
-            const header_name_js = header_name_str.toJS(globalObject);
-            const args = [_]JSValue{header_name_js};
-
-            const header_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-
-            if (header_value_js.isNull() or header_value_js.isUndefined()) continue;
-            if (!header_value_js.isString()) continue;
-
-            // Build bitpacked key: context | FLAG_OTEL_HEADER | header_id
-            const header_key = header_list.context | AttributeKey.FLAG_OTEL_HEADER | @as(u16, header_id);
-            self.setHeader(header_key, header_value_js) catch continue;
-        }
+        _ = self;
+        _ = headers_obj;
+        _ = header_list;
+        _ = globalObject;
+        // Header extraction temporarily disabled during refactoring
     }
 
-    /// Extract headers from plain JavaScript object using HeaderNameList configuration
-    /// This is the slow path using property access
+    /// Extract headers from plain JavaScript object
+    /// Note: Header extraction is currently disabled - headers are not captured
+    /// This is a placeholder for future implementation when header capture is re-enabled
+    /// When implemented, use std.ArrayList(*const AttributeKey) for header_list
     pub fn extractHeadersFromPlainObject(
         self: *AttributeMap,
         headers_obj: JSValue,
-        header_list: *const HeaderNameList,
+        header_list: anytype,
         globalObject: *JSGlobalObject,
     ) void {
-        // Set up exception handling
-        var catch_scope: jsc.CatchScope = undefined;
-        catch_scope.init(globalObject, @src());
-        defer catch_scope.deinit();
-
-        // Fast path: Extract HTTPHeaderName headers
-        for (header_list.fast_headers.items) |header_id| {
-            const header_name = semconv.httpHeaderNameToString(header_id);
-
-            const header_value_js = headers_obj.get(globalObject, header_name) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-            if (header_value_js == null) continue;
-            if (header_value_js.?.isNull() or header_value_js.?.isUndefined()) continue;
-            if (!header_value_js.?.isString()) continue;
-
-            // Build bitpacked key: context | header_id
-            const header_key = header_list.context | @as(u16, header_id);
-            self.setHeader(header_key, header_value_js.?) catch continue;
-        }
-
-        // Slow path: Extract OTel-specific headers
-        for (header_list.slow_header_names.items, 0..) |header_name_str, i| {
-            const header_id = header_list.slow_header_ids.items[i];
-            const header_name_slice = header_name_str.toUTF8(self.allocator);
-            defer header_name_slice.deinit();
-
-            const header_value_js = headers_obj.get(globalObject, header_name_slice.slice()) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-            if (header_value_js == null) continue;
-            if (header_value_js.?.isNull() or header_value_js.?.isUndefined()) continue;
-            if (!header_value_js.?.isString()) continue;
-
-            // Build bitpacked key: context | FLAG_OTEL_HEADER | header_id
-            const header_key = header_list.context | AttributeKey.FLAG_OTEL_HEADER | @as(u16, header_id);
-            self.setHeader(header_key, header_value_js.?) catch continue;
-        }
+        _ = self;
+        _ = headers_obj;
+        _ = header_list;
+        _ = globalObject;
+        // Header extraction temporarily disabled during refactoring
     }
 };

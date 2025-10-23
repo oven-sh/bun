@@ -15,10 +15,11 @@ test("Node.js http.Server injects headers from instruments", async () => {
     onOperationStart() {},
     onOperationInject(opId: number, data: any) {
       injectCalled = true;
-      return {
-        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        "x-custom-trace": "test-value-123",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent", "x-custom-trace"]
+      return [
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // traceparent
+        "test-value-123", // x-custom-trace
+      ];
     },
   });
 
@@ -62,7 +63,8 @@ test("Node.js http.Server handles multiple instruments with same headers", async
     },
     onOperationStart() {},
     onOperationInject() {
-      return { traceparent: "00-trace1-span1-01" };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      return ["00-trace1-span1-01"]; // traceparent
     },
   });
 
@@ -75,7 +77,8 @@ test("Node.js http.Server handles multiple instruments with same headers", async
     },
     onOperationStart() {},
     onOperationInject() {
-      return { traceparent: "00-trace2-span2-01" };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      return ["00-trace2-span2-01"]; // traceparent
     },
   });
 
@@ -115,7 +118,8 @@ test("Node.js http.Server skips injection when no headers configured", async () 
     onOperationStart() {},
     onOperationInject() {
       injectCalled = true;
-      return { traceparent: "should-not-appear" };
+      // Return array (but this shouldn't be called)
+      return ["should-not-appear"];
     },
   });
 
@@ -154,7 +158,8 @@ test("Node.js http.Server handles inject returning undefined gracefully", async 
     },
     onOperationStart() {},
     onOperationInject() {
-      return undefined; // No headers to inject
+      // Return undefined - no headers to inject
+      return undefined;
     },
   });
 
@@ -193,10 +198,12 @@ test("Node.js http.Server only injects configured headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-configured-header-01",
-        "x-not-configured": "should-not-appear",
-      };
+      // Return array of values matching injectHeaders.response order: ["traceparent"]
+      // Note: Extra values beyond configured headers should be ignored
+      return [
+        "00-configured-header-01", // traceparent (configured)
+        "should-not-appear", // x-not-configured (not configured, should be ignored)
+      ];
     },
   });
 

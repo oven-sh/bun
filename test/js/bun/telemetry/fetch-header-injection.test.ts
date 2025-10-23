@@ -24,10 +24,11 @@ test("fetch injects headers into outgoing requests", async () => {
     onOperationStart() {},
     onOperationInject(opId: number, data: any) {
       injectCalled = true;
-      return {
-        traceparent: "00-fetch-trace-id-span-01",
-        "x-custom-trace": "fetch-client-test",
-      };
+      // Return array of values matching injectHeaders.request order: ["traceparent", "x-custom-trace"]
+      return [
+        "00-fetch-trace-id-span-01", // traceparent
+        "fetch-client-test", // x-custom-trace
+      ];
     },
   });
 
@@ -66,10 +67,11 @@ test("fetch handles multiple instruments injecting headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-trace1-span1-01",
-        "x-trace-1": "value1",
-      };
+      // Return array of values matching injectHeaders.request order: ["traceparent", "x-trace-1"]
+      return [
+        "00-trace1-span1-01", // traceparent
+        "value1", // x-trace-1
+      ];
     },
   });
 
@@ -82,10 +84,11 @@ test("fetch handles multiple instruments injecting headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-trace2-span2-01",
-        "x-trace-2": "value2",
-      };
+      // Return array of values matching injectHeaders.request order: ["traceparent", "x-trace-2"]
+      return [
+        "00-trace2-span2-01", // traceparent
+        "value2", // x-trace-2
+      ];
     },
   });
 
@@ -124,7 +127,8 @@ test("fetch skips injection when no headers configured", async () => {
     onOperationStart() {},
     onOperationInject() {
       injectCalled = true;
-      return { traceparent: "should-not-appear" };
+      // Return array (but this shouldn't be called)
+      return ["should-not-appear"];
     },
   });
 
@@ -160,10 +164,12 @@ test("fetch only injects configured headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return {
-        traceparent: "00-configured-01",
-        "x-not-configured": "should-not-appear",
-      };
+      // Return array of values matching injectHeaders.request order: ["traceparent"]
+      // Note: Extra values beyond configured headers should be ignored
+      return [
+        "00-configured-01", // traceparent (configured)
+        "should-not-appear", // x-not-configured (not configured, should be ignored)
+      ];
     },
   });
 
@@ -199,7 +205,8 @@ test("fetch preserves user-provided headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      return { traceparent: "00-injected-01" };
+      // Return array of values matching injectHeaders.request order: ["traceparent"]
+      return ["00-injected-01"]; // traceparent
     },
   });
 

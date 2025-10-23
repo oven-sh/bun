@@ -38,16 +38,6 @@ pub const InstrumentKind = enum(u8) {
     pub const COUNT = @typeInfo(InstrumentKind).@"enum".fields.len;
 };
 
-/// Operation lifecycle event types
-/// Contract: specs/001-opentelemetry-support/contracts/telemetry-context.md lines 28-36
-pub const OperationType = enum(u8) {
-    start = 0,
-    progress = 1,
-    end = 2,
-    @"error" = 3,
-    inject = 4,
-};
-
 /// Parse an instrument kind from a string JSValue.
 /// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3".
 /// Returns .custom (0) if the value is not a string or does not match a known kind.
@@ -451,65 +441,6 @@ pub const TelemetryContext = struct {
         return info;
     }
 
-    /// Notify TypeScript layer of an operation event (base dispatch method)
-    /// This is the low-level API that all helper methods (notifyOperationStart, etc.) use internally
-    /// Contract: specs/001-opentelemetry-support/contracts/telemetry-context.md lines 75-81
-    ///
-    /// @param op: Operation type (start, progress, end, error, inject)
-    /// @param kind: Instrumentation Target (comptime for O(1) dispatch)
-    /// @param id: OpId from generateId()
-    /// @param attrs: *AttributeMap with operation attributes
-    /// @return JSValue (.js_undefined except for inject which returns injection data)
-    pub inline fn notifyOperation(
-        self: *TelemetryContext,
-        comptime op: OperationType,
-        comptime kind: InstrumentKind,
-        id: OpId,
-        attrs: *AttributeMap,
-    ) JSValue {
-        const js_attrs = attrs.toJS();
-        const kind_index = @intFromEnum(kind);
-        const instruments = self.instrument_table[kind_index].items;
-
-        switch (op) {
-            .start => {
-                for (instruments) |*record| {
-                    record.invokeStart(self.globalObject, id, js_attrs);
-                }
-                return .js_undefined;
-            },
-            .progress => {
-                for (instruments) |*record| {
-                    record.invokeProgress(self.globalObject, id, js_attrs);
-                }
-                return .js_undefined;
-            },
-            .end => {
-                for (instruments) |*record| {
-                    record.invokeEnd(self.globalObject, id, js_attrs);
-                }
-                return .js_undefined;
-            },
-            .@"error" => {
-                for (instruments) |*record| {
-                    record.invokeError(self.globalObject, id, js_attrs);
-                }
-                return .js_undefined;
-            },
-            .inject => {
-                if (instruments.len == 0) return .js_undefined;
-                const result_array = JSValue.createEmptyArray(self.globalObject, @intCast(instruments.len)) catch return .js_undefined;
-                for (instruments, 0..) |*record, i| {
-                    const injected = record.invokeInject(self.globalObject, id, js_attrs);
-                    if (!injected.isUndefined()) {
-                        result_array.putIndex(self.globalObject, @intCast(i), injected) catch {};
-                    }
-                }
-                return result_array;
-            },
-        }
-    }
-
     /// Invoke onOperationStart for all instruments registered for this kind
     pub inline fn notifyOperationStart(
         self: *TelemetryContext,
@@ -878,12 +809,7 @@ pub fn jsNotifyOperationStart(
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
     const id = @as(u64, @intFromFloat(id_value.asNumber()));
 
-    // JS bridge receives JSValue attributes directly from TypeScript
-    // Bypass AttributeMap and call InstrumentRecord.invoke* methods directly
-    const kind_index = @intFromEnum(kind);
-    for (telemetry.instrument_table[kind_index].items) |*record| {
-        record.invokeStart(telemetry.globalObject, id, attributes);
-    }
+    telemetry.notifyOperationStart(kind, id, attributes);
     return .js_undefined;
 }
 
@@ -916,11 +842,7 @@ pub fn jsNotifyOperationEnd(
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
     const id = @as(u64, @intFromFloat(id_value.asNumber()));
 
-    // JS bridge receives JSValue attributes directly from TypeScript
-    const kind_index = @intFromEnum(kind);
-    for (telemetry.instrument_table[kind_index].items) |*record| {
-        record.invokeEnd(telemetry.globalObject, id, attributes);
-    }
+    telemetry.notifyOperationEnd(kind, id, attributes);
     return .js_undefined;
 }
 
@@ -953,11 +875,7 @@ pub fn jsNotifyOperationError(
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
     const id = @as(u64, @intFromFloat(id_value.asNumber()));
 
-    // JS bridge receives JSValue attributes directly from TypeScript
-    const kind_index = @intFromEnum(kind);
-    for (telemetry.instrument_table[kind_index].items) |*record| {
-        record.invokeError(telemetry.globalObject, id, attributes);
-    }
+    telemetry.notifyOperationError(kind, id, attributes);
     return .js_undefined;
 }
 
@@ -990,11 +908,7 @@ pub fn jsNotifyOperationProgress(
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
     const id = @as(u64, @intFromFloat(id_value.asNumber()));
 
-    // JS bridge receives JSValue attributes directly from TypeScript
-    const kind_index = @intFromEnum(kind);
-    for (telemetry.instrument_table[kind_index].items) |*record| {
-        record.invokeProgress(telemetry.globalObject, id, attributes);
-    }
+    telemetry.notifyOperationProgress(kind, id, attributes);
     return .js_undefined;
 }
 
@@ -1028,20 +942,7 @@ pub fn jsNotifyOperationInject(
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
     const id = @as(u64, @intFromFloat(id_value.asNumber()));
 
-    // JS bridge receives JSValue data directly from TypeScript
-    // Return collected results from all instruments
-    const kind_index = @intFromEnum(kind);
-    const instruments = telemetry.instrument_table[kind_index].items;
-    if (instruments.len == 0) return .js_undefined;
-
-    const result_array = JSValue.createEmptyArray(telemetry.globalObject, @intCast(instruments.len)) catch return .js_undefined;
-    for (instruments, 0..) |*record, i| {
-        const injected = record.invokeInject(telemetry.globalObject, id, data);
-        if (!injected.isUndefined()) {
-            result_array.putIndex(telemetry.globalObject, @intCast(i), injected) catch {};
-        }
-    }
-    return result_array;
+    return telemetry.notifyOperationInject(kind, id, data);
 }
 
 /// Bun.telemetry.nativeHooks.getConfigurationProperty(propertyId: number): any

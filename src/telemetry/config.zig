@@ -110,7 +110,7 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             server_req_headers_js,
-            semconv.AttributeKey.CONTEXT_SERVER_REQUEST,
+            semconv.CONTEXT_SERVER_REQUEST,
         );
 
         // Pre-compute HeaderNameList for server response headers
@@ -118,7 +118,7 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             server_res_headers_js,
-            semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
+            semconv.CONTEXT_SERVER_RESPONSE,
         );
 
         // Pre-compute HeaderNameList for fetch request headers
@@ -126,7 +126,7 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             fetch_req_headers_js,
-            semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
+            semconv.CONTEXT_FETCH_REQUEST,
         );
 
         // Pre-compute HeaderNameList for fetch response headers
@@ -134,7 +134,7 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             fetch_res_headers_js,
-            semconv.AttributeKey.CONTEXT_FETCH_RESPONSE,
+            semconv.CONTEXT_FETCH_RESPONSE,
         );
 
         return TelemetryConfig{
@@ -304,12 +304,12 @@ pub const TelemetryConfig = struct {
 
         // Determine context based on property type and create HeaderNameList
         const maybe_context: ?u16 = switch (@as(ConfigurationProperty, @enumFromInt(property_id))) {
-            .http_capture_headers_server_request => semconv.AttributeKey.CONTEXT_SERVER_REQUEST,
-            .http_capture_headers_server_response => semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
-            .http_propagate_headers_server_response => semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
-            .http_capture_headers_fetch_request => semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
-            .http_capture_headers_fetch_response => semconv.AttributeKey.CONTEXT_FETCH_RESPONSE,
-            .http_propagate_headers_fetch_request => semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
+            .http_capture_headers_server_request => semconv.CONTEXT_SERVER_REQUEST,
+            .http_capture_headers_server_response => semconv.CONTEXT_SERVER_RESPONSE,
+            .http_propagate_headers_server_response => semconv.CONTEXT_SERVER_RESPONSE,
+            .http_capture_headers_fetch_request => semconv.CONTEXT_FETCH_REQUEST,
+            .http_capture_headers_fetch_response => semconv.CONTEXT_FETCH_RESPONSE,
+            .http_propagate_headers_fetch_request => semconv.CONTEXT_FETCH_REQUEST,
             else => null,
         };
 

@@ -3,7 +3,7 @@ const sql = new Bun.SQL({
   url: process.env.MYSQL_URL,
   tls,
   max: 1,
-  // ensure that the process doesn't exit because of timeouts
+  // Set timeouts high enough to not fire during this test
   idleTimeout: 100,
   maxLifetime: 100,
   connectionTimeout: 100,

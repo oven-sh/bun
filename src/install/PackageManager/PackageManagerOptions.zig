@@ -71,6 +71,9 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+public_hoist_pattern: ?bun.install.PnpmMatcher = null,
+hoist_pattern: ?bun.install.PnpmMatcher = null,
+
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
@@ -251,6 +254,7 @@ pub fn load(
         .username = "",
         .password = "",
         .token = "",
+        .email = "",
     };
     if (bun_install_) |config| {
         if (config.default_registry) |registry| {
@@ -384,6 +388,14 @@ pub fn load(
 
         if (config.minimum_release_age_excludes) |exclusions| {
             this.minimum_release_age_excludes = exclusions;
+        }
+
+        if (config.public_hoist_pattern) |public_hoist_pattern| {
+            this.public_hoist_pattern = public_hoist_pattern;
+        }
+
+        if (config.hoist_pattern) |hoist_pattern| {
+            this.hoist_pattern = hoist_pattern;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;

@@ -533,69 +533,70 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         } else null;
 
         // Build reachability set for production mode by traversing lockfile dependency graph
-        var production_reachable_hashes: ?std.AutoHashMap(PackageNameHash, void) = null;
-        defer if (production_reachable_hashes) |*map| map.deinit();
+        // Use PackageID-based tracking to correctly handle multi-version installs
+        var production_reachable_ids: ?std.AutoHashMap(PackageID, void) = null;
+        defer if (production_reachable_ids) |*map| map.deinit();
 
         if (is_production and pkg_json_for_prune != null) {
-            production_reachable_hashes = std.AutoHashMap(PackageNameHash, void).init(manager.allocator);
-            var reachable = &production_reachable_hashes.?;
+            production_reachable_ids = std.AutoHashMap(PackageID, void).init(manager.allocator);
+            var reachable = &production_reachable_ids.?;
 
             // Get root package ID
             const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
-            
+
             // Skip production reachability if root package ID is invalid
             if (root_pkg_id == invalid_package_id) {
                 // Can't determine production dependencies without valid root package
-                production_reachable_hashes = null;
+                production_reachable_ids = null;
             } else {
-            const packages = manager.lockfile.packages.slice();
-            const dependencies_lists = packages.items(.dependencies);
-            const resolutions_lists = packages.items(.resolutions);
+                const packages = manager.lockfile.packages.slice();
+                const dependencies_lists = packages.items(.dependencies);
+                const resolutions_lists = packages.items(.resolutions);
 
-            // No need to parse package.json - we can seed directly from lockfile's non-dev edges
+                // No need to parse package.json - we can seed directly from lockfile's non-dev edges
 
-            // BFS traversal to find all reachable packages from production dependencies
-            var queue = std.ArrayList(PackageID).init(manager.allocator);
-            defer queue.deinit();
-            var visited = std.AutoHashMap(PackageID, void).init(manager.allocator);
-            defer visited.deinit();
+                // BFS traversal to find all reachable packages from production dependencies
+                var queue = std.ArrayList(PackageID).init(manager.allocator);
+                defer queue.deinit();
+                var visited = std.AutoHashMap(PackageID, void).init(manager.allocator);
+                defer visited.deinit();
 
-            // Start with root package's production dependencies
-            const root_dep_list = dependencies_lists[root_pkg_id];
-            const root_res_list = resolutions_lists[root_pkg_id];
-            const root_deps = root_dep_list.get(manager.lockfile.buffers.dependencies.items);
-            const root_package_ids = root_res_list.get(manager.lockfile.buffers.resolutions.items);
+                // Start with root package's production dependencies
+                const root_dep_list = dependencies_lists[root_pkg_id];
+                const root_res_list = resolutions_lists[root_pkg_id];
+                const root_deps = root_dep_list.get(manager.lockfile.buffers.dependencies.items);
+                const root_package_ids = root_res_list.get(manager.lockfile.buffers.resolutions.items);
 
-            for (root_deps, root_package_ids) |dep, pkg_id| {
-                // Seed BFS from all non-dev dependencies (production + optional)
-                // The lockfile already tracks dep.behavior, so we don't need to parse package.json
-                if (pkg_id != invalid_package_id and !dep.behavior.dev) {
-                    try queue.append(pkg_id);
-                    try visited.put(pkg_id, {});
-                    try reachable.put(name_hashes[pkg_id], {});
+                for (root_deps, root_package_ids) |dep, pkg_id| {
+                    // Seed BFS from all non-dev dependencies (production + optional)
+                    // The lockfile already tracks dep.behavior, so we don't need to parse package.json
+                    if (pkg_id != invalid_package_id and !dep.behavior.dev) {
+                        try queue.append(pkg_id);
+                        try visited.put(pkg_id, {});
+                        try reachable.put(pkg_id, {});
+                    }
                 }
-            }
 
-            // BFS to traverse all transitive dependencies (using index-based dequeue for O(n))
-            var qi: usize = 0;
-            while (qi < queue.items.len) : (qi += 1) {
-                const current_pkg_id = queue.items[qi];
+                // BFS to traverse all transitive dependencies (using index-based dequeue for O(n))
+                var qi: usize = 0;
+                while (qi < queue.items.len) : (qi += 1) {
+                    const current_pkg_id = queue.items[qi];
 
-                const dep_list = dependencies_lists[current_pkg_id];
-                const res_list = resolutions_lists[current_pkg_id];
-                const deps = dep_list.get(manager.lockfile.buffers.dependencies.items);
-                const pkg_ids = res_list.get(manager.lockfile.buffers.resolutions.items);
+                    const dep_list = dependencies_lists[current_pkg_id];
+                    const res_list = resolutions_lists[current_pkg_id];
+                    const deps = dep_list.get(manager.lockfile.buffers.dependencies.items);
+                    const pkg_ids = res_list.get(manager.lockfile.buffers.resolutions.items);
 
-                for (deps, pkg_ids) |dep2, pkg_id| {
-                    if (pkg_id == invalid_package_id) continue;
-                    if (dep2.behavior.dev) continue; // skip dev edges in production graph
-                    if (visited.contains(pkg_id)) continue;
+                    for (deps, pkg_ids) |dep2, pkg_id| {
+                        if (pkg_id == invalid_package_id) continue;
+                        if (dep2.behavior.dev) continue; // skip dev edges in production graph
+                        if (visited.contains(pkg_id)) continue;
 
-                    try queue.append(pkg_id);
-                    try visited.put(pkg_id, {});
-                    try reachable.put(name_hashes[pkg_id], {});
+                        try queue.append(pkg_id);
+                        try visited.put(pkg_id, {});
+                        try reachable.put(pkg_id, {});
+                    }
                 }
-            }
             }
         }
 
@@ -607,7 +608,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             package_resolutions: @TypeOf(package_resolutions),
             workspace_paths: @TypeOf(workspace_paths),
             is_production: bool,
-            production_reachable_hashes: ?*const std.AutoHashMap(PackageNameHash, void),
+            production_reachable_ids: ?*const std.AutoHashMap(PackageID, void),
             is_dry_run: bool,
             // Precomputed multimap for O(1) lookup of package IDs by name hash
             name_to_ids: *const std.AutoHashMap(PackageNameHash, std.ArrayList(PackageID)),
@@ -712,7 +713,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 if (matching_packages_ptr == null) {
                     return true;
                 }
-                
+
                 const matching_packages = matching_packages_ptr.?;
 
                 // If only one matching package, use it (fast path - no version check needed)
@@ -750,14 +751,14 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             if (self.package_resolutions[pkg_id].tag == .npm) {
                                 const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
                                 const string_buf = self.manager.lockfile.buffers.string_bytes.items;
-                                
+
                                 const lockfile_ver_str = std.fmt.allocPrint(
                                     self.manager.allocator,
                                     "{any}",
                                     .{lockfile_version.fmt(string_buf)},
                                 ) catch continue;
                                 defer self.manager.allocator.free(lockfile_ver_str);
-                                
+
                                 if (strings.eql(inst_ver, lockfile_ver_str)) {
                                     matched_pkg_id = pkg_id;
                                     break;
@@ -765,7 +766,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             }
                         }
                     }
-                    
+
                     // If we couldn't match by version, fall back to first match
                     if (matched_pkg_id == null) {
                         matched_pkg_id = matching_packages.items[0];
@@ -773,10 +774,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 }
 
                 // If we found a match, check if it should be kept
-                if (matched_pkg_id) |_| {
-                    // In production mode, check if package is reachable
-                    if (self.is_production and self.production_reachable_hashes != null) {
-                        if (!self.production_reachable_hashes.?.contains(pkg_hash)) {
+                if (matched_pkg_id) |pkg_id| {
+                    // In production mode, check if this specific PackageID is reachable
+                    // This correctly handles multi-version scenarios (e.g., lodash@4.17.0 vs lodash@4.17.21)
+                    if (self.is_production and self.production_reachable_ids != null) {
+                        if (!self.production_reachable_ids.?.contains(pkg_id)) {
                             return true;
                         }
                     }
@@ -797,17 +799,18 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
             name_to_ids.deinit();
         }
-        
+
         for (name_hashes, 0..) |hash, idx| {
             const pkg_id = @as(PackageID, @intCast(idx));
-            
+
             // Skip workspace packages in the multimap
-            if (package_resolutions[pkg_id].tag == .workspace or 
+            if (package_resolutions[pkg_id].tag == .workspace or
                 package_metas[pkg_id].origin == .local or
-                workspace_paths.contains(hash)) {
+                workspace_paths.contains(hash))
+            {
                 continue;
             }
-            
+
             const result = try name_to_ids.getOrPut(hash);
             if (!result.found_existing) {
                 result.value_ptr.* = std.ArrayList(PackageID).init(manager.allocator);
@@ -822,7 +825,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             .package_resolutions = package_resolutions,
             .workspace_paths = workspace_paths,
             .is_production = is_production,
-            .production_reachable_hashes = if (production_reachable_hashes) |*map| map else null,
+            .production_reachable_ids = if (production_reachable_ids) |*map| map else null,
             .is_dry_run = is_dry_run,
             .name_to_ids = &name_to_ids,
         };

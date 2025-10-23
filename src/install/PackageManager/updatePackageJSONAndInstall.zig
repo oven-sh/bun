@@ -545,7 +545,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     if (pkg_id != invalid_package_id and !dep.behavior.dev) {
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        reachable.set(pkg_id);
+                        reachable.set(@intCast(pkg_id));
                     }
                 }
 
@@ -566,7 +566,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        reachable.set(pkg_id);
+                        reachable.set(@intCast(pkg_id));
                     }
                 }
             }
@@ -724,7 +724,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     for (matching_packages.items) |pid| {
                         if (self.package_resolutions[pid].tag != .npm) {
                             if (!self.is_production or self.production_reachable_ids == null or
-                                self.production_reachable_ids.?.isSet(pid))
+                                self.production_reachable_ids.?.isSet(@intCast(pid)))
                             {
                                 matched_pkg_id = pid;
                                 break;
@@ -794,7 +794,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     // In production mode, check if this specific PackageID is reachable
                     // This correctly handles multi-version scenarios (e.g., lodash@4.17.0 vs lodash@4.17.21)
                     if (self.is_production and self.production_reachable_ids != null) {
-                        if (!self.production_reachable_ids.?.isSet(pkg_id)) {
+                        if (!self.production_reachable_ids.?.isSet(@intCast(pkg_id))) {
                             return true;
                         }
                     }

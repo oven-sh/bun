@@ -68,6 +68,13 @@ pub const NapiEnv = opaque {
     extern fn napi_internal_get_version(*NapiEnv) u32;
     extern fn NapiEnv__deref(*NapiEnv) void;
     extern fn NapiEnv__ref(*NapiEnv) void;
+
+    pub const external_shared_descriptor = struct {
+        pub const ref = NapiEnv__ref;
+        pub const deref = NapiEnv__deref;
+    };
+
+    pub const EnvRef = bun.ptr.ExternalShared(NapiEnv);
 };
 
 fn envIsNull() napi_status {
@@ -1038,7 +1045,7 @@ pub const napi_async_work = struct {
     concurrent_task: jsc.ConcurrentTask = .{},
     event_loop: *jsc.EventLoop,
     global: *jsc.JSGlobalObject,
-    env: *NapiEnv,
+    env: NapiEnv.EnvRef,
     execute: napi_async_execute_callback,
     complete: ?napi_async_complete_callback,
     data: ?*anyopaque = null,
@@ -1058,7 +1065,7 @@ pub const napi_async_work = struct {
 
         const work = bun.new(napi_async_work, .{
             .global = global,
-            .env = env,
+            .env = NapiEnv.EnvRef.cloneFromRaw(env),
             .execute = execute,
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
@@ -1068,6 +1075,8 @@ pub const napi_async_work = struct {
     }
 
     pub fn destroy(this: *napi_async_work) void {
+        var env_ref = this.env;
+        env_ref.deinit();
         bun.destroy(this);
     }
 
@@ -1089,7 +1098,7 @@ pub const napi_async_work = struct {
                 return;
             }
         }
-        this.execute(this.env, this.data);
+        this.execute(this.env.get(), this.data);
         this.status.store(.completed, .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
@@ -1109,7 +1118,7 @@ pub const napi_async_work = struct {
             return;
         };
 
-        const env = this.env;
+        const env = this.env.get();
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 
@@ -1368,13 +1377,13 @@ pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
 extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;
 
 pub const Finalizer = struct {
-    env: napi_env,
+    env: NapiEnv.EnvRef.Optional,
     fun: napi_finalize,
     data: ?*anyopaque = null,
     hint: ?*anyopaque = null,
 
     pub fn run(this: *Finalizer) void {
-        const env = this.env.?;
+        const env = this.env.get() orelse return;
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 
@@ -1397,7 +1406,7 @@ pub const Finalizer = struct {
     /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
     /// which they couldn't if they ran immediately while the garbage collector is still running.
     pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
-        const task = NapiFinalizerTask.init(.{ .env = env, .fun = fun, .data = data, .hint = hint });
+        const task = NapiFinalizerTask.init(.{ .env = NapiEnv.EnvRef.Optional.cloneFromRaw(env), .fun = fun, .data = data, .hint = hint });
         task.schedule();
     }
 };
@@ -1439,9 +1448,9 @@ pub const ThreadSafeFunction = struct {
     event_loop: *jsc.EventLoop,
     tracker: jsc.Debugger.AsyncTaskTracker,
 
-    env: *NapiEnv,
+    env: NapiEnv.EnvRef,
 
-    finalizer: Finalizer = Finalizer{ .env = null, .fun = null, .data = null },
+    finalizer: Finalizer = Finalizer{ .env = NapiEnv.EnvRef.Optional.initNull(), .fun = null, .data = null },
     has_queued_finalizer: bool = false,
     queue: Queue = .{
         .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
@@ -1590,7 +1599,7 @@ pub const ThreadSafeFunction = struct {
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
     fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSTerminated!void {
-        const env = this.env;
+        const env = this.env.get();
         if (!is_first) {
             try this.event_loop.drainMicrotasks();
         }
@@ -1665,12 +1674,17 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            Finalizer.napi_internal_enqueue_finalizer(this.env, fun, this.finalizer.data, this.ctx);
+            Finalizer.napi_internal_enqueue_finalizer(this.env.get(), fun, this.finalizer.data, this.ctx);
+        } else {
+            // If there's no finalizer to run, we need to deinit the finalizer's env ref
+            var finalizer_env_ref = this.finalizer.env;
+            finalizer_env_ref.deinit();
         }
 
         this.callback.deinit();
         this.queue.deinit();
-        this.env.deref();
+        var env_ref = this.env;
+        env_ref.deinit();
         bun.destroy(this);
     }
 
@@ -1748,7 +1762,7 @@ pub export fn napi_create_threadsafe_function(
     const vm = env.toJS().bunVM();
     var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
-        .env = env,
+        .env = NapiEnv.EnvRef.cloneFromRaw(env),
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
@@ -1764,11 +1778,10 @@ pub export fn napi_create_threadsafe_function(
         .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
     });
 
-    function.finalizer = .{ .env = env, .data = thread_finalize_data, .fun = thread_finalize_cb };
+    function.finalizer = .{ .env = NapiEnv.EnvRef.Optional.cloneFromRaw(env), .data = thread_finalize_data, .fun = thread_finalize_cb };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);
-    function.env.ref();
 
     result.* = function;
     return env.ok();
@@ -2486,7 +2499,7 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn schedule(this: *NapiFinalizerTask) void {
-        const globalThis = this.finalizer.env.?.toJS();
+        const globalThis = (this.finalizer.env.get() orelse return).toJS();
 
         const vm, const thread_kind = globalThis.tryBunVM();
 
@@ -2505,6 +2518,8 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn deinit(this: *NapiFinalizerTask) void {
+        var env_ref = this.finalizer.env;
+        env_ref.deinit();
         bun.default_allocator.destroy(this);
     }
 

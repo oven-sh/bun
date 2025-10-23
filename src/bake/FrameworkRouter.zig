@@ -930,7 +930,7 @@ pub const TinyLog = struct {
             const symbols = bun.fmt.TableSymbols.unicode;
             bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
             if (log.cursor_len > 1) {
-                w.writeBytesNTimes(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
+                w.splatBytesAll(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
             }
         } else {
             if (log.cursor_len <= 1) {

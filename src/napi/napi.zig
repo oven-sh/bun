@@ -55,14 +55,6 @@ pub const NapiEnv = opaque {
         return null;
     }
 
-    pub fn ref(self: *NapiEnv) void {
-        NapiEnv__ref(self);
-    }
-
-    pub fn deref(self: *NapiEnv) void {
-        NapiEnv__deref(self);
-    }
-
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
     extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
     extern fn napi_internal_get_version(*NapiEnv) u32;

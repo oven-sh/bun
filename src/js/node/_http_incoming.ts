@@ -23,6 +23,7 @@ const {
   NodeHTTPResponseAbortEvent,
   webRequestOrResponseHasBodyValue,
   kBunServer,
+  kAbortController,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 
@@ -349,7 +350,6 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     if (isAbortError(err)) {
       err = undefined;
     }
-
     var nodeHTTPResponse = this[kHandle];
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
@@ -374,6 +374,10 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
+    }
+    const req = this.req;
+    if (req && !this.complete) {
+      req[kAbortController]?.abort?.();
     }
 
     if ($isCallable(cb)) {

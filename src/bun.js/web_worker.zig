@@ -169,6 +169,10 @@ fn resolveEntryPointSpecifier(
                 error_message.* = bun.String.static("unexpected exception");
                 return null;
             },
+            error.JSTerminated => {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            },
         };
         error_message.* = out;
         return null;
@@ -382,8 +386,10 @@ fn flushLogs(this: *WebWorker) void {
         const str = err.toBunString(vm.global) catch |e| break :blk e;
         break :blk .{ err, str };
     } catch |err| switch (err) {
+        // TODO: properly handle exception
         error.JSError => @panic("unhandled exception"),
         error.OutOfMemory => bun.outOfMemory(),
+        error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
@@ -426,6 +432,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         switch (err) {
             error.JSError => {},
             error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
         error_instance = globalObject.tryTakeException().?;
     };

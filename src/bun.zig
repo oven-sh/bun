@@ -157,15 +157,17 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+    /// Similar to error.JSError but always represents a termination exception.
+    JSTerminated,
 };
 
-pub const JSExecutionTerminated = error{
+pub const JSTerminated = error{
     /// JavaScript execution has been terminated.
     /// This condition is indicated by throwing an exception, so most code should still handle it
     /// with JSError. If you expect that you will not throw any errors other than the termination
     /// exception, you can catch JSError, assert that the exception is the termination exception,
-    /// and return error.JSExecutionTerminated.
-    JSExecutionTerminated,
+    /// and return error.JSTerminated.
+    JSTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -1315,7 +1317,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], wide_slice);
         return buf[0..res.written];
     }
 
@@ -1988,8 +1990,6 @@ pub const WTF = struct {
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
-
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
 const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
@@ -2845,23 +2845,6 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
-}
-
-extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
-
-pub fn getUserName(output_buffer: []u8) ?[]const u8 {
-    if (Environment.isWindows) {
-        var size: u32 = @intCast(output_buffer.len);
-        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
-            return null;
-        }
-        return output_buffer[0..size];
-    }
-    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
-    const user = env.get("USER") orelse return null;
-    const size = @min(output_buffer.len, user.len);
-    copy(u8, output_buffer[0..size], user[0..size]);
-    return output_buffer[0..size];
 }
 
 pub inline fn resolveSourcePath(

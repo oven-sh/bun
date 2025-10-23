@@ -364,7 +364,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn memoryCost(this: Self) usize {
-            return this.cap;
+            return this.cap * @sizeOf(Type);
         }
 
         /// This method is available only for `BabyList(u8)`.
@@ -400,63 +400,39 @@ pub fn BabyList(comptime Type: type) type {
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
             const old = this.listManaged(allocator);
-            const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, []const u8, str);
+            const new = try strings.allocateLatin1IntoUTF8WithList(old, old.items.len, str);
             this.update(new);
             return this.len - initial;
         }
 
-        /// This method is available only for `BabyList(u8)`.
+        /// This method is available only for `BabyList(u8)`. Invalid characters are replaced with
+        /// replacement character
         pub fn writeUTF16(this: *Self, allocator: std.mem.Allocator, str: []const u16) OOM!u32 {
             if ((comptime safety_checks) and str.len > 0) this.assertOwned();
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
-            var list_ = this.listManaged(allocator);
-            const initial = this.len;
-            outer: {
-                defer this.update(list_);
-                const trimmed = bun.simdutf.trim.utf16(str);
-                if (trimmed.len == 0)
-                    break :outer;
-                const available_len = (list_.capacity - list_.items.len);
+            const initial_len = this.len;
 
-                // maximum UTF-16 length is 3 times the UTF-8 length + 2
-                // only do the pass over the input length if we may not have enough space
-                const out_len = if (available_len <= (trimmed.len * 3 + 2))
-                    bun.simdutf.length.utf8.from.utf16.le(trimmed)
+            var list_ = this.listManaged(allocator);
+            {
+                defer this.update(list_);
+
+                // Maximum UTF-16 length is 3 times the UTF-8 length + 2
+                const length_estimate = if (list_.unusedCapacitySlice().len <= (str.len * 3 + 2))
+                    // This length is an estimate. `str` isn't validated and might contain invalid
+                    // sequences. If it does simdutf will assume they require 2 characters instead
+                    // of 3.
+                    bun.simdutf.length.utf8.from.utf16.le(str)
                 else
                     str.len;
 
-                if (out_len == 0)
-                    break :outer;
+                try list_.ensureUnusedCapacity(length_estimate);
 
-                // intentionally over-allocate a little
-                try list_.ensureTotalCapacity(list_.items.len + out_len);
-
-                var remain = str;
-                while (remain.len > 0) {
-                    const orig_len = list_.items.len;
-
-                    const slice_ = list_.items.ptr[orig_len..list_.capacity];
-                    const result = strings.copyUTF16IntoUTF8WithBufferImpl(
-                        slice_,
-                        []const u16,
-                        remain,
-                        trimmed,
-                        out_len,
-                        // FIXME: Unclear whether or not we should allow
-                        //        incomplete UTF-8 sequences. If you are solving a bug
-                        //        with invalid UTF-8 sequences, this may be the
-                        //        culprit...
-                        true,
-                    );
-                    remain = remain[result.read..];
-                    list_.items.len += @as(usize, result.written);
-                    if (result.read == 0 or result.written == 0) break;
-                }
+                try strings.convertUTF16ToUTF8Append(&list_, str);
             }
 
-            return this.len - initial;
+            return this.len - initial_len;
         }
 
         /// This method is available only for `BabyList(u8)`.

@@ -301,3 +301,39 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
     expect(result).toBe(String(size));
   }
 });
+
+test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {
+  // Inline raw HTTPS origin: 200 + no Content-Length then close
+  const originServer = tls.createServer(
+    { ...tlsCert, rejectUnauthorized: false },
+    (clientSocket: net.Socket | tls.TLSSocket) => {
+      clientSocket.once("data", () => {
+        const body = "ok";
+        // ! Notice we are not using a Content-Length header here, this is what is causing the issue
+        const resp = "HTTP/1.1 200 OK\r\n" + "content-type: text/plain\r\n" + "connection: close\r\n" + "\r\n" + body;
+        clientSocket.write(resp);
+        clientSocket.end();
+      });
+      clientSocket.on("error", () => {});
+    },
+  );
+  originServer.listen(0);
+  await once(originServer, "listening");
+  const originURL = `https://localhost:${(originServer.address() as net.AddressInfo).port}`;
+  try {
+    const res = await fetch(originURL, {
+      method: "POST",
+      body: "x",
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("ok");
+  } finally {
+    originServer.close();
+    await once(originServer, "close");
+  }
+});

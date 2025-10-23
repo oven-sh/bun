@@ -17,7 +17,7 @@ pub export fn TextEncoder__encode8(
     const slice = ptr[0..len];
 
     if (slice.len <= buf.len / 2) {
-        const result = strings.copyLatin1IntoUTF8(&buf, []const u8, slice);
+        const result = strings.copyLatin1IntoUTF8(&buf, slice);
         const uint8array = jsc.JSValue.createUninitializedUint8Array(globalThis, result.written) catch return .zero;
         bun.assert(result.written <= buf.len);
         bun.assert(result.read == slice.len);
@@ -26,7 +26,7 @@ pub export fn TextEncoder__encode8(
         @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
         return uint8array;
     } else {
-        const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
+        const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, slice) catch {
             return globalThis.throwOutOfMemoryValue();
         };
         bun.assert(bytes.len >= slice.len);
@@ -53,7 +53,7 @@ pub export fn TextEncoder__encode16(
 
     // max utf16 -> utf8 length
     if (slice.len <= buf.len / 4) {
-        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
+        const result = strings.copyUTF16IntoUTF8(&buf, slice);
         if (result.read == 0 or result.written == 0) {
             const uint8array = jsc.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -71,7 +71,6 @@ pub export fn TextEncoder__encode16(
     } else {
         const bytes = strings.toUTF8AllocWithType(
             bun.default_allocator,
-            @TypeOf(slice),
             slice,
         ) catch {
             return globalThis.toInvalidArguments("Out of memory", .{});
@@ -99,7 +98,7 @@ pub export fn c(
 
     // max utf16 -> utf8 length
     if (slice.len <= buf.len / 4) {
-        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
+        const result = strings.copyUTF16IntoUTF8(&buf, slice);
         if (result.read == 0 or result.written == 0) {
             const uint8array = jsc.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -117,7 +116,6 @@ pub export fn c(
     } else {
         const bytes = strings.toUTF8AllocWithType(
             bun.default_allocator,
-            @TypeOf(slice),
             slice,
         ) catch {
             return globalThis.throwOutOfMemoryValue();
@@ -136,7 +134,7 @@ const RopeStringEncoder = struct {
 
     pub fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.C) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
-        const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[this.tail..], []const u8, ptr[0..len], true);
+        const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[this.tail..], ptr[0..len], true);
         if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
             it.stop = 1;
             this.any_non_ascii = true;
@@ -151,7 +149,7 @@ const RopeStringEncoder = struct {
     }
     pub fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.C) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
-        const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[offset..], []const u8, ptr[0..len], true);
+        const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[offset..], ptr[0..len], true);
         if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
             it.stop = 1;
             this.any_non_ascii = true;
@@ -222,7 +220,7 @@ pub export fn TextEncoder__encodeInto16(
 ) u64 {
     const output = buf_ptr[0..buf_len];
     const input = input_ptr[0..input_len];
-    var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input);
+    var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, input);
     if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
         const replacement_char = [_]u8{ 239, 191, 189 };
         @memcpy(buf_ptr[0..replacement_char.len], &replacement_char);
@@ -242,7 +240,7 @@ pub export fn TextEncoder__encodeInto8(
     const output = buf_ptr[0..buf_len];
     const input = input_ptr[0..input_len];
     const result: strings.EncodeIntoResult =
-        strings.copyLatin1IntoUTF8(output, []const u8, input);
+        strings.copyLatin1IntoUTF8(output, input);
     const sized: [2]u32 = .{ result.read, result.written };
     return @bitCast(sized);
 }

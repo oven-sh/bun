@@ -849,7 +849,18 @@ linker = "isolated"
     delete pkg.dependencies["@types/uuid"];
     writeFileSync(join(String(dir), "package.json"), JSON.stringify(pkg, null, 2));
 
-    // Verify both scoped packages exist
+    // Reconcile lockfile by running install to remove @types/uuid from lockfile
+    // This makes @types/uuid truly extraneous (in node_modules but not in lockfile)
+    await using reconcileProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await reconcileProc.exited).toBe(0);
+
+    // Verify both scoped packages exist (node_modules not yet pruned)
     expect(existsSync(join(String(dir), "node_modules/@types/node"))).toBe(true);
     expect(existsSync(join(String(dir), "node_modules/@types/uuid"))).toBe(true);
 

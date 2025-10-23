@@ -584,14 +584,25 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             is_dry_run: bool,
             // Precomputed multimap for O(1) lookup of package IDs by name hash
             name_to_ids: *const std.AutoHashMap(PackageNameHash, std.ArrayList(PackageID)),
+            // Track visited directories by inode to detect cycles
+            visited_inodes: *std.AutoHashMap(u64, void),
 
             fn pruneNodeModulesRecursive(
                 self: *const @This(),
                 dir: std.fs.Dir,
                 depth: u8,
             ) void {
-                // Limit recursion depth to prevent infinite loops
-                if (depth > 10) return;
+                // Detect symlink cycles by checking if we've visited this directory before
+                // Get the directory's stat to identify it by inode
+                const stat = dir.stat() catch return;
+                
+                // Check if we've already visited this inode (indicates a cycle)
+                if (self.visited_inodes.contains(stat.inode)) {
+                    return;
+                }
+                
+                // Mark this directory as visited
+                self.visited_inodes.put(stat.inode, {}) catch return;
 
                 var iter = dir.iterate();
                 while (iter.next() catch null) |entry| {
@@ -790,6 +801,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             try result.value_ptr.append(pkg_id);
         }
 
+        // Track visited inodes to detect symlink cycles
+        var visited_inodes = std.AutoHashMap(u64, void).init(manager.allocator);
+        defer visited_inodes.deinit();
+
         const prune_ctx = PruneContext{
             .manager = manager,
             .name_hashes = name_hashes,
@@ -800,6 +815,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             .production_reachable_ids = if (production_reachable_ids) |*map| map else null,
             .is_dry_run = is_dry_run,
             .name_to_ids = &name_to_ids,
+            .visited_inodes = &visited_inodes,
         };
 
         prune_ctx.pruneNodeModulesRecursive(node_modules_dir, 0);

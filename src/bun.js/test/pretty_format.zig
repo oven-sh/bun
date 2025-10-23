@@ -2117,7 +2117,7 @@ pub const JestPrettyFormat = struct {
                 const flags = instance.flags;
                 const args_value = expect.ExpectCustomAsymmetricMatcher.js.capturedArgsGetCached(value) orelse return true;
                 const matcher_fn = expect.ExpectCustomAsymmetricMatcher.js.matcherFnGetCached(value) orelse return true;
-                const matcher_name = matcher_fn.getName(this.globalThis);
+                const matcher_name = try matcher_fn.getName(this.globalThis);
 
                 printAsymmetricMatcherPromisePrefix(flags, this, writer);
                 if (flags.not) {

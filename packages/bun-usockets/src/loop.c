@@ -419,7 +419,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
             bool has_error = flags->has_error;
             bool is_readable = flags->is_readable;
             bool has_received_eof = flags->has_received_eof;
-            if (flags->is_writable && has_error) {
+            if (flags->is_writable && !has_error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;

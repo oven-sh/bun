@@ -504,40 +504,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         const workspace_paths = &manager.lockfile.workspace_paths;
         const is_production = !manager.options.local_package_features.dev_dependencies;
 
-        // Parse package.json fresh for production mode checks (avoid stale pointers)
-        // Hold onto the contents until we're done with prune cleanup
-        const pkg_json_contents_for_prune = if (is_production) blk: {
-            const contents = bun.sys.File.readFrom(
-                bun.FD.cwd(),
-                manager.original_package_json_path,
-                manager.allocator,
-            ).unwrap() catch |err| {
-                if (log_level != .silent) {
-                    Output.warn("Failed to read package.json for production mode prune: {s}. Skipping devDependency removal.", .{@errorName(err)});
-                }
-                break :blk null;
-            };
-            break :blk contents;
-        } else null;
-        defer if (pkg_json_contents_for_prune) |contents| manager.allocator.free(contents);
-
-        const pkg_json_for_prune = if (pkg_json_contents_for_prune) |contents| blk: {
-            const source = logger.Source.initPathString(manager.original_package_json_path, contents);
-            const parsed = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch {
-                if (log_level != .silent) {
-                    Output.warn("Failed to parse package.json for production mode prune. Skipping devDependency removal.", .{});
-                }
-                break :blk null;
-            };
-            break :blk parsed;
-        } else null;
-
         // Build reachability set for production mode by traversing lockfile dependency graph
         // Use PackageID-based tracking to correctly handle multi-version installs
         var production_reachable_ids: ?std.AutoHashMap(PackageID, void) = null;
         defer if (production_reachable_ids) |*map| map.deinit();
 
-        if (is_production and pkg_json_for_prune != null) {
+        if (is_production) {
             production_reachable_ids = std.AutoHashMap(PackageID, void).init(manager.allocator);
             var reachable = &production_reachable_ids.?;
 

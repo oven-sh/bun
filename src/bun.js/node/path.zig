@@ -2793,7 +2793,7 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
         }
 
         paths_offset -= 1;
-        paths_buf[paths_offset] = path_str.toSlice(allocator).slice();
+        paths_buf[paths_offset] = try path_str.toOwnedSlice(allocator);
 
         if (!isWindows) {
             if (path_str.charAt(0) == CHAR_FORWARD_SLASH) {

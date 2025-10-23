@@ -138,10 +138,6 @@ pub const YarnLock = struct {
             return strings.hasPrefixComptime(version, "npm:");
         }
 
-        pub fn isRemoteTarball(version: []const u8) bool {
-            return strings.hasPrefixComptime(version, "https://") and strings.endsWithComptime(version, ".tgz");
-        }
-
         pub fn isWorkspaceDependency(version: []const u8) bool {
             return strings.hasPrefixComptime(version, "workspace:") or
                 strings.eqlComptime(version, "*");
@@ -385,7 +381,7 @@ pub const YarnLock = struct {
                         } else if (Entry.isNpmAlias(value)) {
                             const alias_info = Entry.parseNpmAlias(value);
                             current_entry.?.version = alias_info.version;
-                        } else if (Entry.isRemoteTarball(value)) {
+                        } else if (Dependency.NpaBridge.isRemoteUrl(value) and strings.endsWithComptime(value, ".tgz")) {
                             current_entry.?.resolved = value;
                         }
                     } else if (strings.eqlComptime(key, "resolved")) {
@@ -861,7 +857,7 @@ pub fn migrateYarnLockfile(
             if (entry.commit != null and entry.git_repo_name != null) {
                 break :blk entry.git_repo_name.?;
             } else if (entry.resolved) |resolved| {
-                if (is_direct_url_dep or YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWithComptime(resolved, ".tgz")) {
+                if (is_direct_url_dep or Dependency.NpaBridge.isRemoteUrl(resolved) or strings.endsWithComptime(resolved, ".tgz")) {
                     // https://registry.npmjs.org/package/-/package-version.tgz
                     if (strings.contains(resolved, "registry.npmjs.org/") or strings.contains(resolved, "registry.yarnpkg.com/")) {
                         if (strings.indexOf(resolved, "/-/")) |separator_idx| {
@@ -945,7 +941,7 @@ pub fn migrateYarnLockfile(
                         });
                     }
 
-                    if (YarnLock.Entry.isRemoteTarball(resolved)) {
+                    if (Dependency.NpaBridge.isRemoteUrl(resolved)) {
                         break :blk Resolution.init(.{
                             .remote_tarball = try string_buf.append(resolved),
                         });

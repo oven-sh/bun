@@ -1008,11 +1008,19 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
 
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) !usize {
-    const amount = socket.write(data);
-    if (amount < 0) {
-        return error.WriteFailed;
+    var remaining = data;
+    var written: usize = 0;
+    while (remaining.len > 0) {
+        const amount = socket.write(remaining);
+        if (amount < 0) {
+            return error.WriteFailed;
+        }
+        const wrote: usize = @intCast(amount);
+        written += wrote;
+        remaining = remaining[wrote..];
+        if (wrote == 0) break;
     }
-    return @intCast(amount);
+    return written;
 }
 
 /// Write data to the socket and buffer the unwritten data if there is backpressure

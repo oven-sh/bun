@@ -34,10 +34,7 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
 
     // Info (EOF-terminated string)
     if (reader.peek().len > 0 and this.packet_size > read_size) {
-        var remaining: usize = 0;
-        if (read_size < this.packet_size) {
-            remaining = this.packet_size - read_size;
-        }
+        const remaining = this.packet_size - read_size;
         this.info = try reader.read(@truncate(remaining));
     }
 }

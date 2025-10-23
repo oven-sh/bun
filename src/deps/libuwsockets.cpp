@@ -62,25 +62,28 @@ extern "C"
                                  size_t server_name_count,
                                  int should_remove_server_names)
   {
-    if (!ssl || !app || !server_names) {
+    if (!ssl || !app) {
       return;
     }
 
     uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
 
     // Clear routes for each SNI domain
-    for (size_t i = 0; i < server_name_count; i++) {
-      if (server_names[i] && server_names[i][0] != '\0') {
-        uwsApp->domain(server_names[i]);
-        uwsApp->clearRoutes();
+    if (server_names) {
+      for (size_t i = 0; i < server_name_count; i++) {
+        if (server_names[i] && server_names[i][0] != '\0') {
+          uwsApp->domain(server_names[i]);
+          uwsApp->clearRoutes();
 
-        if (should_remove_server_names) {
-          uwsApp->removeServerName(server_names[i]);
+          if (should_remove_server_names) {
+            uwsApp->removeServerName(server_names[i]);
+          }
         }
       }
     }
 
-    // Clear routes for default domain
+    // Reset to the default domain and clear its routes as well
+    uwsApp->domain("");
     uwsApp->clearRoutes();
   }
 

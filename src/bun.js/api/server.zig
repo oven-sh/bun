@@ -1612,8 +1612,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         fn clearSNIRoutesHelper(this: *ThisServer, app: *App, should_remove_server_names: bool) void {
             if (comptime !ssl_enabled) return;
 
-            // Collect all server names into a temporary array
-            var server_names = std.ArrayList([*:0]const u8).init(bun.default_allocator);
+            // Preallocate capacity: 1 for main config + count of SNI entries
+            const sni_count = if (this.config.sni) |sni| sni.len else 0;
+            var server_names = std.ArrayList([*:0]const u8).initCapacity(bun.default_allocator, 1 + sni_count) catch std.ArrayList([*:0]const u8).init(bun.default_allocator);
             defer server_names.deinit();
 
             // Add main ssl_config server name if present
@@ -1621,7 +1622,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (ssl_config.server_name) |server_name_ptr| {
                     const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
                     if (server_name.len > 0) {
-                        server_names.append(server_name_ptr) catch {};
+                        server_names.append(server_name_ptr) catch |err| {
+                            bun.Output.warn("Failed to add server name to SNI route clearing list: {s}\n", .{@errorName(err)});
+                        };
                     }
                 }
             }
@@ -1632,16 +1635,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (sni_ssl_config.server_name) |server_name_ptr| {
                         const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
                         if (server_name.len > 0) {
-                            server_names.append(server_name_ptr) catch {};
+                            server_names.append(server_name_ptr) catch |err| {
+                                bun.Output.warn("Failed to add SNI server name to route clearing list: {s}\n", .{@errorName(err)});
+                            };
                         }
                     }
                 }
             }
 
-            // Call the uWS helper function to clear routes for all SNI domains
-            if (server_names.items.len > 0) {
-                app.clearSNIRoutes(server_names.items, should_remove_server_names);
-            }
+            // Always call clearSNIRoutes to clear default domain routes, even if no SNI names
+            app.clearSNIRoutes(server_names.items, should_remove_server_names);
         }
 
         pub fn deinit(this: *ThisServer) void {

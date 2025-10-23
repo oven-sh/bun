@@ -394,12 +394,10 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     // very stable memory address
-    var array = bun.handleOom(MutableString.init(bun.default_allocator, 0));
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
+    const writer = &array.writer;
 
-    const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
     var table_printer = try ConsoleObject.TablePrinter.init(
@@ -420,9 +418,11 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
         },
     }
 
-    try buffered_writer.flush();
+    writer.flush() catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory,
+    };
 
-    return bun.String.createUTF8ForJS(globalThis, array.slice());
+    return bun.String.createUTF8ForJS(globalThis, array.written());
 }
 
 pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -452,13 +452,10 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     }
 
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
-
-    const writer = buffered_writer.writer();
-    const Writer = MutableString.BufferedWriter.Writer;
+    const writer = &array.writer;
+    const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
@@ -472,11 +469,11 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
         formatOptions,
     );
     if (globalThis.hasException()) return error.JSError;
-    buffered_writer.flush() catch return globalThis.throwOutOfMemory();
+    writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    var out = ZigString.init(array.slice()).withEncoding();
+    var out = ZigString.init(array.written()).withEncoding();
     const ret = out.toJS(globalThis);
 
     return ret;
@@ -484,24 +481,22 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
-    const writer = buffered_writer.writer();
+    const writer = &array.writer;
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
     defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
-    buffered_writer.flush() catch return .empty;
-    return bun.String.cloneUTF8(array.slice());
+    writer.flush() catch return .empty;
+    return bun.String.cloneUTF8(array.written());
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
-    const writer = buffered_writer.writer();
-    const Writer = MutableString.BufferedWriter.Writer;
+    const writer = &array.writer;
+    const Writer = @TypeOf(writer);
     ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
         .enable_colors = false,
         .add_newline = false,
@@ -512,8 +507,8 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
         .single_line = true,
     }) catch return .empty;
     if (globalThis.hasException()) return .empty;
-    buffered_writer.flush() catch return .empty;
-    return bun.String.cloneUTF8(array.slice());
+    writer.flush() catch return .empty;
+    return bun.String.cloneUTF8(array.written());
 }
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

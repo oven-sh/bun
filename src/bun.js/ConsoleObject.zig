@@ -11,8 +11,8 @@ const Counter = std.AutoHashMapUnmanaged(u64, u32);
 stderr_buffer: [4096]u8,
 stdout_buffer: [4096]u8,
 
-error_writer_backing: @TypeOf(Output.StreamType.quietWriter(undefined)).Adapter,
-writer_backing: @TypeOf(Output.StreamType.quietWriter(undefined)).Adapter,
+error_writer_backing: @TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
+writer_backing: @TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
 error_writer: *std.Io.Writer,
 writer: *std.Io.Writer,
 
@@ -22,25 +22,23 @@ counts: Counter = .{},
 
 pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
 
-pub fn init(error_writer: Output.StreamType, writer: Output.StreamType) void {
-    _ = error_writer;
-    _ = writer;
-    // out.* = .{
-    //     .stderr_buffer = undefined,
-    //     .stdout_buffer = undefined,
+pub fn init(out: *ConsoleObject, error_writer: Output.Source.StreamType, writer: Output.Source.StreamType) void {
+    out.* = .{
+        .stderr_buffer = undefined,
+        .stdout_buffer = undefined,
 
-    //     .error_writer_backing = undefined,
-    //     .writer_backing = undefined,
+        .error_writer_backing = undefined,
+        .writer_backing = undefined,
 
-    //     .error_writer = undefined,
-    //     .writer = undefined,
-    // };
+        .error_writer = undefined,
+        .writer = undefined,
+    };
 
-    // out.error_writer_backing = error_writer.quietWriter().adaptToNewApi(&out.stderr_buffer);
-    // out.writer_backing = writer.quietWriter().adaptToNewApi(&out.stdout_buffer);
+    out.error_writer_backing = error_writer.quietWriter().adaptToNewApi(&out.stderr_buffer);
+    out.writer_backing = writer.quietWriter().adaptToNewApi(&out.stdout_buffer);
 
-    // out.error_writer = &out.error_writer_backing.new_interface;
-    // out.writer = &out.writer_backing.new_interface;
+    out.error_writer = &out.error_writer_backing.new_interface;
+    out.writer = &out.writer_backing.new_interface;
 }
 
 pub const MessageLevel = enum(u32) {
@@ -153,7 +151,8 @@ fn messageWithTypeAndLevel_(
             Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
         else
             "Assertion failed\n";
-        console.error_writer.unbuffered_writer.writeAll(text) catch {};
+        console.error_writer.writeAll(text) catch {};
+        console.error_writer.flush() catch {};
         return;
     }
 
@@ -162,11 +161,10 @@ fn messageWithTypeAndLevel_(
     else
         Output.enable_ansi_colors_stdout;
 
-    var buffered_writer = if (level == .Warning or level == .Error)
-        &console.error_writer
+    const writer = if (level == .Warning or level == .Error)
+        console.error_writer
     else
-        &console.writer;
-    var writer = buffered_writer.writer();
+        console.writer;
     const Writer = @TypeOf(writer);
 
     if (bun.jsc.Jest.Jest.runner) |runner| {
@@ -207,7 +205,7 @@ fn messageWithTypeAndLevel_(
             switch (enable_colors) {
                 inline else => |colors| table_printer.printTable(Writer, writer, colors) catch return,
             }
-            buffered_writer.flush() catch {};
+            writer.flush() catch {};
             return;
         }
     }
@@ -235,7 +233,7 @@ fn messageWithTypeAndLevel_(
             global,
             vals,
             print_length,
-            @TypeOf(buffered_writer.unbuffered_writer.context),
+            Writer,
             Writer,
             writer,
             print_options,
@@ -248,7 +246,7 @@ fn messageWithTypeAndLevel_(
 
     if (message_type == .Trace) {
         writeTrace(Writer, writer, global);
-        buffered_writer.flush() catch {};
+        writer.flush() catch {};
     }
 }
 
@@ -333,22 +331,29 @@ pub const TablePrinter = struct {
     /// Compute how much horizontal space will take a JSValue when printed
     fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
         var width: usize = 0;
+        var old_writer = VisibleCharacterCounter.Writer{
+            .context = .{
+                .width = &width,
+            },
+        };
+        var discard_buf: [512]u8 = undefined; // using a buffer decreases vtable calls but requires unnecessary memcpys. is it faster or slower?
+        var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
         var value_formatter = this.value_formatter;
 
         const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
         value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
         value_formatter.format(
             tag,
-            VisibleCharacterCounter.Writer,
-            VisibleCharacterCounter.Writer{
-                .context = .{
-                    .width = &width,
-                },
-            },
+            *std.Io.Writer,
+            &adapted_writer.new_interface,
             value,
             this.globalObject,
             false,
         ) catch {}; // TODO:
+
+        adapted_writer.new_interface.flush() catch |e| switch (e) {
+            error.WriteFailed => if (Environment.ci_assert) bun.assert(false), // VisibleCharacterCounter write cannot fail
+        };
 
         return @truncate(width);
     }
@@ -514,7 +519,7 @@ pub const TablePrinter = struct {
     pub fn printTable(
         this: *TablePrinter,
         comptime Writer: type,
-        writer: Writer,
+        writer: *std.Io.Writer,
         comptime enable_ansi_colors: bool,
     ) !void {
         const globalObject = this.globalObject;
@@ -828,7 +833,7 @@ pub fn format2(
     len: usize,
     comptime RawWriter: type,
     comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
     options: FormatOptions,
 ) bun.JSError!void {
     if (len == 1) {
@@ -879,7 +884,7 @@ pub fn format2(
                 _ = writer.write("\n") catch 0;
             }
 
-            writer.context.flush() catch {};
+            writer.flush() catch {};
         } else {
             defer {
                 if (comptime Writer != RawWriter) {
@@ -1757,7 +1762,7 @@ pub const Formatter = struct {
         }
     }
 
-    pub fn printComma(this: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime enable_ansi_colors: bool) !void {
+    pub fn printComma(this: *ConsoleObject.Formatter, comptime _: type, writer: *std.Io.Writer, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>", enable_ansi_colors));
         this.estimated_line_length += 1;
     }
@@ -2059,7 +2064,7 @@ pub const Formatter = struct {
         this: *ConsoleObject.Formatter,
         comptime Format: ConsoleObject.Formatter.Tag,
         comptime Writer: type,
-        writer_: Writer,
+        writer_: *std.Io.Writer,
         value: JSValue,
         jsType: JSValue.JSType,
         comptime enable_ansi_colors: bool,
@@ -3519,7 +3524,7 @@ pub const Formatter = struct {
         const max = 512;
         leftover = leftover[0..@min(leftover.len, max)];
         for (leftover) |el| {
-            this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
+            this.printComma(@TypeOf(writer.ctx), writer.ctx, enable_ansi_colors) catch return;
             writer.space();
 
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
@@ -3532,7 +3537,7 @@ pub const Formatter = struct {
         }
     }
 
-    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
+    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: *std.Io.Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
         const prevGlobalThis = this.globalThis;
         defer this.globalThis = prevGlobalThis;
         this.globalThis = globalThis;
@@ -3570,13 +3575,12 @@ pub fn count(
     const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
     counter.value_ptr.* = current;
 
-    var writer_ctx = &this.writer;
-    var writer = &writer_ctx.writer();
+    const writer = this.writer;
     if (Output.enable_ansi_colors_stdout)
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", true), .{ slice, current }) catch unreachable
     else
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", false), .{ slice, current }) catch unreachable;
-    writer_ctx.flush() catch unreachable;
+    writer.flush() catch unreachable;
 }
 pub fn countReset(
     // console
@@ -3687,8 +3691,8 @@ pub fn timeLog(
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
     };
-    var console = global.bunVM().console;
-    var writer = console.error_writer.writer();
+    const console = global.bunVM().console;
+    const writer = console.error_writer;
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {
         const tag = ConsoleObject.Formatter.Tag.get(arg, global) catch return;
@@ -3700,7 +3704,7 @@ pub fn timeLog(
         }
     }
     _ = writer.write("\n") catch 0;
-    writer.context.flush() catch {};
+    writer.flush() catch {};
 }
 pub fn profile(
     // console

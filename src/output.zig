@@ -579,6 +579,11 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+pub fn rawErrorWriter() Source.StreamType {
+    bun.debugAssert(source_set);
+    return source.raw_error_stream;
+}
+
 // TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() *std.Io.Writer {
     bun.debugAssert(source_set);
@@ -594,6 +599,11 @@ pub fn errorWriterBuffered() *std.Io.Writer {
 pub fn errorStream() *std.Io.Writer {
     bun.debugAssert(source_set);
     return source.error_stream;
+}
+
+pub fn rawWriter() Source.StreamType {
+    bun.debugAssert(source_set);
+    return source.raw_stream;
 }
 
 pub fn writer() *std.Io.Writer {

@@ -1103,7 +1103,7 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    console.init(Output.rawErrorWriter(), Output.rawWriter());
     const transpiler = try Transpiler.init(
         allocator,
         log,

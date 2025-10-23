@@ -1,12 +1,12 @@
 # Contract: Bun.telemetry API
 
-**Component**: Native Telemetry API (Zig layer)
-**Scope**: Core attach/detach instrumentation API
-**Design Rationale**: [ADR-001](./decisions/ADR-001-telemetry-api-design.md)
+**Component**: Public Telemetry API
+**Scope**: attach/detach instrumentation for application developers
+**Audience**: Application developers using Bun's native telemetry
 
-**Related Contracts**:
+**Related Documentation**:
 
-- [hook-lifecycle.md](./hook-lifecycle.md) - Hook specifications and attributes
+- [hook-lifecycle.md](./hook-lifecycle.md) - Hook specifications and semantic convention attributes
 - [header-injection.md](./header-injection.md) - Header injection for distributed tracing
 
 ---
@@ -20,7 +20,8 @@ Registers an instrumentation for specific operation types.
 **Parameters**:
 
 ```typescript
-type RequestId = number | unique Symbol;
+// Internal API type - uses branded number for type safety
+export type OpId = number & { readonly __brand: "OpId" };
 type InstrumentRef = { id: number } & Disposable; // deregister function
 type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3";
 
@@ -30,32 +31,31 @@ interface NativeInstrument {
   version: string; // Required: Instrumentation version
 
   // Attribute capture configuration (optional)
+  // Controls which headers are READ from incoming requests/responses
+  // See telemetry-http.md for the difference between captureAttributes (READ) and injectHeaders (WRITE)
   captureAttributes?: {
     requestHeaders?: string[]; // HTTP request headers to capture
     responseHeaders?: string[]; // HTTP response headers to capture
   };
 
-  // Lifecycle hooks (at least one required)
-  // All hooks receive semantic convention attributes (Record<string, any>)
-  onOperationStart?: (id: RequestId, attributes: Record<string, any>) => void;
-  onOperationProgress?: (
-    id: RequestId,
-    attributes: Record<string, any>,
-  ) => void;
-  onOperationEnd?: (id: RequestId, attributes: Record<string, any>) => void;
-  onOperationError?: (id: RequestId, attributes: Record<string, any>) => void;
-  onOperationInject?: (
-    id: RequestId,
-    data?: unknown,
-  ) => Record<string, string> | void;
-
   // Header injection configuration (optional)
-  // Declares which headers this instrument will inject
-  // See header-injection.md for merge behavior and security constraints
+  // Controls which headers are WRITTEN to outgoing requests/responses for distributed tracing
+  // See telemetry-http.md for the difference between captureAttributes (READ) and injectHeaders (WRITE)
   injectHeaders?: {
     request?: string[]; // Headers for outgoing fetch requests
     response?: string[]; // Headers for HTTP server responses
   };
+
+  onAttach?: () => void;
+  onDetach?: () => void;
+
+  // Lifecycle hooks (at least one required)
+  // All hooks receive semantic convention attributes (Record<string, any>)
+  onOperationStart?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationProgress?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationEnd?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationError?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationInject?: (id: OpId, data?: unknown) => any; // Return value is instrument-specific (e.g., string[] for HTTP header values)
 }
 ```
 
@@ -86,16 +86,11 @@ TypeError: "onOperationStart must be a function";
 - MUST: Lowercase strings in `captureAttributes` arrays (max 50)
 - MUST NOT: Include blocked headers (authorization, cookie, etc.)
 
-**Side Effects**:
+**Behavior**:
 
-- Instrument registered in global `Telemetry` singleton
-- JSValue references protected (prevents GC)
-- Future operations of matching `type` will invoke hooks
-
-**Performance**:
-
-- O(1) registration time
-- ~160 bytes memory allocation per instrument
+- Instrument is registered globally for the specified operation type
+- Future operations of matching `type` will invoke the registered hooks
+- Memory overhead: ~160 bytes per instrument
 
 **Example**:
 
@@ -150,34 +145,41 @@ RangeError: "Invalid instrument ID: ${instrumentId}";
 **Validation Rules**:
 
 1. `instrumentId` must be a value returned from `Bun.telemetry.attach`
-2. `instrumentId` must correspond to a currently registered instrument
-3. Detaching same ID more than once has no effect
+2. Throws `RangeError` if `instrumentId` was never valid (never returned from attach)
+3. Detaching same ID more than once has no effect (idempotent - no error thrown, returns normally)
 
-**Side Effects**:
+**Behavior**:
 
-- Instrument removed from global registry
-- JSValue references unprotected (allows GC)
+- Instrument is removed from global registry
 - Future operations will NOT invoke this instrument's hooks
-- In-flight operations (already started) continue to completion but may or may not trigger this instrument
-- Operations started _strictly after_ `detach()` are never passed to the instrumentation.
-
-**Performance**:
-
-- O(n) where n = number of instruments for that kind (typically <10)
-- All memory freed immediately
+- In-flight operations (already started) may or may not trigger this instrument
+- Operations started _strictly after_ `detach()` completes will never invoke this instrument
+- All memory associated with the instrument is freed
 
 **Example**:
 
 ```typescript
-const id = Bun.telemetry.attach({
+const instrumentRef = Bun.telemetry.attach({
   /* ... */
 });
 
 // Later: unregister
-Bun.telemetry.detach(id);
+Bun.telemetry.detach(instrumentRef);
 
-// Error: already detached
-Bun.telemetry.detach(id); // Throws RangeError
+// Idempotent: no error on second call
+Bun.telemetry.detach(instrumentRef); // No-op, returns normally
+
+// Only throws if ID was never valid
+const fakeRef = { id: 99999 };
+Bun.telemetry.detach(fakeRef); // Throws RangeError
+
+// Modern usage with disposable pattern
+{
+  using instrument = Bun.telemetry.attach({
+    /* ... */
+  });
+  // Automatically detached when leaving scope
+}
 ```
 
 ---
@@ -198,50 +200,24 @@ export type InstrumentKind =
   | "s3";
 ```
 
-**String Literal Meanings**:
+**Operation Types**:
 
 - `"custom"` - User-defined operations
 - `"http"` - HTTP server (Bun.serve, http.createServer)
-- `"fetch"` - Fetch client operations
-- `"sql"` - Database operations
-- `"redis"` - Redis operations
-- `"s3"` - S3 operations
-
-**Internal SDK** (bun-otel/types.ts - NOT exported):
-
-```typescript
-export enum InstrumentKind {
-  Custom = 0,
-  HTTP = 1,
-  Fetch = 2,
-  SQL = 3,
-  Redis = 4,
-  S3 = 5,
-}
-```
-
-**Zig Definition** (src/telemetry/main.zig):
-
-```zig
-pub const InstrumentKind = enum(u8) {
-    custom = 0,
-    http = 1,
-    fetch = 2,
-    sql = 3,
-    redis = 4,
-    s3 = 5,
-
-    pub const COUNT = @typeInfo(InstrumentKind).Enum.fields.len;
-};
-```
-
-**Design Rationale**: See ADR-003. Public API uses ergonomic string literals; internal SDK uses numeric enums for type-safe Zig FFI.
+- `"fetch"` - Fetch client (fetch, Request, Response)
+- `"sql"` - Database operations (future)
+- `"redis"` - Redis operations (future)
+- `"s3"` - S3 operations (future)
 
 **Extensibility**:
 
 - New kinds added in future Bun versions
 - Backward compatible (old code ignores new kinds)
 - Values never reused (monotonic)
+
+**Internal Representation**:
+
+The public API uses string literals for ergonomics. Internally, the Bun runtime and nativeHooks API use a numeric enum for performance. See [telemetry-global.md](./telemetry-global.md#instrumentkind-enum) for the internal numeric representation used by nativeHooks and the Zig bridge layer. Application code should always use the string literal form shown above.
 
 ---
 
@@ -259,91 +235,41 @@ pub const InstrumentKind = enum(u8) {
 
 ---
 
-## Concurrency & Thread Safety
-
-- MUST: Attach/detach on main JavaScript thread only
-- MAY: Invoke hooks on different request threads
-- MUST: Use atomic operations for ID generation
-- MUST NOT: Reuse IDs (globally unique)
-- MUST: Serialize hook execution per request
-
----
-
-## Memory Management
-
-**JSValue Protection**:
-
-- MUST: protect() JSValues on attach
-- MUST: unprotect() JSValues on detach
-- MUST: Match every protect() with unprotect()
-- MUST: Use defer for exception safety
-
-**Implementation**: See `telemetry.zig` protect/unprotect calls
-
----
-
 ## Performance Characteristics
 
-### When Disabled (no instruments)
+**Overhead When No Instruments Attached**:
 
-- `nativeHooks.isEnabledFor()`: ~5ns per check
-- Early return before attribute building
-- **Target**: <0.1% overhead
+- Negligible (<0.1% impact on request throughput)
+- Early detection allows operations to skip instrumentation entirely
 
-### When Enabled (instruments attached)
+**Overhead When Instruments Active**:
 
-- Instrument lookup: O(k) where k = instruments for kind
-- Hook call overhead: ~100ns per hook
-- Attribute building: ~1μs per HTTP request
-- **Target**: <5% overhead
+- ~100ns per hook invocation
+- ~1μs attribute building per operation
+- Target: <5% overhead on typical HTTP workloads
 
-### Memory per Instrument
+**Memory Usage**:
 
-- InstrumentRecord: ~64 bytes
-- Protected JSValues: ~96 bytes (6 pointers × 16 bytes)
-- **Total**: ~160 bytes
+- ~160 bytes per registered instrument
+- No per-request allocations
 
 ---
 
-## Integration Points
+## Thread Safety
 
-**HTTP Server**: `src/bun.js/api/server.zig`
-
-- MUST: Check `nativeHooks.isEnabledFor(.http)` before processing
-- MUST: Generate unique request ID
-- MUST: Invoke `onOperationStart` on request arrival
-- MUST: Invoke `onOperationEnd` on response completion
-
-**Fetch Client**: `src/bun.js/webcore/fetch.zig`
-
-- MUST: Check `nativeHooks.isEnabledFor(.fetch)` before processing
-- MUST: Call `onOperationInject` for header injection
-- MUST: Merge returned headers into request
-- MUST: Invoke lifecycle hooks in order
-
----
-
-## Testing Contract
-
-**Location**: `test/js/bun/telemetry/`
-
-**Requirements**:
-
-- MUST: Test native API surface only
-- MUST NOT: Import `@opentelemetry/*` packages
-- MUST: Verify hook invocation with correct attributes
-- MUST: Validate error handling behaviors
-- MUST: Clean up instruments after each test
+- `attach()` and `detach()` must be called from the main JavaScript thread
+- Hook functions are invoked synchronously on the operation thread
+- Operation IDs are globally unique and never reused
+- Hook execution is serialized per operation (no concurrent calls for same operation)
 
 ---
 
 ## Backward Compatibility
 
-- MUST: Keep API stable in Bun 1.x series
-- MAY: Add new InstrumentKind values
-- MUST NOT: Change existing kind behaviors
-- MAY: Add optional fields to hook signatures
-- SHOULD: Use attach/detach instead of deprecated configure()
+- API is stable for Bun 1.x series
+- New InstrumentKind values may be added in future versions
+- Existing kind behaviors will not change
+- Optional fields may be added to hook signatures (backward compatible)
 
 ---
 

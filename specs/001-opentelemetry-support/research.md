@@ -553,6 +553,64 @@ Native hooks designed to be generic (SQL, Redis, AWS). Implementation deferred t
 
 **Decision**: Provide hook points in Zig, document extension pattern, implement when demand validates
 
+## JavaScriptCore Architecture Constraints
+
+### GlobalObject and VM Relationship
+
+**Key Finding**: Multiple GlobalObjects can share a single JavaScriptCore VM instance and its heap.
+
+**Architectural Facts**:
+
+1. **JSValue is a 64-bit encoding** - either a primitive value or a pointer to a JSCell in the VM's heap
+2. **All GlobalObjects in a VM share the same heap** - no per-GlobalObject memory isolation
+3. **Garbage collection is per-VM, not per-GlobalObject** - the GC walks from all GlobalObjects' roots
+4. **JSValues can be freely shared between GlobalObjects in the same VM** - no copying required
+
+**Example from Bun codebase** (`src/bun.js/bindings/ZigGlobalObject.h:100`):
+
+```cpp
+class GlobalObject : public Bun::GlobalScope {
+    void* m_bunVM;  // Pointer to the parent VM
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, ...);
+};
+```
+
+Each GlobalObject has a reference to the VM, but the VM owns the heap. Functions like `getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32)` take a globalObject parameter but return JSValues directly - no cloning.
+
+### Implications for Telemetry Implementation
+
+**ShadowRealm Isolation**:
+
+Telemetry instrumentation MAY run in a ShadowRealm that is isolated from application code. This has specific implications:
+
+- **Same VM**: If the telemetry ShadowRealm shares the VM with the application GlobalObject, JSValues can be shared without copying
+- **Security Boundaries**: ShadowRealms restrict cross-realm access even within the same VM - only callable objects can cross boundaries (wrapped)
+- **Primitive Values**: Numbers, strings, booleans pass through ShadowRealm boundaries freely
+- **Complex Objects**: Application objects cannot be directly accessed from telemetry realm for security isolation
+
+**When Copying IS Required**:
+
+1. **Worker Threads**: Each worker gets its own VM with a separate heap - values must be serialized via `structuredClone` or `postMessage`
+2. **Cross-VM Communication**: Any transfer between different VM instances requires serialization
+3. **Security-Enforced Isolation**: ShadowRealms may enforce copying for non-primitive values even within the same VM
+
+**Design Consideration**:
+
+Native telemetry hooks (Zig layer) operate at the VM boundary and can access the raw GlobalObject pointer. This allows hooks to:
+
+- Pass JSValues between application and telemetry contexts without copying (when in same VM)
+- Extract primitive values (strings, numbers) for attributes without heap allocation
+- Maintain performance by avoiding unnecessary serialization
+
+The attach/detach model supports both same-VM and cross-VM scenarios by accepting callbacks that operate on the specific GlobalObject context where the instrumented operation occurs.
+
+**References**:
+
+- `src/bun.js/bindings/JSValue.zig:1-3` - JSValue encoding
+- `src/bun.js/bindings/ZigGlobalObject.h:95-148` - GlobalObject/VM relationship
+- `src/bun.js/bindings/ZigGlobalObject.h:755-768` - VM access helpers
+- JavaScriptCore GC documentation: https://webkit.org/blog/12967/understanding-gc-in-jsc-from-scratch/
+
 ## Conclusion
 
 All architectural decisions documented. Working implementation exists in `feat/opentelemetry-server-hooks` branch. Ready for Phase 1 (data model and contracts design) to support refactor execution.

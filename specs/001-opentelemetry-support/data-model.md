@@ -111,17 +111,20 @@ pub const Telemetry = struct {
 
 **Structure**:
 ```typescript
+// Internal API type - uses branded number for type safety
+export type OpId = number & { readonly __brand: 'OpId' };
+
 export interface NativeInstrument {
   type: InstrumentKind;
   name: string;
   version: string;
 
   // Lifecycle hooks (all optional)
-  onOperationStart?: (id: number, info: any) => void;
-  onOperationProgress?: (id: number, attributes: any) => void;
-  onOperationEnd?: (id: number, result: any) => void;
-  onOperationError?: (id: number, error: any) => void;
-  onOperationInject?: (id: number, data?: unknown) => unknown;
+  onOperationStart?: (id: OpId, info: any) => void;
+  onOperationProgress?: (id: OpId, attributes: any) => void;
+  onOperationEnd?: (id: OpId, result: any) => void;
+  onOperationError?: (id: OpId, error: any) => void;
+  onOperationInject?: (id: OpId, data?: unknown) => unknown;
 
   // Internal state (instrumentation can store private data)
   _internalApi?: object | null;
@@ -139,116 +142,89 @@ export interface NativeInstrument {
 - Hooks must not throw (wrapped in try/catch by Zig layer)
 - Hooks execute synchronously (no async/await)
 
-### 5. AttributeMap (Zig Struct - MVP Implementation)
+### 5. AttributeMap (Zig Struct)
 
-**Purpose**: Wrapper around JSValue providing a consistent API for attribute access in native code while maintaining plain JavaScript object semantics at the API boundary
+**Purpose**: Stack-allocated structure for building operation attributes with pointer-based AttributeKey references
 
-**MVP Design Philosophy**:
-- This is a **correctness-focused implementation** optimized for development velocity
-- Full optimization (C++ AttributeMap with perfect hash) deferred to future story
-- Simulates `fastSet`/`fastGet` pattern internally without code generation
-- TypeScript API always deals with plain JavaScript objects
-- Only Zig code sees the fastSet/fastGet methods
+**See**: `specs/001-opentelemetry-support/contracts/attributes.md` for complete AttributeKey, AttributeMap, and AttributeList contracts
 
 **Structure**:
 ```zig
 pub const AttributeMap = struct {
-    // Internal storage: plain JSValue object
-    value: JSValue,
-    global: *JSGlobalObject,
+    js_map: JSValue,  // Internal Record<string, JSValue>
 
-    // Simulated fast accessors for directly used attributes
-    // (internal string lookups, no GPERF codegen in MVP)
-    pub fn fastSet(self: *AttributeMap, key: AttributeKey, val: JSValue) void {
-        // MVP: Internally does string lookup
-        const key_str = attributeKeyToString(key);
-        self.value.put(self.global, key_str, val);
+    pub fn set(self: *AttributeMap, key: *AttributeKey, val: anytype) void {
+        // Accepts JSValue, ZigString, StringPointer, BunString
+        // Non-JSValue strings are copied to JSValue
     }
 
-    pub fn fastGet(self: *AttributeMap, key: AttributeKey) JSValue {
-        // MVP: Internally does string lookup
-        const key_str = attributeKeyToString(key);
-        return self.value.get(self.global, key_str);
-    }
+    pub fn get(self: *AttributeMap, key: *AttributeKey) JSValue;
 
-    // Returns plain JavaScript object (no conversion needed in MVP)
+    // Internal conversion - called by notifyOperation* methods
     pub fn toJS(self: *AttributeMap) JSValue {
-        return self.value;  // Direct return in MVP
+        return self.js_map;
     }
 };
+```
 
-// Enum for directly used semantic convention attributes
-pub const AttributeKey = enum(u8) {
-    http_request_method,
-    http_response_status_code,
-    url_path,
-    url_query,
-    // ... only attributes directly accessed by Bun core
-    // Custom attributes still use plain object access
+**AttributeKey Representation** (pointer-based):
+```zig
+pub const AttributeKey = struct {
+    id: u16,                    // Position in global list (0-1023)
+    semconv_name: []const u8,   // e.g. "http.request.header.content-type"
+    fast_header: ?u8,           // HTTPHeaderNames enum (0-92) if applicable
+    http_header: ?[]const u8,   // Naked header string, null if not a header
 };
 
-fn attributeKeyToString(key: AttributeKey) []const u8 {
-    return switch (key) {
-        .http_request_method => "http.request.method",
-        .http_response_status_code => "http.response.status_code",
-        .url_path => "url.path",
-        .url_query => "url.query",
-        // ...
-    };
-}
+pub const AttributeKeys = struct {
+    // Well-known attributes (code-generated, lazily initialized)
+    http_request_method: *AttributeKey,
+    http_response_status_code: *AttributeKey,
+    error_type: *AttributeKey,
+    // ... ~10-20 core attributes
+
+    // Well-known HTTP headers (code-generated)
+    http_request_header_content_type: *AttributeKey,
+    http_response_header_content_type: *AttributeKey,
+    // ... 93 x 2 for request+response headers
+
+    // Global list (well-known + uncommon, max 1024)
+    all: [1024]*AttributeKey,
+    len: u16,
+
+    pub fn lookupSemconv(name: []const u8) ?*AttributeKey;
+    pub fn lookupHeader(direction: enum { request, response }, header: []const u8) ?*AttributeKey;
+};
 ```
 
-**Key Characteristics**:
-1. **Plain Object Semantics**: `toJS()` returns the underlying JSValue directly
-2. **Internal Optimization Stub**: `fastSet`/`fastGet` simulate optimization pattern without codegen
-3. **Limited Enum**: Only attributes **directly used by Bun core** have enum entries
-4. **String Fallback**: Custom/unused attributes use standard JSValue.put/get
-5. **Zero API Change Commitment**: When C++ optimization lands, Zig call sites unchanged
-
-**API Boundary Clarity**:
-```typescript
-// TypeScript layer (packages/bun-otel): ALWAYS sees plain objects
-onOperationStart(id: number, info: { method: string; url: string; ... }) {
-  const attributes = {
-    "http.request.method": info.method,
-    "url.path": parseUrl(info.url).pathname,
-    // ... standard JavaScript object manipulation
-  };
-  span.setAttributes(attributes);
-}
-```
-
+**Usage Pattern**:
 ```zig
-// Zig layer (src/telemetry/http.zig): Sees fastSet/fastGet
-pub fn buildHttpInfo(request: *Request) AttributeMap {
-    var attrs = AttributeMap.init(global);
-    attrs.fastSet(.http_request_method, request.method.toJS());
-    attrs.fastSet(.url_path, request.url.path.toJS());
-    // Custom headers still use: attrs.value.put(global, "custom.header", val);
-    return attrs;
+// Access via TelemetryContext
+if (bun.telemetry.enabled()) |otel| {
+    var attrs = otel.createAttributeMap();
+    attrs.set(otel.semconv.http_request_method, method);
+    attrs.set(otel.semconv.url_path, path);
+    otel.notifyOperationStart(.http, op_id, &attrs);  // Pass by pointer
 }
 ```
 
 **Lifecycle**:
-1. **Creation**: `AttributeMap.init(global)` wraps a new JSValue object
-2. **Population**: `fastSet()` for known keys, direct JSValue access for custom
-3. **Handoff**: `toJS()` returns to TypeScript as plain object
-4. **No Cleanup Needed**: JSValue garbage collected normally
+1. **Creation**: `otel.createAttributeMap()` - stack-allocated, no globalObject parameter needed
+2. **Population**: `set(key, value)` - pointer-based keys, automatic string copying
+3. **Handoff**: `&attrs` passed to `notifyOperation*` methods - internal toJS() conversion
+4. **No Cleanup**: Stack-allocated, no deinit required
+
+**Memory Management**:
+- AttributeMap: Stack-allocated, automatic cleanup
+- AttributeKeys: Global singleton, lazily initialized, live for process lifetime
+- Well-known keys: Code-generated, pointer stable
+- Uncommon keys: Dynamically allocated on attach/detach, max 1024 total
 
 **Invariants**:
-- `value` must be a valid JavaScript object
-- `fastSet`/`fastGet` only called with enum values defined in AttributeKey
-- Custom attributes bypass enum, use value.put/get directly
-- No performance regression vs. plain JSValue objects (MVP)
-
-**Future Optimization Path**:
-See `specs/001-opentelemetry-support/attributes-api-research.md` for full C++ implementation design:
-- Native `AttributeMap` C++ class replacing JSValue wrapper
-- GPERF-generated perfect hash for O(1) semantic convention lookups
-- Numeric enum values 0-254 stored in fixed array (first 255 slots)
-- Hybrid storage: array for semantic conventions, HashMap for custom attributes
-- Expected 10x performance improvement for attribute-heavy workloads
-- **Implementation deferred to separate story** to maintain focus on correctness
+- AttributeKeys remain valid for process lifetime (no dangling pointers)
+- JSValue strings copied on set() (no dangling references to request/response objects)
+- AttributeMap passed by pointer to notifyOperation* (no premature conversion)
+- toJS() called internally by TelemetryContext (not by instrumentation code)
 
 ## Operation Lifecycle Model
 

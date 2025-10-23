@@ -9,8 +9,14 @@
 ## NativeInstrument Interface
 
 ```typescript
+// Internal API type - uses branded number for type safety
+export type OpId = number & { readonly __brand: 'OpId' };
+
 interface NativeInstrument {
   // Required metadata
+  // Note: InstrumentKind here uses the PUBLIC API string literal form
+  // ("custom" | "http" | "fetch" | "sql" | "redis" | "s3")
+  // NOT the internal numeric enum. See telemetry-global.md for details.
   type: InstrumentKind;
   name: string;
   version: string;
@@ -23,14 +29,14 @@ interface NativeInstrument {
   };
 
   // Lifecycle hooks (at least one required)
-  onOperationStart?: (id: number, attributes: Record<string, any>) => void;
-  onOperationProgress?: (id: number, attributes: Record<string, any>) => void;
-  onOperationEnd?: (id: number, attributes: Record<string, any>) => void;
-  onOperationError?: (id: number, attributes: Record<string, any>) => void;
+  onOperationStart?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationProgress?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationEnd?: (id: OpId, attributes: Record<string, any>) => void;
+  onOperationError?: (id: OpId, attributes: Record<string, any>) => void;
   onOperationInject?: (
-    id: number,
+    id: OpId,
     data?: unknown,
-  ) => Record<string, string> | void;
+  ) => any; // Return value is instrument-specific (HTTP: string[], SQL: different format)
 }
 ```
 
@@ -52,7 +58,7 @@ interface NativeInstrument {
 
 ## Hook Signatures
 
-All hooks: `(id: number, attributes: Record<string, any>) => void`
+All hooks: `(id: OpId, attributes: Record<string, any>) => void`
 
 ### onOperationStart
 
@@ -150,9 +156,13 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 
 ### onOperationInject
 
-**Purpose**: Inject headers for distributed tracing
+**Purpose**: Inject headers for distributed tracing (two-stage injection pattern)
 
-**Returns**: `Record<string, string>` or `void`
+**Returns**: Instrument-specific format
+- **HTTP instrumentation**: Returns `Record<string, string>` (header name → value object)
+- The native layer transforms this to `string[]` (values only) by extracting in config order
+- Other instrument kinds may use different formats (e.g., SQL may return connection strings)
+- Return `void` or empty object if no injection needed
 
 **When Called**:
 | Context | Timing |
@@ -162,13 +172,24 @@ All hooks: `(id: number, attributes: Record<string, any>) => void`
 
 **Validation**:
 
-- MUST: Return plain object or void
-- MUST: Use valid header names (lowercase, alphanumeric + hyphen)
-- MUST: String values only (max 8KB)
-- MUST NOT: Exceed 20 headers
+- MUST: Return array of strings or void
+- MUST: String values only (max 8KB each)
+- MUST: Array length matches configured `injectHeaders` length
 - SHOULD: Cache if computation expensive
 
-**Canonical Example**: Return `{"traceparent": "00-{traceId}-{spanId}-{flags}"}`
+**Design Rationale**: Two-stage injection minimizes memory allocation during hot-path telemetry recording. Header names come from configuration (set once at attach); hooks return only values during each operation.
+
+**Canonical Example**:
+```typescript
+// If instrument configured with: injectHeaders: { request: ["traceparent", "tracestate"] }
+onOperationInject(id, data) {
+  const span = trace.getActiveSpan();
+  return [
+    `00-${span.traceId}-${span.spanId}-01`,  // traceparent value
+    `vendor=${span.vendor}`                  // tracestate value
+  ];
+}
+```
 
 ---
 

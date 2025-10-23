@@ -16,7 +16,7 @@
 **Context**: Distributed tracing requires propagating trace context across service boundaries via HTTP headers (W3C traceparent, tracestate, vendor-specific headers).
 
 **Current Gap**:
-- `onOperationInject` hook exists and returns `Record<string, string>`
+- `onOperationInject` hook exists and returns an array of header values
 - `notifyInject()` collects and merges results from all instruments
 - **BUT**: No mechanism to actually SET these headers on HTTP responses or fetch requests
 - **AND**: No way to configure WHICH header keys to inject per instrument kind
@@ -145,7 +145,7 @@ interface NativeInstrument {
   };
 
   // Existing hooks...
-  onOperationInject?: (id: number, data?: unknown) => Record<string, string> | void;
+  onOperationInject?: (id: OpId, data?: unknown) => any; // HTTP-specific: returns string[] for header values (see header-injection.md)
 }
 ```
 
@@ -162,11 +162,12 @@ const instrument = {
   },
 
   onOperationInject(id, data) {
-    // Return header values to inject
-    return {
-      traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-      tracestate: "vendor1=value1,vendor2=value2"
-    };
+    // Return header values as array (order matches injectHeaders.response declaration)
+    // Index 0 = traceparent, Index 1 = tracestate
+    return [
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // traceparent
+      "vendor1=value1,vendor2=value2" // tracestate
+    ];
   },
 };
 ```
@@ -176,7 +177,7 @@ const instrument = {
 2. `injectHeaders.response` must be array of lowercase strings (max 20 headers)
 3. Header names must match `/^[a-z0-9-]+$/` (lowercase alphanumeric + hyphens)
 4. Blocked headers rejected at attach time: `authorization`, `cookie`, `set-cookie`, `www-authenticate`
-5. Keys in `onOperationInject` return value MUST match declared `injectHeaders` (extra keys ignored)
+5. `onOperationInject` return value MUST be an array with length matching declared `injectHeaders` array length (values by index)
 
 ---
 
@@ -314,7 +315,7 @@ pub fn detach(self: *Telemetry, id: u32) !void {
 if (telemetry.getInjectConfig(.http)) |config| {
     if (config.response_headers.len > 0) {
         // Call notifyInject to get header values
-        const injected = telemetry.notifyInject(.http, request_id, .js_undefined);
+        const injected = telemetry.notifyInject(.http, op_id, .js_undefined);
         if (injected.isObject()) {
             // Iterate over configured header keys
             for (config.response_headers) |header_key| {
@@ -343,7 +344,7 @@ if (telemetry.getInjectConfig(.http)) |config| {
 if (telemetry.getInjectConfig(.fetch)) |config| {
     if (config.request_headers.len > 0) {
         // Call notifyInject to get header values
-        const injected = telemetry.notifyInject(.fetch, request_id, .js_undefined);
+        const injected = telemetry.notifyInject(.fetch, op_id, .js_undefined);
         if (injected.isObject()) {
             // Iterate over configured header keys
             for (config.request_headers) |header_key| {

@@ -132,6 +132,48 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-023**: System MUST enforce header validation rules (lowercase strings only, maximum 50 headers per list, sensitive headers always blocked, invalid headers logged and ignored non-fatally) as specified in Security Model section to prevent data leakage and denial-of-service attacks
 - **FR-024**: All memory allocations in telemetry native hooks MUST be annotated with `// TODO OTEL_MALLOC - REVIEW` unless explicitly justified with human-reviewed `// OTEL_MALLOC - <reason>` comments to ensure memory safety auditing
 
+#### Telemetry Context API Requirements
+
+Performance requirements (see contracts/telemetry-context.md for API details):
+
+- **FR-025**: `enabled()` check MUST be inlined and compile to single boolean check
+- **FR-026**: When telemetry disabled, instrumentation blocks MUST be completely optimized out by compiler
+- **FR-027**: `notifyOperation*` functions MUST be inline functions (zero call overhead)
+- **FR-028**: AttributeMap operations MUST NOT allocate when telemetry disabled
+- **FR-029**: Header injection MUST support synchronous response from TypeScript (no async allowed at this layer)
+
+Memory management requirements:
+
+- **FR-030**: TelemetryContext returned by `enabled()` MUST NOT require cleanup (no deinit)
+- **FR-031**: AttributeMap created by `createAttributeMap()` MUST be stack-allocated and not require cleanup
+- **FR-032**: Operation IDs (OpId/u64) MUST be monotonic and never reused within process lifetime
+- **FR-033**: AttributeMap passed to `notifyOperation*` methods MUST remain valid for the duration of the call only (no ownership transfer)
+
+Error handling requirements:
+
+- **FR-034**: `init()` and `attach()` MUST raise global error on invalid configuration
+- **FR-035**: `notifyOperation*` functions MUST silently fail on OOM (no errors to caller)
+- **FR-036**: `enabled()` MUST return null if initialization failed (never throws)
+
+Thread safety requirements:
+
+- **FR-037**: All telemetry operations MUST be thread-safe: `enabled()` uses atomic read, `generateId()` uses atomic increment, `notifyOperation*` functions have safe concurrent access, AttributeKeys singleton is immutable after initialization
+
+ShadowRealm support requirements:
+
+- **FR-038**: TelemetryContext MUST support independent JavaScript realm contexts (including shadowRealms)
+- **FR-039**: Instrumentation MAY run in a different realm than the execution context
+- **FR-040**: AttributeMap MUST store primitive JSValues (strings, numbers) which CAN be passed between realm contexts within the same VM
+- **FR-041**: AttributeMap MUST NOT store object JSValues that cannot cross realm boundaries
+
+GlobalObject binding requirements:
+
+- **FR-042**: The first call to `Bun.telemetry.attach()` MUST capture the caller's GlobalObject context for all subsequent telemetry operations
+- **FR-043**: All telemetry operations (AttributeMap allocations, callback invocations, context management) MUST use the captured GlobalObject from the initial `attach()` call
+- **FR-044**: Subsequent `attach()` calls from a DIFFERENT GlobalObject in the same VM MUST throw an error: "Telemetry already bound to a different realm"
+- **FR-045**: Subsequent `attach()` calls from the SAME GlobalObject MUST succeed and register the additional instrument
+- **FR-046**: When telemetry is disabled via configuration OR when all instruments are removed (last `detach()` call), the GlobalObject binding MUST be reset, allowing a new `attach()` from a different realm to succeed
+
 ### Key Entities _(include if feature involves data)_
 
 - **Trace Span**: Represents a single operation in a distributed trace with timing, attributes, and relationships to parent/child spans

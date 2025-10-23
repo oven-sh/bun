@@ -47,11 +47,11 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 return This.init(.{ .folder = try string_buf.append(folder) });
             }
 
-            return switch (Dependency.Version.Tag.infer(res_str)) {
+            return switch (Dependency.NpaBridge.inferTag(res_str)) {
                 .git => This.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
                 .github => This.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
                 .tarball => {
-                    if (Dependency.isRemoteTarball(res_str)) {
+                    if (Dependency.NpaBridge.isRemoteUrl(res_str)) {
                         return This.init(.{ .remote_tarball = try string_buf.append(res_str) });
                     }
 
@@ -137,11 +137,11 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 return This.init(.{ .folder = try string_buf.append(path) });
             }
 
-            return switch (Dependency.Version.Tag.infer(res_str)) {
+            return switch (Dependency.NpaBridge.inferTag(res_str)) {
                 .git => This.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
                 .github => This.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
                 .tarball => {
-                    if (Dependency.isRemoteTarball(res_str)) {
+                    if (Dependency.NpaBridge.isRemoteUrl(res_str)) {
                         return This.init(.{ .remote_tarball = try string_buf.append(res_str) });
                     }
                     return This.init(.{ .local_tarball = try string_buf.append(res_str) });

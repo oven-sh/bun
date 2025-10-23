@@ -299,7 +299,7 @@ pub const Repository = extern struct {
                 try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
                 // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
                 try writer.writeByte('+');
-            } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
+            } else if (Dependency.NpaBridge.isGitSCPPath(this.repo.repo.slice(this.string_buf))) {
                 // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
                 try writer.writeAll("ssh++");
             }
@@ -340,7 +340,7 @@ pub const Repository = extern struct {
             if (!formatter.repository.owner.isEmpty()) {
                 try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
                 try writer.writeAll("/");
-            } else if (Dependency.isSCPLikePath(repo)) {
+            } else if (Dependency.NpaBridge.isGitSCPPath(repo)) {
                 try writer.writeAll("ssh://");
             }
             try writer.writeAll(repo);
@@ -410,7 +410,7 @@ pub const Repository = extern struct {
             return url;
         }
 
-        if (Dependency.isSCPLikePath(url)) {
+        if (Dependency.NpaBridge.isGitSCPPath(url)) {
             ssh_path_buf[0.."ssh://git@".len].* = "ssh://git@".*;
             var rest = ssh_path_buf["ssh://git@".len..];
 
@@ -449,7 +449,7 @@ pub const Repository = extern struct {
             return out;
         }
 
-        if (Dependency.isSCPLikePath(url)) {
+        if (Dependency.NpaBridge.isGitSCPPath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
 

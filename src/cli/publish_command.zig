@@ -167,7 +167,7 @@ pub const PublishCommand = struct {
                     }
 
                     const name = try json.getStringCloned(ctx.allocator, "name") orelse return error.MissingPackageName;
-                    const is_scoped = try Dependency.isScopedPackageName(name);
+                    const is_scoped = try Dependency.NpaBridge.isScopedPackageName(name);
 
                     if (manager.options.publish_config.access) |access| {
                         if (access == .restricted and !is_scoped) {

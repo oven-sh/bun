@@ -213,7 +213,7 @@ pub fn editUpdateNoArgs(
                         if (value.data != .e_string) continue;
 
                         const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
-                        var tag = Dependency.Version.Tag.infer(version_literal);
+                        var tag = Dependency.NpaBridge.inferTag(version_literal);
 
                         // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
                         if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
@@ -223,7 +223,7 @@ pub fn editUpdateNoArgs(
                             // negative because the real package might have a scope
                             // e.g. "dep": "npm:@foo/bar@1.2.3"
                             if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                tag = Dependency.NpaBridge.inferTag(version_literal[at_index + 1 ..]);
                                 if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
                                 alias_at_index = at_index;
                             }
@@ -419,7 +419,7 @@ pub fn edit(
                                     } else {
                                         if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
                                             const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                            var tag = Dependency.Version.Tag.infer(version_literal);
+                                            var tag = Dependency.NpaBridge.inferTag(version_literal);
 
                                             if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
 
@@ -431,7 +431,7 @@ pub fn edit(
                                             var is_alias = false;
                                             if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
                                                 if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                                    tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                                    tag = Dependency.NpaBridge.inferTag(version_literal[at_index + 1 ..]);
                                                     if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
                                                     is_alias = true;
                                                 }

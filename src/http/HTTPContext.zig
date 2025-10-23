@@ -124,10 +124,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 @compileError("ssl only");
             }
             var opts: uws.SocketContext.BunSocketContextOptions = .{
-                .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
-                .ca_count = @intCast(init_opts.ca.len),
-                .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
+                .ca = if (init_opts.ca.len > 0 and !init_opts.insecure) @ptrCast(init_opts.ca) else null,
+                .ca_count = if (!init_opts.insecure) @intCast(init_opts.ca.len) else 0,
+                .ca_file_name = if (init_opts.abs_ca_file_name.len > 0 and !init_opts.insecure) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
+                .reject_unauthorized = if (init_opts.insecure) 0 else 1,
             };
 
             try this.initWithOpts(&opts);

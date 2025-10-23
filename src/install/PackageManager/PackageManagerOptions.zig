@@ -51,6 +51,7 @@ publish_config: PublishConfig = .{},
 
 ca: []const string = &.{},
 ca_file_name: string = &.{},
+insecure: bool = false,
 
 // if set to `false` in bunfig, save a binary lockfile
 save_text_lockfile: ?bool = null,
@@ -305,6 +306,10 @@ pub fn load(
 
         if (config.cafile) |cafile| {
             this.ca_file_name = cafile;
+        }
+
+        if (config.insecure) |insecure| {
+            this.insecure = insecure;
         }
 
         if (config.disable_cache orelse false) {
@@ -684,6 +689,7 @@ pub fn load(
         if (cli.ca_file_name.len > 0) {
             this.ca_file_name = cli.ca_file_name;
         }
+        this.insecure = cli.insecure;
 
         // `bun pm version` command options
         this.git_tag_version = cli.git_tag_version;

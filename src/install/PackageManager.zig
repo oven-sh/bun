@@ -97,8 +97,6 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
-
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
 

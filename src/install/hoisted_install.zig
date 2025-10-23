@@ -232,7 +232,6 @@ pub fn installHoistedPackages(
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
                         },
-                        true,
                         log_level,
                     );
                     if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -254,7 +253,6 @@ pub fn installHoistedPackages(
                     .onPackageManifestError = {},
                     .onPackageDownloadError = {},
                 },
-                true,
                 log_level,
             );
             if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -280,7 +278,6 @@ pub fn installHoistedPackages(
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
                         },
-                        true,
                         pm.options.log_level,
                     ) catch |err| {
                         closure.err = err;

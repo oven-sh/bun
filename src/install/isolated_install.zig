@@ -1136,7 +1136,6 @@ pub fn installIsolatedPackages(
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
                     },
-                    true,
                     pkg_manager.options.log_level,
                 ) catch |err| {
                     wait.err = err;

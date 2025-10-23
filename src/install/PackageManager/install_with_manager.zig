@@ -364,7 +364,6 @@ pub fn installWithManager(
                                     @truncate(dependency_i),
                                     dependency,
                                     invalid_package_id,
-                                    false,
                                 );
                             }
                         }
@@ -380,7 +379,6 @@ pub fn installWithManager(
                                 dep_id,
                                 dep,
                                 invalid_package_id,
-                                false,
                             );
                         }
                     }
@@ -401,7 +399,6 @@ pub fn installWithManager(
                                     dependency_i,
                                     &dependency,
                                     manager.lockfile.buffers.resolutions.items[dependency_i],
-                                    false,
                                 );
                             }
                         }
@@ -482,7 +479,7 @@ pub fn installWithManager(
         manager.drainDependencyList();
     }
 
-    if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
+    if (manager.pendingTaskCount() > 0) {
         if (root.dependencies.len > 0) {
             _ = manager.getCacheDirectory();
             _ = manager.getTemporaryDirectory();
@@ -496,17 +493,12 @@ pub fn installWithManager(
         }
 
         const runAndWaitFn = struct {
-            pub fn runAndWaitFn(comptime check_peers: bool, comptime only_pre_patch: bool) *const fn (*PackageManager) anyerror!void {
+            pub fn runAndWaitFn(comptime only_pre_patch: bool) *const fn (*PackageManager) anyerror!void {
                 return struct {
                     manager: *PackageManager,
                     err: ?anyerror = null,
                     pub fn isDone(closure: *@This()) bool {
                         var this = closure.manager;
-                        if (comptime check_peers)
-                            this.processPeerDependencyList() catch |err| {
-                                closure.err = err;
-                                return true;
-                            };
 
                         this.drainDependencyList();
 
@@ -520,18 +512,11 @@ pub fn installWithManager(
                                 .onPackageDownloadError = {},
                                 .progress_bar = true,
                             },
-                            check_peers,
                             this.options.log_level,
                         ) catch |err| {
                             closure.err = err;
                             return true;
                         };
-
-                        if (comptime check_peers) {
-                            if (this.peer_dependencies.readableLength() > 0) {
-                                return false;
-                            }
-                        }
 
                         if (comptime only_pre_patch) {
                             const pending_patch = this.pending_pre_calc_hashes.load(.monotonic);
@@ -562,25 +547,15 @@ pub fn installWithManager(
             }
         }.runAndWaitFn;
 
-        const waitForCalcingPatchHashes = runAndWaitFn(false, true);
-        const waitForEverythingExceptPeers = runAndWaitFn(false, false);
-        const waitForPeers = runAndWaitFn(true, false);
+        const waitForCalcingPatchHashes = runAndWaitFn(true);
+        const waitForEverything = runAndWaitFn(false);
 
         if (manager.lockfile.patched_dependencies.entries.len > 0) {
             try waitForCalcingPatchHashes(manager);
         }
 
         if (manager.pendingTaskCount() > 0) {
-            try waitForEverythingExceptPeers(manager);
-        }
-
-        if (manager.peer_dependencies.readableLength() > 0) {
-            try manager.processPeerDependencyList();
-            manager.drainDependencyList();
-        }
-
-        if (manager.pendingTaskCount() > 0) {
-            try waitForPeers(manager);
+            try waitForEverything(manager);
         }
 
         if (log_level.showProgress()) {

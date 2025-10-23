@@ -1075,8 +1075,7 @@ pub const napi_async_work = struct {
     }
 
     pub fn destroy(this: *napi_async_work) void {
-        var env_ref = this.env;
-        env_ref.deinit();
+        this.env.deinit();
         bun.destroy(this);
     }
 
@@ -1677,14 +1676,12 @@ pub const ThreadSafeFunction = struct {
             Finalizer.napi_internal_enqueue_finalizer(this.env.get(), fun, this.finalizer.data, this.ctx);
         } else {
             // If there's no finalizer to run, we need to deinit the finalizer's env ref
-            var finalizer_env_ref = this.finalizer.env;
-            finalizer_env_ref.deinit();
+            this.finalizer.env.deinit();
         }
 
         this.callback.deinit();
         this.queue.deinit();
-        var env_ref = this.env;
-        env_ref.deinit();
+        this.env.deinit();
         bun.destroy(this);
     }
 
@@ -2518,8 +2515,7 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn deinit(this: *NapiFinalizerTask) void {
-        var env_ref = this.finalizer.env;
-        env_ref.deinit();
+        this.finalizer.env.deinit();
         bun.default_allocator.destroy(this);
     }
 

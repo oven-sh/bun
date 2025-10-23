@@ -321,9 +321,13 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
-    s->flags.is_ipc = 0;
     s->flags.is_ipc = ipc;
+    s->flags.is_readable = true;
+    s->flags.is_writable = true;
+    s->flags.has_error = false;
+    s->flags.has_received_eof = false;
     s->connect_state = NULL;
+    s->connect_next = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -366,14 +370,25 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return 0;
     }
+    int total_written = 0;
+    int slice_len = length;
+    do {
+        int written = bsd_send(us_poll_fd(&s->p), data, slice_len);
+        
+        if (written <= 0) {
+            s->context->loop->data.last_write_failed = 1;
+            s->flags.is_writable = false;
+            int events = us_poll_events(&s->p);
+            us_poll_change(&s->p, s->context->loop, events | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        } else {
+            data += written;
+            slice_len -= written;
+            total_written += written;
+        }
+    } while(total_written < length);
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length) {
-        s->context->loop->data.last_write_failed = 1;
-        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    }
-
-    return written < 0 ? 0 : written;
+    return total_written;
 }
 
 #if !defined(_WIN32)

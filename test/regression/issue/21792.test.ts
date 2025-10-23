@@ -33,7 +33,7 @@ describe("SNI stop/restart crash (issue #21792)", () => {
 
     // 2. Stop the server - this frees the server but leaves routes in uWS
     const port = server.port;
-    server.stop();
+    await server.stop();
 
     // Force GC to ensure server is freed
     if (Bun?.gc) Bun.gc(true);
@@ -57,7 +57,7 @@ describe("SNI stop/restart crash (issue #21792)", () => {
     // Should get response from new server, not crash
     expect(await response2.text()).toBe("Server 2");
 
-    server.stop();
+    await server.stop();
   });
 
   test("should not crash with routes object pattern", async () => {
@@ -85,7 +85,7 @@ describe("SNI stop/restart crash (issue #21792)", () => {
     expect(await r1.text()).toBe("Route 1");
 
     const port = server.port;
-    server.stop();
+    await server.stop();
     if (Bun?.gc) Bun.gc(true);
     await Bun.sleep(100);
 
@@ -108,7 +108,7 @@ describe("SNI stop/restart crash (issue #21792)", () => {
     });
     expect(await r2.text()).toBe("Route 2");
 
-    server.stop();
+    await server.stop();
   });
 
   test("should not crash when reloading server with SNI", async () => {
@@ -166,6 +166,6 @@ describe("SNI stop/restart crash (issue #21792)", () => {
     });
     expect(await r3.text()).toBe("Version 3");
 
-    server.stop();
+    await server.stop();
   });
 });

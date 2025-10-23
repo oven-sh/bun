@@ -1085,8 +1085,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // We'll clean them all up during server deinit() when it's safe.
             }
 
-            // Pass false to setRoutesInternal to prevent freeing old routes during reload
+            // When had_routes_object is false (fetch handler), pass true to free old routes
+            // When had_routes_object is true (routes object reload), pass false to prevent freeing old routes during reload
             const route_list_value = this.setRoutesInternal(new_config.had_routes_object == false);
+
+            // Re-apply routes to all SNI domains after clearing
+            this.reapplySNIRoutesHelper(app);
+
             if (new_config.had_routes_object) {
                 if (this.js_value.tryGet()) |server_js_value| {
                     if (server_js_value != .zero) {
@@ -1623,7 +1628,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
                     if (server_name.len > 0) {
                         server_names.append(server_name_ptr) catch |err| {
-                            bun.Output.warn("Failed to add server name to SNI route clearing list: {s}\n", .{@errorName(err)});
+                            httplog("Failed to add server name to SNI route clearing list: {s}", .{@errorName(err)});
                         };
                     }
                 }
@@ -1636,7 +1641,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
                         if (server_name.len > 0) {
                             server_names.append(server_name_ptr) catch |err| {
-                                bun.Output.warn("Failed to add SNI server name to route clearing list: {s}\n", .{@errorName(err)});
+                                httplog("Failed to add SNI server name to route clearing list: {s}", .{@errorName(err)});
                             };
                         }
                     }
@@ -1645,6 +1650,39 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // Always call clearSNIRoutes to clear default domain routes, even if no SNI names
             app.clearSNIRoutes(server_names.items, should_remove_server_names);
+        }
+
+        /// Helper to re-apply routes to all SNI domains after clearing
+        /// This is necessary during reload to ensure each domain has the updated handlers
+        fn reapplySNIRoutesHelper(this: *ThisServer, app: *App) void {
+            if (comptime !ssl_enabled) return;
+
+            // Re-apply routes for main server name if present
+            if (this.config.ssl_config) |*ssl_config| {
+                if (ssl_config.server_name) |server_name_ptr| {
+                    const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                    if (server_name.len > 0) {
+                        app.domain(server_name);
+                        _ = this.setRoutes();
+                    }
+                }
+            }
+
+            // Re-apply routes for each SNI domain
+            if (this.config.sni) |*sni| {
+                for (sni.slice()) |*sni_ssl_config| {
+                    if (sni_ssl_config.server_name) |server_name_ptr| {
+                        const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                        if (server_name.len > 0) {
+                            app.domain(server_name);
+                            _ = this.setRoutes();
+                        }
+                    }
+                }
+            }
+
+            // Reset to default domain after re-applying all SNI routes
+            app.domain("");
         }
 
         pub fn deinit(this: *ThisServer) void {

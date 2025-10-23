@@ -189,65 +189,32 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 }
 
 void us_loop_run(struct us_loop_t *loop) {
-    us_loop_integrate(loop);
-
-    /* While we have non-fallthrough polls we shouldn't fall through */
-    while (loop->num_polls) {
-        /* Emit pre callback */
-        us_internal_loop_pre(loop);
-
-        /* Fetch ready polls */
-#ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL);
-#else
-        do {
-            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
-        } while (IS_EINTR(loop->num_ready_polls));
-#endif
-
-        /* Iterate ready polls, dispatching them by type */
-        for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
-            struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
-            /* Any ready poll marked with nullptr will be ignored */
-            if (LIKELY(poll)) {
-                if (CLEAR_POINTER_TAG(poll) != poll) {
-                    Bun__internal_dispatch_ready_poll(loop, poll);
-                    continue;
-                }
-#ifdef LIBUS_USE_EPOLL
-                int events = loop->ready_polls[loop->current_ready_poll].events;
-                const int error = events & EPOLLERR;
-                const int eof = events & EPOLLHUP;
-#else
-                const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
-                const int16_t filter = current_kevent->filter;
-                const uint16_t flags = current_kevent->flags;
-                const uint32_t fflags = current_kevent->fflags;
-
-                // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
-                // > Instead, the filter will aggregate the events into a single kevent struct
-                // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-                int events = 0
-                    | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
-                    | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-                const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
-                const int eof = (flags & (EV_EOF));
-#endif
-                /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
-                events &= us_poll_events(poll);
-                if (events || error || eof) {
-                    us_internal_dispatch_ready_poll(poll, error, eof, events);
-                }
-            }
-        }
-
-        /* Emit post callback */
-        us_internal_loop_post(loop);
-    }
+    // this is only only we use us_loop_run_bun_tick on ubun
 }
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
+
+bool us_internal_us_poll_is_pollable(struct us_poll_t *p) {
+    switch (us_internal_poll_type(p)) {
+        case POLL_TYPE_CALLBACK: {
+            return true;
+        }
+        case POLL_TYPE_SEMI_SOCKET: 
+        case POLL_TYPE_SOCKET_SHUT_DOWN:
+        case POLL_TYPE_SOCKET: {
+            struct us_socket_t* s = (struct us_socket_t*)p;
+            struct us_socket_flags flags = s->flags;
+            return flags.is_readable || flags.is_writable || flags.has_received_eof || flags.has_error;
+        }
+        case POLL_TYPE_UDP: {
+            struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            return u->is_readable || u->is_writable || u->has_received_eof || u->has_error;
+        }
+        default:
+            return false;
+    }
+}
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
         return;
@@ -309,11 +276,34 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
             events &= us_poll_events(poll);
+            
             if (events || error || eof) {
-                us_internal_dispatch_ready_poll(poll, error, eof, events);
+                us_internal_update_ready_poll_state(poll, error, eof, events);
+                #ifdef LIBUS_USE_EPOLL
+                // in epool we can dispatch all events at once
+                us_internal_dispatch_ready_poll(poll);
+                #endif
             }
         }
     }
+    #ifdef LIBUS_USE_KQUEUE
+    // events are now coallesced in kqueue
+    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+        struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
+        /* Any ready poll marked with nullptr will be ignored */
+        if (LIKELY(poll)) {
+            if (CLEAR_POINTER_TAG(poll) != poll) {
+                continue;
+            }
+
+            if(us_internal_us_poll_is_pollable(poll)) {
+                // we are using the internal information now for kqueue and epool
+                us_internal_dispatch_ready_poll(poll);
+            }
+
+        }
+    }
+    #endif
 
     /* Emit post callback */
     us_internal_loop_post(loop);
@@ -360,11 +350,11 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     if(!is_readable && !is_writable) {
         if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
             // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
     } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         /* Do they differ in writable? */
-        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
     int ret;
     do {

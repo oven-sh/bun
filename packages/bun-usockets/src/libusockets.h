@@ -372,7 +372,6 @@ void *us_loop_ext(us_loop_r loop) nonnull_fn_decl;
 /* Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
 void us_loop_run(us_loop_r loop) nonnull_fn_decl;
 
-
 /* Signals the loop from any thread to wake up and execute its wakeup handler from the loop's own running thread.
  * This is the only fully thread-safe function and serves as the basis for thread safety */
 void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;

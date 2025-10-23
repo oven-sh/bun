@@ -84,13 +84,13 @@ pub const AttributeKey = enum(u16) {
     pub const FLAG_ERROR: u16 = 0x8000;
 
     /// Create header attribute key from context and HTTPHeaderName ID
-    pub inline fn fromHeader(context: u16, header_id: u8) u16 {
-        return context | @as(u16, header_id);
+    pub inline fn fromHeader(context_: u16, header_id: u8) u16 {
+        return context_ | @as(u16, header_id);
     }
 
     /// Create OTel header attribute key from context and header ID
-    pub inline fn fromOTelHeader(context: u16, header_id: u8) u16 {
-        return context | FLAG_OTEL_HEADER | @as(u16, header_id);
+    pub inline fn fromOTelHeader(context_: u16, header_id: u8) u16 {
+        return context_ | FLAG_OTEL_HEADER | @as(u16, header_id);
     }
 
     /// Extract base ID (bits 0-6)

@@ -6,8 +6,10 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 const telemetry = @import("main.zig");
-const AttributeMap = telemetry.AttributeMap;
-const AttributeKey = telemetry.AttributeKey;
+const attributes = @import("attributes.zig");
+const AttributeMap = attributes.AttributeMap;
+const AttributeKey = attributes.AttributeKey;
+const semconv = @import("semconv.zig");
 const traceparent = @import("traceparent.zig");
 const simple_url_parser = @import("simple_url_parser.zig");
 
@@ -73,8 +75,11 @@ pub fn buildHttpStartAttributes(
     if (parsed.query.len > 0) {
         attrs.fastSet(.url_query, ZigString.init(parsed.query).toJS(globalObject));
     }
+    // URL scheme - default to "http" for path-only URLs (could be https, but doing the simple thing for now)
     if (parsed.scheme.len > 0) {
-        attrs.set("url.scheme", ZigString.init(parsed.scheme).toJS(globalObject));
+        attrs.fastSet(.url_scheme, ZigString.init(parsed.scheme).toJS(globalObject));
+    } else {
+        attrs.fastSet(.url_scheme, ZigString.init("http").toJS(globalObject));
     }
     if (parsed.host.len > 0) {
         attrs.fastSet(.server_address, ZigString.init(parsed.host).toJS(globalObject));
@@ -86,7 +91,7 @@ pub fn buildHttpStartAttributes(
     // Request headers capture and traceparent extraction
     if (headers) |headers_jsvalue| {
         // Capture configured request headers
-        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_request, true);
+        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_request);
 
         // Extract traceparent header for distributed tracing
         extractTraceparent(&attrs, headers_jsvalue, globalObject);
@@ -116,8 +121,8 @@ pub fn buildHttpEndAttributes(
     // HTTP response status
     attrs.fastSet(.http_response_status_code, JSValue.jsNumber(@as(f64, @floatFromInt(status_code))));
 
-    // Response body size
-    attrs.fastSet(.http_response_body_size, JSValue.jsNumber(@as(f64, @floatFromInt(content_length))));
+    // Response body size (not in semconv enum, use slow path)
+    attrs.set("http.response.body.size", JSValue.jsNumber(@as(f64, @floatFromInt(content_length))));
 
     // Operation duration
     const end_timestamp_ns = std.time.nanoTimestamp();
@@ -126,7 +131,7 @@ pub fn buildHttpEndAttributes(
 
     // Response headers capture
     if (headers) |headers_jsvalue| {
-        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_response, false);
+        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_response);
     }
 
     return attrs;
@@ -154,7 +159,7 @@ pub fn buildHttpErrorAttributes(
 
     // Error information
     attrs.fastSet(.error_type, ZigString.init(error_type).toJS(globalObject));
-    attrs.fastSet(.error_message, ZigString.init(error_message).toJS(globalObject));
+    attrs.set("error.message", ZigString.init(error_message).toJS(globalObject));
 
     if (stack_trace) |stack| {
         attrs.set("error.stack_trace", ZigString.init(stack).toJS(globalObject));
@@ -177,14 +182,13 @@ pub fn buildHttpErrorAttributes(
 // Header Capture and Traceparent Extraction Helpers
 // ============================================================================
 
-/// Capture configured headers from JSValue (FetchHeaders object) and add to attributes map
-/// @param is_request - true for request headers ("http.request.header.*"), false for response ("http.response.header.*")
+/// Capture configured headers from JSValue (FetchHeaders object or plain object) and add to attributes map
+/// Uses pre-computed HeaderNameList for efficient header extraction
 fn captureJSValueHeaders(
     attrs: *AttributeMap,
     headers_jsvalue: JSValue,
     globalObject: *JSGlobalObject,
     comptime config_property: telemetry.ConfigurationProperty,
-    comptime is_request: bool,
 ) void {
     // Set up exception handling FIRST, before any JavaScript operations
     var catch_scope: jsc.CatchScope = undefined;
@@ -193,13 +197,9 @@ fn captureJSValueHeaders(
 
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Get configured header names from telemetry config
+    // Get pre-computed HeaderNameList from telemetry config
     const config_property_id = @intFromEnum(config_property);
-    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
-    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
-
-    const header_names_len = header_names_js.getLength(globalObject) catch return;
-    if (header_names_len == 0) return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
 
     // Headers can be either FetchHeaders (has .get() method) or a plain object
     if (headers_jsvalue.isUndefined() or headers_jsvalue.isNull()) return;
@@ -212,50 +212,12 @@ fn captureJSValueHeaders(
 
     const use_fetch_headers = if (get_method) |method| method.isCallable() else false;
 
-    // Iterate through configured header names
-    var i: u32 = 0;
-    while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch {
-            _ = catch_scope.clearException();
-            continue;
-        };
-        if (!header_name_js.isString()) continue;
-
-        // Convert header name to ZigString (used by both paths)
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
-
-        // Get header value using appropriate method
-        const header_value_js = if (use_fetch_headers) blk: {
-            // Fast path: FetchHeaders with .get() method
-            const args = [_]JSValue{header_name_js};
-            break :blk get_method.?.callWithGlobalThis(globalObject, &args) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-        } else blk: {
-            // Slow path: Plain object property access
-            const value = headers_jsvalue.get(globalObject, header_name_zig.slice()) catch {
-                _ = catch_scope.clearException();
-                continue;
-            };
-            break :blk value orelse continue;
-        };
-
-        if (header_value_js.isNull() or header_value_js.isUndefined()) continue;
-        if (!header_value_js.isString()) continue;
-        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
-        defer header_name_slice.deinit();
-
-        // Build attribute key
-        var attr_key_buf: [256]u8 = undefined;
-        const attr_key = if (is_request)
-            std.fmt.bufPrint(&attr_key_buf, "http.request.header.{s}", .{header_name_slice.slice()}) catch continue
-        else
-            std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
-
-        // Add to attributes
-        attrs.set(attr_key, header_value_js);
+    if (use_fetch_headers) {
+        // Fast path: FetchHeaders with direct ID lookup
+        attrs.extractHeadersFromFetchHeaders(headers_jsvalue, header_list, globalObject);
+    } else {
+        // Slow path: Plain object property access
+        attrs.extractHeadersFromPlainObject(headers_jsvalue, header_list, globalObject);
     }
 }
 

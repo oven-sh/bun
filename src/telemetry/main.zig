@@ -10,6 +10,10 @@ const telemetry_config = @import("config.zig");
 pub const ConfigurationProperty = telemetry_config.ConfigurationProperty;
 const TelemetryConfig = telemetry_config.TelemetryConfig;
 
+/// Operation ID type - branded u64 for type safety
+/// Prevents accidental mixing of operation IDs with other numeric values
+pub const OpId = u64;
+
 /// HTTP server telemetry support
 pub const http = @import("http.zig");
 
@@ -557,7 +561,8 @@ pub const AttributeMap = struct {
 
 /// Convert a request ID (u64) to a JavaScript number value.
 /// Note: JavaScript numbers are IEEE 754 double precision (53-bit integer precision).
-/// Request IDs up to 2^53-1 (9007199254740991) are safe.
+/// Request IDs up to 2^53-1 (9007199254740991) are safe, beyond will wrap.
+/// This is like 1 million requests per second for 285 years.
 pub inline fn jsRequestId(id: u64) JSValue {
     return JSValue.jsNumber(@as(f64, @floatFromInt(id)));
 }

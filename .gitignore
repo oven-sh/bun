@@ -195,3 +195,4 @@ scripts/lldb-inline
 
 # We regenerate these in all the build scripts
 cmake/sources/*.txt
+.vscode/c_cpp_properties.json

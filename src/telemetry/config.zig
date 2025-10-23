@@ -5,6 +5,8 @@ const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 const ZigString = jsc.ZigString;
+const semconv = @import("semconv.zig");
+const HeaderNameList = semconv.HeaderNameList;
 
 /// Configuration property identifiers for accessing telemetry configuration values.
 /// Used by getConfigurationProperty() to retrieve specific configuration data.
@@ -30,6 +32,10 @@ pub const TelemetryConfig = struct {
     /// Configuration properties as native string arrays (indexed by ConfigurationProperty enum)
     /// Kept in sync with js_properties for fast native access
     native_properties: [ConfigurationProperty.COUNT]std.ArrayList(bun.String),
+
+    /// Pre-computed HeaderNameList for header capture/propagation configuration
+    /// Parsed from JS arrays during set() for O(1) header extraction
+    header_properties: [ConfigurationProperty.COUNT]?HeaderNameList,
 
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
@@ -96,9 +102,45 @@ pub const TelemetryConfig = struct {
             try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response)].append(bun.String.fromBytes(header));
         }
 
+        // Initialize header properties (pre-computed HeaderNameList for each config property)
+        var header_properties: [ConfigurationProperty.COUNT]?HeaderNameList = [_]?HeaderNameList{null} ** ConfigurationProperty.COUNT;
+
+        // Pre-compute HeaderNameList for server request headers
+        header_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_request)] = try HeaderNameList.fromJS(
+            allocator,
+            global,
+            server_req_headers_js,
+            semconv.AttributeKey.CONTEXT_SERVER_REQUEST,
+        );
+
+        // Pre-compute HeaderNameList for server response headers
+        header_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_response)] = try HeaderNameList.fromJS(
+            allocator,
+            global,
+            server_res_headers_js,
+            semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
+        );
+
+        // Pre-compute HeaderNameList for fetch request headers
+        header_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request)] = try HeaderNameList.fromJS(
+            allocator,
+            global,
+            fetch_req_headers_js,
+            semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
+        );
+
+        // Pre-compute HeaderNameList for fetch response headers
+        header_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response)] = try HeaderNameList.fromJS(
+            allocator,
+            global,
+            fetch_res_headers_js,
+            semconv.AttributeKey.CONTEXT_FETCH_RESPONSE,
+        );
+
         return TelemetryConfig{
             .js_properties = js_properties,
             .native_properties = native_properties,
+            .header_properties = header_properties,
             .allocator = allocator,
             .global = global,
         };
@@ -121,6 +163,13 @@ pub const TelemetryConfig = struct {
             }
             list.deinit();
         }
+
+        // Clean up header properties (pre-computed HeaderNameList)
+        for (&self.header_properties) |*maybe_list| {
+            if (maybe_list.*) |*list| {
+                list.deinit();
+            }
+        }
     }
 
     /// Get a configuration property JSValue by its enum ID
@@ -137,6 +186,17 @@ pub const TelemetryConfig = struct {
             return null;
         }
         return self.native_properties[property_id].items;
+    }
+
+    /// Get pre-computed HeaderNameList by its enum ID
+    pub fn getHeaderList(self: *const TelemetryConfig, property_id: u8) ?*const HeaderNameList {
+        if (property_id >= ConfigurationProperty.COUNT) {
+            return null;
+        }
+        if (self.header_properties[property_id]) |*list| {
+            return list;
+        }
+        return null;
     }
 
     /// Validate that configuration property is properly typed
@@ -234,6 +294,36 @@ pub const TelemetryConfig = struct {
 
         // Validate consistency between JS and native arrays
         try self.validate(property_id);
+
+        // Pre-compute HeaderNameList for header capture/propagate properties
+        // Clean up old HeaderNameList if present
+        if (self.header_properties[property_id]) |*old_list| {
+            old_list.deinit();
+            self.header_properties[property_id] = null;
+        }
+
+        // Determine context based on property type and create HeaderNameList
+        const maybe_context: ?u16 = switch (@as(ConfigurationProperty, @enumFromInt(property_id))) {
+            .http_capture_headers_server_request => semconv.AttributeKey.CONTEXT_SERVER_REQUEST,
+            .http_capture_headers_server_response => semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
+            .http_propagate_headers_server_response => semconv.AttributeKey.CONTEXT_SERVER_RESPONSE,
+            .http_capture_headers_fetch_request => semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
+            .http_capture_headers_fetch_response => semconv.AttributeKey.CONTEXT_FETCH_RESPONSE,
+            .http_propagate_headers_fetch_request => semconv.AttributeKey.CONTEXT_FETCH_REQUEST,
+            else => null,
+        };
+
+        if (maybe_context) |context| {
+            // Only create HeaderNameList if js_value is a valid array
+            if (!js_value.isUndefined() and !js_value.isNull() and js_value.isArray()) {
+                self.header_properties[property_id] = try HeaderNameList.fromJS(
+                    self.allocator,
+                    self.global,
+                    js_value,
+                    context,
+                );
+            }
+        }
     }
 
     /// Rebuild inject header configuration from multiple instrument configs

@@ -379,8 +379,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         if (written <= 0) {
             s->context->loop->data.last_write_failed = 1;
             s->flags.is_writable = false;
-            int events = us_poll_events(&s->p);
-            us_poll_change(&s->p, s->context->loop, events | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(&s->p, s->context->loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
             break;
         } else {
             data += written;

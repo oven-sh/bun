@@ -540,11 +540,7 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCall(globalObject, @src(), JSBuffer__bufferFromLength, .{ globalObject, @intCast(len) });
     }
 
-    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
-        var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        const writer = buffered_writer.writer();
-        const Writer = @TypeOf(writer);
-
+    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *std.Io.Writer, globalObject: *JSGlobalObject) !void {
         const fmt_options = JestPrettyFormat.FormatOptions{
             .enable_colors = false,
             .add_newline = false,
@@ -557,13 +553,13 @@ pub const JSValue = enum(i64) {
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
             1,
-            Writer,
-            Writer,
-            writer,
+            *std.Io.Writer,
+            *std.Io.Writer,
+            out,
             fmt_options,
         );
 
-        try buffered_writer.flush();
+        try out.flush();
     }
 
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;

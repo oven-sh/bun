@@ -79,10 +79,12 @@ pub const Source = struct {
             .stream = undefined,
             .error_stream = undefined,
         };
+
         out.buffered_stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&out.stdout_buffer);
         out.buffered_error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&out.stderr_buffer);
         out.buffered_stream = &out.buffered_stream_backing.new_interface;
         out.buffered_error_stream = &out.buffered_error_stream_backing.new_interface;
+
         out.stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&.{});
         out.error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&.{});
         out.stream = &out.stream_backing.new_interface;

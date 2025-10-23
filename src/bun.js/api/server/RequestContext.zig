@@ -150,7 +150,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 const globalThis: *jsc.JSGlobalObject = server.globalThis;
 
                 Output.enableBuffering();
-                var writer = Output.errorWriter();
+                const writer = Output.errorWriter();
 
                 if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
@@ -167,7 +167,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 Output.flush();
                 if (!globalThis.hasException()) {
-                    jsc.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                    jsc.ConsoleObject.writeTrace(@TypeOf(writer), writer, globalThis);
                 }
                 Output.flush();
             }

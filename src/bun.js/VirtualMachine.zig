@@ -1266,7 +1266,7 @@ pub fn initWorker(
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    console.* = ConsoleObject.init(Output.raw_error_stream, Output.raw_stream);
     const transpiler = try Transpiler.init(
         allocator,
         log,
@@ -2366,7 +2366,7 @@ pub fn printErrorlikeObject(
     exception_list: ?*ExceptionList,
     formatter: *ConsoleObject.Formatter,
     comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
 ) void {
@@ -2437,7 +2437,7 @@ fn printErrorFromMaybePrivateData(
     exception_list: ?*ExceptionList,
     formatter: *ConsoleObject.Formatter,
     comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
 ) bool {

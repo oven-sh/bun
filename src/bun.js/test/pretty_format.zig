@@ -74,7 +74,7 @@ pub const JestPrettyFormat = struct {
         len: usize,
         comptime RawWriter: type,
         comptime Writer: type,
-        writer: Writer,
+        writer: *std.Io.Writer,
         options: FormatOptions,
     ) bun.JSError!void {
         var fmt: JestPrettyFormat.Formatter = undefined;
@@ -94,38 +94,33 @@ pub const JestPrettyFormat = struct {
             };
             const tag = try JestPrettyFormat.Formatter.Tag.get(vals[0], global);
 
-            var unbuffered_writer = if (comptime Writer != RawWriter)
-                writer.context.unbuffered_writer.context.writer()
-            else
-                writer;
-
             if (tag.tag == .String) {
                 if (options.enable_colors) {
                     if (level == .Error) {
-                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
+                        writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
                     }
                     try fmt.format(
                         tag,
-                        @TypeOf(unbuffered_writer),
-                        unbuffered_writer,
+                        @TypeOf(writer),
+                        writer,
                         vals[0],
                         global,
                         true,
                     );
                     if (level == .Error) {
-                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
+                        writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
                     }
                 } else {
                     try fmt.format(
                         tag,
-                        @TypeOf(unbuffered_writer),
-                        unbuffered_writer,
+                        @TypeOf(writer),
+                        writer,
                         vals[0],
                         global,
                         false,
                     );
                 }
-                if (options.add_newline) _ = unbuffered_writer.write("\n") catch 0;
+                if (options.add_newline) writer.writeAll("\n") catch {};
             } else {
                 defer {
                     if (comptime Writer != RawWriter) {
@@ -153,6 +148,8 @@ pub const JestPrettyFormat = struct {
                 }
                 if (options.add_newline) _ = writer.write("\n") catch 0;
             }
+
+            writer.flush() catch {};
 
             return;
         }
@@ -871,7 +868,7 @@ pub const JestPrettyFormat = struct {
             this: *JestPrettyFormat.Formatter,
             comptime Format: JestPrettyFormat.Formatter.Tag,
             comptime Writer: type,
-            writer_: Writer,
+            writer_: *std.Io.Writer,
             value: JSValue,
             jsType: JSValue.JSType,
             comptime enable_ansi_colors: bool,
@@ -1959,7 +1956,7 @@ pub const JestPrettyFormat = struct {
             }
         }
 
-        pub fn format(this: *JestPrettyFormat.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
+        pub fn format(this: *JestPrettyFormat.Formatter, result: Tag.Result, comptime Writer: type, writer: *std.Io.Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
             const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;

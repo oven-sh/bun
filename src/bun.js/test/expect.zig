@@ -708,9 +708,9 @@ pub const Expect = struct {
         const update = runner.snapshots.update_snapshots;
         var needs_write = false;
 
-        var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
+        var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
+        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
 
         var start_indent: ?[]const u8 = null;
         var end_indent: ?[]const u8 = null;
@@ -719,7 +719,7 @@ pub const Expect = struct {
             defer runner.snapshots.allocator.free(buf);
             const trim_res = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
 
-            if (strings.eqlLong(pretty_value.slice(), trim_res.trimmed, true)) {
+            if (strings.eqlLong(pretty_value.written(), trim_res.trimmed, true)) {
                 runner.snapshots.passed += 1;
                 return .js_undefined;
             } else if (update) {
@@ -732,7 +732,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
                 const fmt = signature ++ "\n\n{any}\n";
                 const diff_format = DiffFormatter{
-                    .received_string = pretty_value.slice(),
+                    .received_string = pretty_value.written(),
                     .expected_string = trim_res.trimmed,
                     .globalThis = globalThis,
                 };
@@ -783,7 +783,7 @@ pub const Expect = struct {
             try runner.snapshots.addInlineSnapshotToWrite(file_id, .{
                 .line = srcloc.line,
                 .col = srcloc.column,
-                .value = pretty_value.toOwnedSlice(),
+                .value = try pretty_value.toOwnedSlice(),
                 .has_matchers = property_matchers != null,
                 .is_added = result == null,
                 .kind = fn_name,
@@ -794,7 +794,7 @@ pub const Expect = struct {
 
         return .js_undefined;
     }
-    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *MutableString, comptime fn_name: []const u8) bun.JSError!void {
+    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) bun.JSError!void {
         if (property_matchers) |_prop_matchers| {
             if (!value.isObject()) {
                 const signature = comptime getSignature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -822,11 +822,11 @@ pub const Expect = struct {
         };
     }
     pub fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
-        var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
+        var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
+        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
 
-        const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
+        const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.written(), hint) catch |err| {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
             var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
@@ -846,7 +846,7 @@ pub const Expect = struct {
         };
 
         if (existing_value) |saved_value| {
-            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
+            if (strings.eqlLong(pretty_value.written(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .js_undefined;
             }
@@ -855,7 +855,7 @@ pub const Expect = struct {
             const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
-                .received_string = pretty_value.slice(),
+                .received_string = pretty_value.written(),
                 .expected_string = saved_value,
                 .globalThis = globalThis,
             };

@@ -8,20 +8,39 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
-const BufferedWriter = bun.deprecated.BufferedWriter(4096, Output.WriterType);
-error_writer: BufferedWriter,
-writer: BufferedWriter,
+stderr_buffer: [4096]u8,
+stdout_buffer: [4096]u8,
+
+error_writer_backing: @TypeOf(Output.StreamType.quietWriter(undefined)).Adapter,
+writer_backing: @TypeOf(Output.StreamType.quietWriter(undefined)).Adapter,
+error_writer: *std.Io.Writer,
+writer: *std.Io.Writer,
+
 default_indent: u16 = 0,
 
 counts: Counter = .{},
 
 pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
 
-pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleObject {
-    return ConsoleObject{
-        .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
-        .writer = BufferedWriter{ .unbuffered_writer = writer },
-    };
+pub fn init(error_writer: Output.StreamType, writer: Output.StreamType) void {
+    _ = error_writer;
+    _ = writer;
+    // out.* = .{
+    //     .stderr_buffer = undefined,
+    //     .stdout_buffer = undefined,
+
+    //     .error_writer_backing = undefined,
+    //     .writer_backing = undefined,
+
+    //     .error_writer = undefined,
+    //     .writer = undefined,
+    // };
+
+    // out.error_writer_backing = error_writer.quietWriter().adaptToNewApi(&out.stderr_buffer);
+    // out.writer_backing = writer.quietWriter().adaptToNewApi(&out.stdout_buffer);
+
+    // out.error_writer = &out.error_writer_backing.new_interface;
+    // out.writer = &out.writer_backing.new_interface;
 }
 
 pub const MessageLevel = enum(u32) {

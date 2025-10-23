@@ -196,6 +196,11 @@ pub const prompt = struct {
     }
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
+    /// This implementation has two modes:
+    /// 1. If stdin is an interactive TTY, it switches the terminal to raw mode to
+    ///    provide a rich editing experience with cursor movement and history.
+    /// 2. If stdin is not a TTY (e.g., piped input), it falls back to a simple
+    ///    buffered line reader.
     pub fn call(
         globalObject: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
@@ -262,6 +267,150 @@ pub const prompt = struct {
         };
 
         // 7. Pause while waiting for the user's response.
+        if (comptime !Environment.isWindows) {
+            const c_termios = @cImport({
+                @cInclude("termios.h");
+                @cInclude("unistd.h");
+                @cInclude("signal.h");
+            });
+
+            if (c_termios.isatty(bun.FD.stdin().native()) == 1) {
+                var original_termios: c_termios.termios = undefined;
+                if (c_termios.tcgetattr(bun.FD.stdin().native(), &original_termios) != 0) {
+                    return .null;
+                }
+
+                defer {
+                    _ = c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &original_termios);
+                    // Move cursor to next line after input is done
+                    _ = bun.Output.writer().writeAll("\n") catch {};
+                    bun.Output.flush();
+                }
+
+                var raw_termios = original_termios;
+                // Unset canonical mode and echo
+                raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO);
+
+                if (c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &raw_termios) != 0) {
+                    return .null;
+                }
+
+                var input = std.ArrayList(u8).init(allocator);
+                defer input.deinit();
+                var cursor_index: usize = 0;
+
+                const reader = bun.Output.buffered_stdin.reader();
+                var stdout_writer = bun.Output.writer();
+
+                while (true) {
+                    const byte = reader.readByte() catch {
+                        // User aborted (Ctrl+D)
+                        return .null;
+                    };
+
+                    switch (byte) {
+                        // End of input
+                        '\n', '\r' => {
+                            if (input.items.len == 0 and !has_default) return jsc.ZigString.init("").toJS(globalObject);
+                            if (input.items.len == 0) return default;
+
+                            var result = jsc.ZigString.init(input.items);
+                            result.markUTF8();
+                            return result.toJS(globalObject);
+                        },
+
+                        // Backspace (ASCII 8) or DEL (ASCII 127)
+                        8, 127 => {
+                            if (cursor_index > 0) {
+                                _ = input.orderedRemove(cursor_index - 1);
+                                cursor_index -= 1;
+
+                                // Redraw the line from the cursor
+                                _ = stdout_writer.writeAll("\x1b[D") catch {}; // Move cursor left
+                                _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
+                                _ = stdout_writer.writeAll(" ") catch {}; // Clear the character at the end
+                                _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index + 1}) catch {}; // Move cursor back
+                                bun.Output.flush();
+                            }
+                        },
+
+                        // Ctrl+C
+                        3 => {
+                            // This will trigger the defer and restore terminal settings
+                            _ = c_termios.raise(c_termios.SIGINT);
+                            return .null;
+                        },
+
+                        // Escape sequence (e.g., arrow keys)
+                        27 => {
+                            // Try to read the next two bytes for [D (left) or [C (right)
+                            const byte2 = reader.readByte() catch continue;
+                            if (byte2 != '[') {
+                                continue;
+                            }
+                            switch (reader.readByte() catch continue) {
+                                'D' => { // Left arrow
+                                    if (cursor_index > 0) {
+                                        cursor_index -= 1;
+                                        _ = stdout_writer.writeAll("\x1b[D") catch {};
+                                        bun.Output.flush();
+                                    }
+                                },
+                                'C' => { // Right arrow
+                                    if (cursor_index < input.items.len) {
+                                        cursor_index += 1;
+                                        _ = stdout_writer.writeAll("\x1b[C") catch {};
+                                        bun.Output.flush();
+                                    }
+                                },
+                                '3' => { // DEL
+                                    const next = reader.readByte() catch continue;
+                                    if (next != '~') {
+                                        // Signifies that there is a modifier key (SHIFT, CTRL).
+                                        // We ignore the modifier as that is what canonical mode does.
+                                        if (next == ';') {
+                                            _ = reader.readByte() catch continue; // modifier key skipped
+                                            const final = reader.readByte() catch continue;
+                                            if (final != '~') {
+                                                continue;
+                                            }
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    // Handle Delete key: remove character under cursor
+                                    if (cursor_index < input.items.len) {
+                                        _ = input.orderedRemove(cursor_index);
+
+                                        // Redraw from cursor
+                                        _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
+                                        _ = stdout_writer.writeAll(" ") catch {};
+                                        _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index + 1}) catch {};
+                                        bun.Output.flush();
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+
+                        else => {
+                            try input.insert(cursor_index, byte);
+                            cursor_index += 1;
+
+                            // Echo the new character and redraw the rest of the line
+                            _ = stdout_writer.writeAll(input.items[cursor_index - 1 ..]) catch {};
+                            // Move cursor back to its correct position
+                            if (input.items.len > cursor_index) {
+                                _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index}) catch {};
+                            }
+                            bun.Output.flush();
+                        },
+                    }
+                }
+            }
+        }
+
+        // Fallback for non-interactive terminals (or Windows)
         const reader = bun.Output.buffered_stdin.reader();
         var second_byte: ?u8 = null;
         const first_byte = reader.readByte() catch {

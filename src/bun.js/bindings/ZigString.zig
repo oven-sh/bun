@@ -330,6 +330,10 @@ pub const ZigString = extern struct {
             };
         }
 
+        pub fn initDupe(allocator: std.mem.Allocator, input: []const u8) OOM!Slice {
+            return .init(allocator, try allocator.dupe(u8, input));
+        }
+
         pub fn byteLength(this: *const Slice) usize {
             return this.len;
         }
@@ -394,7 +398,7 @@ pub const ZigString = extern struct {
         }
 
         /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
-        pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
+        pub fn cloneIfBorrowed(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
             if (this.isAllocated()) {
                 return this;
             }
@@ -642,7 +646,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -662,7 +666,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -671,7 +675,7 @@ pub const ZigString = extern struct {
         }
 
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this._unsafe_ptr_do_not_use)[0..this.len])) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -685,6 +689,7 @@ pub const ZigString = extern struct {
         };
     }
 
+    /// The returned slice is always allocated by `allocator`.
     pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) OOM!Slice {
         if (this.len == 0)
             return Slice.empty;

@@ -548,8 +548,7 @@ const URLSearchParamsConverter = struct {
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
     pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
-        var out = bun.handleOom(str.toSlice(this.allocator).cloneIfNeeded(this.allocator));
-        this.buf = @constCast(out.slice());
+        this.buf = bun.handleOom(str.toOwnedSlice(this.allocator));
     }
 };
 
@@ -633,8 +632,8 @@ export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) void {
     if (this.store) |store| {
         if (store.data == .bytes) {
             if (store.data.bytes.stored_name.len == 0) {
-                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch unreachable;
-                store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
+                const utf8 = path_str.toUTF8Bytes(bun.default_allocator);
+                store.data.bytes.stored_name = bun.PathString.init(utf8);
             }
         }
     }
@@ -1743,7 +1742,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
+                        name_value_str.toUTF8Bytes(bun.default_allocator),
                     );
                 },
                 .s3, .file => {
@@ -1755,9 +1754,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             blob.store = Blob.Store.new(.{
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
-                        bun.PathString.init(
-                            bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
-                        ),
+                        bun.PathString.init(name_value_str.toUTF8Bytes(bun.default_allocator)),
                         allocator,
                     ),
                 },
@@ -2488,11 +2485,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{ .fd = store.data.file.pathlike.fd };
             } else {
                 break :brk .{
-                    .path = ZigString.Slice.fromUTF8NeverFree(
-                        store.data.file.pathlike.path.slice(),
-                    ).cloneIfNeeded(
+                    .path = bun.handleOom(ZigString.Slice.initDupe(
                         bun.default_allocator,
-                    ) catch |err| bun.handleOom(err),
+                        store.data.file.pathlike.path.slice(),
+                    )),
                 };
             }
         };
@@ -2728,11 +2724,10 @@ pub fn getWriter(
             break :brk .{ .fd = store.data.file.pathlike.fd };
         } else {
             break :brk .{
-                .path = ZigString.Slice.fromUTF8NeverFree(
-                    store.data.file.pathlike.path.slice(),
-                ).cloneIfNeeded(
+                .path = bun.handleOom(ZigString.Slice.initDupe(
                     bun.default_allocator,
-                ) catch |err| bun.handleOom(err),
+                    store.data.file.pathlike.path.slice(),
+                )),
             };
         }
     };

@@ -1820,8 +1820,17 @@ fn NewLexer_(
 
         pub fn expectedString(self: *LexerType, text: string) !void {
             if (self.prev_token_was_await_keyword) {
-                var notes: [1]logger.Data = undefined;
-                if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                if (self.fn_or_arrow_start_loc.isEmpty()) {
+                    // Top-level await - provide better error message
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "Top-level await can only be used when output format is ESM",
+                        .{},
+                        &.{},
+                    );
+                } else {
+                    // Inside a non-async function
+                    var notes: [1]logger.Data = undefined;
                     notes[0] = logger.rangeData(
                         &self.source,
                         rangeOfIdentifier(
@@ -1830,19 +1839,14 @@ fn NewLexer_(
                         ),
                         "Consider adding the \"async\" keyword here",
                     );
+
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "\"await\" can only be used inside an \"async\" function",
+                        .{},
+                        &notes,
+                    );
                 }
-
-                const notes_ptr: []const logger.Data = notes[0..@as(
-                    usize,
-                    @intFromBool(!self.fn_or_arrow_start_loc.isEmpty()),
-                )];
-
-                try self.addRangeErrorWithNotes(
-                    self.range(),
-                    "\"await\" can only be used inside an \"async\" function",
-                    .{},
-                    notes_ptr,
-                );
                 return;
             }
             if (self.source.contents.len != self.start) {

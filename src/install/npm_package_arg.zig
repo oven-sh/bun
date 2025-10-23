@@ -395,7 +395,8 @@ pub const NpaSpec = struct {
 
                     const starts_w32_drive_letter = if (comptime bun.Environment.isWindows)
                         bun.strings.startsWithWindowsDriveLetter(after_protocol)
-                    else false;
+                    else
+                        false;
 
                     if (starts_w32_drive_letter) {
                         const parts = try SpecStrUtils.extractHostAndPathnameWithLowercaseHost(
@@ -1696,7 +1697,6 @@ const PathHelpers = struct {
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
-const pathlib = @import("../paths/Path.zig");
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
 

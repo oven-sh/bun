@@ -756,11 +756,13 @@ fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
 fn correctUrlMut(url_proto_pair: UrlProtocolPair) UrlProtocolPair {
     const at_idx: isize = if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, '@', '#')) |idx|
         @intCast(idx)
-        else -1;
+    else
+        -1;
 
     const col_idx: isize = if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, ':', '#')) |idx|
         @intCast(idx)
-    else -1;
+    else
+        -1;
 
     if (col_idx > at_idx) {
         url_proto_pair.url[@intCast(col_idx)] = '/';

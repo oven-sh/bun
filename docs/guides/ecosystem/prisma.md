@@ -62,7 +62,7 @@ Then generate and run initial migration.
 This will generate a `.sql` migration file in `prisma/migrations`, create a new SQLite instance, and execute the migration against the new instance.
 
 ```bash
-$ bunx prisma migrate dev --name init
+$ bunx --bun prisma migrate dev --name init
 Environment variables loaded from .env
 Prisma schema loaded from prisma/schema.prisma
 Datasource "db": SQLite database "dev.db" at "file:./dev.db"
@@ -87,7 +87,7 @@ Your database is now in sync with your schema.
 As indicated in the output, Prisma re-generates our _Prisma client_ whenever we execute a new migration. The client provides a fully typed API for reading and writing from our database. You can manually re-generate the client with the Prisma CLI.
 
 ```sh
-$ bunx prisma generate
+$ bunx --bun prisma generate
 ```
 
 ---

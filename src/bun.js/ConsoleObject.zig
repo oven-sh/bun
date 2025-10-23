@@ -2322,11 +2322,11 @@ pub const Formatter = struct {
                 }
             },
             .Function => {
-                var printable = value.getName(this.globalThis);
+                var printable = try value.getName(this.globalThis);
                 defer printable.deref();
 
                 const proto = value.getPrototype(this.globalThis);
-                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+                const func_name = try proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
                 if (printable.isEmpty() or func_name.eql(printable)) {
@@ -3312,7 +3312,7 @@ pub const Formatter = struct {
                         this.resetLine();
                     }
 
-                    var display_name = value.getName(this.globalThis);
+                    var display_name = try value.getName(this.globalThis);
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }

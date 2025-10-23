@@ -57,7 +57,7 @@ static inline String redact(const String& input)
 
 inline DOMURL::DOMURL(URL&& completeURL)
     : m_url(WTFMove(completeURL))
-    , m_initialURLCostForGC(std::min(static_cast<short>(m_url.string().impl()->costDuringGC()), std::numeric_limits<short>::max()))
+    , m_initialURLCostForGC(static_cast<uint16_t>(std::min<size_t>(m_url.string().impl()->costDuringGC(), std::numeric_limits<uint16_t>::max())))
 {
     ASSERT(m_url.isValid());
 }

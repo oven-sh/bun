@@ -1562,7 +1562,7 @@ pub const RunCommand = struct {
             @memcpy(ptr[0..ext.len], ext);
             ptr[ext.len] = 0;
 
-            const l = root.len + cwd_len + prefix.len + target_name.len + ext.len;
+            const l = root.len + cwd_len + prefix.len + encoded.len + ext.len;
             const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
             BunXFastPath.tryLaunch(ctx, path_to_use, this_transpiler.env, ctx.passthrough);
         }

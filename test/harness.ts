@@ -1755,6 +1755,13 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
       bunfig += `registry = "${this.registryUrl()}"\n`;
     }
     bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
+    if (opts.publicHoistPattern) {
+      if (typeof opts.publicHoistPattern === "string") {
+        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
+      } else {
+        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
+      }
+    }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }
@@ -1763,6 +1770,7 @@ type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
   isolated?: boolean;
+  publicHoistPattern?: string | string[];
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

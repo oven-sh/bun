@@ -85,6 +85,7 @@ pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvid
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
 pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
+pub const RegularExpression = @import("./bindings/RegularExpression.zig").RegularExpression;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;

@@ -34,7 +34,7 @@ content_type_was_set: bool = false,
 
 /// JavaScriptCore strings are either latin1 or UTF-16
 /// When UTF-16, they're nearly always due to non-ascii characters
-charset: Charset = .unknown,
+charset: strings.AsciiStatus = .unknown,
 
 /// Was it created via file constructor?
 is_jsdom_file: bool = false,
@@ -3244,7 +3244,7 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
         .store = store,
         .content_type = "",
         .globalThis = globalThis,
-        .charset = .fromIsAllASCII(is_all_ascii),
+        .charset = .fromBool(is_all_ascii),
     };
 }
 
@@ -3423,7 +3423,7 @@ pub fn sharedView(this: *const Blob) []const u8 {
 pub const Lifetime = jsc.WebCore.Lifetime;
 
 pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
-    this.charset = .fromIsAllASCII(is_all_ascii);
+    this.charset = .fromBool(is_all_ascii);
     // if this Blob represents the entire binary data
     // which will be pretty common
     // we can update the store's is_all_ascii flag
@@ -4734,20 +4734,6 @@ pub fn FileCloser(comptime This: type) type {
         }
     };
 }
-
-/// This takes up less space than a `?bool`.
-pub const Charset = enum {
-    unknown,
-    all_ascii,
-    non_ascii,
-
-    pub fn fromIsAllASCII(is_all_ascii: ?bool) Charset {
-        return if (is_all_ascii orelse return .unknown)
-            .all_ascii
-        else
-            .non_ascii;
-    }
-};
 
 pub fn isAllASCII(self: *const Blob) ?bool {
     return switch (self.charset) {

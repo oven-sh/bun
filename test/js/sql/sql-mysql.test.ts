@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -55,6 +55,14 @@ if (isDockerEnabled()) {
           sql = new SQL(getOptions());
         });
 
+        test("process should exit when idle", async () => {
+          const { stderr } = bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
+            ...bunEnv,
+            MYSQL_URL: getOptions().url,
+            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+          });
+          expect(stderr).toBe("");
+        });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
@@ -587,6 +595,27 @@ if (isDockerEnabled()) {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const err = await sql`wat 1`.catch(x => x);
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
+        });
+
+        // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.
+        // This happened when FieldType.fromJS returned error.JSError without throwing an exception first.
+        test("should throw error for NumberObject parameter", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Number(42) creates a NumberObject (not a primitive number)
+          // This used to cause a panic because FieldType.fromJS returned error.JSError without throwing
+          const numberObject = new Number(42);
+          const err = await sql`SELECT ${numberObject} as value`.catch(x => x);
+          expect(err).toBeInstanceOf(Error);
+          expect(err.message).toContain("Cannot bind NumberObject to query parameter");
+        });
+
+        test("should throw error for BooleanObject parameter", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // new Boolean(true) creates a BooleanObject (not a primitive boolean)
+          const booleanObject = new Boolean(true);
+          const err = await sql`SELECT ${booleanObject} as value`.catch(x => x);
+          expect(err).toBeInstanceOf(Error);
+          expect(err.message).toContain("Cannot bind BooleanObject to query parameter");
         });
 
         test("should work with fragments", async () => {

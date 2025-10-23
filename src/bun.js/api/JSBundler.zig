@@ -694,6 +694,12 @@ pub const JSBundler = struct {
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
                 try this.public_path.append(base_public_path);
 
+                // When using --compile, only `external` sourcemaps work, as we do not
+                // look at the source map comment. Override any other sourcemap type.
+                if (this.source_map != .none) {
+                    this.source_map = .external;
+                }
+
                 if (compile.outfile.isEmpty()) {
                     const entry_point = this.entry_points.keys()[0];
                     var outfile = std.fs.path.basename(entry_point);

@@ -3591,17 +3591,31 @@ pub const ViewTransitionPartName = union(enum) {
     all,
     /// <custom-ident>
     name: css.css_values.ident.CustomIdent,
+    /// .<custom-ident>
+    class: css.css_values.ident.CustomIdent,
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         return switch (this.*) {
             .all => try dest.writeStr("*"),
             .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
+            .class => |name| {
+                try dest.writeChar('.');
+                try css.CustomIdentFns.toCss(&name, W, dest);
+            },
         };
     }
 
     pub fn parse(input: *css.Parser) Result(ViewTransitionPartName) {
         if (input.tryParse(css.Parser.expectDelim, .{'*'}).isOk()) {
             return .{ .result = .all };
+        }
+
+        // Try to parse a class selector (.<custom-ident>)
+        if (input.tryParse(css.Parser.expectDelim, .{'.'}).isOk()) {
+            return .{ .result = .{ .class = switch (css.css_values.ident.CustomIdent.parse(input)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            } } };
         }
 
         return .{ .result = .{ .name = switch (css.css_values.ident.CustomIdent.parse(input)) {

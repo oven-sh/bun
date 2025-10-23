@@ -55,9 +55,19 @@ pub const NapiEnv = opaque {
         return null;
     }
 
+    pub fn ref(self: *NapiEnv) void {
+        NapiEnv__ref(self);
+    }
+
+    pub fn deref(self: *NapiEnv) void {
+        NapiEnv__deref(self);
+    }
+
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
     extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
     extern fn napi_internal_get_version(*NapiEnv) u32;
+    extern fn NapiEnv__deref(*NapiEnv) void;
+    extern fn NapiEnv__ref(*NapiEnv) void;
 };
 
 fn envIsNull() napi_status {
@@ -1660,6 +1670,7 @@ pub const ThreadSafeFunction = struct {
 
         this.callback.deinit();
         this.queue.deinit();
+        this.env.deref();
         bun.destroy(this);
     }
 
@@ -1757,6 +1768,7 @@ pub export fn napi_create_threadsafe_function(
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);
+    function.env.ref();
 
     result.* = function;
     return env.ok();

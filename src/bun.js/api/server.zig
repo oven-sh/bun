@@ -76,9 +76,9 @@ pub const AnyRoute = union(enum) {
     fn bundledHTMLManifestItemFromJS(argument: jsc.JSValue, index_path: []const u8, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (!argument.isObject()) return null;
 
-        const path_string = try bun.String.fromJS(try argument.get(init_ctx.global, "path") orelse return null, init_ctx.global);
+        var path_string = try bun.String.fromJS(try argument.get(init_ctx.global, "path") orelse return null, init_ctx.global);
         defer path_string.deref();
-        var path = jsc.Node.PathOrFileDescriptor{ .path = try jsc.Node.PathLike.fromBunString(init_ctx.global, path_string, false, bun.default_allocator) };
+        var path = jsc.Node.PathOrFileDescriptor{ .path = try jsc.Node.PathLike.fromBunString(init_ctx.global, &path_string, false, bun.default_allocator) };
         defer path.deinit();
 
         // Construct the route by stripping paths above the root.

@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { SourceMap } from "node:module";
 import { itBundled } from "./expectBundled";
 
 describe("single-line comments", () => {
@@ -348,6 +349,45 @@ describe("single-line comments", () => {
     },
     run: {
       stdout: "123",
+    },
+  });
+});
+
+describe("multi-line comments", () => {
+  itBundled("comment with \\r\\n has sourcemap", {
+    files: {
+      "/entry.js": "/*!\r\n * Legal comment line 1\r\n * Legal comment line 2\r\n */\r\nexport const x = 1;",
+    },
+    sourceMap: "external",
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      const sourcemapContent = api.readFile("/out.js.map");
+      const sourcemap = JSON.parse(sourcemapContent);
+      const sm = new SourceMap(sourcemap);
+
+      // Find the multi-line legal comment in the output
+      const outputLines = output.split("\n");
+      let commentLineIndex = -1;
+      for (let i = 0; i < outputLines.length; i++) {
+        if (outputLines[i].includes("Legal comment")) {
+          commentLineIndex = i;
+          break;
+        }
+      }
+
+      expect(commentLineIndex).toBeGreaterThanOrEqual(0);
+
+      // The multi-line legal comment should have a sourcemap entry
+      const entry = sm.findEntry(commentLineIndex, 0);
+
+      // Verify we found a mapping for the comment
+      expect(entry).toBeTruthy();
+      expect(Object.keys(entry).length).toBeGreaterThan(0);
+
+      // The mapping should point back to the original source
+      expect(entry!.originalSource!).toContain("entry.js");
+      expect(typeof entry.originalLine).toBe("number");
+      expect(entry.originalLine).toBeGreaterThanOrEqual(0);
     },
   });
 });

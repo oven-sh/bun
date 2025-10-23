@@ -223,10 +223,9 @@ pub const StringOrBuffer = union(enum) {
                 if (!allow_string_object and str_type != .String) {
                     return null;
                 }
-                const str = try bun.String.fromJS(value, global);
-
+                var str = try bun.String.fromJS(value, global);
+                defer str.deref();
                 if (is_async) {
-                    defer str.deref();
                     var possible_clone = str;
                     var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
@@ -672,7 +671,7 @@ pub const PathLike = union(enum) {
 
                 arguments.eat();
 
-                return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
             },
             else => {
                 if (arg.as(jsc.DOMURL)) |domurl| {
@@ -693,7 +692,7 @@ pub const PathLike = union(enum) {
                     }
                     arguments.eat();
 
-                    return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                    return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
                 }
 
                 return null;
@@ -701,7 +700,7 @@ pub const PathLike = union(enum) {
         }
     }
 
-    pub fn fromBunString(global: *jsc.JSGlobalObject, str: bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
+    pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
         try Valid.pathStringLength(str.length(), global);
 
         if (will_be_async) {
@@ -718,13 +717,12 @@ pub const PathLike = union(enum) {
             return .{ .threadsafe_string = sliced };
         } else {
             var sliced = str.toSlice(allocator);
-            errdefer if (!sliced.isWTFAllocated()) sliced.deinit();
+            errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
             if (sliced.isWTFAllocated()) {
-                str.ref();
                 return .{ .slice_with_underlying_string = sliced };
             }
 

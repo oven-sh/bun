@@ -595,12 +595,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 // Detect symlink cycles by checking if we've visited this directory before
                 // Get the directory's stat to identify it by inode
                 const stat = dir.stat() catch return;
-                
+
                 // Check if we've already visited this inode (indicates a cycle)
                 if (self.visited_inodes.contains(stat.inode)) {
                     return;
                 }
-                
+
                 // Mark this directory as visited
                 self.visited_inodes.put(stat.inode, {}) catch return;
 
@@ -750,9 +750,26 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         }
                     }
 
-                    // If we couldn't match by version, fall back to first match
+                    // If we couldn't determine the installed version, fall back to first match
+                    // But if we know the version and it doesn't match, check if ANY matching package is needed
                     if (matched_pkg_id == null) {
-                        matched_pkg_id = matching_packages.items[0];
+                        if (installed_version == null) {
+                            // Can't read version, use fallback (graceful degradation)
+                            matched_pkg_id = matching_packages.items[0];
+                        } else if (self.is_production and self.production_reachable_ids != null) {
+                            // Version known but doesn't match - in production mode, check if ANY version is needed
+                            for (matching_packages.items) |pkg_id| {
+                                if (self.production_reachable_ids.?.contains(pkg_id)) {
+                                    // At least one version is needed, keep the installed one (install will fix version)
+                                    matched_pkg_id = pkg_id;
+                                    break;
+                                }
+                            }
+                            // If no version is needed in production, leave matched_pkg_id null (will be removed)
+                        } else {
+                            // Not in production mode and version doesn't match - use fallback
+                            matched_pkg_id = matching_packages.items[0];
+                        }
                     }
                 }
 

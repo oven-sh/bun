@@ -635,7 +635,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             // Remove if marked for removal
                             if (should_remove) {
                                 if (!self.is_dry_run) {
-                                    scope_dir.deleteTree(scoped_entry.name) catch continue;
+                                    scope_dir.deleteTree(scoped_entry.name) catch |err| {
+                                        if (self.manager.options.log_level != .silent) {
+                                            Output.warn("Failed to remove scoped package {s}: {s}", .{ scoped_name, @errorName(err) });
+                                        }
+                                        continue;
+                                    };
                                     self.manager.summary.remove += 1;
                                 } else {
                                     self.manager.summary.remove += 1;
@@ -666,7 +671,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     // Remove if marked for removal
                     if (should_remove) {
                         if (!self.is_dry_run) {
-                            dir.deleteTree(entry.name) catch continue;
+                            dir.deleteTree(entry.name) catch |err| {
+                                if (self.manager.options.log_level != .silent) {
+                                    Output.warn("Failed to remove package {s}: {s}", .{ entry.name, @errorName(err) });
+                                }
+                                continue;
+                            };
                             self.manager.summary.remove += 1;
                         } else {
                             self.manager.summary.remove += 1;

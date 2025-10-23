@@ -1057,7 +1057,7 @@ pub const napi_async_work = struct {
 
         const work = bun.new(napi_async_work, .{
             .global = global,
-            .env = NapiEnv.Ref.cloneFromRaw(env),
+            .env = .cloneFromRaw(env),
             .execute = execute,
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
@@ -1397,7 +1397,7 @@ pub const Finalizer = struct {
     /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
     /// which they couldn't if they ran immediately while the garbage collector is still running.
     pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
-        const task = NapiFinalizerTask.init(.{ .env = NapiEnv.Ref.Optional.cloneFromRaw(env), .fun = fun, .data = data, .hint = hint });
+        const task = NapiFinalizerTask.init(.{ .env = .cloneFromRaw(env), .fun = fun, .data = data, .hint = hint });
         task.schedule();
     }
 };
@@ -1441,7 +1441,7 @@ pub const ThreadSafeFunction = struct {
 
     env: NapiEnv.Ref,
 
-    finalizer: Finalizer = Finalizer{ .env = NapiEnv.Ref.Optional.initNull(), .fun = null, .data = null },
+    finalizer: Finalizer = Finalizer{ .env = .initNull(), .fun = null, .data = null },
     has_queued_finalizer: bool = false,
     queue: Queue = .{
         .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
@@ -1751,7 +1751,7 @@ pub export fn napi_create_threadsafe_function(
     const vm = env.toJS().bunVM();
     var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
-        .env = NapiEnv.Ref.cloneFromRaw(env),
+        .env = .cloneFromRaw(env),
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
@@ -1767,7 +1767,7 @@ pub export fn napi_create_threadsafe_function(
         .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
     });
 
-    function.finalizer = .{ .env = NapiEnv.Ref.Optional.cloneFromRaw(env), .data = thread_finalize_data, .fun = thread_finalize_cb };
+    function.finalizer = .{ .env = .cloneFromRaw(env), .data = thread_finalize_data, .fun = thread_finalize_cb };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);

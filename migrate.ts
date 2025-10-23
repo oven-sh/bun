@@ -27,7 +27,7 @@ function replacements(content: string): string {
     .replaceAll("std.time.sleep", "std.Thread.sleep")
     .replaceAll("comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype", "writer: *std.Io.Writer")
     .replaceAll("@TypeOf(writer).Error!", "std.Io.Writer.Error!")
-    .replaceAll(".writeByteNTimes", ".splatByteAll");
+    .replaceAll(".writeByteNTimes", ".splatByteAll")
     .replaceAll(".writeBytesNTimes", ".splatBytesAll");
   // consider: .replaceAll("writer: anytype", "writer: *std.Io.Writer") - looks like it has some false-positives
 }

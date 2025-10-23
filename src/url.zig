@@ -879,7 +879,10 @@ pub const PercentEncoding = struct {
     /// Returns an owned slice that must be freed by the caller.
     /// Returns error.InvalidURL if the URL cannot be parsed.
     /// Returns error.InvalidPath if percent-decoding fails.
-    pub fn extractDecodedPathname(url_string: bun.String, allocator: std.mem.Allocator) ![]u8 {
+    pub fn extractDecodedPathname(
+        url_string: bun.String,
+        allocator: std.mem.Allocator,
+    ) error{ InvalidURL, InvalidPath, OutOfMemory }![]u8 {
         const url = bun.jsc.URL.fromString(url_string) orelse return error.InvalidURL;
         defer url.deinit();
 

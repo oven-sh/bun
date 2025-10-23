@@ -30,12 +30,12 @@ pub const NpaSpec = struct {
     /// Encodes additional information on the type of specifier.
     type: Type,
 
-    #allocator: std.mem.Allocator,
+    _allocator: std.mem.Allocator,
     /// Single arena buffer containing all owned strings (raw, name, raw_spec, save_spec,
     /// fetch_spec). All string fields are slices into this buffer (or null)
-    #arena_buffer: ?[]u8,
+    _arena_buffer: ?[]u8,
     /// The fetch spec slice (may be null, or a slice into arena_buffer or raw_spec)
-    #fetch_spec_slice: ?[]const u8,
+    _fetch_spec_slice: ?[]const u8,
 
     pub const Type = union(enum) {
         /// Package is fetched from a git repository, eg. `git+https://...`, `git+ssh://...`,
@@ -117,13 +117,13 @@ pub const NpaSpec = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.#arena_buffer) |arena| {
-            self.#allocator.free(arena);
+        if (self._arena_buffer) |arena| {
+            self._allocator.free(arena);
         }
 
         switch (self.type) {
-            .git => |*g| g.deinit(self.#allocator),
-            .alias => |*a| a.deinit(self.#allocator),
+            .git => |*g| g.deinit(self._allocator),
+            .alias => |*a| a.deinit(self._allocator),
             else => {},
         }
     }
@@ -143,7 +143,7 @@ pub const NpaSpec = struct {
 
     /// Returns the fetch spec string (the path or URL which would be used to fetch the package).
     pub fn fetchSpec(self: *const Self) ?[]const u8 {
-        return self.#fetch_spec_slice;
+        return self._fetch_spec_slice;
     }
 
     /// Convert this NpaSpec to a JavaScript object
@@ -318,8 +318,8 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = fetch_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = fetch_spec_slice,
                     .save_spec = raw_spec_slice,
                     .type = .{
                         .git = .{
@@ -327,7 +327,7 @@ pub const NpaSpec = struct {
                             .attrs = git_attrs,
                         },
                     },
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             }
         }
@@ -373,11 +373,11 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = raw_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = raw_spec_slice,
                     .save_spec = save_spec_slice,
                     .type = .remote,
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             },
 
@@ -395,7 +395,8 @@ pub const NpaSpec = struct {
 
                     const starts_w32_drive_letter = if (comptime bun.Environment.isWindows)
                         bun.strings.startsWithWindowsDriveLetter(after_protocol)
-                    else false;
+                    else
+                        false;
 
                     if (starts_w32_drive_letter) {
                         const parts = try SpecStrUtils.extractHostAndPathnameWithLowercaseHost(
@@ -446,8 +447,8 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = fetch_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = fetch_spec_slice,
                     .save_spec = save_spec_slice,
                     .type = .{
                         .git = .{
@@ -455,7 +456,7 @@ pub const NpaSpec = struct {
                             .hosted = null,
                         },
                     },
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             },
 
@@ -496,11 +497,11 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = null,
             .type = undefined,
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
 
         const query = Semver.Query.parse(
@@ -574,15 +575,15 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = null,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = null,
             .save_spec = null,
             .type = .{
                 .alias = .{
                     .sub_spec = sub_spec_ptr,
                 },
             },
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -633,8 +634,8 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = .{
                 .git = .{
@@ -642,7 +643,7 @@ pub const NpaSpec = struct {
                     .hosted = hosted,
                 },
             },
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -652,15 +653,13 @@ pub const NpaSpec = struct {
         raw_spec: []const u8,
         where: []const u8,
         raw_arg: ?[]const u8,
-    ) !Self {
+    ) error{ OutOfMemory, InvalidPath, InvalidURL }!Self {
         const stack_fallback_bytes = 8192;
 
         var stack_fallback = std.heap.stackFallback(stack_fallback_bytes, allocator);
         const temp = stack_fallback.get();
 
-        var raw_spec_cleaned = PathToFileUrlUtils.cleanPathToFileUrl(temp, raw_spec) catch {
-            return error.InvalidPath;
-        };
+        var raw_spec_cleaned = try PathToFileUrlUtils.cleanPathToFileUrl(temp, raw_spec);
         defer temp.free(raw_spec_cleaned);
 
         // Turn file://path into file:/path
@@ -678,10 +677,10 @@ pub const NpaSpec = struct {
 
         // Create resolvedUrl: new URL(rawSpec, `${pathToFileURL(path.resolve(where))}/`)
         const resolved_href = blk: {
-            var path_buffers: PathHelpers.PathBufferPair = .init();
+            var path_buffers: PathResolver.BufferPair = .init();
             defer path_buffers.deinit();
 
-            const resolved_where_path = try PathHelpers.resolve(&.{where}, &path_buffers);
+            const resolved_where_path = try PathResolver.resolvePath(&.{where}, &path_buffers);
 
             const where_url_len = PathToFileUrlUtils.pathToFileUrlLength(resolved_where_path);
             const where_with_slash_buf = try temp.alloc(u8, where_url_len + 1);
@@ -764,11 +763,11 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = Self.Type.fromInodePath(raw_spec),
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -789,7 +788,7 @@ pub const NpaSpec = struct {
             allocator: std.mem.Allocator,
             fetch_spec_str: []const u8,
             save_spec_content: []const u8,
-        ) !PathPair {
+        ) error{OutOfMemory}!PathPair {
             const total_size = fetch_spec_str.len + 5 + save_spec_content.len;
             const buffer = try allocator.alloc(u8, total_size);
             errdefer allocator.free(buffer);
@@ -817,8 +816,8 @@ pub const NpaSpec = struct {
         raw_spec: []const u8,
         where_path: []const u8,
         resolved_path: []const u8,
-    ) !PathPair {
-        var path_buffers: PathHelpers.PathBufferPair = .init();
+    ) error{ OutOfMemory, InvalidPath }!PathPair {
+        var path_buffers: PathResolver.BufferPair = .init();
         defer path_buffers.deinit();
 
         if (bun.strings.hasPrefixComptime(spec_path, "/~/") or
@@ -826,7 +825,7 @@ pub const NpaSpec = struct {
         {
             if (bun.getenvZ("HOME")) |home_dir| {
                 const path_after_tilde = if (spec_path.len > 3) spec_path[3..] else "";
-                const resolved = try PathHelpers.resolve(
+                const resolved = try PathResolver.resolvePath(
                     &.{ home_dir, path_after_tilde },
                     &path_buffers,
                 );
@@ -835,14 +834,28 @@ pub const NpaSpec = struct {
                 return error.InvalidPath;
             }
         } else if (!std.fs.path.isAbsolute(bun.strings.substring(raw_spec, 5, null))) {
-            var relative_buffers: PathHelpers.PathBufferTriplet = .init();
-            const relative_path = try PathHelpers.relative(where_path, resolved_path, &relative_buffers);
-            const resolved = try PathHelpers.resolve(&.{ where_path, resolved_path }, &path_buffers);
+            var relative_buffers: PathResolver.BufferTriplet = .init();
+            defer relative_buffers.deinit();
+            const relative_path = try PathResolver.computeRelative(
+                where_path,
+                resolved_path,
+                &relative_buffers,
+            );
+            const resolved = try PathResolver.resolvePath(
+                &.{ where_path, resolved_path },
+                &path_buffers,
+            );
 
             return PathPair.init(allocator, resolved, relative_path);
         } else {
-            const resolved_for_save = try PathHelpers.resolve(&.{resolved_path}, &path_buffers);
-            const resolved_for_fetch = try PathHelpers.resolve(&.{ where_path, resolved_path }, &path_buffers);
+            const resolved_for_save = try PathResolver.resolvePath(
+                &.{resolved_path},
+                &path_buffers,
+            );
+            const resolved_for_fetch = try PathResolver.resolvePath(
+                &.{ where_path, resolved_path },
+                &path_buffers,
+            );
 
             return PathPair.init(allocator, resolved_for_fetch, resolved_for_save);
         }
@@ -856,7 +869,6 @@ pub const NpaError = error{
     AliasMissingName,
     InvalidPath,
     InvalidURL,
-    Unexpected,
     CurrentWorkingDirectoryUnlinked,
     InvalidRegistrySpec,
     InvalidCommittish,
@@ -883,23 +895,26 @@ const GitAttrs = struct {
     range: ?[]const u8,
     subdir: ?[]const u8,
 
-    #allocator: std.mem.Allocator,
+    _allocator: std.mem.Allocator,
     _range_buf: ?[]const u8,
 
     pub fn deinit(self: *Self) void {
-        if (self.committish) |c| self.#allocator.free(c);
+        if (self.committish) |c| self._allocator.free(c);
         // Don't free range - it's a slice into _range_buf
-        if (self.subdir) |s| self.#allocator.free(s);
-        if (self._range_buf) |b| self.#allocator.free(b);
+        if (self.subdir) |s| self._allocator.free(s);
+        if (self._range_buf) |b| self._allocator.free(b);
     }
 
-    pub fn fromCommittish(allocator: std.mem.Allocator, committish: []const u8) !Self {
+    pub fn fromCommittish(
+        allocator: std.mem.Allocator,
+        committish: []const u8,
+    ) error{ OutOfMemory, InvalidCommittish }!Self {
         var res: Self = .{
             .committish = null,
             .range = null,
             .subdir = null,
             ._range_buf = null,
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
         errdefer res.deinit();
 
@@ -954,7 +969,10 @@ const GitAttrs = struct {
 
     /// Extract and parse git attributes from a URL's hash fragment.
     /// Returns null if the URL has no hash or an empty hash.
-    pub fn fromUrl(allocator: std.mem.Allocator, parsed_url: *bun.jsc.URL) !?Self {
+    pub fn fromUrl(
+        allocator: std.mem.Allocator,
+        parsed_url: *bun.jsc.URL,
+    ) error{ OutOfMemory, InvalidCommittish }!?Self {
         const hash_slice = try parsed_url.hash().toOwnedSlice(allocator);
         defer allocator.free(hash_slice);
 
@@ -1009,8 +1027,13 @@ fn resolve(
     spec: []const u8,
     maybe_where: ?[]const u8,
     raw_arg: ?[]const u8,
-) !NpaSpec {
-    const where = maybe_where orelse try std.process.getCwdAlloc(allocator);
+) NpaError!NpaSpec {
+    const where = maybe_where orelse std.process.getCwdAlloc(allocator) catch |err| {
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.CurrentWorkingDirectoryUnlinked,
+        }
+    };
     defer if (maybe_where == null) allocator.free(where);
 
     if (SpecStrUtils.isFile(spec)) {
@@ -1432,15 +1455,12 @@ pub const SpecStrUtils = struct {
         if (str.len == 0) return false;
 
         // Count leading slashes (must be 1-3)
-        var slash_count: usize = 0;
-        var i: usize = 0;
-        while (i < str.len and str[i] == '/' and slash_count < 3) : (i += 1) {
-            slash_count += 1;
-        }
+        const slash_count = bun.strings.countLeadingChar(str, '/');
 
         // Must have 1-3 slashes
         if (slash_count == 0 or slash_count > 3) return false;
 
+        var i = slash_count;
         // Must have at least one more character (the first dot)
         if (i >= str.len or str[i] != '.') return false;
         i += 1;
@@ -1594,104 +1614,6 @@ pub const TestingAPIs = struct {
         defer resolved.deinit();
 
         return resolved.toJS(allocator, go);
-    }
-};
-
-/// Helper functions for path operations that reduce boilerplate.
-/// These return heap-allocated results since we typically need to own the paths anyway.
-///
-/// TODO(markovejnovic): This feels like it shouldn't be in npm-package-arg, but in a more generic
-/// location.
-const PathHelpers = struct {
-    const Self = @This();
-
-    const PathBufferPair = struct {
-        buf1: *bun.PathBuffer,
-        buf2: *bun.PathBuffer,
-
-        pub fn init() PathBufferPair {
-            return .{
-                .buf1 = bun.path_buffer_pool.get(),
-                .buf2 = bun.path_buffer_pool.get(),
-            };
-        }
-
-        pub fn deinit(self: *PathBufferPair) void {
-            bun.path_buffer_pool.put(self.buf1);
-            bun.path_buffer_pool.put(self.buf2);
-        }
-    };
-
-    const PathBufferTriplet = struct {
-        pair: PathBufferPair,
-        buf3: *bun.PathBuffer,
-
-        pub fn init() PathBufferTriplet {
-            return .{
-                .pair = Self.PathBufferPair.init(),
-                .buf3 = bun.path_buffer_pool.get(),
-            };
-        }
-
-        pub fn deinit(self: *PathBufferTriplet) void {
-            self.pair.deinit();
-            bun.path_buffer_pool.put(self.buf3);
-        }
-    };
-
-    /// JS path.resolve equivalent.
-    fn resolve(segments: []const []const u8, buffers: *PathBufferPair) ![]const u8 {
-        const result = if (bun.Environment.isWindows)
-            PathResolver.resolveWindowsT(u8, segments, buffers.buf1, buffers.buf2)
-        else
-            PathResolver.resolvePosixT(u8, segments, buffers.buf1, buffers.buf2);
-
-        return switch (result) {
-            .result => |r| r,
-            .err => error.InvalidPath,
-        };
-    }
-
-    fn resolveWithPrefix(
-        allocator: std.mem.Allocator,
-        comptime prefix: []const u8,
-        segments: []const []const u8,
-        buffers: *PathBufferPair,
-    ) ![]u8 {
-        const resolved = try Self.resolve(segments, buffers);
-        return std.fmt.allocPrint(allocator, prefix ++ "{s}", .{resolved});
-    }
-
-    /// Computes relative path and returns a stack-backed slice.
-    /// The returned slice is valid as long as the buffers struct is in scope.
-    fn relative(
-        from: []const u8,
-        to: []const u8,
-        buffers: *PathBufferTriplet,
-    ) ![]const u8 {
-        const result = if (bun.Environment.isWindows)
-            PathResolver.relativeWindowsT(
-                u8,
-                from,
-                to,
-                buffers.pair.buf1,
-                buffers.pair.buf2,
-                buffers.buf3,
-            )
-        else
-            PathResolver.relativePosixT(
-                u8,
-                from,
-                to,
-                buffers.pair.buf1,
-                buffers.pair.buf2,
-                buffers.buf3,
-            );
-
-        return switch (result) {
-            .result => |r| r,
-            .err => error.InvalidPath,
-        };
     }
 };
 

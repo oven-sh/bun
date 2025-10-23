@@ -79,8 +79,8 @@ pub const HostedGitInfo = struct {
     host_provider: HostProvider,
     default_representation: Representation,
 
-    #memory_buffer: []const u8,
-    #allocator: std.mem.Allocator,
+    _memory_buffer: []const u8,
+    _allocator: std.mem.Allocator,
 
     /// Helper function to decode a percent-encoded string and append it to a StringBuilder.
     /// Returns the decoded slice and updates the StringBuilder's length.
@@ -92,7 +92,10 @@ pub const HostedGitInfo = struct {
     ///
     /// Therefore, we use this function to first take a URL string, encode it into a *jsc.URL and
     /// then decode it back to a normal string. Kind of a lot of work, but it works.
-    fn decodeAndAppend(sb: *bun.StringBuilder, input: []const u8) ![]const u8 {
+    fn decodeAndAppend(
+        sb: *bun.StringBuilder,
+        input: []const u8,
+    ) error{ OutOfMemory, InvalidURL }![]const u8 {
         const writable = sb.writable();
         var stream = std.io.fixedBufferStream(writable);
         const decoded_len = PercentEncoding.decode(
@@ -113,7 +116,7 @@ pub const HostedGitInfo = struct {
         host_provider: HostProvider,
         default_representation: Representation,
         allocator: std.mem.Allocator,
-    ) !Self {
+    ) error{ OutOfMemory, InvalidURL }!Self {
         var sb = bun.StringBuilder{};
 
         if (user) |u| sb.count(u);
@@ -135,15 +138,15 @@ pub const HostedGitInfo = struct {
             .user = user_part,
             .host_provider = host_provider,
             .default_representation = default_representation,
-            .#memory_buffer = owned_buffer,
-            .#allocator = allocator,
+            ._memory_buffer = owned_buffer,
+            ._allocator = allocator,
         };
     }
 
-    /// Initialize a HostedGitInfo from an Extracted structure.
-    /// Takes ownership of the Extracted structure.
-    fn moveFromExtracted(
-        extracted: *HostProvider.Config.Formatters.Extract.Result,
+    /// Initialize a HostedGitInfo from an extracted structure.
+    /// Takes ownership of the extracted structure.
+    fn moveFromextracted(
+        extracted: *HostProvider.Config.formatters.extract.Result,
         host_provider: HostProvider,
         default_representation: Representation,
     ) Self {
@@ -154,14 +157,14 @@ pub const HostedGitInfo = struct {
             .user = extracted.user,
             .host_provider = host_provider,
             .default_representation = default_representation,
-            .#memory_buffer = moved.buffer,
-            .#allocator = moved.allocator,
+            ._memory_buffer = moved.buffer,
+            ._allocator = moved.allocator,
         };
     }
 
     /// Clean up owned memory
     pub fn deinit(self: *const Self) void {
-        self.#allocator.free(self.#memory_buffer);
+        self._allocator.free(self._memory_buffer);
     }
 
     /// Convert this HostedGitInfo to a JavaScript object
@@ -206,16 +209,47 @@ pub const HostedGitInfo = struct {
 
     /// Generate a URL string based on the default representation.
     /// Mimics hosted-git-info's toString() method
-    pub fn toString(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
+    pub fn toString(
+        self: *const Self,
+        allocator: std.mem.Allocator,
+    ) error{OutOfMemory}![]const u8 {
         return switch (self.default_representation) {
-            .shortcut => self.host_provider.formatShortcut(allocator, self.user, self.project, self.committish),
-            .sshurl => self.host_provider.formatSshUrl(allocator, self.user, self.project, self.committish),
-            .ssh => self.host_provider.formatSsh(allocator, self.user, self.project, self.committish),
-            .https => self.host_provider.formatHttps(allocator, null, self.user, self.project, self.committish),
+            .shortcut => self.host_provider.formatShortcut(
+                allocator,
+                self.user,
+                self.project,
+                self.committish,
+            ),
+            .sshurl => self.host_provider.formatSshUrl(
+                allocator,
+                self.user,
+                self.project,
+                self.committish,
+            ),
+            .ssh => self.host_provider.formatSsh(
+                allocator,
+                self.user,
+                self.project,
+                self.committish,
+            ),
+            .https => self.host_provider.formatHttps(
+                allocator,
+                null,
+                self.user,
+                self.project,
+                self.committish,
+            ),
             .git => {
                 const git_formatter = HostProvider.configs.get(self.host_provider).format_git;
                 if (git_formatter) |formatter| {
-                    return formatter(self.host_provider, allocator, null, self.user, self.project, self.committish);
+                    return formatter(
+                        self.host_provider,
+                        allocator,
+                        null,
+                        self.user,
+                        self.project,
+                        self.committish,
+                    );
                 }
                 @panic("No git formatter for this provider. This is a bug in Bun.");
             },
@@ -229,26 +263,38 @@ pub const HostedGitInfo = struct {
     };
 
     /// Generate both save_spec and fetch_spec in a single operation.
-    /// For shortcuts, fetch_spec is null. Otherwise, fetch_spec is the URL without committish and with git+ prefix stripped.
-    pub fn toStringBoth(self: *const Self, allocator: std.mem.Allocator) !StringPair {
+    /// For shortcuts, fetch_spec is null. Otherwise, fetch_spec is the URL without committish and
+    /// with git+ prefix stripped.
+    pub fn toStringBoth(
+        self: *const Self,
+        allocator: std.mem.Allocator,
+    ) error{OutOfMemory}!StringPair {
         // Generate save_spec (with committish)
         const save_spec = try self.toString(allocator);
         errdefer allocator.free(save_spec);
 
-        // For shortcuts, fetch_spec is null
-        if (self.default_representation == .shortcut) {
-            return .{
-                .save_spec = save_spec,
-                .fetch_spec = null,
-            };
-        }
-
         // Generate fetch_spec (without committish)
         const fetch_spec_with_prefix = switch (self.default_representation) {
-            .shortcut => unreachable, // handled above
-            .sshurl => try self.host_provider.formatSshUrl(allocator, self.user, self.project, null),
+            .shortcut => {
+                return .{
+                    .save_spec = save_spec,
+                    .fetch_spec = null,
+                };
+            },
+            .sshurl => try self.host_provider.formatSshUrl(
+                allocator,
+                self.user,
+                self.project,
+                null,
+            ),
             .ssh => try self.host_provider.formatSsh(allocator, self.user, self.project, null),
-            .https => try self.host_provider.formatHttps(allocator, null, self.user, self.project, null),
+            .https => try self.host_provider.formatHttps(
+                allocator,
+                null,
+                self.user,
+                self.project,
+                null,
+            ),
             .git => blk: {
                 const git_formatter = HostProvider.configs.get(self.host_provider).format_git;
                 if (git_formatter) |formatter| {
@@ -278,14 +324,18 @@ pub const HostedGitInfo = struct {
     }
 
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
-    pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?Self {
+    /// The HostedGitInfo is valid only for as long as `git_url` is valid.
+    pub fn fromUrl(
+        allocator: std.mem.Allocator,
+        git_url: []u8,
+    ) error{ OutOfMemory, InvalidURL }!?Self {
         // git_url_mut may carry two ownership semantics:
         //  - It aliases `git_url`, in which case it must not be freed.
         //  - It actually points to a new allocation, in which case it must be freed.
         var git_url_mut = git_url;
         defer if (git_url.ptr != git_url_mut.ptr) allocator.free(git_url_mut);
 
-        if (isGithubShorthand(git_url)) {
+        if (isGitHubShorthand(git_url)) {
             // In this case we have to prefix the url with `github:`.
             //
             // NOTE(markovejnovic): I don't exactly understand why this is treated specially.
@@ -309,8 +359,8 @@ pub const HostedGitInfo = struct {
 
         const is_shortcut = parsed.proto == .well_formed and parsed.proto.well_formed.isShortcut();
         if (!is_shortcut) {
-            var extracted = host_provider.extract(allocator, parsed.url) orelse return null;
-            return HostedGitInfo.moveFromExtracted(
+            var extracted = try host_provider.extract(allocator, parsed.url) orelse return null;
+            return HostedGitInfo.moveFromextracted(
                 &extracted,
                 host_provider,
                 parsed.proto.defaultRepresentation(),
@@ -329,7 +379,7 @@ pub const HostedGitInfo = struct {
             pathname = pathname[first_at + 1 ..];
         }
 
-        // Extract user and project from pathname (from-url.js line 76-86)
+        // extract user and project from pathname (from-url.js line 76-86)
         var user_part: ?[]const u8 = null;
         const project_part: []const u8 = blk: {
             if (bun.strings.lastIndexOfChar(pathname, '/')) |last_slash| {
@@ -369,7 +419,7 @@ pub const HostedGitInfo = struct {
 /// May error with `error.InvalidGitUrl` if the URL is not valid.
 ///
 /// Note that this may or may not allocate but it manages its own memory.
-fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) !struct {
+fn parseUrl(allocator: std.mem.Allocator, npa_str: []u8) error{InvalidGitUrl}!struct {
     url: *jsc.URL,
     proto: UrlProtocol,
 } {
@@ -529,7 +579,7 @@ pub const WellDefinedProtocol = enum {
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-fn isGithubShorthand(npa_str: []const u8) bool {
+pub fn isGitHubShorthand(npa_str: []const u8) bool {
     // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
     // single-pass algorithm for better performance.
     //
@@ -756,11 +806,13 @@ fn normalizeProtocol(npa_str: []u8) UrlProtocolPair {
 fn correctUrlMut(url_proto_pair: UrlProtocolPair) UrlProtocolPair {
     const at_idx: isize = if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, '@', '#')) |idx|
         @intCast(idx)
-        else -1;
+    else
+        -1;
 
     const col_idx: isize = if (bun.strings.lastIndexBeforeChar(url_proto_pair.url, ':', '#')) |idx|
         @intCast(idx)
-    else -1;
+    else
+        -1;
 
     if (col_idx > at_idx) {
         url_proto_pair.url[@intCast(col_idx)] = '/';
@@ -841,7 +893,7 @@ const HostProvider = enum {
         self: Self,
         allocator: std.mem.Allocator,
         url: *jsc.URL,
-    ) ?Config.Formatters.Extract.Result {
+    ) error{ OutOfMemory, InvalidURL }!?Config.formatters.extract.Result {
         return configs.get(self).format_extract(allocator, url);
     }
 
@@ -853,16 +905,16 @@ const HostProvider = enum {
         blob_path: ?[]const u8,
         edit_path: ?[]const u8,
 
-        format_ssh: Formatters.Ssh.Type = Self.Config.Formatters.Ssh.default,
-        format_sshurl: Formatters.SshUrl.Type = Self.Config.Formatters.SshUrl.default,
-        format_https: Formatters.Https.Type = Self.Config.Formatters.Https.default,
-        format_shortcut: Formatters.Shortcut.Type = Self.Config.Formatters.Shortcut.default,
-        format_git: Formatters.Git.Type = Self.Config.Formatters.Git.default,
-        format_extract: Formatters.Extract.Type,
+        format_ssh: formatters.ssh.Type = Self.Config.formatters.ssh.default,
+        format_sshurl: formatters.ssh_url.Type = Self.Config.formatters.ssh_url.default,
+        format_https: formatters.https.Type = Self.Config.formatters.https.default,
+        format_shortcut: formatters.shortcut.Type = Self.Config.formatters.shortcut.default,
+        format_git: formatters.git.Type = Self.Config.formatters.git.default,
+        format_extract: formatters.extract.Type,
 
         /// Encapsulates all the various foramtters that different hosts may have. Usually this has
         /// to do with URLs, but could be other things.
-        const Formatters = struct {
+        const formatters = struct {
             fn requiresUser(user: ?[]const u8) void {
                 if (user == null) {
                     @panic("Attempted to format a default SSH URL without a user. This is an " ++
@@ -872,7 +924,7 @@ const HostProvider = enum {
             }
 
             /// Mirrors hosts.js's sshtemplate
-            const Ssh = struct {
+            const ssh = struct {
                 const Type = *const fn (
                     self: Self,
                     allocator: std.mem.Allocator,
@@ -919,7 +971,7 @@ const HostProvider = enum {
             };
 
             /// Mirrors hosts.js's sshurltemplate
-            const SshUrl = struct {
+            const ssh_url = struct {
                 const Type = *const fn (
                     self: Self,
                     allocator: std.mem.Allocator,
@@ -966,7 +1018,7 @@ const HostProvider = enum {
             };
 
             /// Mirrors hosts.js's httpstemplate
-            const Https = struct {
+            const https = struct {
                 const Type = *const fn (
                     self: Self,
                     allocator: std.mem.Allocator,
@@ -1042,7 +1094,7 @@ const HostProvider = enum {
             };
 
             /// Mirrors hosts.js's shortcuttemplate
-            const Shortcut = struct {
+            const shortcut = struct {
                 const Type = *const fn (
                     self: Self,
                     allocator: std.mem.Allocator,
@@ -1091,17 +1143,17 @@ const HostProvider = enum {
             };
 
             /// Mirrors hosts.js's extract function
-            const Extract = struct {
+            const extract = struct {
                 const Result = struct {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                    #owned_buffer: ?[]const u8,
-                    #allocator: std.mem.Allocator,
+                    _owned_buffer: ?[]const u8,
+                    _allocator: std.mem.Allocator,
 
                     fn deinit(self: *Result) void {
-                        if (self.#owned_buffer) |buf| {
-                            self.#allocator.free(buf);
+                        if (self._owned_buffer) |buf| {
+                            self._allocator.free(buf);
                         }
                     }
 
@@ -1114,15 +1166,15 @@ const HostProvider = enum {
                         buffer: []const u8,
                         allocator: std.mem.Allocator,
                     } {
-                        if (self.#owned_buffer == null) {
+                        if (self._owned_buffer == null) {
                             @panic("Cannot move an empty Result. This is a bug in Bun. Please " ++
                                 "report this issue on GitHub.");
                         }
 
-                        const buffer = self.#owned_buffer.?;
-                        const allocator = self.#allocator;
+                        const buffer = self._owned_buffer.?;
+                        const allocator = self._allocator;
 
-                        self.#owned_buffer = null;
+                        self._owned_buffer = null;
 
                         return .{
                             .buffer = buffer,
@@ -1131,10 +1183,16 @@ const HostProvider = enum {
                     }
                 };
 
-                const Type = *const fn (allocator: std.mem.Allocator, url: *jsc.URL) ?Result;
+                const Type = *const fn (
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ OutOfMemory, InvalidURL }!?Result;
 
-                fn github(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
-                    const pathname_owned = url.pathname().toOwnedSlice(allocator) catch return null;
+                fn github(
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ OutOfMemory, InvalidURL }!?Result {
+                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1177,15 +1235,13 @@ const HostProvider = enum {
                     sb.count(project);
                     if (committish) |c| sb.count(c);
 
-                    sb.allocate(allocator) catch return null;
+                    try sb.allocate(allocator);
 
-                    const user_slice =
-                        HostedGitInfo.decodeAndAppend(&sb, user_part) catch return null;
-                    const project_slice =
-                        HostedGitInfo.decodeAndAppend(&sb, project) catch return null;
+                    const user_slice = try HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = try HostedGitInfo.decodeAndAppend(&sb, project);
                     const committish_slice =
                         if (committish) |c|
-                            HostedGitInfo.decodeAndAppend(&sb, c) catch return null
+                            try HostedGitInfo.decodeAndAppend(&sb, c)
                         else
                             null;
 
@@ -1193,13 +1249,16 @@ const HostProvider = enum {
                         .user = user_slice,
                         .project = project_slice,
                         .committish = committish_slice,
-                        .#owned_buffer = sb.allocatedSlice(),
-                        .#allocator = allocator,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
                     };
                 }
 
-                fn bitbucket(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
-                    const pathname_owned = url.pathname().toOwnedSlice(allocator) catch return null;
+                fn bitbucket(
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ InvalidURL, OutOfMemory }!?Result {
+                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1232,13 +1291,13 @@ const HostProvider = enum {
                     sb.count(project);
                     if (committish) |c| sb.count(c);
 
-                    sb.allocate(allocator) catch return null;
+                    try sb.allocate(allocator);
 
-                    const user_slice = HostedGitInfo.decodeAndAppend(&sb, user_part) catch return null;
-                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project) catch return null;
+                    const user_slice = try HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = try HostedGitInfo.decodeAndAppend(&sb, project);
                     const committish_slice =
                         if (committish) |c|
-                            HostedGitInfo.decodeAndAppend(&sb, c) catch return null
+                            try HostedGitInfo.decodeAndAppend(&sb, c)
                         else
                             null;
 
@@ -1246,13 +1305,16 @@ const HostProvider = enum {
                         .user = user_slice,
                         .project = project_slice,
                         .committish = committish_slice,
-                        .#owned_buffer = sb.allocatedSlice(),
-                        .#allocator = allocator,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
                     };
                 }
 
-                fn gitlab(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
-                    const pathname_owned = url.pathname().toOwnedSlice(allocator) catch return null;
+                fn gitlab(
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ OutOfMemory, InvalidURL }!?Result {
+                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1283,10 +1345,10 @@ const HostProvider = enum {
                     sb.count(project);
                     if (committish.len > 0) sb.count(committish);
 
-                    sb.allocate(allocator) catch return null;
+                    try sb.allocate(allocator);
 
-                    const user_slice = HostedGitInfo.decodeAndAppend(&sb, user_part) catch return null;
-                    const project_slice = HostedGitInfo.decodeAndAppend(&sb, project) catch return null;
+                    const user_slice = try HostedGitInfo.decodeAndAppend(&sb, user_part);
+                    const project_slice = try HostedGitInfo.decodeAndAppend(&sb, project);
                     const committish_slice =
                         if (committish.len > 0)
                             HostedGitInfo.decodeAndAppend(&sb, committish) catch return null
@@ -1297,13 +1359,16 @@ const HostProvider = enum {
                         .user = user_slice,
                         .project = project_slice,
                         .committish = committish_slice,
-                        .#owned_buffer = sb.allocatedSlice(),
-                        .#allocator = allocator,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
                     };
                 }
 
-                fn gist(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
-                    const pathname_owned = url.pathname().toOwnedSlice(allocator) catch return null;
+                fn gist(
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ OutOfMemory, InvalidURL }!?Result {
+                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1361,13 +1426,16 @@ const HostProvider = enum {
                         .user = user_slice,
                         .project = project_slice,
                         .committish = committish_slice,
-                        .#owned_buffer = sb.allocatedSlice(),
-                        .#allocator = allocator,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
                     };
                 }
 
-                fn sourcehut(allocator: std.mem.Allocator, url: *jsc.URL) ?Result {
-                    const pathname_owned = url.pathname().toOwnedSlice(allocator) catch return null;
+                fn sourcehut(
+                    allocator: std.mem.Allocator,
+                    url: *jsc.URL,
+                ) error{ InvalidURL, OutOfMemory }!?Result {
+                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1440,14 +1508,14 @@ const HostProvider = enum {
                         .user = user_slice,
                         .project = project_slice,
                         .committish = committish_slice,
-                        .#owned_buffer = sb.allocatedSlice(),
-                        .#allocator = allocator,
+                        ._owned_buffer = sb.allocatedSlice(),
+                        ._allocator = allocator,
                     };
                 }
             };
 
             /// Mirrors hosts.js's gittemplate
-            const Git = struct {
+            const git = struct {
                 const Type = ?*const fn (
                     self: Self,
                     allocator: std.mem.Allocator,
@@ -1513,7 +1581,7 @@ const HostProvider = enum {
             .tree_path = "src",
             .blob_path = "src",
             .edit_path = "?mode=edit",
-            .format_extract = Self.Config.Formatters.Extract.bitbucket,
+            .format_extract = Self.Config.formatters.extract.bitbucket,
         },
         .gist = .{
             .protocols = &.{ .git, .git_plus_ssh, .git_plus_https, .ssh, .https },
@@ -1522,12 +1590,12 @@ const HostProvider = enum {
             .tree_path = null,
             .blob_path = null,
             .edit_path = "edit",
-            .format_ssh = Self.Config.Formatters.Ssh.gist,
-            .format_sshurl = Self.Config.Formatters.SshUrl.gist,
-            .format_https = Self.Config.Formatters.Https.gist,
-            .format_shortcut = Self.Config.Formatters.Shortcut.gist,
-            .format_git = Self.Config.Formatters.Git.gist,
-            .format_extract = Self.Config.Formatters.Extract.gist,
+            .format_ssh = Self.Config.formatters.ssh.gist,
+            .format_sshurl = Self.Config.formatters.ssh_url.gist,
+            .format_https = Self.Config.formatters.https.gist,
+            .format_shortcut = Self.Config.formatters.shortcut.gist,
+            .format_git = Self.Config.formatters.git.gist,
+            .format_extract = Self.Config.formatters.extract.gist,
         },
         .github = .{
             .protocols = &.{ .git, .http, .git_plus_ssh, .git_plus_https, .ssh, .https },
@@ -1536,8 +1604,8 @@ const HostProvider = enum {
             .tree_path = "tree",
             .blob_path = "blob",
             .edit_path = "edit",
-            .format_git = Self.Config.Formatters.Git.github,
-            .format_extract = Self.Config.Formatters.Extract.github,
+            .format_git = Self.Config.formatters.git.github,
+            .format_extract = Self.Config.formatters.extract.github,
         },
         .gitlab = .{
             .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
@@ -1546,7 +1614,7 @@ const HostProvider = enum {
             .tree_path = "tree",
             .blob_path = "tree",
             .edit_path = "-/edit",
-            .format_extract = Self.Config.Formatters.Extract.gitlab,
+            .format_extract = Self.Config.formatters.extract.gitlab,
         },
         .sourcehut = .{
             .protocols = &.{ .git_plus_ssh, .https },
@@ -1555,8 +1623,8 @@ const HostProvider = enum {
             .tree_path = "tree",
             .blob_path = "tree",
             .edit_path = null,
-            .format_https = Self.Config.Formatters.Https.sourcehut,
-            .format_extract = Self.Config.Formatters.Extract.sourcehut,
+            .format_https = Self.Config.formatters.https.sourcehut,
+            .format_extract = Self.Config.formatters.extract.sourcehut,
         },
     });
 

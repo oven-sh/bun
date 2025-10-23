@@ -506,11 +506,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         // Build reachability set for production mode by traversing lockfile dependency graph
         // Use PackageID-based tracking to correctly handle multi-version installs
-        var production_reachable_ids: ?std.AutoHashMap(PackageID, void) = null;
-        defer if (production_reachable_ids) |*map| map.deinit();
+        var production_reachable_ids: ?std.bit_set.DynamicBitSetUnmanaged = null;
+        defer if (production_reachable_ids) |*bitset| bitset.deinit(manager.allocator);
 
         if (is_production) {
-            production_reachable_ids = std.AutoHashMap(PackageID, void).init(manager.allocator);
+            const packages = manager.lockfile.packages.slice();
+            production_reachable_ids = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(manager.allocator, packages.len);
             var reachable = &production_reachable_ids.?;
 
             // Get root package ID
@@ -521,7 +522,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 // Can't determine production dependencies without valid root package
                 production_reachable_ids = null;
             } else {
-                const packages = manager.lockfile.packages.slice();
                 const dependencies_lists = packages.items(.dependencies);
                 const resolutions_lists = packages.items(.resolutions);
 
@@ -545,7 +545,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     if (pkg_id != invalid_package_id and !dep.behavior.dev) {
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        try reachable.put(pkg_id, {});
+                        reachable.set(pkg_id);
                     }
                 }
 
@@ -566,7 +566,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        try reachable.put(pkg_id, {});
+                        reachable.set(pkg_id);
                     }
                 }
             }
@@ -580,7 +580,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             package_resolutions: @TypeOf(package_resolutions),
             workspace_paths: @TypeOf(workspace_paths),
             is_production: bool,
-            production_reachable_ids: ?*const std.AutoHashMap(PackageID, void),
+            production_reachable_ids: ?*const std.bit_set.DynamicBitSetUnmanaged,
             is_dry_run: bool,
             // Precomputed multimap for O(1) lookup of package IDs by name hash
             name_to_ids: *const std.AutoHashMap(PackageNameHash, std.ArrayList(PackageID)),
@@ -719,7 +719,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     for (matching_packages.items) |pid| {
                         if (self.package_resolutions[pid].tag != .npm) {
                             if (!self.is_production or self.production_reachable_ids == null or
-                                self.production_reachable_ids.?.contains(pid))
+                                self.production_reachable_ids.?.isSet(pid))
                             {
                                 matched_pkg_id = pid;
                                 break;
@@ -789,7 +789,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     // In production mode, check if this specific PackageID is reachable
                     // This correctly handles multi-version scenarios (e.g., lodash@4.17.0 vs lodash@4.17.21)
                     if (self.is_production and self.production_reachable_ids != null) {
-                        if (!self.production_reachable_ids.?.contains(pkg_id)) {
+                        if (!self.production_reachable_ids.?.isSet(pkg_id)) {
                             return true;
                         }
                     }

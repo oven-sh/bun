@@ -114,7 +114,8 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
-void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+void us_internal_dispatch_ready_poll(struct us_poll_t *p);
+void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
@@ -170,6 +171,10 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
+    bool is_readable: 1;
+    bool is_writable: 1;
+    bool has_error: 1;
+    bool has_received_eof: 1;
 
 } __attribute__((packed));
 
@@ -221,8 +226,12 @@ struct us_udp_socket_t {
      * many interfaces it may listen to. Therefore we cache the port after creation
      * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
     uint16_t port;
-    uint16_t closed : 1;
-    uint16_t connected : 1;
+    bool closed : 1;
+    bool connected : 1;
+    bool is_readable: 1;
+    bool is_writable: 1;
+    bool has_error: 1;
+    bool has_received_eof: 1;
     struct us_udp_socket_t *next;
 };
 

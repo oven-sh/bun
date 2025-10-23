@@ -248,7 +248,8 @@ pub const napi_status = c_uint;
 pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
 
 /// expects `napi_env`, `callback_data`, `context`
-pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
+pub const NapiFinalizeFunction = *const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
+pub const napi_finalize = ?NapiFinalizeFunction;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
     name: napi_value,
@@ -1368,20 +1369,17 @@ pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
 extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;
 
 pub const Finalizer = struct {
-    env: NapiEnv.Ref.Optional,
-    fun: napi_finalize,
+    env: NapiEnv.Ref,
+    fun: NapiFinalizeFunction,
     data: ?*anyopaque = null,
     hint: ?*anyopaque = null,
 
     pub fn run(this: *Finalizer) void {
-        const env = this.env.get() orelse return;
+        const env = this.env.get();
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 
-        if (this.fun) |fun| {
-            fun(env, this.data, this.hint);
-        }
-
+        this.fun(env, this.data, this.hint);
         napi_internal_remove_finalizer(env, this.fun, this.hint, this.data);
 
         if (env.toJS().tryTakeException()) |exception| {
@@ -1393,12 +1391,28 @@ pub const Finalizer = struct {
         }
     }
 
+    pub fn deinit(this: *Finalizer) void {
+        this.env.deinit();
+        this.* = undefined;
+    }
+
     /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
     /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
     /// which they couldn't if they ran immediately while the garbage collector is still running.
     pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
-        const task = NapiFinalizerTask.init(.{ .env = .cloneFromRaw(env), .fun = fun, .data = data, .hint = hint });
-        task.schedule();
+        var this: Finalizer = .{
+            .fun = fun orelse return,
+            .env = .cloneFromRaw(env orelse return),
+            .data = data,
+            .hint = hint,
+        };
+        this.enqueue();
+    }
+
+    /// Takes ownership of `this`.
+    pub fn enqueue(this: *Finalizer) void {
+        NapiFinalizerTask.init(this.*).schedule();
+        this.* = undefined;
     }
 };
 
@@ -1440,8 +1454,9 @@ pub const ThreadSafeFunction = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     env: NapiEnv.Ref,
+    finalizer_fun: napi_finalize = null,
+    finalizer_data: ?*anyopaque = null,
 
-    finalizer: Finalizer = Finalizer{ .env = .initNull(), .fun = null, .data = null },
     has_queued_finalizer: bool = false,
     queue: Queue = .{
         .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
@@ -1664,16 +1679,19 @@ pub const ThreadSafeFunction = struct {
     pub fn deinit(this: *ThreadSafeFunction) void {
         this.unref();
 
-        if (this.finalizer.fun) |fun| {
-            Finalizer.napi_internal_enqueue_finalizer(this.env.get(), fun, this.finalizer.data, this.ctx);
+        if (this.finalizer_fun) |fun| {
+            var finalizer: Finalizer = .{
+                .env = this.env,
+                .fun = fun,
+                .data = this.finalizer_data,
+            };
+            finalizer.enqueue();
         } else {
-            // If there's no finalizer to run, we need to deinit the finalizer's env ref
-            this.finalizer.env.deinit();
+            this.env.deinit();
         }
 
         this.callback.deinit();
         this.queue.deinit();
-        this.env.deinit();
         bun.destroy(this);
     }
 
@@ -1765,9 +1783,10 @@ pub export fn napi_create_threadsafe_function(
         .thread_count = .{ .raw = @intCast(initial_thread_count) },
         .poll_ref = Async.KeepAlive.init(),
         .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
+        .finalizer_fun = thread_finalize_cb,
+        .finalizer_data = thread_finalize_data,
     });
 
-    function.finalizer = .{ .env = .cloneFromRaw(env), .data = thread_finalize_data, .fun = thread_finalize_cb };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);
@@ -2488,7 +2507,7 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn schedule(this: *NapiFinalizerTask) void {
-        const globalThis = (this.finalizer.env.get() orelse return).toJS();
+        const globalThis = this.finalizer.env.get().toJS();
 
         const vm, const thread_kind = globalThis.tryBunVM();
 
@@ -2507,7 +2526,7 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn deinit(this: *NapiFinalizerTask) void {
-        this.finalizer.env.deinit();
+        this.finalizer.deinit();
         bun.default_allocator.destroy(this);
     }
 

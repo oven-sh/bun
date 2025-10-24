@@ -551,11 +551,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                     } else if (!length) {
                         // lets handle EOF in the same place
                         has_received_eof = true;
-                        s->flags.is_readable = true;
+                        s->flags.is_readable = false;
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR) {
                         if(bsd_would_block()) {
-                            s->flags.is_readable = true;
+                            s->flags.is_readable = false;
                             break;
                         }
                         /* Todo: decide also here what kind of reason we should give */

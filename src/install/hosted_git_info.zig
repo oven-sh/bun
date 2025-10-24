@@ -278,6 +278,7 @@ pub const HostedGitInfo = struct {
     }
 
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
+    /// The HostedGitInfo is valid only for as long as `git_url` is valid.
     pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?Self {
         // git_url_mut may carry two ownership semantics:
         //  - It aliases `git_url`, in which case it must not be freed.
@@ -285,7 +286,7 @@ pub const HostedGitInfo = struct {
         var git_url_mut = git_url;
         defer if (git_url.ptr != git_url_mut.ptr) allocator.free(git_url_mut);
 
-        if (isGithubShorthand(git_url)) {
+        if (isGitHubShorthand(git_url)) {
             // In this case we have to prefix the url with `github:`.
             //
             // NOTE(markovejnovic): I don't exactly understand why this is treated specially.
@@ -529,7 +530,7 @@ pub const WellDefinedProtocol = enum {
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-fn isGithubShorthand(npa_str: []const u8) bool {
+pub fn isGitHubShorthand(npa_str: []const u8) bool {
     // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
     // single-pass algorithm for better performance.
     //

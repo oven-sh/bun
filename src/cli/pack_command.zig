@@ -1210,7 +1210,7 @@ pub const PackCommand = struct {
         const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
         const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         if (comptime for_publish) {
-            const is_scoped = try Dependency.NpaBridge.isScopedPackageName(package_name);
+            const is_scoped = try Dependency.isScopedPackageName(package_name);
             if (manager.options.publish_config.access) |access| {
                 if (access == .restricted and !is_scoped) {
                     return error.RestrictedUnscopedPackage;

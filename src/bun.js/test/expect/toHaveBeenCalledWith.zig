@@ -94,9 +94,9 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     };
 
     const fmt =
-        \\    <green>Expected<r>: {any}
+        \\    <green>Expected<r>: {f}
         \\    <red>Received<r>:
-        \\{any}
+        \\{f}
         \\
         \\    Number of calls: {d}
     ;

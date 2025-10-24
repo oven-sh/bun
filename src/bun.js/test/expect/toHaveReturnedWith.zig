@@ -98,9 +98,9 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         const fmt =
             \\Some calls errored:
             \\
-            \\    Expected: {any}
+            \\    Expected: {f}
             \\    Received:
-            \\{any}
+            \\{f}
             \\
             \\    Number of returns: {d}
             \\    Number of calls:   {d}
@@ -124,9 +124,9 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
             .formatter = &formatter,
         };
         const fmt =
-            \\    <green>Expected<r>: {any}
+            \\    <green>Expected<r>: {f}
             \\    <red>Received<r>:
-            \\{any}
+            \\{f}
             \\
             \\    Number of returns: {d}
         ;

@@ -4,7 +4,7 @@ pub const std_options = std.Options{
 };
 
 pub const io_mode = .blocking;
-pub const format_mode = .always_call_format;
+pub const format_mode = .require_f;
 
 comptime {
     bun.assert(builtin.target.cpu.arch.endian() == .little);

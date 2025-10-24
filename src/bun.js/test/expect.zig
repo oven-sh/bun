@@ -769,8 +769,8 @@ pub const Expect = struct {
                     \\
                     \\
                     \\<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:
-                    \\  Expected to be called from file: <green>"{}"<r>
-                    \\  {s} called from file: <red>"{}"<r>
+                    \\  Expected to be called from file: <green>"{f}"<r>
+                    \\  {s} called from file: <red>"{f}"<r>
                     \\
                 , .{
                     std.zig.fmtString(fget.source.path.text),
@@ -818,7 +818,7 @@ pub const Expect = struct {
         value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Failed to pretty format value: {f}", .{value.toFmt(&formatter)});
         };
     }
     pub fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
@@ -933,7 +933,7 @@ pub const Expect = struct {
 
                 if (!matcher_fn.jsType().isFunction()) {
                     const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalThis).getZigString(globalThis));
-                    return globalThis.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
+                    return globalThis.throwInvalidArguments("expect.extend: `{f}` is not a valid matcher. Must be a function, is \"{f}\"", .{ matcher_name, type_name });
                 }
 
                 // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSCustomExpectMatcherFunction.

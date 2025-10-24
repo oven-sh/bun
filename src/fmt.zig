@@ -1368,7 +1368,7 @@ pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
     // std.net.Address.format includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
-    var result = try std.fmt.bufPrint(into, "{}", .{address});
+    var result = try std.fmt.bufPrint(into, "{f}", .{address});
 
     // Strip `:<port>`
     if (std.mem.lastIndexOfScalar(u8, result, ':')) |colon| {
@@ -1755,7 +1755,7 @@ pub const js_bindings = struct {
                 };
             },
             .escape_powershell => {
-                writer.writer().print("{}", .{escapePowershell(code)}) catch |err| {
+                writer.writer().print("{f}", .{escapePowershell(code)}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
@@ -1813,8 +1813,10 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
                 try writer.print(" Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
                 try writer.print(" Received {s}", .{self.value});
+            } else if (comptime std.meta.hasFn(@TypeOf(self.value), "format")) {
+                try writer.print(" Received {f}", .{self.value});
             } else {
-                try writer.print(" Received {d}", .{self.value});
+                try writer.print(" Received {}", .{self.value});
             }
         }
     };

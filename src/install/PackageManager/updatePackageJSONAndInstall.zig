@@ -760,17 +760,29 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                         if (installed_version) |inst_ver| {
                             // Find package with matching version
+                            // Use stack buffer to avoid per-candidate heap allocations
+                            var stack_buf: [128]u8 = undefined;
+
                             for (matching_packages.items) |pkg_id| {
                                 if (self.package_resolutions[pkg_id].tag == .npm) {
                                     const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
                                     const string_buf = self.manager.lockfile.buffers.string_bytes.items;
 
-                                    const lockfile_ver_str = std.fmt.allocPrint(
-                                        self.manager.allocator,
+                                    // Try stack buffer first, fallback to heap only if needed
+                                    const lockfile_ver_str = std.fmt.bufPrint(
+                                        &stack_buf,
                                         "{any}",
                                         .{lockfile_version.fmt(string_buf)},
-                                    ) catch continue;
-                                    defer self.manager.allocator.free(lockfile_ver_str);
+                                    ) catch blk: {
+                                        // Stack buffer too small, use heap as fallback
+                                        const heap_str = std.fmt.allocPrint(
+                                            self.manager.allocator,
+                                            "{any}",
+                                            .{lockfile_version.fmt(string_buf)},
+                                        ) catch continue;
+                                        defer self.manager.allocator.free(heap_str);
+                                        break :blk heap_str;
+                                    };
 
                                     if (strings.eql(inst_ver, lockfile_ver_str)) {
                                         matched_pkg_id = pkg_id;

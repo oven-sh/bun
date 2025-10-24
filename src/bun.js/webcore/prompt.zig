@@ -292,8 +292,11 @@ pub const prompt = struct {
                 }
 
                 var raw_termios = original_termios;
-                // Unset canonical mode and echo
-                raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO);
+                // Unset canonical mode, echo, signal generation, and extended input processing
+                raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO | c_termios.ISIG | c_termios.IEXTEN);
+                // Set VMIN=1 and VTIME=0 for non-canonical read (read returns after 1 byte)
+                raw_termios.c_cc[c_termios.VMIN] = 1;
+                raw_termios.c_cc[c_termios.VTIME] = 0;
 
                 if (c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &raw_termios) != 0) {
                     return .null;
@@ -308,7 +311,7 @@ pub const prompt = struct {
 
                 while (true) {
                     const byte = reader.readByte() catch {
-                        // User aborted (Ctrl+D)
+                        // Real I/O error or EOF from upstream (not user EOT)
                         return .null;
                     };
 
@@ -395,6 +398,11 @@ pub const prompt = struct {
                                 },
                                 else => {},
                             }
+                        },
+
+                        // Ctrl+D (EOT)
+                        4 => {
+                            return .null;
                         },
 
                         else => {

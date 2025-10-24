@@ -75,41 +75,37 @@ pub const js_fns = struct {
                         return .js_undefined;
                     },
                     .execution => {
-                        if (tag == .afterAll or tag == .afterEach or tag == .onTestFinished) {
-                            // allowed
-                            const active = bunTest.getCurrentStateData();
-                            const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
-                                return globalThis.throw("Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.", .{@tagName(tag)});
-                            };
+                        const active = bunTest.getCurrentStateData();
+                        const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
+                            return globalThis.throw("Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.", .{@tagName(tag)});
+                        };
 
-                            const append_point = switch (tag) {
-                                .afterAll, .afterEach => blk: {
-                                    var iter = sequence.active_entry;
-                                    while (iter) |entry| : (iter = entry.next) {
-                                        if (entry == sequence.test_entry) break :blk sequence.test_entry.?;
-                                    }
+                        const append_point = switch (tag) {
+                            .afterAll, .afterEach => blk: {
+                                var iter = sequence.active_entry;
+                                while (iter) |entry| : (iter = entry.next) {
+                                    if (entry == sequence.test_entry) break :blk sequence.test_entry.?;
+                                }
 
-                                    break :blk sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
-                                },
-                                .onTestFinished => blk: {
-                                    // Find the last entry in the sequence
-                                    var last_entry = sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside a test instead.", .{@tagName(tag)});
-                                    while (last_entry.next) |next_entry| {
-                                        last_entry = next_entry;
-                                    }
-                                    break :blk last_entry;
-                                },
-                                else => unreachable,
-                            };
+                                break :blk sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
+                            },
+                            .onTestFinished => blk: {
+                                // Find the last entry in the sequence
+                                var last_entry = sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside a test instead.", .{@tagName(tag)});
+                                while (last_entry.next) |next_entry| {
+                                    last_entry = next_entry;
+                                }
+                                break :blk last_entry;
+                            },
+                            else => return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)}),
+                        };
 
-                            const new_item = ExecutionEntry.create(bunTest.gpa, null, args.callback, cfg, null, .{}, .execution);
-                            new_item.next = append_point.next;
-                            append_point.next = new_item;
-                            bun.handleOom(bunTest.extra_execution_entries.append(new_item));
+                        const new_item = ExecutionEntry.create(bunTest.gpa, null, args.callback, cfg, null, .{}, .execution);
+                        new_item.next = append_point.next;
+                        append_point.next = new_item;
+                        bun.handleOom(bunTest.extra_execution_entries.append(new_item));
 
-                            return .js_undefined;
-                        }
-                        return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)});
+                        return .js_undefined;
                     },
                     .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{@tagName(tag)}),
                 }

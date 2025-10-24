@@ -8,6 +8,12 @@
 //! If default values are provided, the .get() method is guaranteed not to return a nullable type,
 //! whereas if no default is provided, the .get() method will return an optional type.
 //!
+//! Note that environment variables may fail to parse silently. If they do fail to parse, the
+//! default is to treat them as not set. This behavior can be customized, but environment variables
+//! are not meant to be a robust configuration mechanism. If you do think your feature needs more
+//! customization, consider using other means. The reason we have decided upon this behavior is to
+//! avoid panics due to environment variable pollution.
+//!
 //! TODO(markovejnovic): It would be neat if this library supported loading floats as
 //!                      well as strings, integers and booleans, but for now this will do.
 //!
@@ -36,7 +42,7 @@ pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
 pub const BUN_DEBUG_CSS_ORDER = New(kind.boolean, "BUN_DEBUG_CSS_ORDER", .{ .default = false });
 pub const BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE = New(kind.boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", .{ .default = false });
-pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", .{ .deser = .{ .error_handling = .not_set } });
+pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", .{});
 pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });
 pub const BUN_DEV_SERVER_TEST_RUNNER = New(kind.string, "BUN_DEV_SERVER_TEST_RUNNER", .{});
@@ -247,7 +253,7 @@ const kind = struct {
                     return .{ .value = ptr.?[0..len] };
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     // The implementation is racy and allows two threads to both set the value at
                     // the same time, as long as the value they are setting is the same. This is
                     // difficult to write an assertion for since it requires the DEV path take a
@@ -279,7 +285,7 @@ const kind = struct {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
             const false_values = .{ "", "0", "false", "no", "off" };
 
-            inline for (false_values) |tv| {
+            for (false_values) |tv| {
                 if (std.ascii.eqlIgnoreCase(s, tv)) {
                     return false;
                 }
@@ -298,7 +304,7 @@ const kind = struct {
 
                 value: std.atomic.Value(StoredType) = .init(.unknown),
 
-                inline fn getCached(self: *Self) Output {
+                fn getCached(self: *Self) Output {
                     _ = ip;
 
                     const cached = self.value.load(.monotonic);
@@ -319,7 +325,7 @@ const kind = struct {
                     }
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     if (raw_env == null) {
                         self.value.store(.not_set, .monotonic);
                         return null;
@@ -341,9 +347,10 @@ const kind = struct {
             default: ?ValueType = null,
             deser: struct {
                 /// Control how deserializing and deserialization errors are handled.
+                ///
+                /// Note that deserialization errors cannot panic. If you need more robust means of
+                /// handling inputs, consider not using environment variables.
                 error_handling: enum {
-                    /// panic on deserialization errors.
-                    panic,
                     /// Ignore deserialization errors and treat the variable as not set.
                     not_set,
                     /// Fallback to default.
@@ -356,7 +363,7 @@ const kind = struct {
                     /// Note: Most values are considered truthy, except for "", "0", "false", "no",
                     /// and "off".
                     truthy_cast,
-                } = .panic,
+                } = .not_set,
 
                 /// Control what empty strings are treated as.
                 empty_string_as: union(enum) {
@@ -381,7 +388,7 @@ const kind = struct {
 
                 value: std.atomic.Value(StoredType) = .init(unknown_sentinel),
 
-                inline fn getCached(self: *Self) Output {
+                fn getCached(self: *Self) Output {
                     switch (self.value.load(.monotonic)) {
                         unknown_sentinel => {
                             @branchHint(.unlikely);
@@ -396,7 +403,7 @@ const kind = struct {
                     }
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     if (raw_env == null) {
                         self.value.store(not_set_sentinel, .monotonic);
                         return null;
@@ -409,7 +416,7 @@ const kind = struct {
                                 return v;
                             },
                             .erroneous => {
-                                return self.handleError(raw_env.?, "is an empty string");
+                                return self.handleError(raw_env.?);
                             },
                         }
                     }
@@ -417,36 +424,27 @@ const kind = struct {
                     const formatted = std.fmt.parseInt(StoredType, raw_env.?, 10) catch |err| {
                         switch (err) {
                             error.Overflow => {
-                                return self.handleError(raw_env.?, "overflows u64");
+                                return self.handleError(raw_env.?);
                             },
                             error.InvalidCharacter => {
-                                return self.handleError(raw_env.?, "is not a valid integer");
+                                return self.handleError(raw_env.?);
                             },
                         }
                     };
 
                     if (formatted == not_set_sentinel or formatted == unknown_sentinel) {
-                        return self.handleError(raw_env.?, "is a reserved value");
+                        return self.handleError(raw_env.?);
                     }
 
                     self.value.store(formatted, .monotonic);
                     return formatted;
                 }
 
-                fn handleError(
-                    self: *Self,
-                    raw_env: []const u8,
-                    comptime reason: []const u8,
-                ) ?ValueType {
-                    const base_fmt = "Environment variable '{s}' has value '{s}' which ";
-                    const fmt = base_fmt ++ reason ++ ".";
+                fn handleError(self: *Self, raw_env: []const u8) ?ValueType {
                     const missing_default_fmt = "Environment variable '{s}' is configured to " ++
                         "fallback to default on {s}, but no default is set.";
 
                     switch (ip.opts.deser.error_handling) {
-                        .panic => {
-                            bun.Output.panic(fmt, .{ ip.var_name, raw_env });
-                        },
                         .not_set => {
                             self.value.store(not_set_sentinel, .monotonic);
                             return null;

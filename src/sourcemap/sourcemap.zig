@@ -357,7 +357,7 @@ pub const Mapping = struct {
                 const a = ctx.generated[a_index];
                 const b = ctx.generated[b_index];
 
-                return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() <= b.columns.zeroBased());
+                return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() < b.columns.zeroBased());
             }
         };
 

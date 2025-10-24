@@ -3428,8 +3428,8 @@ pub fn NewParser_(
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {
-            var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
-            var panic_stream = std.io.fixedBufferStream(panic_buffer);
+            const panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
+            var panic_stream = std.Io.Writer.fixed(panic_buffer);
 
             // panic during visit pass leaves the lexer at the end, which
             // would make this location absolutely useless.
@@ -3445,9 +3445,9 @@ pub fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.print(panic_stream.writer()) catch unreachable;
+            p.log.print(&panic_stream) catch unreachable;
 
-            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_stream.buffered()});
         }
 
         pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {

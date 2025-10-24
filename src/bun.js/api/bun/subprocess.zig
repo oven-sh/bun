@@ -1027,6 +1027,7 @@ pub fn spawnMaybeSync(
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
+    var windows_shell_enabled: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
     defer {
         // Ensure we clean it up on error.
@@ -1213,6 +1214,12 @@ pub fn spawnMaybeSync(
                         windows_verbatim_arguments = val.asBoolean();
                     }
                 }
+
+                if (try args.get(globalThis, "windowsShellEnabled")) |val| {
+                    if (val.isBoolean()) {
+                        windows_shell_enabled = val.asBoolean();
+                    }
+                }
             }
 
             if (try args.get(globalThis, "timeout")) |timeout_value| brk: {
@@ -1375,6 +1382,7 @@ pub fn spawnMaybeSync(
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
+            .shell_enabled = windows_shell_enabled,
             .loop = jsc.EventLoopHandle.init(jsc_vm),
         },
     };

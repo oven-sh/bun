@@ -1,10 +1,10 @@
 /**
  * Exercises using `bun install` on the most used JavaScript repositories.
  */
-import { describe, test, expect } from "bun:test";
-import { tempDir, bunEnv, bunExe } from "harness";
-import { unlink } from 'node:fs/promises';
-import * as path from 'node:path';
+import { describe, expect, test } from "bun:test";
+import { bunExe, tempDir } from "harness";
+import { unlink } from "node:fs/promises";
+import * as path from "node:path";
 
 const MAX_TIMEOUT_MS = 60 * 1000;
 
@@ -1003,55 +1003,74 @@ const PACKAGES_TO_TEST = [
 ];
 
 describe("bun install works on popular packages", () => {
-  test.concurrent.each(PACKAGES_TO_TEST)("$name", async ({ name, tag, committish }) => {
-    using workdir = tempDir("popular-packages-install", {});
-    const url = `https://github.com/${name}.git`
+  test.concurrent.each(PACKAGES_TO_TEST)(
+    "$name",
+    async ({ name, tag, committish }) => {
+      using workdir = tempDir("popular-packages-install", {});
+      const url = `https://github.com/${name}.git`;
 
-    const runAndWait = async (args: string[]) => {
-      const proc = Bun.spawn(args, { cwd: workdir, stderr: "pipe", stdout: "pipe" });
-      await proc.exited;
-      return { code: proc.exitCode, stdout: await proc.stdout.text(), stderr: await proc.stderr.text() };
-    };
+      const runAndWait = async (args: string[]) => {
+        const proc = Bun.spawn(args, { cwd: workdir, stderr: "pipe", stdout: "pipe" });
+        await proc.exited;
+        return { code: proc.exitCode, stdout: await proc.stdout.text(), stderr: await proc.stderr.text() };
+      };
 
-    const expectRun = async (args: string[]) => {
-      const res = await runAndWait(args);
-      try {
-        expect(res.code).toBe(0);
-      } catch (e) {
-        console.error(`Command "${args.join(" ")}" failed with stdout:`, res.stdout);
-        console.error(`Command "${args.join(" ")}" failed with stderr:`, res.stderr);
-        throw e;
-      }
-    }
+      const expectRun = async (args: string[]) => {
+        const res = await runAndWait(args);
+        try {
+          expect(res.code).toBe(0);
+        } catch (e) {
+          console.error(`Command "${args.join(" ")}" failed with stdout:`, res.stdout);
+          console.error(`Command "${args.join(" ")}" failed with stderr:`, res.stderr);
+          throw e;
+        }
+      };
 
-    const cloneRepo = async () => {
-      if (tag) {
-        expect((await runAndWait(
-          ["git", "clone", "--depth", "1", "--branch", tag, url, ".", "--recurse-submodules", "--shallow-submodules"]
-        )).code).toBe(0);
-        return;
-      }
+      const cloneRepo = async () => {
+        if (tag) {
+          expect(
+            (
+              await runAndWait([
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                tag,
+                url,
+                ".",
+                "--recurse-submodules",
+                "--shallow-submodules",
+              ])
+            ).code,
+          ).toBe(0);
+          return;
+        }
 
-      if (committish) {
-        await expectRun(["git", "clone", "--depth", "1", url, ".", "--recurse-submodules", "--shallow-submodules"]);
-        await expectRun(["git", "fetch", "--depth", "1", "origin", committish]);
-        await expectRun(["git", "checkout", committish]);
-        return;
-      }
+        if (committish) {
+          await expectRun(["git", "clone", "--depth", "1", url, ".", "--recurse-submodules", "--shallow-submodules"]);
+          await expectRun(["git", "fetch", "--depth", "1", "origin", committish]);
+          await expectRun(["git", "checkout", committish]);
+          return;
+        }
 
-      throw new Error("Either tag or committish must be provided");
-    };
+        throw new Error("Either tag or committish must be provided");
+      };
 
-    const wipeLockfiles = async (dir: string) => {
-      const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
-      for (const lockfile of lockfiles) {
-        const lockfilePath = path.join(dir, lockfile);
-        await unlink(lockfilePath).catch(() => { /* ignore */ });
-      }
-    }
+      const wipeLockfiles = async (dir: string) => {
+        const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+        for (const lockfile of lockfiles) {
+          const lockfilePath = path.join(dir, lockfile);
+          await unlink(lockfilePath).catch(() => {
+            /* ignore */
+          });
+        }
+      };
 
-    await cloneRepo();
-    await wipeLockfiles(workdir);
-    await expectRun([bunExe(), "install"]);
-  }, MAX_TIMEOUT_MS);
+      await cloneRepo();
+      await wipeLockfiles(workdir);
+      await expectRun([bunExe(), "install"]);
+    },
+    MAX_TIMEOUT_MS,
+  );
 });

@@ -44,7 +44,7 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                var args = try ScopeFunctions.parseArguments(globalThis, callFrame, .{ .str = @tagName(tag) ++ "()" }, bun.default_allocator, .{ .callback = .require });
+                var args = try ScopeFunctions.parseArguments(globalThis, callFrame, .{ .str = @tagName(tag) ++ "()" }, bun.default_allocator, .{ .callback = .require, .kind = .hook });
                 defer args.deinit(bun.default_allocator);
 
                 const has_done_parameter = if (args.callback) |callback| try callback.getLength(globalThis) > 0 else false;

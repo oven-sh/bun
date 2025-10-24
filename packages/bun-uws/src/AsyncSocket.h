@@ -64,6 +64,13 @@ public:
         return us_socket_get_native_handle(SSL, (us_socket_t *) this);
     }
 
+
+    bool isWritable() {
+        return ((us_socket_t *) this)->flags.is_writable;
+    }
+    bool isReadable() {
+        return ((us_socket_t *) this)->flags.is_readable;
+    }
     /* Get loop data for socket */
     LoopData *getLoopData() {
         return (LoopData *) us_loop_ext(us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this)));

@@ -144,3 +144,95 @@ test("CLAUDECODE flag handles no test files found", () => {
   expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("no-tests-normal");
   expect(normalizeBunSnapshot(quietOutput, dir)).toMatchSnapshot("no-tests-quiet");
 });
+
+test("CLAUDECODE=1 formats error source lines with dash separator", () => {
+  const dir = tempDirWithFiles("claudecode-error-format", {
+    "error.test.js": `
+      import { test, expect } from "bun:test";
+
+      test("error formatting", () => {
+        function foo() {
+          const x = 1;
+          const y = 2;
+          throw new Error("Test error message");
+        }
+        foo();
+      });
+    `,
+  });
+
+  // Run with CLAUDECODE=0 (normal output with pipe separator)
+  const result1 = spawnSync({
+    cmd: [bunExe(), "test", "error.test.js"],
+    env: { ...testEnv, CLAUDECODE: "0" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  // Run with CLAUDECODE=1 (AI agent output with dash separator)
+  const result2 = spawnSync({
+    cmd: [bunExe(), "test", "error.test.js"],
+    env: { ...testEnv, CLAUDECODE: "1" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const normalOutput = result1.stderr.toString() + result1.stdout.toString();
+  const aiAgentOutput = result2.stderr.toString() + result2.stdout.toString();
+
+  // Normal output should use pipe separator: "6 |"
+  expect(normalOutput).toMatch(/\d+ \|/);
+
+  // AI agent output should use dash separator: "6-"
+  expect(aiAgentOutput).toMatch(/\d+-/);
+  expect(aiAgentOutput).not.toMatch(/\d+ \|/);
+
+  expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("error-normal");
+  expect(normalizeBunSnapshot(aiAgentOutput, dir)).toMatchSnapshot("error-ai-agent");
+});
+
+test("CLAUDECODE=1 error format in Bun.inspect", () => {
+  const dir = tempDirWithFiles("claudecode-inspect-error", {
+    "inspect.test.js": `
+      import { test, expect } from "bun:test";
+
+      test("inspect error format", () => {
+        const err = new Error("Inspected error");
+        console.log(Bun.inspect(err));
+      });
+    `,
+  });
+
+  // Run with CLAUDECODE=0 (normal output with pipe separator)
+  const result1 = spawnSync({
+    cmd: [bunExe(), "test", "inspect.test.js"],
+    env: { ...testEnv, CLAUDECODE: "0" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  // Run with CLAUDECODE=1 (AI agent output with dash separator)
+  const result2 = spawnSync({
+    cmd: [bunExe(), "test", "inspect.test.js"],
+    env: { ...testEnv, CLAUDECODE: "1" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const normalOutput = result1.stderr.toString() + result1.stdout.toString();
+  const aiAgentOutput = result2.stderr.toString() + result2.stdout.toString();
+
+  // Normal output should use pipe separator: "6 |"
+  expect(normalOutput).toMatch(/\d+ \|/);
+
+  // AI agent output should use dash separator: "6-"
+  expect(aiAgentOutput).toMatch(/\d+-/);
+  expect(aiAgentOutput).not.toMatch(/\d+ \|/);
+
+  expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("inspect-error-normal");
+  expect(normalizeBunSnapshot(aiAgentOutput, dir)).toMatchSnapshot("inspect-error-ai-agent");
+});

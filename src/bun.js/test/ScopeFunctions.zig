@@ -338,8 +338,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         // description, callback(fn), options(!fn)
         // description, options(!fn), callback(fn)
         .three => if (a2.isFunction()) .{ .description = a1, .callback = a2, .options = a3 } else .{ .description = a1, .callback = a3, .options = a2 },
+        // callback(fn), options(!fn)
         // description, callback(fn)
-        .two => .{ .description = a1, .callback = a2 },
+        .two => if (a1.isFunction() and !a2.isFunction()) .{ .callback = a1, .options = a2 } else .{ .description = a1, .callback = a2 },
         // description
         // callback(fn)
         .one => if (a1.isFunction()) .{ .callback = a1 } else .{ .description = a1 },

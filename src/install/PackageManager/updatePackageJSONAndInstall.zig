@@ -823,8 +823,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             const pkg_id = @as(PackageID, @intCast(idx));
 
             // Skip workspace packages in the multimap
+            // Note: file: dependencies have .local origin but should be included
             if (package_resolutions[pkg_id].tag == .workspace or
-                package_metas[pkg_id].origin == .local or
                 workspace_paths.contains(hash))
             {
                 continue;

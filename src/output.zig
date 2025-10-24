@@ -845,10 +845,9 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
     }
 
     return struct {
-        const BufferedWriter = bun.deprecated.BufferedWriter(4096, bun.sys.File.QuietWriter);
-
-        var buffered_writer: BufferedWriter = undefined;
-        var out: BufferedWriter.Writer = undefined;
+        var buffer: [4096]u8 = undefined;
+        var buffered_writer: File.QuietWriter.Adapter = undefined;
+        var out: *std.Io.Writer = undefined;
         var out_set = false;
         var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
@@ -910,10 +909,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
                 return;
 
             if (!out_set) {
-                buffered_writer = .{
-                    .unbuffered_writer = scopedWriter(),
-                };
-                out = buffered_writer.writer();
+                buffered_writer = scopedWriter().adaptToNewApi(&buffer);
+                out = &buffered_writer.new_interface;
                 out_set = true;
             }
             lock.lock();
@@ -925,7 +922,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
                         really_disable.store(true, .monotonic);
                         return;
                     };
-                    buffered_writer.flush() catch {
+                    out.flush() catch {
                         really_disable.store(true, .monotonic);
                         return;
                     };

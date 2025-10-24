@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (3.82 KB) {
+    "Response (4.28 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -108,4 +108,17 @@ test("new Response(123, { statusText: 123 }) does not throw", () => {
 test("new Response(123, { method: 456 }) does not throw", () => {
   // @ts-expect-error
   expect(() => new Response("123", { method: 456 })).not.toThrow();
+});
+
+test("Response constructor should reject function as init (regression test for stack overflow)", () => {
+  function f0() {
+    const v1 = [1046375616, -1024, -1024, -268435456, 536870887, -77930801, -53473, 24365];
+    // @ts-expect-error - Testing invalid usage
+    Response(v1, f0, f0).arrayBuffer(v1, Response);
+    v1.forEach(f0);
+    return Response;
+  }
+
+  // This should throw an error instead of causing a stack overflow
+  expect(() => f0()).toThrow();
 });

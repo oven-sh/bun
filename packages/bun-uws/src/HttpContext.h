@@ -464,12 +464,14 @@ private:
 
         /* Handle HTTP write out (note: SSL_read may trigger this spuriously, the app need to handle spurious calls) */
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
+            printf("us_socket_context_on_writable!\n");
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
             
             /* Attempt to drain the socket buffer before triggering onWritable callback */
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
+                
                 /* Try to flush pending data from the socket's buffer to the network */
                 asyncSocket->flush();
                 /* Check if there's still data waiting to be sent after flush attempt */

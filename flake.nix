@@ -30,6 +30,10 @@
         llvm = pkgs.llvm_19;
         clang = pkgs.clang_19;
         lld = pkgs.lld_19;
+        llvmVersion = llvm.version;
+        llvmVersionMajor = pkgs.lib.versions.major llvmVersion;
+        llvmVersionMinor = pkgs.lib.versions.minor llvmVersion;
+        llvmVersionPatch = pkgs.lib.versions.patch llvmVersion;
 
         # Node.js 24 - matching the bootstrap script (targets 24.3.0, actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_24;
@@ -132,6 +136,10 @@
         }) {
           inherit packages;
 
+          # Disable fortify hardening so Bun's debug build (which uses -O0)
+          # doesn't trip over glibc's _FORTIFY_SOURCE requirement.
+          hardeningDisable = [ "fortify" ];
+
           shellHook = ''
             # Set up build environment
             export CC="${pkgs.lib.getExe clang}"
@@ -144,6 +152,10 @@
             export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
+            export LLVM_VERSION="${llvmVersion}"
+            export LLVM_VERSION_MAJOR="${llvmVersionMajor}"
+            export LLVM_VERSION_MINOR="${llvmVersionMinor}"
+            export LLVM_VERSION_PATCH="${llvmVersionPatch}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"

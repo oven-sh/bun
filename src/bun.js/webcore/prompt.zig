@@ -154,27 +154,6 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
-    fn consumeModifierSequence(reader: anytype) !void {
-        // Check for a modifier sequence like '1;5'
-        var byte = reader.readByte() catch return;
-        if (byte == '1') {
-            byte = reader.readByte() catch return;
-            if (byte == ';') {
-                // Read the modifier number (e.g., '5')
-                byte = reader.readByte() catch return;
-                if (byte >= '0' and byte <= '9') {
-                    // Modifier consumed
-                    return;
-                }
-            }
-        }
-        // If it wasn't a modifier sequence, push the last read byte back
-        // Since we don't have a pushback reader, we'll just rely on the caller's logic
-        // to handle the next byte if this function returns early.
-        // Given the current structure, this is tricky. I will integrate the logic directly
-        // into the main switch for simplicity and to avoid complex reader logic.
-    }
-
     fn utf8Prev(slice: []const u8, index: usize) ?usize {
         if (index == 0) return null;
         var i = index - 1;
@@ -197,6 +176,73 @@ pub const prompt = struct {
         const next_index = index + len;
         if (next_index > slice.len) return null;
         return next_index;
+    }
+
+    fn fullRedraw(stdout_writer: anytype, input: *std.ArrayList(u8), cursor_index: usize, prompt_width: usize) !void {
+        // 1. Move cursor to the start of the input area using absolute positioning (column prompt_width + 1).
+        _ = stdout_writer.print("\x1b[{d}G", .{prompt_width + 1}) catch {};
+
+        // 2. Write the entire input buffer, expanding tabs to spaces to ensure correct alignment.
+        var i: usize = 0;
+        var current_column = prompt_width;
+        while (i < input.items.len) {
+            const char = input.items[i];
+            if (char == '\t') {
+                const spaces_to_add = 8;
+                var j: usize = 0;
+                while (j < spaces_to_add) : (j += 1) {
+                    _ = stdout_writer.writeByte(' ') catch {};
+                }
+                current_column += spaces_to_add;
+                i += 1;
+            } else {
+                const codepoint_slice = input.items[i..];
+                const next_codepoint_start = utf8Next(codepoint_slice, 0);
+                const codepoint_len = next_codepoint_start orelse 1;
+                const char_width = columnWidth(codepoint_slice[0..codepoint_len]);
+
+                _ = stdout_writer.writeAll(codepoint_slice[0..codepoint_len]) catch {};
+
+                current_column += char_width;
+                i += codepoint_len;
+            }
+        }
+
+        // 3. Clear the rest of the line.
+        _ = stdout_writer.writeAll("\x1b[K") catch {};
+
+        // 4. Move cursor to the correct column position using absolute positioning.
+        const new_column_width = columnPosition(input.items, cursor_index, prompt_width);
+        _ = stdout_writer.print("\x1b[{d}G", .{prompt_width + new_column_width + 1}) catch {};
+
+        bun.Output.flush();
+    }
+
+    fn calculateColumn(slice: []const u8, byte_index: usize, start_column: usize) usize {
+        var column: usize = start_column;
+        var i: usize = 0;
+        while (i < byte_index) {
+            const char = slice[i];
+            if (char == '\t') {
+                // Tab stop of 8 columns
+                column += 8;
+                i += 1;
+            } else {
+                // Use the project's visible width function for other characters
+                const codepoint_slice = slice[i..];
+                const next_codepoint_start = utf8Next(codepoint_slice, 0);
+                const codepoint_len = next_codepoint_start orelse 1;
+                const char_width = columnWidth(codepoint_slice[0..codepoint_len]);
+
+                column += char_width;
+                i += codepoint_len;
+            }
+        }
+        return column;
+    }
+
+    fn columnPosition(slice: []const u8, byte_index: usize, start_column: usize) usize {
+        return calculateColumn(slice, byte_index, start_column) - start_column;
     }
 
     fn columnWidth(slice: []const u8) usize {
@@ -354,9 +400,25 @@ pub const prompt = struct {
                 var input = std.ArrayList(u8).init(allocator);
                 defer input.deinit();
                 var cursor_index: usize = 0;
+                var prompt_width: usize = 0;
+
+                // Calculate prompt width for redraws
+                if (has_message) {
+                    const message = try arguments[0].toSlice(globalObject, allocator);
+                    defer message.deinit();
+                    prompt_width += columnWidth(message.slice());
+                }
+                prompt_width += columnWidth(if (has_message) " " else "Prompt ");
+
+                if (has_default) {
+                    const default_string = try arguments[1].toSlice(globalObject, allocator);
+                    defer default_string.deinit();
+
+                    prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
+                }
 
                 const reader = bun.Output.buffered_stdin.reader();
-                var stdout_writer = bun.Output.writer();
+                const stdout_writer = bun.Output.writer();
 
                 while (true) {
                     const byte = reader.readByte() catch {
@@ -365,6 +427,12 @@ pub const prompt = struct {
                     };
 
                     switch (byte) {
+                        // Tab (ASCII 9)
+                        9 => {
+                            try input.insert(cursor_index, byte);
+                            cursor_index += 1;
+                        },
+
                         // End of input
                         '\n', '\r' => {
                             if (input.items.len == 0 and !has_default) return jsc.ZigString.init("").toJS(globalObject);
@@ -380,14 +448,6 @@ pub const prompt = struct {
                             if (cursor_index > 0) {
                                 const old_cursor_index = cursor_index;
                                 const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
-                                
-                                var deleted_slice: []const u8 = undefined;
-                                if (prev_codepoint_start) |start| {
-                                    deleted_slice = input.items[start..old_cursor_index];
-                                } else {
-                                    deleted_slice = input.items[old_cursor_index - 1 .. old_cursor_index];
-                                }
-                                const deleted_width = columnWidth(deleted_slice);
 
                                 if (prev_codepoint_start) |start| {
                                     // Remove the codepoint bytes
@@ -401,25 +461,8 @@ pub const prompt = struct {
                                     _ = input.orderedRemove(old_cursor_index - 1);
                                     cursor_index -= 1;
                                 }
-
-                                // Redraw the line from the cursor
-                                _ = stdout_writer.print("\x1b[{d}D", .{deleted_width}) catch {}; // Move cursor left (W columns)
-                                _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
-                                
-                                // Clear the space left by the deleted character
-                                var i: usize = 0;
-                                while (i < deleted_width) : (i += 1) {
-                                    _ = stdout_writer.writeAll(" ") catch {};
-                                }
-                                
-                                // Move cursor back to its correct position
-                                const redrawn_width = columnWidth(input.items[cursor_index..]);
-                                _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width + deleted_width}) catch {};
-                                bun.Output.flush();
                             }
-                        },
-
-                        // Ctrl+C
+                        }, // Ctrl+C
                         3 => {
                             // This will trigger the defer and restore terminal settings
                             pending_sigint = true;
@@ -447,32 +490,12 @@ pub const prompt = struct {
                             switch (final_byte) {
                                 'D' => { // Left arrow
                                     if (cursor_index > 0) {
-                                        const old_cursor_index = cursor_index;
-                                        const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
-                                        
-                                        var move_width: usize = 1;
-                                        if (prev_codepoint_start) |start| {
-                                            move_width = columnWidth(input.items[start..old_cursor_index]);
-                                        }
-
-                                        cursor_index = prev_codepoint_start orelse old_cursor_index - 1;
-                                        _ = stdout_writer.print("\x1b[{d}D", .{move_width}) catch {};
-                                        bun.Output.flush();
+                                        cursor_index = utf8Prev(input.items, cursor_index) orelse cursor_index - 1;
                                     }
                                 },
                                 'C' => { // Right arrow
                                     if (cursor_index < input.items.len) {
-                                        const old_cursor_index = cursor_index;
-                                        const next_codepoint_start = utf8Next(input.items, old_cursor_index);
-                                        
-                                        var move_width: usize = 1;
-                                        if (next_codepoint_start) |end| {
-                                            move_width = columnWidth(input.items[old_cursor_index..end]);
-                                        }
-
-                                        cursor_index = next_codepoint_start orelse old_cursor_index + 1;
-                                        _ = stdout_writer.print("\x1b[{d}C", .{move_width}) catch {};
-                                        bun.Output.flush();
+                                        cursor_index = utf8Next(input.items, cursor_index) orelse cursor_index + 1;
                                     }
                                 },
                                 '3' => { // DEL
@@ -493,14 +516,6 @@ pub const prompt = struct {
                                     // Handle Delete key: remove character under cursor
                                     if (cursor_index < input.items.len) {
                                         const next_codepoint_start = utf8Next(input.items, cursor_index);
-                                        
-                                        var deleted_slice: []const u8 = undefined;
-                                        if (next_codepoint_start) |end| {
-                                            deleted_slice = input.items[cursor_index..end];
-                                        } else {
-                                            deleted_slice = input.items[cursor_index..cursor_index + 1];
-                                        }
-                                        const deleted_width = columnWidth(deleted_slice);
 
                                         if (next_codepoint_start) |end| {
                                             // Remove the codepoint bytes
@@ -512,20 +527,6 @@ pub const prompt = struct {
                                             // Fallback: delete one byte if invalid UTF-8
                                             _ = input.orderedRemove(cursor_index);
                                         }
-
-                                        // Redraw from cursor
-                                        _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
-                                        
-                                        // Clear the space left by the deleted character
-                                        var i: usize = 0;
-                                        while (i < deleted_width) : (i += 1) {
-                                            _ = stdout_writer.writeAll(" ") catch {};
-                                        }
-                                        
-                                        // Move cursor back to its correct position
-                                        const redrawn_width = columnWidth(input.items[cursor_index..]);
-                                        _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width + deleted_width}) catch {};
-                                        bun.Output.flush();
                                     }
                                 },
                                 else => {},
@@ -540,17 +541,9 @@ pub const prompt = struct {
                         else => {
                             try input.insert(cursor_index, byte);
                             cursor_index += 1;
-
-                            // Echo the new character and redraw the rest of the line
-                            _ = stdout_writer.writeAll(input.items[cursor_index - 1 ..]) catch {};
-                            // Move cursor back to its correct position
-                            if (input.items.len > cursor_index) {
-                                const redrawn_width = columnWidth(input.items[cursor_index..]);
-                                _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width}) catch {};
-                            }
-                            bun.Output.flush();
                         },
                     }
+                    try fullRedraw(stdout_writer, &input, cursor_index, prompt_width);
                 }
             }
         }

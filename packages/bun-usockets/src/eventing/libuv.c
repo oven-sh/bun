@@ -200,6 +200,12 @@ void us_loop_free(struct us_loop_t *loop) {
   free(loop);
 }
 
+void us_loop_run(struct us_loop_t *loop) {
+  us_loop_integrate(loop);
+  uv_update_time(loop->uv_loop);
+
+  uv_run(loop->uv_loop, UV_RUN_ONCE);
+}
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
                                  unsigned int ext_size) {

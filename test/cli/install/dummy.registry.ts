@@ -36,7 +36,12 @@ export function read(path: string) {
   return Bun.file(join(package_dir, path));
 }
 
-export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numberOfTimesTo500PerURL = 0) {
+export function dummyRegistry(
+  urls: string[],
+  info: any = { "0.0.2": {} },
+  numberOfTimesTo500PerURL = 0,
+  tgzDir?: string,
+) {
   let retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
     urls.push(request.url);
@@ -57,7 +62,8 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numbe
 
     expect(request.method).toBe("GET");
     if (url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, basename(url).toLowerCase())), { status });
+      const tgzPath = join(tgzDir ?? import.meta.dir, basename(url).toLowerCase());
+      return new Response(file(tgzPath), { status });
     }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",

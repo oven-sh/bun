@@ -279,7 +279,13 @@ pub fn withoutBuildTag(version: string) string {
     if (strings.indexOfChar(version, '+')) |plus| return version[0..plus] else return version;
 }
 
-pub const Version = struct {
+pub const ModernVersion = union(enum) {
+    _npa: npm_package_arg.NpaSpec,
+};
+
+pub const Version = ModernVersion;
+
+pub const LegacyVersion = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },

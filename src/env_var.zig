@@ -247,7 +247,7 @@ const kind = struct {
                     return .{ .value = ptr.?[0..len] };
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     // The implementation is racy and allows two threads to both set the value at
                     // the same time, as long as the value they are setting is the same. This is
                     // difficult to write an assertion for since it requires the DEV path take a
@@ -298,7 +298,7 @@ const kind = struct {
 
                 value: std.atomic.Value(StoredType) = .init(.unknown),
 
-                inline fn getCached(self: *Self) Output {
+                fn getCached(self: *Self) Output {
                     _ = ip;
 
                     const cached = self.value.load(.monotonic);
@@ -319,7 +319,7 @@ const kind = struct {
                     }
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     if (raw_env == null) {
                         self.value.store(.not_set, .monotonic);
                         return null;
@@ -356,7 +356,7 @@ const kind = struct {
                     /// Note: Most values are considered truthy, except for "", "0", "false", "no",
                     /// and "off".
                     truthy_cast,
-                } = .panic,
+                } = if (bun.Environment.isDebug) .panic else .default_fallback,
 
                 /// Control what empty strings are treated as.
                 empty_string_as: union(enum) {
@@ -381,7 +381,7 @@ const kind = struct {
 
                 value: std.atomic.Value(StoredType) = .init(unknown_sentinel),
 
-                inline fn getCached(self: *Self) Output {
+                fn getCached(self: *Self) Output {
                     switch (self.value.load(.monotonic)) {
                         unknown_sentinel => {
                             @branchHint(.unlikely);
@@ -396,7 +396,7 @@ const kind = struct {
                     }
                 }
 
-                inline fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
+                fn deserAndInvalidate(self: *Self, raw_env: ?[]const u8) ?ValueType {
                     if (raw_env == null) {
                         self.value.store(not_set_sentinel, .monotonic);
                         return null;
@@ -462,7 +462,7 @@ const kind = struct {
                         },
                         .default_fallback => {
                             if (comptime ip.opts.default) |d| {
-                                return deserAndInvalidate(d);
+                                return d;
                             }
                             @compileError(std.fmt.comptimePrint(missing_default_fmt, .{
                                 ip.var_name,

@@ -316,6 +316,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             }
             if ((events & LIBUS_SOCKET_WRITABLE) != 0) {
                 s->flags.is_writable = true;
+                s->flags.writable_emitted = false;
             }
             if (error != 0) {
                 s->flags.has_error = true;
@@ -332,6 +333,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             }
             if((events & LIBUS_SOCKET_WRITABLE) != 0) {
                 u->is_writable = true;
+                u->writable_emitted = false;
             }
             if(error != 0) {
                 u->has_error = true;
@@ -428,8 +430,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
 
-                s = s->context->on_writable(s);
-
+                if (!flags->writable_emitted) {
+                    flags->writable_emitted = true;
+                    s = s->context->on_writable(s);
+                }
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }
@@ -619,7 +623,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                 } while (!u->closed);
             }
 
-            if (u->is_writable && !has_error && !u->closed) {
+            if (u->is_writable && !has_error && !u->closed && !u->writable_emitted) {
+                u->writable_emitted = true;
                 u->on_drain(u);
                 if (u->closed) {
                     break;

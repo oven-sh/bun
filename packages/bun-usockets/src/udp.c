@@ -181,6 +181,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->connected = false;
     udp->is_readable = true;
     udp->is_writable = true;
+    udp->writable_emitted = true;
     udp->has_error = false;
     udp->has_received_eof = false;
 

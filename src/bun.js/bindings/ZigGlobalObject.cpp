@@ -3361,6 +3361,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
+extern "C" bool Bun__VM__isMainModule(void*, EncodedJSValue);
 
 JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
@@ -3370,7 +3371,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     if (scriptFetcher && scriptFetcher.isObject()) [[unlikely]] {
-        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key)) || Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(key))) {
             Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(scriptFetcher));
         }
         return scriptFetcher;
@@ -3379,7 +3380,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
 
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key)) || Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(key))) {
         Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
     }
 

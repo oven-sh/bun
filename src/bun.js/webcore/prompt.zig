@@ -276,7 +276,7 @@ pub const prompt = struct {
 
             if (c_termios.isatty(bun.FD.stdin().native()) == 1) {
                 var original_termios: c_termios.termios = undefined;
-                var pendingSigint: bool = false;
+                var pending_sigint: bool = false;
                 if (c_termios.tcgetattr(bun.FD.stdin().native(), &original_termios) != 0) {
                     return .null;
                 }
@@ -286,8 +286,8 @@ pub const prompt = struct {
                     // Move cursor to next line after input is done
                     _ = bun.Output.writer().writeAll("\n") catch {};
                     bun.Output.flush();
-                    if (pendingSigint) {
-                        _ = c_signal.raise(c_signal.SIGINT);
+                    if (pending_sigint) {
+                        _ = c_termios.raise(c_termios.SIGINT);
                     }
                 }
 
@@ -353,7 +353,7 @@ pub const prompt = struct {
                         // Ctrl+C
                         3 => {
                             // This will trigger the defer and restore terminal settings
-                            pendingSigint = true;
+                            pending_sigint = true;
                             return .null;
                         },
 

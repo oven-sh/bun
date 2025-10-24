@@ -211,7 +211,7 @@ pub const Report = struct {
         pub fn writeFormat(
             report: *const Report,
             base_path: []const u8,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
             var filename = report.source_url.slice();
             if (base_path.len > 0) {

@@ -401,7 +401,7 @@ pub const MinifyErrorKind = union(enum) {
         custom_media_loc: Location,
     },
 
-    pub fn format(this: *const @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         return switch (this.*) {
             .circular_custom_media => |name| try writer.print("Circular @custom-media rule: \"{s}\"", .{name.name}),
             .custom_media_not_defined => |name| try writer.print("Custom media rule \"{s}\" not defined", .{name.name}),

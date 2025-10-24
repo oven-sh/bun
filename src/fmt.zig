@@ -140,7 +140,7 @@ pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
 pub const RedactedSourceFormatter = struct {
     text: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var i: usize = 0;
         while (i < this.text.len) {
             if (strings.startsWithSecret(this.text[i..])) |secret| {
@@ -167,7 +167,7 @@ pub fn redactedSource(str: string) RedactedSourceFormatter {
 pub const DependencyUrlFormatter = struct {
     url: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var remain = this.url;
         while (strings.indexOfChar(remain, '/')) |slash| {
             try writer.writeAll(remain[0..slash]);
@@ -878,9 +878,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
     pub const RedactedKeywords = bun.ComptimeEnumMap(RedactedKeyword);
 
-    pub fn format(this: @This(), comptime unused_fmt: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(unused_fmt.len == 0);
-
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var text = this.text;
         if (this.opts.check_for_unhighlighted_write) {
             if (!this.opts.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
@@ -1032,7 +1030,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     };
 
                                     if (curly_remain.text.len > 0) {
-                                        try curly_remain.format("", .{}, writer);
+                                        try curly_remain.format(writer);
                                     }
 
                                     if (i < text.len and text[i] == '}') {

@@ -402,16 +402,16 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             buf: []const u8,
             path_sep: bun.fmt.PathFormatOptions.Sep,
 
-            pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+            pub fn format(formatter: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const buf = formatter.buf;
                 const value = formatter.resolution.value;
                 switch (formatter.resolution.tag) {
-                    .npm => try value.npm.version.fmt(buf).format(layout, opts, writer),
-                    .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
-                    .folder => try bun.fmt.fmtPath(u8, value.folder.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
+                    .npm => try value.npm.version.fmt(buf).format(writer),
+                    .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = formatter.path_sep }).format(writer),
+                    .folder => try bun.fmt.fmtPath(u8, value.folder.slice(buf), .{ .path_sep = formatter.path_sep }).format(writer),
                     .remote_tarball => try writer.writeAll(value.remote_tarball.slice(buf)),
-                    .git => try value.git.formatAs("git+", buf, layout, opts, writer),
-                    .github => try value.github.formatAs("github:", buf, layout, opts, writer),
+                    .git => try value.git.formatAs("git+", buf, writer),
+                    .github => try value.github.formatAs("github:", buf, writer),
                     .workspace => try writer.print("workspace:{s}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
                         .path_sep = formatter.path_sep,
                     })}),

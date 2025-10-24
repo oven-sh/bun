@@ -406,7 +406,7 @@ const JSChunkKeyFormatter = struct {
     has_html: bool,
     entry_bits: []const u8,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(&[_]u8{@intFromBool(!this.has_html)});
         try writer.writeAll(this.entry_bits);
     }

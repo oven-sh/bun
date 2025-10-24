@@ -1050,9 +1050,8 @@ pub const CommandLineReporter = struct {
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         }
 
-        var console_buffer = bun.MutableString.initEmpty(bun.default_allocator);
-        var console_buffer_buffer = console_buffer.bufferedWriter();
-        var console_writer = console_buffer_buffer.writer();
+        var console_buffer = std.Io.Writer.Allocating.init(bun.default_allocator);
+        const console_writer = &console_buffer.writer;
 
         var avg = bun.sourcemap.coverage.Fraction{
             .functions = 0.0,
@@ -1064,8 +1063,8 @@ pub const CommandLineReporter = struct {
 
         // --- LCOV ---
         var lcov_name_buf: bun.PathBuffer = undefined;
-        const lcov_file, const lcov_name, const lcov_buffered_writer = brk: {
-            if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
+        const lcov_file, const lcov_name, var lcov_buffered_writer = brk: {
+            if (comptime !reporters.lcov) break :brk .{ {}, {}, {} };
 
             // Ensure the directory exists
             var fs = bun.jsc.Node.fs.NodeFS{};
@@ -1113,7 +1112,7 @@ pub const CommandLineReporter = struct {
                 },
             }
         };
-        const lcov_writer = &lcov_buffered_writer.new_interface;
+        const lcov_writer = if (comptime reporters.lcov) &lcov_buffered_writer.new_interface;
         errdefer {
             if (comptime reporters.lcov) {
                 lcov_file.close();
@@ -1201,8 +1200,8 @@ pub const CommandLineReporter = struct {
                 try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
             }
 
-            console_buffer_buffer.flush() catch return;
-            try console.writeAll(console_buffer.list.items);
+            console_writer.flush() catch return;
+            try console.writeAll(console_buffer.written());
             try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
             console.splatByteAll('-', max_filepath_length + 2) catch return;
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
@@ -1212,7 +1211,7 @@ pub const CommandLineReporter = struct {
         }
 
         if (comptime reporters.lcov) {
-            try lcov_buffered_writer.flush();
+            try lcov_writer.flush();
             lcov_file.close();
             const cwd = bun.FD.cwd();
             bun.sys.moveFileZ(
@@ -1652,7 +1651,7 @@ pub const TestCommand = struct {
                 const DotIndenter = struct {
                     indent: bool = false,
 
-                    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+                    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                         if (this.indent) {
                             try writer.writeAll(" ");
                         }

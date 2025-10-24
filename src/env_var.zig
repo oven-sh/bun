@@ -8,6 +8,12 @@
 //! If default values are provided, the .get() method is guaranteed not to return a nullable type,
 //! whereas if no default is provided, the .get() method will return an optional type.
 //!
+//! Note that environment variables may fail to parse silently. If they do fail to parse, the
+//! default is to show a debug warning and treat them as not set. This behavior can be customized,
+//! but environment variables are not meant to be a robust configuration mechanism. If you do think
+//! your feature needs more customization, consider using other means. The reason we have decided
+//! upon this behavior is to avoid panics due to environment variable pollution.
+//!
 //! TODO(markovejnovic): It would be neat if this library supported loading floats as
 //!                      well as strings, integers and booleans, but for now this will do.
 //!
@@ -341,9 +347,12 @@ const kind = struct {
             default: ?ValueType = null,
             deser: struct {
                 /// Control how deserializing and deserialization errors are handled.
+                ///
+                /// Note that deserialization errors cannot panic. If you need more robust means of
+                /// handling inputs, consider not using environment variables.
                 error_handling: enum {
-                    /// panic on deserialization errors.
-                    panic,
+                    /// debug_warn on deserialization errors.
+                    debug_warn,
                     /// Ignore deserialization errors and treat the variable as not set.
                     not_set,
                     /// Fallback to default.
@@ -356,7 +365,7 @@ const kind = struct {
                     /// Note: Most values are considered truthy, except for "", "0", "false", "no",
                     /// and "off".
                     truthy_cast,
-                } = .panic,
+                } = .debug_warn,
 
                 /// Control what empty strings are treated as.
                 empty_string_as: union(enum) {
@@ -444,8 +453,10 @@ const kind = struct {
                         "fallback to default on {s}, but no default is set.";
 
                     switch (ip.opts.deser.error_handling) {
-                        .panic => {
-                            bun.Output.panic(fmt, .{ ip.var_name, raw_env });
+                        .debug_warn => {
+                            bun.Output.debugWarn(fmt, .{ ip.var_name, raw_env });
+                            self.value.store(not_set_sentinel, .monotonic);
+                            return null;
                         },
                         .not_set => {
                             self.value.store(not_set_sentinel, .monotonic);

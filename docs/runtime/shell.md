@@ -62,6 +62,44 @@ console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 
+Because the shell uses tagged template literals, any value enclosed in `${}` will be passed to the shell command as a single argument, with no need for escaping:
+
+```js#argv.js
+console.log(process.argv.slice(2));
+```
+
+```js
+import { $ } from "bun";
+
+process.env.FOO = "BAR";
+// [ "hello world 'foo bar' $FOO $(pwd)" ]
+await $`bun argv.js ${"hello world 'foo bar' $FOO $(pwd)"}`;
+// [ "hello", "world", "foo bar", "BAR", "/path/to/cwd" ]
+await $`bun argv.js hello world 'foo bar' $FOO $(pwd)`;
+```
+
+This also means that, if you have a string containing a complete command to run like `"echo bun"`, it will not work when interpolated. This is because Bun will treat this as a single item in the arguments array, and look for a program named `echo bun`:
+
+```js
+import { $ } from "bun";
+
+const cmd = "echo bun";
+await $`${cmd}`; // bun: command not found: echo bun
+```
+
+If you want a string to be inlined into the command, and then split into arguments and parsed like normal, pass an object with `raw` set to your string. **Be careful if the string is user-controlled**, since malicious strings could execute commands with `$()`, look up sensitive environment variables, or cause various other unintended effects:
+
+```js
+import { $ } from "bun";
+
+process.env.FOO = "BAR";
+const cmd = "echo bun";
+// [ "hello", "world", "foo bar", "BAR", "/path/to/cwd" ]
+await $`bun argv.js ${{ raw: "hello world 'foo bar' $FOO $(pwd)" }}`;
+// bun
+await $`${{ raw: cmd }}`;
+```
+
 ## Error handling
 
 By default, non-zero exit codes will throw an error. This `ShellError` contains information about the command run.

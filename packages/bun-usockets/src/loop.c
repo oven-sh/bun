@@ -433,7 +433,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                 if (!flags->writable_emitted) {
                     flags->writable_emitted = true;
-                    #ifndef LIBUS_USE_LIBUV
+                    #ifdef LIBUS_USE_KQUEUE
                     p->state.poll_type = (is_readable ? POLL_TYPE_POLLING_IN : 0);
                     #endif
                     s = s->context->on_writable(s);
@@ -632,7 +632,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
             if (u->is_writable && !has_error && !u->closed && !u->writable_emitted) {
                 u->writable_emitted = true;
-                #ifndef LIBUS_USE_LIBUV
+                #ifdef LIBUS_USE_KQUEUE
                 p->state.poll_type = (u->is_readable ? POLL_TYPE_POLLING_IN : 0);
                 #endif
                 u->on_drain(u);

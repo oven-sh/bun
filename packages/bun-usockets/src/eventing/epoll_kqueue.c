@@ -205,11 +205,11 @@ bool us_internal_us_poll_is_pollable(struct us_poll_t *p) {
         case POLL_TYPE_SOCKET: {
             struct us_socket_t* s = (struct us_socket_t*)p;
             struct us_socket_flags flags = s->flags;
-            return flags.is_readable || flags.is_writable || flags.has_received_eof || flags.has_error;
+            return flags.is_readable || !flags.writable_emitted || flags.has_received_eof || flags.has_error;
         }
         case POLL_TYPE_UDP: {
             struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
-            return u->is_readable || u->is_writable || u->has_received_eof || u->has_error;
+            return u->is_readable || !u->writable_emitted || u->has_received_eof || u->has_error;
         }
         default:
             return false;

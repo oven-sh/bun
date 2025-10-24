@@ -1808,6 +1808,7 @@ fn NewLexer_(
 
             lexer.did_panic = true;
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
+            return error.SyntaxError;
         }
 
         pub fn raw(noalias self: *const LexerType) []const u8 {

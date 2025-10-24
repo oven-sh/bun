@@ -19,9 +19,8 @@ describe("onTestFinished ordering", () => {
   });
 
   test("test 2", () => {
-    output.push("test 2");
-    // After test 2, verify the order from test 1
-    expect(output.slice(0, 4)).toEqual(["test 1", "inner afterAll", "afterEach", "onTestFinished"]);
+    // After test 2 starts, verify the order from test 1
+    expect(output).toEqual(["test 1", "inner afterAll", "afterEach", "onTestFinished"]);
   });
 });
 

@@ -84,16 +84,12 @@ pub const js_fns = struct {
 
                             const append_point = switch (tag) {
                                 .afterAll, .afterEach => blk: {
-                                    var point = sequence.active_entry;
+                                    var iter = sequence.active_entry;
+                                    while (iter) |entry| : (iter = entry.next) {
+                                        if (entry == sequence.test_entry) break :blk sequence.test_entry.?;
+                                    }
 
-                                    var iter = point;
-                                    const before_test_entry = while (iter) |entry| : (iter = entry.next) {
-                                        if (entry == sequence.test_entry) break true;
-                                    } else false;
-
-                                    if (before_test_entry) point = sequence.test_entry;
-
-                                    break :blk point orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
+                                    break :blk sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
                                 },
                                 .onTestFinished => blk: {
                                     // Find the last entry in the sequence

@@ -26,7 +26,7 @@
 static void poll_cb(uv_poll_t *p, int status, int events) {
   int error = status < 0 && status != UV_EOF;
   int eof = status == UV_EOF;
-  us_internal_update_ready_poll_state(poll, error, eof, events);
+  us_internal_update_ready_poll_state((struct us_poll_t *)p->data, error, eof, events);
   us_internal_dispatch_ready_poll((struct us_poll_t *)p->data);
 }
 

@@ -2,6 +2,10 @@
 name: Use Prisma with Bun
 ---
 
+{% callout %}
+**Note** — Prisma's dynamic subcommand loading system currently requires npm to be installed alongside Bun. This affects certain CLI commands like `prisma init`, `prisma migrate`, etc. Generated code works perfectly with Bun using the new `prisma-client` generator.
+{% /callout %}
+
 ---
 
 Prisma works out of the box with Bun. First, create a directory and initialize it with `bun init`.

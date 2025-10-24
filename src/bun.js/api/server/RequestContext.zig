@@ -1336,6 +1336,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         fn endRequestStreamingAndDrain(this: *RequestContext) void {
+            ctxLog("endRequestStreamingAndDrain", .{});
             assert(this.server != null);
 
             if (this.endRequestStreaming() catch true) { // TODO: properly propagate exception upwards
@@ -2321,6 +2322,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn renderBytes(this: *RequestContext) void {
+            ctxLog("renderBytes", .{});
             // copy it to stack memory to prevent aliasing issues in release builds
             const blob = this.blob;
             const bytes = blob.slice();

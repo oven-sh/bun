@@ -235,6 +235,7 @@ public:
     * @return The total number of bytes successfully written to the socket
     */
     size_t flush() {
+
         /* Check if socket is valid for operations */
         if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
             /* Socket is closed, no flushing is possible */

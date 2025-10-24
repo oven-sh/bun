@@ -257,13 +257,13 @@ $ bun test --watch
 
 Bun supports the following lifecycle hooks:
 
-| Hook              | Description                                                |
-| ----------------- | ---------------------------------------------------------- |
-| `beforeAll`       | Runs once before all tests.                                |
-| `beforeEach`      | Runs before each test.                                     |
-| `afterEach`       | Runs after each test.                                      |
-| `afterAll`        | Runs once after all tests.                                 |
-| `onTestFinished`  | Runs after a test finishes, including after `afterEach`.   |
+| Hook             | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `beforeAll`      | Runs once before all tests.                              |
+| `beforeEach`     | Runs before each test.                                   |
+| `afterEach`      | Runs after each test.                                    |
+| `afterAll`       | Runs once after all tests.                               |
+| `onTestFinished` | Runs after a test finishes, including after `afterEach`. |
 
 These hooks can be defined inside test files, or in a separate file that is preloaded with the `--preload` flag.
 

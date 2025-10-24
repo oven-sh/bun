@@ -282,8 +282,8 @@ pub fn installIsolatedPackages(
                                 break :resolved_pkg_id .{ ids.pkg_id, false };
                             }
 
-                            const peer_dep_version = peer_dep.version.value.npm.version;
-                            const res_version = res.value.npm.version;
+                            const peer_dep_version = peer_dep.version.getVersion();
+                            const res_version = res.getVersion();
 
                             if (!peer_dep_version.satisfies(res_version, string_buf, string_buf)) {
                                 // TODO: add warning!
@@ -956,7 +956,7 @@ pub fn installIsolatedPackages(
                     }
 
                     var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res_tag) {
-                        .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                        .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.getVersion(), patch_info.contentsHash()),
                         .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                         .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
                         .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
@@ -1021,7 +1021,7 @@ pub fn installIsolatedPackages(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
-                                pkg_res.value.npm.version,
+                                pkg_res.getVersion(),
                                 pkg_res.value.npm.url.slice(string_buf),
                                 ctx,
                                 patch_info.nameAndVersionHash(),

@@ -30,12 +30,12 @@ pub const NpaSpec = struct {
     /// Encodes additional information on the type of specifier.
     type: Type,
 
-    #allocator: std.mem.Allocator,
+    _allocator: std.mem.Allocator,
     /// Single arena buffer containing all owned strings (raw, name, raw_spec, save_spec,
     /// fetch_spec). All string fields are slices into this buffer (or null)
-    #arena_buffer: ?[]u8,
+    _arena_buffer: ?[]u8,
     /// The fetch spec slice (may be null, or a slice into arena_buffer or raw_spec)
-    #fetch_spec_slice: ?[]const u8,
+    _fetch_spec_slice: ?[]const u8,
 
     pub const Type = union(enum) {
         /// Package is fetched from a git repository, eg. `git+https://...`, `git+ssh://...`,
@@ -43,6 +43,13 @@ pub const NpaSpec = struct {
         git: struct {
             attrs: ?GitAttrs,
             hosted: ?HostedGitInfo,
+
+            pub fn clone(self: *const Self) !@This() {
+                return .{
+                    .attrs = if (self.attrs) |a| try a.clone(self._allocator) else null,
+                    .hosted = if (self.hosted) |h| try h.clone(self._allocator) else null,
+                };
+            }
 
             pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
                 if (self.hosted) |*h| h.deinit();
@@ -68,10 +75,18 @@ pub const NpaSpec = struct {
             //                      "AliasedNpaSpec" struct here, which omits the alias type case.
             //                      That saves a pointer dereference and an allocation.
             sub_spec: *NpaSpec,
+            allocator: std.mem.Allocator,
 
-            pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            pub fn clone(self: *const Self) !@This() {
+                return .{
+                    .sub_spec = try self.sub_spec.clone(),
+                    .allocator = self.allocator,
+                };
+            }
+
+            pub fn deinit(self: *@This()) void {
                 self.sub_spec.deinit();
-                allocator.destroy(self.sub_spec);
+                self.allocator.destroy(self.sub_spec);
             }
         },
         /// Package is fetched from a remote URL, eg. `http://...`, `https://...`
@@ -116,14 +131,26 @@ pub const NpaSpec = struct {
         };
     }
 
+    pub fn clone(self: *const Self) !NpaSpec {
+        return .{
+            ._allocator = self._allocator,
+            ._arena_buffer = if (self._arena_buffer) |buf| self._allocator.dupe(u8, buf) else null,
+            .type = switch (self.type) {
+                .git => |*g| try .git(g.clone()),
+                .alias => |*a| try .alias(a.clone()),
+                else => self.type,
+            },
+        };
+    }
+
     pub fn deinit(self: *Self) void {
-        if (self.#arena_buffer) |arena| {
-            self.#allocator.free(arena);
+        if (self._arena_buffer) |arena| {
+            self._allocator.free(arena);
         }
 
         switch (self.type) {
-            .git => |*g| g.deinit(self.#allocator),
-            .alias => |*a| a.deinit(self.#allocator),
+            .git => |*g| g.deinit(self._allocator),
+            .alias => |*a| a.deinit(),
             else => {},
         }
     }
@@ -143,7 +170,7 @@ pub const NpaSpec = struct {
 
     /// Returns the fetch spec string (the path or URL which would be used to fetch the package).
     pub fn fetchSpec(self: *const Self) ?[]const u8 {
-        return self.#fetch_spec_slice;
+        return self._fetch_spec_slice;
     }
 
     /// Convert this NpaSpec to a JavaScript object
@@ -318,8 +345,8 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = fetch_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = fetch_spec_slice,
                     .save_spec = raw_spec_slice,
                     .type = .{
                         .git = .{
@@ -327,7 +354,7 @@ pub const NpaSpec = struct {
                             .attrs = git_attrs,
                         },
                     },
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             }
         }
@@ -373,11 +400,11 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = raw_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = raw_spec_slice,
                     .save_spec = save_spec_slice,
                     .type = .remote,
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             },
 
@@ -395,7 +422,8 @@ pub const NpaSpec = struct {
 
                     const starts_w32_drive_letter = if (comptime bun.Environment.isWindows)
                         bun.strings.startsWithWindowsDriveLetter(after_protocol)
-                    else false;
+                    else
+                        false;
 
                     if (starts_w32_drive_letter) {
                         const parts = try SpecStrUtils.extractHostAndPathnameWithLowercaseHost(
@@ -446,8 +474,8 @@ pub const NpaSpec = struct {
                     .raw = raw_slice,
                     .name = name_slice,
                     .raw_spec = raw_spec_slice,
-                    .#arena_buffer = arena.buffer,
-                    .#fetch_spec_slice = fetch_spec_slice,
+                    ._arena_buffer = arena.buffer,
+                    ._fetch_spec_slice = fetch_spec_slice,
                     .save_spec = save_spec_slice,
                     .type = .{
                         .git = .{
@@ -455,7 +483,7 @@ pub const NpaSpec = struct {
                             .hosted = null,
                         },
                     },
-                    .#allocator = allocator,
+                    ._allocator = allocator,
                 };
             },
 
@@ -496,11 +524,11 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = null,
             .type = undefined,
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
 
         const query = Semver.Query.parse(
@@ -574,15 +602,16 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = null,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = null,
             .save_spec = null,
             .type = .{
                 .alias = .{
                     .sub_spec = sub_spec_ptr,
+                    .allocator = allocator,
                 },
             },
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -633,8 +662,8 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = .{
                 .git = .{
@@ -642,7 +671,7 @@ pub const NpaSpec = struct {
                     .hosted = hosted,
                 },
             },
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -764,11 +793,11 @@ pub const NpaSpec = struct {
             .raw = raw_slice,
             .name = name_slice,
             .raw_spec = raw_spec_slice,
-            .#arena_buffer = arena.buffer,
-            .#fetch_spec_slice = fetch_spec_slice,
+            ._arena_buffer = arena.buffer,
+            ._fetch_spec_slice = fetch_spec_slice,
             .save_spec = save_spec_slice,
             .type = Self.Type.fromInodePath(raw_spec),
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
     }
 
@@ -883,14 +912,24 @@ const GitAttrs = struct {
     range: ?[]const u8,
     subdir: ?[]const u8,
 
-    #allocator: std.mem.Allocator,
+    _allocator: std.mem.Allocator,
     _range_buf: ?[]const u8,
 
+    pub fn clone(self: *Self) !Self {
+        return .{
+            .committish = if (self.committish) |c| try self._allocator.dupe(u8, c) else null,
+            .range = if (self.range) |r| try self._allocator.dupe(u8, r) else null,
+            .subdir = if (self.subdir) |s| try self._allocator.dupe(u8, s) else null,
+            ._range_buf = if (self._range_buf) |b| try self._allocator.dupe(u8, b) else null,
+            ._allocator = self._allocator,
+        };
+    }
+
     pub fn deinit(self: *Self) void {
-        if (self.committish) |c| self.#allocator.free(c);
+        if (self.committish) |c| self._allocator.free(c);
         // Don't free range - it's a slice into _range_buf
-        if (self.subdir) |s| self.#allocator.free(s);
-        if (self._range_buf) |b| self.#allocator.free(b);
+        if (self.subdir) |s| self._allocator.free(s);
+        if (self._range_buf) |b| self._allocator.free(b);
     }
 
     pub fn fromCommittish(allocator: std.mem.Allocator, committish: []const u8) !Self {
@@ -899,7 +938,7 @@ const GitAttrs = struct {
             .range = null,
             .subdir = null,
             ._range_buf = null,
-            .#allocator = allocator,
+            ._allocator = allocator,
         };
         errdefer res.deinit();
 

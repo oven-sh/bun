@@ -82,6 +82,17 @@ pub const HostedGitInfo = struct {
     #memory_buffer: []const u8,
     #allocator: std.mem.Allocator,
 
+    pub fn clone(self: *const Self) !Self {
+        return Self.copyFrom(
+            self.committish,
+            self.project,
+            self.user,
+            self.host_provider,
+            self.default_representation,
+            self.#allocator,
+        );
+    }
+
     /// Helper function to decode a percent-encoded string and append it to a StringBuilder.
     /// Returns the decoded slice and updates the StringBuilder's length.
     ///

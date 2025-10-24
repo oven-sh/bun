@@ -558,7 +558,7 @@ pub const PackageInstaller = struct {
         //     .github => Task.Id.forTarball(data.url),
         //     .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
         //     .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
-        //     .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
+        //     .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.getVersion()),
         //     else => unreachable,
         // };
 
@@ -793,7 +793,7 @@ pub const PackageInstaller = struct {
             .npm => {
                 installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(
                     pkg_name.slice(this.lockfile.buffers.string_bytes.items),
-                    resolution.value.npm.version,
+                    resolution.getVersion(),
                     patch_contents_hash,
                 );
                 installer.cache_dir = this.manager.getCacheDirectory();
@@ -975,7 +975,7 @@ pub const PackageInstaller = struct {
                             pkg_name.slice(this.lockfile.buffers.string_bytes.items),
                             dependency_id,
                             package_id,
-                            resolution.value.npm.version,
+                            resolution.getVersion(),
                             resolution.value.npm.url.slice(this.lockfile.buffers.string_bytes.items),
                             context,
                             patch_name_and_version_hash,

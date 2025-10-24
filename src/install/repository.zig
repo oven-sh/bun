@@ -228,7 +228,7 @@ pub const Repository = extern struct {
         };
 
         if (name.len == 0) {
-            const version_literal = dep.version.literal.slice(buf);
+            const version_literal = dep.version.copyLiteralSlice(buf);
             const name_buf = bun.handleOom(allocator.alloc(u8, bun.sha.EVP.SHA1.digest));
             var sha1 = bun.sha.SHA1.init();
             defer sha1.deinit();

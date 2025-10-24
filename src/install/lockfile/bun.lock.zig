@@ -307,7 +307,7 @@ pub const Stringifier = struct {
                     try writer.print(
                         \\{}: {},
                         \\
-                    , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                    , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.fmtLiteralJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -332,7 +332,7 @@ pub const Stringifier = struct {
                     try writer.print(
                         \\{}: {},
                         \\
-                    , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
+                    , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.fmtLiteralJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -361,7 +361,7 @@ pub const Stringifier = struct {
                         try writer.print(
                             \\{}: {},
                             \\
-                        , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
+                        , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.fmtLiteralJson(buf, .{}) });
                     }
 
                     try decIndent(writer, indent);
@@ -705,7 +705,7 @@ pub const Stringifier = struct {
 
                 try writer.print("{}: {}", .{
                     bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
-                    bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
+                    bun.fmt.formatJSONStringUTF8(dep.version.copyLiteralSlice(buf), .{}),
                 });
 
                 if (dep.behavior.peer and !dep.behavior.optional and pkg_map.map.count() > 0) {
@@ -900,7 +900,7 @@ pub const Stringifier = struct {
                 }
 
                 const name = dep.name.slice(buf);
-                const version = dep.version.literal.slice(buf);
+                const version = dep.version.copyLiteralSlice(buf);
 
                 try writer.print("{}: {}", .{
                     bun.fmt.formatJSONStringUTF8(name, .{}),
@@ -2023,7 +2023,7 @@ fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfi
         const res = &pkg_resolutions[pkg_id];
         if (res.tag == .workspace) {
             dep.version.tag = .workspace;
-            dep.version.value = .{ .workspace = res.value.workspace };
+            dep.version._value = .{ .workspace = res.value.workspace };
         }
     }
 }
@@ -2172,9 +2172,7 @@ fn parseAppendDependencies(
                     .behavior = .{ .workspace = true },
                     .version = .{
                         .tag = .workspace,
-                        .value = .{
-                            .workspace = try buf.append(path),
-                        },
+                        ._value = .{ .workspace = try buf.append(path) },
                     },
                 };
 

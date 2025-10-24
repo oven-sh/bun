@@ -128,7 +128,7 @@ fn packages(
                     try writer.writeAll(", ");
                     needs_comma = false;
                 }
-                const version_name = dependency_version.literal.slice(string_buf);
+                const version_name = dependency_version.copyLiteralSlice(string_buf);
                 const needs_quote = always_needs_quote or bun.strings.indexAnyComptime(version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
 
                 if (needs_quote) {
@@ -208,7 +208,7 @@ fn packages(
                         try writer.writeByte('"');
                     }
                     try writer.writeAll(" \"");
-                    try writer.writeAll(dep.version.literal.slice(string_buf));
+                    try writer.writeAll(dep.version.copyLiteralSlice(string_buf));
                     try writer.writeAll("\"\n");
                 }
             }

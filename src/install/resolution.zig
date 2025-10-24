@@ -433,7 +433,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 try writer.writeAll(bun.tagName(Tag, formatter.resolution.tag) orelse "invalid");
                 try writer.writeAll(" = ");
                 switch (formatter.resolution.tag) {
-                    .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
+                    .npm => try formatter.resolution.getVersion().fmt(formatter.buf).format(layout, opts, writer),
                     .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
                     .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                     .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),

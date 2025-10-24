@@ -113,7 +113,7 @@ pub fn determinePreinstallState(
             const folder_path = switch (pkg.resolution.tag) {
                 .git => manager.cachedGitFolderNamePrintAuto(&pkg.resolution.value.git, patch_hash),
                 .github => manager.cachedGitHubFolderNamePrintAuto(&pkg.resolution.value.github, patch_hash),
-                .npm => manager.cachedNPMPackageFolderName(lockfile.str(&pkg.name), pkg.resolution.value.npm.version, patch_hash),
+                .npm => manager.cachedNPMPackageFolderName(lockfile.str(&pkg.name), pkg.resolution.getVersion(), patch_hash),
                 .local_tarball => manager.cachedTarballFolderName(pkg.resolution.value.local_tarball, patch_hash),
                 .remote_tarball => manager.cachedTarballFolderName(pkg.resolution.value.remote_tarball, patch_hash),
                 else => "",

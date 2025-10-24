@@ -6,7 +6,7 @@ pub fn formatLaterVersionInCache(
 ) ?Semver.Version.Formatter {
     switch (resolution.tag) {
         Resolution.Tag.npm => {
-            if (resolution.value.npm.version.tag.hasPre())
+            if (resolution.getVersion().tag.hasPre())
                 // TODO:
                 return null;
 
@@ -20,7 +20,7 @@ pub fn formatLaterVersionInCache(
 
             if (manifest.findByDistTagWithFilter("latest", this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes).unwrap()) |*latest_version| {
                 if (latest_version.version.order(
-                    resolution.value.npm.version,
+                    resolution.getVersion(),
                     manifest.string_buf,
                     this.lockfile.buffers.string_bytes.items,
                 ) != .gt) return null;
@@ -103,7 +103,7 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
         Semver.Version.sortGt,
     );
     for (installed_versions.items) |installed_version| {
-        if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
+        if (version.getVersion().satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
             var buf: bun.PathBuffer = undefined;
             const npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                 Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
@@ -148,7 +148,7 @@ pub fn assignResolution(this: *PackageManager, dependency_id: DependencyID, pack
     buffers.resolutions.items[dependency_id] = package_id;
     const string_buf = buffers.string_bytes.items;
     var dep = &buffers.dependencies.items[dependency_id];
-    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
+    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.copyLiteralSlice(string_buf))) {
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
     }
@@ -164,7 +164,7 @@ pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, 
     buffers.resolutions.items[dependency_id] = package_id;
     const string_buf = buffers.string_bytes.items;
     var dep = &buffers.dependencies.items[dependency_id];
-    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
+    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.copyLiteralSlice(string_buf))) {
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
     }
@@ -198,7 +198,7 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
             if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(features)) continue;
 
             if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
+                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.copyLiteralSlice(string_buf), true)) {
                     Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
                         failed_dep.version.literal.fmt(string_buf),
                     });

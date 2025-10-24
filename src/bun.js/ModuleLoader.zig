@@ -557,9 +557,9 @@ pub const AsyncModule = struct {
                 .{ result.name, result.url },
             ),
             error.DistTagNotFound, error.NoMatchingVersion => brk: {
-                const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.version.isExact())
+                const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.getVersion().isExact())
                     "Version not found"
-                else if (result.version.tag == .npm and !result.version.value.npm.version.isExact())
+                else if (result.version.tag == .npm and !result.version.getVersion().isExact())
                     "No matching version found"
                 else
                     "No match found";
@@ -1390,7 +1390,7 @@ pub fn transpileSourceCode(
         .sqlite_embedded, .sqlite => {
             const sqlite_module_source_code_string = brk: {
                 if (jsc_vm.hot_reload == .hot) {
-                    break :brk 
+                    break :brk
                     \\// Generated code
                     \\import {Database} from 'bun:sqlite';
                     \\const {path} = import.meta;
@@ -1410,7 +1410,7 @@ pub fn transpileSourceCode(
                     ;
                 }
 
-                break :brk 
+                break :brk
                 \\// Generated code
                 \\import {Database} from 'bun:sqlite';
                 \\export const db = new Database(import.meta.path);

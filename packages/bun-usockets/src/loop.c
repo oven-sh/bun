@@ -433,6 +433,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                 if (!flags->writable_emitted) {
                     flags->writable_emitted = true;
+                    p->state.poll_type = (is_readable ? POLL_TYPE_POLLING_IN : 0);
                     s = s->context->on_writable(s);
                 }
                 if (!s || us_socket_is_closed(0, s)) {
@@ -524,9 +525,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                        // if(has_received_eof) {
-                        //     continue;
-                        // }
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:

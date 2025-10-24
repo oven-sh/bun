@@ -298,7 +298,6 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
     if (written != header_length + payload_length) {
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
-
     return written < 0 ? 0 : written;
 }
 
@@ -376,7 +375,6 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     int remaining = length;
     do {
         int written = bsd_send(us_poll_fd(&s->p), data, remaining);
-        
         if (written <= 0) {
             s->context->loop->data.last_write_failed = 1;
             s->flags.is_writable = false;
@@ -388,7 +386,6 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
             total_written += written;
         }
     } while(remaining > 0);
-
     return total_written;
 }
 
@@ -436,7 +433,9 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
             total_written += written;
         }
     } while(remaining > 0);
-    
+    if(length != total_written) {
+        s->flags.writable_emitted = false;
+    }
 
     return total_written;
 }

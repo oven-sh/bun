@@ -13,7 +13,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     var remaining_bytes = try reader.length();
     remaining_bytes -|= 4;
 
-    const field_count: usize = @intCast(@max(try reader.short(), 0));
+    const field_count: usize = @as(usize, @max(try reader.short(), 0));
     var fields = try bun.default_allocator.alloc(
         FieldDescription,
         field_count,

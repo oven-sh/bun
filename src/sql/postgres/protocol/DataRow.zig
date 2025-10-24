@@ -2,21 +2,21 @@ pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(Co
     var remaining_bytes = try reader.length();
     remaining_bytes -|= 4;
 
-    const remaining_fields: usize = @intCast(@max(try reader.short(), 0));
+    const remaining_fields: usize = @as(usize, @max(try reader.short(), 0));
 
     for (0..remaining_fields) |index| {
         const byte_length = try reader.int4();
         switch (byte_length) {
             0 => {
                 var empty = Data.Empty;
-                if (!try forEach(context, @intCast(index), &empty)) break;
+                if (!try forEach(context, @truncate(index), &empty)) break;
             },
             null_int4 => {
-                if (!try forEach(context, @intCast(index), null)) break;
+                if (!try forEach(context, @truncate(index), null)) break;
             },
             else => {
-                var bytes = try reader.bytes(@intCast(byte_length));
-                if (!try forEach(context, @intCast(index), &bytes)) break;
+                var bytes = try reader.bytes(@as(usize, byte_length));
+                if (!try forEach(context, @truncate(index), &bytes)) break;
             },
         }
     }

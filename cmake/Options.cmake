@@ -123,9 +123,8 @@ endif()
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
 optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN support should be enabled" DEFAULT ${ENABLE_ASAN})
 
-if (NOT ENABLE_ASAN)
-  set(ENABLE_ZIG_ASAN OFF)
-endif()
+# Forcibly enable ENABLE_ZIG_ASAN
+set(ENABLE_ZIG_ASAN ON)
 
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)

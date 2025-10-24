@@ -545,7 +545,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     if (pkg_id != invalid_package_id and !dep.behavior.dev) {
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        reachable.set(@intCast(pkg_id));
+                        reachable.set(pkg_id);
                     }
                 }
 
@@ -566,7 +566,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                         try queue.append(pkg_id);
                         try visited.put(pkg_id, {});
-                        reachable.set(@intCast(pkg_id));
+                        reachable.set(pkg_id);
                     }
                 }
             }
@@ -627,12 +627,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
 
                             // Open package directory to check version
-                            // Note: openDir with iterate=false can fail on symlinks in isolated linker mode
-                            // so we retry with iterate=true if the first attempt fails
-                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch blk: {
-                                // Retry with iterate=true for symlinks (isolated linker mode)
-                                break :blk scope_dir.openDir(scoped_entry.name, .{ .iterate = true }) catch continue;
-                            };
+                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
                             defer scoped_pkg_dir.close();
 
                             const should_remove = self.shouldRemovePackage(scoped_name, scoped_pkg_dir);
@@ -760,29 +755,17 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                         if (installed_version) |inst_ver| {
                             // Find package with matching version
-                            // Use stack buffer to avoid per-candidate heap allocations
-                            var stack_buf: [128]u8 = undefined;
-
                             for (matching_packages.items) |pkg_id| {
                                 if (self.package_resolutions[pkg_id].tag == .npm) {
                                     const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
                                     const string_buf = self.manager.lockfile.buffers.string_bytes.items;
 
-                                    // Try stack buffer first, fallback to heap only if needed
-                                    const lockfile_ver_str = std.fmt.bufPrint(
-                                        &stack_buf,
+                                    const lockfile_ver_str = std.fmt.allocPrint(
+                                        self.manager.allocator,
                                         "{any}",
                                         .{lockfile_version.fmt(string_buf)},
-                                    ) catch blk: {
-                                        // Stack buffer too small, use heap as fallback
-                                        const heap_str = std.fmt.allocPrint(
-                                            self.manager.allocator,
-                                            "{any}",
-                                            .{lockfile_version.fmt(string_buf)},
-                                        ) catch continue;
-                                        defer self.manager.allocator.free(heap_str);
-                                        break :blk heap_str;
-                                    };
+                                    ) catch continue;
+                                    defer self.manager.allocator.free(lockfile_ver_str);
 
                                     if (strings.eql(inst_ver, lockfile_ver_str)) {
                                         matched_pkg_id = pkg_id;
@@ -806,7 +789,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     // In production mode, check if this specific PackageID is reachable
                     // This correctly handles multi-version scenarios (e.g., lodash@4.17.0 vs lodash@4.17.21)
                     if (self.is_production and self.production_reachable_ids != null) {
-                        if (!self.production_reachable_ids.?.isSet(@intCast(pkg_id))) {
+                        if (!self.production_reachable_ids.?.isSet(pkg_id)) {
                             return true;
                         }
                     }
@@ -835,8 +818,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             const pkg_id = @as(PackageID, @intCast(idx));
 
             // Skip workspace packages in the multimap
-            // Note: file: dependencies have .local origin but should be included
             if (package_resolutions[pkg_id].tag == .workspace or
+                package_metas[pkg_id].origin == .local or
                 workspace_paths.contains(hash))
             {
                 continue;

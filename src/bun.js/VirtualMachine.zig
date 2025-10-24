@@ -220,7 +220,7 @@ pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value)
 /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
 /// true may expose bugs that would otherwise only occur using Workers. Controlled by
 pub fn shouldDestructMainThreadOnExit(_: *const VirtualMachine) bool {
-    return bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT);
+    return bun.feature_flag.BUN_DESTRUCT_VM_ON_EXIT.get();
 }
 
 pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
@@ -464,7 +464,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER.get()) {
         this.transpiler_store.enabled = false;
     }
 
@@ -1199,12 +1199,12 @@ pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
 }
 
 fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) void {
-    if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+    if (bun.env_var.HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get() != null) {
         return;
     }
 
-    const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-    const connect_to = bun.getenvZ("BUN_INSPECT_CONNECT_TO") orelse "";
+    const unix = bun.env_var.BUN_INSPECT.get();
+    const connect_to = bun.env_var.BUN_INSPECT_CONNECT_TO.get();
 
     const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
     const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
@@ -2645,8 +2645,8 @@ pub fn remapZigException(
 ) void {
     error_instance.toZigException(this.global, exception);
     const enable_source_code_preview = allow_source_code_preview and
-        !(bun.getRuntimeFeatureFlag(.BUN_DISABLE_SOURCE_CODE_PREVIEW) or
-            bun.getRuntimeFeatureFlag(.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW));
+        !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
+            bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
 
     defer {
         if (Environment.isDebug) {
@@ -3345,7 +3345,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
     const message = exception.message;
     const frames = exception.stack.frames();
     const top_frame = if (frames.len > 0) frames[0] else null;
-    const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+    const dir = bun.env_var.GITHUB_WORKSPACE.get() orelse bun.fs.FileSystem.instance.top_level_dir;
     const allocator = bun.default_allocator;
     Output.flush();
 

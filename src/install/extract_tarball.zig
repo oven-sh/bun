@@ -495,7 +495,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         };
     }
 
-    if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX)) {
+    if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX.get()) {
         // create an index storing each version of a package installed
         if (strings.indexOfChar(basename, '/') == null) create_index: {
             const dest_name = switch (this.resolution.tag) {

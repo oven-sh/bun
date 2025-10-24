@@ -1361,7 +1361,7 @@ pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
 }
 
 pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT)) {
+    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT.get()) {
         bun.crash_handler.suppressReporting();
     }
 }

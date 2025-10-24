@@ -432,7 +432,7 @@ pub const StandaloneModuleGraph = struct {
             };
 
             if (comptime bun.Environment.is_canary or bun.Environment.isDebug) {
-                if (bun.getenvZ("BUN_FEATURE_FLAG_DUMP_CODE")) |dump_code_dir| {
+                if (bun.env_var.BUN_FEATURE_FLAG_DUMP_CODE.get()) |dump_code_dir| {
                     const buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(buf);
                     const dest_z = bun.path.joinAbsStringBufZ(dump_code_dir, buf, &.{dest_path}, .auto);
@@ -1325,7 +1325,7 @@ pub const StandaloneModuleGraph = struct {
                         var whichbuf: bun.PathBuffer = undefined;
                         if (bun.which(
                             &whichbuf,
-                            bun.getenvZ("PATH") orelse return error.FileNotFound,
+                            bun.env_var.PATH.get() orelse return error.FileNotFound,
                             "",
                             bun.argv[0],
                         )) |path| {

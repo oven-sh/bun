@@ -6,7 +6,7 @@ var trace_file: ?bun.sys.File = null;
 pub fn init() void {
     if (trace_file != null) return;
 
-    if (bun.getenvZ("BUN_WATCHER_TRACE")) |trace_path| {
+    if (bun.env_var.BUN_WATCHER_TRACE.get()) |trace_path| {
         if (trace_path.len > 0) {
             const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND;
             const mode = 0o644;

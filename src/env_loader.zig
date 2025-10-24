@@ -1332,8 +1332,6 @@ pub const Map = struct {
 
 pub var instance: ?*Loader = null;
 
-pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
-
 const string = []const u8;
 
 const Fs = @import("./fs.zig");

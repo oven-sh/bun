@@ -274,7 +274,7 @@ pub const RunCommand = struct {
         };
 
         const ipc_fd: ?bun.FD = if (!Environment.isWindows) blk: {
-            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const node_ipc_fd = bun.env_var.NODE_CHANNEL_FD.get() orelse break :blk null;
             const fd = std.fmt.parseInt(u31, node_ipc_fd, 10) catch break :blk null;
             break :blk bun.FD.fromNative(fd);
         } else null; // TODO: implement on Windows
@@ -321,7 +321,7 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
-                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                         bun.crash_handler.suppressReporting();
                     }
 
@@ -344,7 +344,7 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                     bun.crash_handler.suppressReporting();
                 }
 
@@ -521,7 +521,7 @@ pub const RunCommand = struct {
                             });
                         }
 
-                        if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                             bun.crash_handler.suppressReporting();
                         }
 
@@ -538,7 +538,7 @@ pub const RunCommand = struct {
                                 });
                             }
 
-                            if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                            if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                                 bun.crash_handler.suppressReporting();
                             }
 
@@ -1503,10 +1503,7 @@ pub const RunCommand = struct {
             const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
             defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
-                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
-                    bun.strings.eqlComptime(env, "1")
-                else
-                    false;
+                bun.env_var.NODE_PRESERVE_SYMLINKS_MAIN.get();
             break :brk this_transpiler.resolver.resolve(
                 this_transpiler.fs.top_level_dir,
                 target_name,

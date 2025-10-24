@@ -321,7 +321,7 @@ pub const FFI = struct {
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.State, []u8 } {
             const compile_options: [:0]const u8 = if (this.flags.len > 0)
                 this.flags
-            else if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options|
+            else if (bun.env_var.BUN_TCC_OPTIONS.get()) |tcc_options|
                 @ptrCast(tcc_options)
             else
                 default_tcc_options;
@@ -349,7 +349,7 @@ pub const FFI = struct {
             if (Environment.isMac) {
                 add_system_include_dir: {
                     const dirs_to_try = [_][]const u8{
-                        bun.getenvZ("SDKROOT") orelse "",
+                        bun.env_var.SDKROOT.get() orelse "",
                         getSystemIncludeDir() orelse "",
                     };
 

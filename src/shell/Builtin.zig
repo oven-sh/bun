@@ -112,7 +112,7 @@ pub const Kind = enum {
     }
 
     fn forceEnableOnPosix() bool {
-        return bun.getRuntimeFeatureFlag(.BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS);
+        return bun.feature_flag.BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS.get();
     }
 
     pub fn fromStr(str: []const u8) ?Builtin.Kind {

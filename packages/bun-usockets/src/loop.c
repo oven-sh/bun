@@ -300,6 +300,7 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 
 
 void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof, int events) {
+
     switch (us_internal_poll_type(p)) {
         case POLL_TYPE_CALLBACK: {
             // not relevant update here to coallesce
@@ -308,6 +309,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
         case POLL_TYPE_SEMI_SOCKET: 
         case POLL_TYPE_SOCKET_SHUT_DOWN:
         case POLL_TYPE_SOCKET: {
+            
             struct us_socket_t* s = (struct us_socket_t*)p;
             if ((events & LIBUS_SOCKET_READABLE) != 0) {
                 s->flags.is_readable = true;
@@ -321,6 +323,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if (eof != 0) {
                 s->flags.has_received_eof = true;
             }
+            break;
         }
         case POLL_TYPE_UDP: {
             struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;

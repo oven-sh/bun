@@ -1179,6 +1179,7 @@ fn runWithSourceCode(
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
+    opts.features.worker_entrypoint = output_format != .internal_bake_dev and !source.index.isRuntime();
     opts.features.react_fast_refresh = target == .browser and
         transpiler.options.react_fast_refresh and
         loader.isJSX() and

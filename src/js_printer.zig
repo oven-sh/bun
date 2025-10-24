@@ -386,6 +386,7 @@ pub const Options = struct {
     indent: Indentation = .{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
+    unique_key_prefix: []const u8 = "",
     source_path: ?fs.Path = null,
     allocator: std.mem.Allocator = default_allocator,
     source_map_allocator: ?std.mem.Allocator = null,
@@ -2165,6 +2166,54 @@ fn NewPrinter(
 
                         p.print(")");
                     }
+
+                    if (wrap) {
+                        p.print(")");
+                    }
+                },
+                .e_new_worker => |e| {
+                    const wrap = level.gte(.call);
+
+                    if (wrap) {
+                        p.print("(");
+                    }
+
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+                    p.print("new Worker(");
+
+                    const import_record = p.importRecord(e.import_record_index);
+
+                    // In dev mode, use the direct path - the dev server will resolve it
+                    // In production mode, use unique keys for chunk path resolution
+                    if (p.options.module_type == .internal_bake_dev) {
+                        // Dev mode: use the original path
+                        // The dev server will serve this worker as a separate bundle
+                        p.printStringLiteralUTF8(import_record.path.pretty, true);
+                    } else if (p.options.unique_key_prefix.len > 0) {
+                        // Production mode: use unique keys for chunk resolution
+                        // Use the source_index from the import record, not the import_record_index
+                        // This allows the linker to map from source_index to chunk_index using entry_point_chunk_indices
+                        const source_index = import_record.source_index.get();
+                        const unique_key = std.fmt.allocPrint(p.options.allocator, "{s}W{d:0>8}", .{ p.options.unique_key_prefix, source_index }) catch unreachable;
+                        defer p.options.allocator.free(unique_key);
+                        p.printStringLiteralUTF8(unique_key, true);
+                    } else {
+                        // Fallback to direct path if unique_key_prefix is not available
+                        p.printStringLiteralUTF8(import_record.path.text, true);
+                    }
+
+                    // Always print {type: "module"} for workers
+                    // Workers in Bun are always ES modules
+                    p.print(",");
+                    p.printSpace();
+                    p.print("{type:\"module\"}");
+
+                    if (e.close_parens_loc.start > expr.loc.start) {
+                        p.addSourceMapping(e.close_parens_loc);
+                    }
+
+                    p.print(")");
 
                     if (wrap) {
                         p.print(")");

@@ -591,8 +591,8 @@ pub const RunCommand = struct {
         const args = ctx.args;
 
         var this_transpiler = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null);
-        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
-        this_transpiler.options.env.prefix = "";
+        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -777,9 +777,9 @@ pub const RunCommand = struct {
     ) !*DirInfo {
         const args = ctx.args;
         this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
-        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler.env.quiet = true;
-        this_transpiler.options.env.prefix = "";
+        this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;

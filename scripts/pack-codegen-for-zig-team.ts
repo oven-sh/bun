@@ -11,6 +11,9 @@ import { relative, join, dirname } from "path";
 //   process.exit(1);
 // }
 
+// TODO: automatically run `./vendor/zig/zig fmt src --upstream` and then revert local changes at the end
+// only do this with the above git state assertion
+
 let skip = -1;
 const args = process.argv.slice(2).filter((arg, i) => {
   if (arg === "--listen=-") return false;

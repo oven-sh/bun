@@ -329,13 +329,22 @@ pub const prompt = struct {
                         // Backspace (ASCII 8) or DEL (ASCII 127)
                         8, 127 => {
                             if (cursor_index > 0) {
-                                _ = input.orderedRemove(cursor_index - 1);
-                                cursor_index -= 1;
+                                const old_cursor_index = cursor_index;
+                                const prev_codepoint_start = std.unicode.utf8Prev(input.items, old_cursor_index);
+                                if (prev_codepoint_start) |start| {
+                                    // Remove the codepoint bytes
+                                    _ = input.orderedRemoveRange(start, old_cursor_index);
+                                    cursor_index = start;
+                                } else {
+                                    // Fallback for invalid UTF-8 or start of string: delete one byte
+                                    _ = input.orderedRemove(old_cursor_index - 1);
+                                    cursor_index -= 1;
+                                }
 
                                 // Redraw the line from the cursor
-                                _ = stdout_writer.writeAll("\x1b[D") catch {}; // Move cursor left
+                                _ = stdout_writer.writeAll("\x1b[D") catch {}; // Move cursor left (1 column)
                                 _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
-                                _ = stdout_writer.writeAll(" ") catch {}; // Clear the character at the end
+                                _ = stdout_writer.writeAll(" ") catch {}; // Clear the character at the end (1 column)
                                 _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index + 1}) catch {}; // Move cursor back
                                 bun.Output.flush();
                             }
@@ -358,14 +367,14 @@ pub const prompt = struct {
                             switch (reader.readByte() catch continue) {
                                 'D' => { // Left arrow
                                     if (cursor_index > 0) {
-                                        cursor_index -= 1;
+                                        cursor_index = std.unicode.utf8Prev(input.items, cursor_index) orelse cursor_index - 1;
                                         _ = stdout_writer.writeAll("\x1b[D") catch {};
                                         bun.Output.flush();
                                     }
                                 },
                                 'C' => { // Right arrow
                                     if (cursor_index < input.items.len) {
-                                        cursor_index += 1;
+                                        cursor_index = std.unicode.utf8Next(input.items, cursor_index) orelse cursor_index + 1;
                                         _ = stdout_writer.writeAll("\x1b[C") catch {};
                                         bun.Output.flush();
                                     }
@@ -387,7 +396,14 @@ pub const prompt = struct {
                                     }
                                     // Handle Delete key: remove character under cursor
                                     if (cursor_index < input.items.len) {
-                                        _ = input.orderedRemove(cursor_index);
+                                        const next_codepoint_start = std.unicode.utf8Next(input.items, cursor_index);
+                                        if (next_codepoint_start) |end| {
+                                            // Remove the codepoint bytes
+                                            _ = input.orderedRemoveRange(cursor_index, end);
+                                        } else {
+                                            // Fallback: delete one byte if invalid UTF-8
+                                            _ = input.orderedRemove(cursor_index);
+                                        }
 
                                         // Redraw from cursor
                                         _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};

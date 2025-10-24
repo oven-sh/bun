@@ -445,7 +445,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                 }
             }
 
-            if (is_readable) {
+            if (is_readable && !s->flags.is_paused) {
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
@@ -524,6 +524,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        // if(has_received_eof) {
+                        //     continue;
+                        // }
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:
@@ -548,10 +551,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                     } else if (!length) {
                         // lets handle EOF in the same place
                         has_received_eof = true;
+                        s->flags.is_readable = true;
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR) {
                         if(bsd_would_block()) {
-                            s->flags.is_readable = false;
+                            s->flags.is_readable = true;
                             break;
                         }
                         /* Todo: decide also here what kind of reason we should give */

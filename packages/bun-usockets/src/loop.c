@@ -628,6 +628,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
             if (u->is_writable && !has_error && !u->closed && !u->writable_emitted) {
                 u->writable_emitted = true;
+                p->state.poll_type = (u->is_readable ? POLL_TYPE_POLLING_IN : 0);
                 u->on_drain(u);
                 if (u->closed) {
                     break;

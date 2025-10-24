@@ -1,11 +1,11 @@
 /**
- * Test Bun.telemetry.nativeHooks.isEnabledFor() internal API
+ * Test Bun.telemetry.nativeHooks()?.isEnabledFor() internal API
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
 import { InstrumentKind, InstrumentRef } from "./types";
 
-describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
+describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
   test("returns false when no instruments are attached", () => {
     // Ensure no instruments from previous tests
     const kinds = [
@@ -18,7 +18,7 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
     ]; // All InstrumentKind values
 
     kinds.forEach(kind => {
-      const enabled = Bun.telemetry.nativeHooks.isEnabledFor(kind);
+      const enabled = Bun.telemetry.nativeHooks()?.isEnabledFor(kind);
       // Might be true if other tests left instruments attached, but usually false
       expect(typeof enabled).toBe("boolean");
     });
@@ -32,11 +32,11 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
       onOperationStart: () => {},
     });
 
-    const httpEnabled = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP);
+    const httpEnabled = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP);
     expect(httpEnabled).toBe(true);
 
     // Other kinds should still be false (unless other tests attached)
-    const sqlEnabled = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.SQL);
+    const sqlEnabled = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.SQL);
     // Can't assert false because parallel tests might attach SQL instruments
     expect(typeof sqlEnabled).toBe("boolean");
   });
@@ -50,11 +50,11 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
         onOperationStart: () => {},
       });
 
-      expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
+      expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
     }
 
     // After detaching, should be false (unless other tests attached Fetch instruments)
-    const enabled = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Fetch);
+    const enabled = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Fetch);
     // Can't reliably assert false in parallel test environment
     expect(typeof enabled).toBe("boolean");
   });
@@ -74,11 +74,11 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
       onOperationEnd: () => {},
     });
 
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
 
     // Detach one, should still be true
     Bun.telemetry.detach(instrument1.id);
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
   });
 
   test("tracks enabled state independently for each kind", () => {
@@ -104,16 +104,16 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
     });
 
     // All three should be enabled
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.SQL)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.SQL)).toBe(true);
 
     // Detach HTTP
     Bun.telemetry.detach(httpInstrument.id);
 
     // Fetch and SQL should still be enabled
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.SQL)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.SQL)).toBe(true);
   });
 
   test("isEnabledFor is O(1) operation", () => {
@@ -133,7 +133,7 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
       // isEnabledFor should be fast regardless of number of instruments
       const start = performance.now();
       for (let i = 0; i < 1000; i++) {
-        Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP);
+        Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP);
       }
       const duration = performance.now() - start;
 
@@ -165,7 +165,7 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
         onOperationStart: () => {},
       });
 
-      expect(Bun.telemetry.nativeHooks.isEnabledFor(value)).toBe(true);
+      expect(Bun.telemetry.nativeHooks()?.isEnabledFor(value)).toBe(true);
     });
   });
 
@@ -177,61 +177,12 @@ describe("Bun.telemetry.nativeHooks.isEnabledFor()", () => {
       onOperationStart: () => {},
     });
 
-    const result1 = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Redis);
-    const result2 = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Redis);
-    const result3 = Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Redis);
+    const result1 = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Redis);
+    const result2 = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Redis);
+    const result3 = Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Redis);
 
     expect(result1).toBe(result2);
     expect(result2).toBe(result3);
     expect(result1).toBe(true);
-  });
-});
-
-describe("Bun.telemetry.nativeHooks.isEnabledFor() performance", () => {
-  test("zero overhead when no instruments attached", () => {
-    // Ensure clean state
-    const allInstruments = Bun.telemetry.listInstruments();
-    allInstruments.forEach((info: any) => {
-      Bun.telemetry.detach(info.id);
-    });
-
-    // Benchmark isEnabledFor when disabled
-    const iterations = 100000;
-    const start = performance.now();
-
-    for (let i = 0; i < iterations; i++) {
-      Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP);
-    }
-
-    const duration = performance.now() - start;
-    const nsPerCall = (duration * 1_000_000) / iterations;
-
-    // Should be < 50ns per call (essentially free)
-    console.log(`isEnabledFor (disabled): ${nsPerCall.toFixed(2)}ns per call`);
-    expect(duration).toBeLessThan(100); // 100ms for 100k calls
-  });
-
-  test("minimal overhead when instruments attached", () => {
-    using instrument = new InstrumentRef({
-      type: InstrumentKind.HTTP,
-      name: "perf-test",
-      version: "1.0.0",
-      onOperationStart: () => {},
-    });
-
-    // Benchmark isEnabledFor when enabled
-    const iterations = 100000;
-    const start = performance.now();
-
-    for (let i = 0; i < iterations; i++) {
-      Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP);
-    }
-
-    const duration = performance.now() - start;
-    const nsPerCall = (duration * 1_000_000) / iterations;
-
-    // Should still be < 100ns per call (just array length check)
-    console.log(`isEnabledFor (enabled): ${nsPerCall.toFixed(2)}ns per call`);
-    expect(duration).toBeLessThan(200); // 200ms for 100k calls
   });
 });

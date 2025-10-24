@@ -13,9 +13,9 @@ test("attach rebuilds inject config for fetch kind", () => {
   });
 
   // Verify global config was updated
-  const config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  const config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeArray();
   expect(config.length).toBe(2);
   expect(config).toContain("traceparent");
@@ -34,9 +34,9 @@ test("attach rebuilds inject config for http kind", () => {
   });
 
   // Verify global config was updated
-  const config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_server_response,
-  );
+  const config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_server_response);
   expect(config).toBeArray();
   expect(config.length).toBe(2);
   expect(config).toContain("traceparent");
@@ -65,9 +65,9 @@ test("multiple instruments merge headers linearly", () => {
   });
 
   // Verify linear concatenation (duplicates allowed)
-  const config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  const config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeArray();
   expect(config.length).toBe(4);
   expect(config[0]).toBe("traceparent");
@@ -98,18 +98,18 @@ test("detach rebuilds inject config without detached instrument", () => {
   });
 
   // Before detach: both headers present
-  let config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  let config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config.length).toBe(2);
 
   // Detach first instrument
   Bun.telemetry.detach(instrument1.id);
 
   // After detach: only second instrument's header remains
-  config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeArray();
   expect(config.length).toBe(1);
   expect(config[0]).toBe("x-request-id");
@@ -128,17 +128,17 @@ test("detaching last instrument clears config", () => {
     });
 
     // Config should be set
-    let config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-      ConfigurationProperty.http_propagate_headers_fetch_request,
-    );
+    let config = Bun.telemetry
+      .nativeHooks()
+      ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
     expect(config).toBeArray();
     expect(config.length).toBe(1);
   }
 
   // After scope exit, config should be undefined
-  const config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  const config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeUndefined();
 });
 
@@ -162,9 +162,9 @@ test("instruments without injectHeaders don't affect config", () => {
   });
 
   // Config should only include first instrument's headers
-  const config = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  const config = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeArray();
   expect(config.length).toBe(1);
   expect(config[0]).toBe("traceparent");
@@ -192,17 +192,17 @@ test("http and fetch configs are independent", () => {
   });
 
   // Fetch request headers
-  const fetchConfig = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_fetch_request,
-  );
+  const fetchConfig = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(fetchConfig).toBeArray();
   expect(fetchConfig.length).toBe(1);
   expect(fetchConfig[0]).toBe("x-fetch-header");
 
   // HTTP response headers
-  const httpConfig = Bun.telemetry.nativeHooks.getConfigurationProperty(
-    ConfigurationProperty.http_propagate_headers_server_response,
-  );
+  const httpConfig = Bun.telemetry
+    .nativeHooks()
+    ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_server_response);
   expect(httpConfig).toBeArray();
   expect(httpConfig.length).toBe(1);
   expect(httpConfig[0]).toBe("x-http-header");

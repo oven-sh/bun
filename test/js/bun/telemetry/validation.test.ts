@@ -189,26 +189,26 @@ describe("Bun.telemetry.detach() validation", () => {
   });
 });
 
-describe("Bun.telemetry.nativeHooks.isEnabledFor() validation", () => {
+describe("Bun.telemetry.nativeHooks()?.isEnabledFor() validation", () => {
   test("returns false for invalid kind types", () => {
     // @ts-expect-error - testing error case
-    expect(Bun.telemetry.nativeHooks.isEnabledFor("http")).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor("http")).toBe(false);
 
     // @ts-expect-error - testing error case
-    expect(Bun.telemetry.nativeHooks.isEnabledFor({})).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor({})).toBe(false);
 
     // @ts-expect-error - testing error case
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(null)).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(null)).toBe(false);
   });
 
   test("returns false for out-of-range kind values", () => {
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(-1)).toBe(false);
-    expect(Bun.telemetry.nativeHooks.isEnabledFor(999)).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(-1)).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor(999)).toBe(false);
   });
 
   test("returns false when called with no arguments", () => {
     // @ts-expect-error - testing error case
-    expect(Bun.telemetry.nativeHooks.isEnabledFor()).toBe(false);
+    expect(Bun.telemetry.nativeHooks()?.isEnabledFor()).toBe(false);
   });
 });
 

@@ -389,6 +389,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.is_ipc = 0;
     s->flags.is_readable = true;
     s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
     s->next = 0;
@@ -430,6 +431,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.is_ipc = 0;
     s->flags.is_readable = true;
     s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
     s->next = 0;
@@ -465,6 +467,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.is_ipc = 0;
     socket->flags.is_readable = true;
     socket->flags.is_writable = true;
+    socket->flags.writable_emitted = true;
     socket->flags.has_error = false;
     socket->flags.has_received_eof = false;
     socket->connect_state = NULL;
@@ -599,6 +602,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->is_ipc = 0;
         flags->is_readable = true;
         flags->is_writable = true;
+        flags->writable_emitted = true;
         flags->has_error = false;
         flags->has_received_eof = false;
         /* Link it into context so that timeout fires properly */
@@ -780,6 +784,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.is_ipc = 0;
     connect_socket->flags.is_readable = true;
     connect_socket->flags.is_writable = true;
+    connect_socket->flags.writable_emitted = true;
     connect_socket->flags.has_error = false;
     connect_socket->flags.has_received_eof = false;
     connect_socket->connect_state = NULL;

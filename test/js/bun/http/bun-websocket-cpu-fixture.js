@@ -1,9 +1,11 @@
+import path from "path";
+
 const server = Bun.serve({
   port: 0,
   idleTimeout: 100,
   tls: {
-    cert: Bun.file(process.env.CERT_PATH),
-    key: Bun.file(process.env.KEY_PATH),
+    cert: Bun.file(path.join(import.meta.dir, "fixtures", "cert.pem")),
+    key: Bun.file(path.join(import.meta.dir, "fixtures", "cert.key")),
   },
   fetch(req, server) {
     if (server.upgrade(req)) {

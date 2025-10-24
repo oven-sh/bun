@@ -282,6 +282,8 @@ public:
             asyncSocketData->buffer.clear();
         }
 
+        
+
         /* Return the total number of bytes written during this flush operation */
         return total_written;
     }

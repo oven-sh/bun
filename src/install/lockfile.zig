@@ -281,7 +281,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -336,7 +336,7 @@ pub fn loadFromDir(
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -521,7 +521,6 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                                 sliced.slice,
                                 &sliced,
                                 null,
-                                manager,
                             ) orelse Dependency.Version{};
                         }
                     }
@@ -663,8 +662,8 @@ pub fn cleanWithLogger(
         old.overrides.count(old, &builder);
         old.catalogs.count(old, &builder);
         try builder.allocate();
-        new.overrides = try old.overrides.clone(manager, old, new, &builder);
-        new.catalogs = try old.catalogs.clone(manager, old, new, &builder);
+        new.overrides = try old.overrides.clone(old, new, &builder);
+        new.catalogs = try old.catalogs.clone(old, new, &builder);
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -687,7 +686,7 @@ pub fn cleanWithLogger(
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-    _ = try root.clone(manager, old, new, package_id_mapping, &cloner);
+    _ = try root.clone(old, new, package_id_mapping, &cloner);
 
     // Clone workspace_paths and workspace_versions at the end.
     if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
@@ -859,7 +858,6 @@ pub const Cloner = struct {
             const old_package = this.old.packages.get(to_clone.old_resolution);
 
             this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
-                this.manager,
                 this.old,
                 this.lockfile,
                 this.mapping,

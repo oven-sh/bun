@@ -340,7 +340,6 @@ pub const BunxCommand = struct {
         defer requests_buf.deinit(ctx.allocator);
         const update_requests = UpdateRequest.parse(
             ctx.allocator,
-            null,
             ctx.log,
             &.{opts.package_name},
             &requests_buf,

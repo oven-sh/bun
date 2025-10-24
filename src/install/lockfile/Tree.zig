@@ -28,7 +28,6 @@ pub const Id = enum(u32) {
     }
 
     pub fn from(id: u32) Id {
-        bun.debugAssert(id != max);
         return @enumFromInt(id);
     }
 

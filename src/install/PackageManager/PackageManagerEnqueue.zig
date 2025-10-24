@@ -301,7 +301,7 @@ pub fn enqueueDependencyToRoot(
 
         builder.allocate() catch |err| return .{ .failure = err };
 
-        const dep = dummy.cloneWithDifferentBuffers(this, name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+        const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
         builder.clamp();
         const index = this.lockfile.buffers.dependencies.items.len;
         this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -446,29 +446,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     };
 
     const version = version: {
-        if (dependency.version.tag == .npm) {
-            if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                const group = dependency.version.value.npm.version;
-                const buf = this.lockfile.buffers.string_bytes.items;
-                var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
-                while (curr_list) |queries| {
-                    var curr: ?*const Semver.Query = &queries.head;
-                    while (curr) |query| {
-                        if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
-                            name = aliased.value.npm.name;
-                            name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                            break :version aliased;
-                        }
-                        curr = query.next;
-                    }
-                    curr_list = queries.next;
-                }
-
-                // fallthrough. a package that matches the name of an alias but does not match
-                // the version should be enqueued as a normal npm dependency, overrides allowed
-            }
-        }
-
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
@@ -1359,7 +1336,6 @@ fn getOrPutResolvedPackageWithFindResult(
 
     // appendPackage sets the PackageID on the package
     const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
-        this,
         this.allocator,
         this.lockfile,
         this.log,

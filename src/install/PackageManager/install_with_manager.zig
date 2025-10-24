@@ -250,8 +250,8 @@ pub fn installWithManager(
                         break :brk all_name_hashes;
                     };
 
-                    manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
-                    manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
+                    manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
+                    manager.lockfile.catalogs = try lockfile.catalogs.clone(&lockfile, manager.lockfile, builder);
 
                     manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                         try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -274,7 +274,7 @@ pub fn installWithManager(
                     manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
 
                     for (new_dependencies, 0..) |new_dep, i| {
-                        dependencies[i] = try new_dep.clone(manager, lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         if (mapping[i] != invalid_package_id) {
                             resolutions[i] = old_resolutions[mapping[i]];
                         }

@@ -79,7 +79,6 @@ pub fn Package(comptime SemverIntType: type) type {
 
         pub fn clone(
             this: *const @This(),
-            pm: *PackageManager,
             old: *Lockfile,
             new: *Lockfile,
             package_id_mapping: []PackageID,
@@ -176,7 +175,6 @@ pub fn Package(comptime SemverIntType: type) type {
 
             for (old_dependencies, dependencies) |old_dep, *new_dep| {
                 new_dep.* = try old_dep.clone(
-                    pm,
                     old_string_buf,
                     *Lockfile.StringBuilder,
                     builder,
@@ -210,7 +208,6 @@ pub fn Package(comptime SemverIntType: type) type {
 
         pub fn fromPackageJSON(
             lockfile: *Lockfile,
-            pm: *PackageManager,
             package_json: *PackageJSON,
             comptime features: Features,
         ) !@This() {
@@ -270,7 +267,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 for (package_dependencies) |dep| {
                     if (!dep.behavior.isEnabled(features)) continue;
 
-                    dependencies[0] = try dep.clone(pm, source_buf, @TypeOf(&string_builder), &string_builder);
+                    dependencies[0] = try dep.clone(source_buf, @TypeOf(&string_builder), &string_builder);
                     dependencies = dependencies[1..];
                     if (dependencies.len == 0) break;
                 }
@@ -300,7 +297,6 @@ pub fn Package(comptime SemverIntType: type) type {
         }
 
         pub fn fromNPM(
-            pm: *PackageManager,
             allocator: Allocator,
             lockfile: *Lockfile,
             log: *logger.Log,
@@ -463,7 +459,6 @@ pub fn Package(comptime SemverIntType: type) type {
                                 sliced.slice,
                                 &sliced,
                                 log,
-                                pm,
                             ) orelse Dependency.Version{},
                         };
 
@@ -1031,7 +1026,6 @@ pub fn Package(comptime SemverIntType: type) type {
                 tag,
                 &sliced,
                 log,
-                pm,
             ) orelse Dependency.Version{};
             var workspace_range: ?Semver.Query.Group = null;
             const name_hash = switch (dependency_version.tag) {
@@ -1100,7 +1094,6 @@ pub fn Package(comptime SemverIntType: type) type {
                                 .workspace,
                                 &path,
                                 log,
-                                pm,
                             )) |dep| {
                                 dependency_version.tag = dep.tag;
                                 dependency_version.value = dep.value;
@@ -1941,12 +1934,12 @@ pub fn Package(comptime SemverIntType: type) type {
 
             // This function depends on package.dependencies being set, so it is done at the very end.
             if (comptime features.is_main) {
-                try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+                try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
 
                 var found_any_catalog_or_catalog_object = false;
                 var has_workspaces = false;
                 if (json.get("workspaces")) |workspaces_expr| {
-                    found_any_catalog_or_catalog_object = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, workspaces_expr, &string_builder);
+                    found_any_catalog_or_catalog_object = try lockfile.catalogs.parseAppend(lockfile, log, source, workspaces_expr, &string_builder);
                     has_workspaces = true;
                 }
 
@@ -1955,7 +1948,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 // allow "catalog" and "catalogs" in top-level "package.json"
                 // so it's easier to guess.
                 if (!found_any_catalog_or_catalog_object and has_workspaces) {
-                    _ = try lockfile.catalogs.parseAppend(pm, lockfile, log, source, json, &string_builder);
+                    _ = try lockfile.catalogs.parseAppend(lockfile, log, source, json, &string_builder);
                 }
             }
 

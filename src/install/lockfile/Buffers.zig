@@ -339,7 +339,6 @@ pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm_: ?*Pack
         .log = log,
         .allocator = allocator,
         .buffer = string_buf,
-        .package_manager = pm_,
     };
 
     this.dependencies.expandToCapacity();

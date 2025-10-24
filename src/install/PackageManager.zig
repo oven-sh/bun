@@ -97,9 +97,6 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-// name hash from alias package name -> aliased package dependency version info
-known_npm_aliases: NpmAliasMap = .{},
-
 event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust

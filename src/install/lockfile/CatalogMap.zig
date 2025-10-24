@@ -109,7 +109,6 @@ pub fn parseCount(_: *CatalogMap, lockfile: *Lockfile, expr: Expr, builder: *Loc
 
 pub fn parseAppend(
     this: *CatalogMap,
-    pm: *PackageManager,
     lockfile: *Lockfile,
     log: *logger.Log,
     source: *const logger.Source,
@@ -141,7 +140,6 @@ pub fn parseAppend(
                                 version_sliced.slice,
                                 &version_sliced,
                                 log,
-                                pm,
                             ) orelse {
                                 try log.addError(source, item.value.?.loc, "Invalid dependency version");
                                 continue;
@@ -202,7 +200,6 @@ pub fn parseAppend(
                                             version_sliced.slice,
                                             &version_sliced,
                                             log,
-                                            pm,
                                         ) orelse {
                                             try log.addError(source, item.value.?.loc, "Invalid dependency version");
                                             continue;
@@ -305,7 +302,6 @@ fn putEntriesFromPnpmLockfile(
                 version_sliced.slice,
                 &version_sliced,
                 log,
-                null,
             ) orelse {
                 return error.InvalidPnpmLockfile;
             },
@@ -407,7 +403,7 @@ pub fn count(this: *CatalogMap, lockfile: *Lockfile, builder: *Lockfile.StringBu
     }
 }
 
-pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockfile, builder: *Lockfile.StringBuilder) OOM!CatalogMap {
+pub fn clone(this: *CatalogMap, old: *Lockfile, new: *Lockfile, builder: *Lockfile.StringBuilder) OOM!CatalogMap {
     var new_catalog: CatalogMap = .{};
 
     try new_catalog.default.ensureTotalCapacity(new.allocator, this.default.count());
@@ -418,7 +414,7 @@ pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockf
         const dep = entry.value_ptr;
         new_catalog.default.putAssumeCapacityContext(
             builder.append(String, dep_name.slice(old.buffers.string_bytes.items)),
-            try dep.clone(pm, old.buffers.string_bytes.items, @TypeOf(builder), builder),
+            try dep.clone(old.buffers.string_bytes.items, @TypeOf(builder), builder),
             String.arrayHashContext(new, null),
         );
     }
@@ -439,7 +435,7 @@ pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockf
             const dep = entry.value_ptr;
             new_group.putAssumeCapacityContext(
                 builder.append(String, dep_name.slice(old.buffers.string_bytes.items)),
-                try dep.clone(pm, old.buffers.string_bytes.items, @TypeOf(builder), builder),
+                try dep.clone(old.buffers.string_bytes.items, @TypeOf(builder), builder),
                 String.arrayHashContext(new, null),
             );
         }

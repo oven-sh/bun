@@ -1032,7 +1032,9 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
-                if (packet_type == .OK or packet_type == .EOF) {
+                const is_end_packet = (packet_type == .OK and header_length >= 7) or packet_type == .EOF;
+
+                if (is_end_packet) {
                     if (request.isSimple() or packet_type == .EOF) {
                         // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
                         // If is not simple and is EOF this is actually a OK packet but with the flag EOF

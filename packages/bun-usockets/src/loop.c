@@ -441,6 +441,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }
+
+                #ifndef LIBUS_USE_KQUEUE
+                /* If we have no failed write or if we shut down, then stop polling for more writable */
+                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                }
+                #endif
             }
             
             if (is_readable && !s->flags.is_paused) {

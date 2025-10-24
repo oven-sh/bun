@@ -69,6 +69,20 @@ $ bun --env-file=.env.1 src/index.ts
 $ bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
+### Disabling automatic `.env` file loading
+
+You can disable Bun's automatic `.env` file loading by setting `dotenv = false` in your [`bunfig.toml`](/docs/runtime/bunfig) configuration file.
+
+```toml#bunfig.toml
+dotenv = false
+```
+
+When disabled, Bun will not automatically load `.env`, `.env.local`, `.env.production`, `.env.development`, or `.env.test` files. However, environment variables set in your shell or passed to the process will still be available via `process.env`.
+
+{% callout %}
+**Note:** When `dotenv = false`, you can still manually load specific `.env` files using the `--env-file` flag.
+{% /callout %}
+
 ### Quotation marks
 
 Bun supports double quotes, single quotes, and template literal backticks:

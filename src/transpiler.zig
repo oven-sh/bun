@@ -474,6 +474,17 @@ pub const Transpiler = struct {
     }
 
     pub fn runEnvLoader(this: *Transpiler, skip_default_env: bool) !void {
+        // Check if dotenv is disabled via bunfig.toml
+        if (this.options.transform_options.disable_dotenv) {
+            // Skip .env loading but still load from process.env
+            try this.env.loadProcess();
+            if (this.env.isProduction()) {
+                this.options.setProduction(true);
+                this.resolver.opts.setProduction(true);
+            }
+            return;
+        }
+
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.

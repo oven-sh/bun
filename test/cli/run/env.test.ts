@@ -857,3 +857,45 @@ LARGE3="${"c".repeat(3000)}"
     expect(stdout).toBe("4096");
   });
 });
+
+describe("bunfig.toml dotenv flag", () => {
+  test("dotenv = false disables .env loading", () => {
+    const dir = tempDirWithFiles("bunfig-dotenv-disable", {
+      ".env": "FOO=from_env\n",
+      "bunfig.toml": "dotenv = false\n",
+      "index.ts": "console.log(process.env.FOO || 'undefined');",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("undefined");
+  });
+
+  test("dotenv = false still allows process.env to work", () => {
+    const dir = tempDirWithFiles("bunfig-dotenv-disable-processenv", {
+      ".env": "FOO=from_env\n",
+      "bunfig.toml": "dotenv = false\n",
+      "index.ts": "console.log(process.env.BAR || 'undefined');",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { BAR: "from_process" });
+    expect(stdout).toBe("from_process");
+  });
+
+  test("dotenv = true allows .env loading (explicit)", () => {
+    const dir = tempDirWithFiles("bunfig-dotenv-enable", {
+      ".env": "FOO=from_env\n",
+      "bunfig.toml": "dotenv = true\n",
+      "index.ts": "console.log(process.env.FOO);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("from_env");
+  });
+
+  test("without bunfig.toml dotenv field, .env loads by default", () => {
+    const dir = tempDirWithFiles("bunfig-dotenv-default", {
+      ".env": "FOO=from_env\n",
+      "bunfig.toml": "# no dotenv field\n",
+      "index.ts": "console.log(process.env.FOO);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("from_env");
+  });
+});

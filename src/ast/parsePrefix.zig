@@ -137,6 +137,8 @@ pub fn ParsePrefix(
                             p.lexer.prev_token_was_await_keyword = true;
                             p.lexer.await_keyword_loc = name_range.loc;
                             p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                            // Check if we're at module scope by comparing current scope to module scope
+                            p.lexer.is_at_module_scope = p.current_scope == p.module_scope;
                         },
                     }
                 },

@@ -138,6 +138,7 @@ fn NewLexer_(
         prev_token_was_await_keyword: bool = false,
         await_keyword_loc: logger.Loc = logger.Loc.Empty,
         fn_or_arrow_start_loc: logger.Loc = logger.Loc.Empty,
+        is_at_module_scope: bool = true,
         regex_flags_start: ?u16 = null,
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
@@ -1820,7 +1821,7 @@ fn NewLexer_(
 
         pub fn expectedString(self: *LexerType, text: string) !void {
             if (self.prev_token_was_await_keyword) {
-                if (self.fn_or_arrow_start_loc.isEmpty()) {
+                if (self.is_at_module_scope) {
                     // Top-level await - provide better error message
                     try self.addRangeErrorWithNotes(
                         self.range(),
@@ -1828,8 +1829,8 @@ fn NewLexer_(
                         .{},
                         &.{},
                     );
-                } else {
-                    // Inside a non-async function
+                } else if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                    // Inside a non-async function with a clear location for adding "async"
                     var notes: [1]logger.Data = undefined;
                     notes[0] = logger.rangeData(
                         &self.source,
@@ -1845,6 +1846,14 @@ fn NewLexer_(
                         "\"await\" can only be used inside an \"async\" function",
                         .{},
                         &notes,
+                    );
+                } else {
+                    // Inside a function (e.g., arrow function) but no clear location for "async"
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "\"await\" can only be used inside an \"async\" function",
+                        .{},
+                        &.{},
                     );
                 }
                 return;

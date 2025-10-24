@@ -31,11 +31,11 @@ pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callfra
     // handle failure
     if (not) {
         const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{f}<r>\n" ++ "Received number of calls: <red>{f}<r>\n", .{ times, calls.getLength(globalThis) });
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{d}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
     }
 
     const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{f}<r>\n" ++ "Received number of calls: <red>{f}<r>\n", .{ times, calls.getLength(globalThis) });
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
 }
 
 const bun = @import("bun");

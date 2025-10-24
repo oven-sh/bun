@@ -173,14 +173,14 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSE
         if (token.raw.asBunString(globalThis).hasPrefixComptime("--")) {
             err = globalThis.toTypeError(
                 .PARSE_ARGS_INVALID_OPTION_VALUE,
-                "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '{}=-XYZ'.",
+                "Option '{f}' argument is ambiguous.\nDid you forget to specify the option argument for '{f}'?\nTo specify an option argument starting with a dash use '{f}=-XYZ'.",
                 .{ raw_name, raw_name, raw_name },
             );
         } else {
             const token_name = token.name.asBunString(globalThis);
             err = globalThis.toTypeError(
                 .PARSE_ARGS_INVALID_OPTION_VALUE,
-                "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '--{}=-XYZ' or '{}-XYZ'.",
+                "Option '{f}' argument is ambiguous.\nDid you forget to specify the option argument for '{f}'?\nTo specify an option argument starting with a dash use '--{f}=-XYZ' or '{f}-XYZ'.",
                 .{ raw_name, raw_name, token_name, raw_name },
             );
         }
@@ -198,7 +198,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     // the option was found earlier because we trimmed 'no-' from the name, so we throw
                     // the expected unknown option error.
                     const raw_name: OptionToken.RawNameFormatter = .{ .token = token, .globalThis = globalThis };
-                    const err = globalThis.toTypeError(.PARSE_ARGS_UNKNOWN_OPTION, "Unknown option '{}'", .{raw_name});
+                    const err = globalThis.toTypeError(.PARSE_ARGS_UNKNOWN_OPTION, "Unknown option '{f}'", .{raw_name});
                     return globalThis.throwValue(err);
                 }
                 const err = globalThis.toTypeError(
@@ -232,11 +232,11 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
 
         const err = if (allow_positionals) (globalThis.toTypeError(
             .PARSE_ARGS_UNKNOWN_OPTION,
-            "Unknown option '{}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{}\"",
+            "Unknown option '{f}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{f}\"",
             .{ raw_name, raw_name },
         )) else (globalThis.toTypeError(
             .PARSE_ARGS_UNKNOWN_OPTION,
-            "Unknown option '{}'",
+            "Unknown option '{f}'",
             .{raw_name},
         ));
         return globalThis.throwValue(err);
@@ -722,7 +722,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         if (option.default_value) |default_value| {
             if (!option.long_name.eqlComptime("__proto__")) {
                 if (try state.values.getOwn(globalThis, option.long_name) == null) {
-                    log("  Setting \"{}\" to default value", .{option.long_name});
+                    log("  Setting \"{f}\" to default value", .{option.long_name});
                     try state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }
             }

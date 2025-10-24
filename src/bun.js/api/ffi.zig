@@ -1841,7 +1841,7 @@ pub const FFI = struct {
                 const lengthBuf = std.fmt.printInt(arg_buf["arg".len..], i, 10, .lower, .{});
                 const argName = arg_buf[0 .. 3 + lengthBuf];
                 if (arg.needsACastInC()) {
-                    try writer.print("{any}", .{arg.toC(argName)});
+                    try writer.print("{f}", .{arg.toC(argName)});
                 } else {
                     try writer.writeAll(argName);
                 }
@@ -1862,7 +1862,7 @@ pub const FFI = struct {
             try writer.writeAll("return ");
 
             if (!(this.return_type == .void)) {
-                try writer.print("{any}.asZigRepr", .{this.return_type.toJS("return_value")});
+                try writer.print("{f}.asZigRepr", .{this.return_type.toJS("return_value")});
             } else {
                 try writer.writeAll("ValueUndefined.asZigRepr");
             }
@@ -1946,7 +1946,7 @@ pub const FFI = struct {
                 for (this.arg_types.items, 0..) |arg, i| {
                     const printed = std.fmt.printInt(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed];
-                    try writer.print("arguments[{d}] = {any}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    try writer.print("arguments[{d}] = {f}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
                 }
             }
 
@@ -1961,13 +1961,13 @@ pub const FFI = struct {
                 if (this.arg_types.items.len > 0) {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
-                        "FFI_Callback_call((void*)0x{any}ULL, {d}, arguments)",
+                        "FFI_Callback_call((void*)0x{f}ULL, {d}, arguments)",
                         .{ fmt, this.arg_types.items.len },
                     );
                 } else {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
-                        "FFI_Callback_call((void*)0x{any}ULL, 0, (ZIG_REPR_TYPE*)0)",
+                        "FFI_Callback_call((void*)0x{f}ULL, 0, (ZIG_REPR_TYPE*)0)",
                         .{fmt},
                     );
                 }
@@ -1979,7 +1979,7 @@ pub const FFI = struct {
                 const len = inner_buf.len + 1;
                 inner_buf = inner_buf_[0..len];
                 inner_buf[0] = '_';
-                try writer.print("return {s}", .{this.return_type.toCExact(inner_buf)});
+                try writer.print("return {f}", .{this.return_type.toCExact(inner_buf)});
             }
 
             try writer.writeAll(";\n}\n\n");

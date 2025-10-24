@@ -119,10 +119,10 @@ pub const Expect = struct {
                 switch (!custom_label.isEmpty()) {
                     inline else => |use_default_label| {
                         if (use_default_label) {
-                            const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>{s}{s}<d>(<r>{s}<d>)<r>\n\n" ++ message_fmt, colors);
+                            const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>" ++ bun.deprecated.autoFormatLabel(@TypeOf(chain)) ++ bun.deprecated.autoFormatLabel(@TypeOf(matcher_name)) ++ "<d>(<r>" ++ bun.deprecated.autoFormatLabel(@TypeOf(matcher_params)) ++ "<d>)<r>\n\n" ++ message_fmt, colors);
                             return globalThis.throwPretty(fmt, .{ chain, matcher_name, matcher_params } ++ message_args);
                         } else {
-                            const fmt = comptime Output.prettyFmt("{}\n\n" ++ message_fmt, colors);
+                            const fmt = comptime Output.prettyFmt("{f}\n\n" ++ message_fmt, colors);
                             return globalThis.throwPretty(fmt, .{custom_label} ++ message_args);
                         }
                     },
@@ -190,7 +190,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     defer formatter.deinit();
-                                    const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                                    const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{f}<r>\n";
                                     return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return error.JSError;
@@ -203,7 +203,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     defer formatter.deinit();
-                                    const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                                    const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{f}<r>\n";
                                     return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return error.JSError;
@@ -219,7 +219,7 @@ pub const Expect = struct {
                     if (!silent) {
                         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                         defer formatter.deinit();
-                        const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
+                        const message = "Expected promise<r>\nReceived: <red>{f}<r>\n";
                         return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                     }
                     return error.JSError;
@@ -730,7 +730,7 @@ pub const Expect = struct {
             } else {
                 runner.snapshots.failed += 1;
                 const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
-                const fmt = signature ++ "\n\n{any}\n";
+                const fmt = signature ++ "\n\n{f}\n";
                 const diff_format = DiffFormatter{
                     .received_string = pretty_value.written(),
                     .expected_string = trim_res.trimmed,
@@ -807,7 +807,7 @@ pub const Expect = struct {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
-                    "\n\nReceived: {any}\n";
+                    "\n\nReceived: {f}\n";
 
                 var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                 defer formatter.deinit();
@@ -838,10 +838,10 @@ pub const Expect = struct {
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
-                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)}),
+                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {f}", .{value.toFmt(&formatter)}),
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
                 error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
-                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
+                else => globalThis.throw("Failed to snapshot value: {f}", .{value.toFmt(&formatter)}),
             };
         };
 
@@ -853,7 +853,7 @@ pub const Expect = struct {
 
             Jest.runner.?.snapshots.failed += 1;
             const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = signature ++ "\n\n{f}\n";
             const diff_format = DiffFormatter{
                 .received_string = pretty_value.written(),
                 .expected_string = saved_value,
@@ -1010,7 +1010,7 @@ pub const Expect = struct {
             "Unexpected return from matcher function `{s}`.\n" ++
             "Matcher functions should return an object in the following format:\n" ++
             "  {{message?: string | function, pass: boolean}}\n" ++
-            "'{any}' was returned";
+            "'{f}' was returned";
         const err = switch (Output.enable_ansi_colors) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
@@ -1101,7 +1101,7 @@ pub const Expect = struct {
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
-        return throwPrettyMatcherError(globalThis, bun.String.empty, matcher_name, matcher_params, .{}, "{s}", .{message_text});
+        return throwPrettyMatcherError(globalThis, bun.String.empty, matcher_name, matcher_params, .{}, "{f}", .{message_text});
     }
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
@@ -1189,13 +1189,13 @@ pub const Expect = struct {
 
         if (!expected.isNumber()) {
             var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+            return globalThis.throw("Expected value must be a non-negative integer: {f}", .{expected.toFmt(&fmt)});
         }
 
         const expected_assertions: f64 = try expected.toNumber(globalThis);
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
             var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+            return globalThis.throw("Expected value must be a non-negative integer: {f}", .{expected.toFmt(&fmt)});
         }
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
@@ -1933,11 +1933,11 @@ pub const ExpectMatcherUtils = struct {
 
         if (is_not) {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", true);
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = signature ++ "\n\n{f}\n";
             return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         } else {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", false);
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = signature ++ "\n\n{f}\n";
             return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         }
     }
@@ -1987,7 +1987,7 @@ pub const mock = struct {
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
         }
 
         return try returns.arrayIterator(globalThis);
@@ -2000,7 +2000,7 @@ pub const mock = struct {
         }
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function with returns: {f}", .{value.toFmt(&formatter)});
     }
     pub fn jestMockReturnObject_value(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!JSValue {
         return (try value.get(globalThis, "value")) orelse .js_undefined;
@@ -2026,7 +2026,7 @@ pub const mock = struct {
 
                 try writer.print("           {d: >4}: ", .{i + 1});
                 const call_args = self.calls.getIndex(self.globalThis, @intCast(i)) catch |e| return bun.deprecated.jsErrorToWriteError(e);
-                try writer.print("{any}", .{call_args.toFmt(self.formatter)});
+                try writer.print("{f}", .{call_args.toFmt(self.formatter)});
             }
         }
     };
@@ -2062,11 +2062,11 @@ pub const mock = struct {
                 const value = jestMockReturnObject_value(self.globalThis, item) catch |e| return bun.deprecated.jsErrorToWriteError(e);
                 switch (jestMockReturnObject_type(self.globalThis, item) catch |e| return bun.deprecated.jsErrorToWriteError(e)) {
                     .@"return" => {
-                        try writer.print("{any}", .{value.toFmt(self.formatter)});
+                        try writer.print("{f}", .{value.toFmt(self.formatter)});
                         num_returns += 1;
                     },
                     .throw => {
-                        try writer.print("function call threw an error: {any}", .{value.toFmt(self.formatter)});
+                        try writer.print("function call threw an error: {f}", .{value.toFmt(self.formatter)});
                     },
                     .incomplete => {
                         try writer.print("<incomplete call>", .{});
@@ -2092,7 +2092,7 @@ pub const mock = struct {
                 printed_once = true;
 
                 try writer.print("           {d: >4}: ", .{i});
-                try writer.print("{any}", .{val.toFmt(self.formatter)});
+                try writer.print("{f}", .{val.toFmt(self.formatter)});
             }
         }
     };

@@ -28,11 +28,11 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     // handle failure
     if (not) {
         const signature = comptime getSignature("toHaveBeenCalled", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{f}<r>\n", .{calls_length});
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
     }
 
     const signature = comptime getSignature("toHaveBeenCalled", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{f}<r>\n", .{calls_length});
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
 }
 
 const bun = @import("bun");

@@ -212,7 +212,7 @@ pub fn AstMaybe(
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
                                         ) catch unreachable;
                                         bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{
@@ -318,7 +318,7 @@ pub fn AstMaybe(
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
-                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                        std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                     ) catch unreachable;
                                     bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                     named_export_entry.value_ptr.* = .{
@@ -491,7 +491,7 @@ pub fn AstMaybe(
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                         ) catch unreachable;
                                         bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{

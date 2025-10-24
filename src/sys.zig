@@ -1949,17 +1949,17 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = darwin_nocancel.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-                log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
+                log("read({}, {d}) = {s} ({f})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+            log("read({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
         .linux => {
             while (true) {
                 const rc = syscall.read(fd.cast(), buf.ptr, adjusted_len);
-                log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+                log("read({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -2537,7 +2537,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
         }
 
-        log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
+        log("CreateSymbolicLinkW({f}, {f}, {any}) = 0", .{
             bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
@@ -3033,7 +3033,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
                 var max_pipe_size_buf: [128]u8 = undefined;
                 const max_pipe_size = switch (read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
                     .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
-                        log("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
+                        log("Failed to parse /proc/sys/fs/pipe-max-size: {s}\n", .{@errorName(err)});
                         return default_out_size;
                     },
                     .err => |err| {

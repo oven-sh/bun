@@ -638,4 +638,13 @@ pub fn jsErrorToWriteError(e: bun.JSError) std.Io.Writer.Error {
     };
 }
 
+pub fn autoFormatLabel(comptime ty: type) []const u8 {
+    if (std.meta.hasFn(ty, "format")) {
+        return "{f}";
+    } else {
+        return "{s}";
+    }
+    // else return {any}
+}
+
 const bun = @import("bun");

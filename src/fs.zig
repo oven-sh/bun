@@ -50,7 +50,7 @@ pub const FileSystem = struct {
     pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
-        return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
+        return try std.fmt.bufPrintZ(buf, ".{f}-{f}.{s}", .{
             bun.fmt.hexIntLower(hex_value),
             bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .monotonic)),
             extname,
@@ -856,7 +856,7 @@ pub const FileSystem = struct {
 
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{s}-{any}",
+                    "{s}-{f}",
                     .{
                         basename,
                         bun.fmt.hexIntLower(hex_int),

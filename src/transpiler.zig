@@ -173,13 +173,13 @@ pub const PluginRunner = struct {
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{f}", .{file_path}) catch unreachable,
                 user_namespace.byteSlice(),
             );
         } else {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
-                std.fmt.allocPrint(this.allocator, "{any}", .{user_namespace}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{f}", .{file_path}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{f}", .{user_namespace}) catch unreachable,
             );
         }
     }
@@ -264,7 +264,7 @@ pub const PluginRunner = struct {
         defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by jsc
-        const combined_string = std.fmt.allocPrint(this.allocator, "{any}:{any}", .{ user_namespace, file_path }) catch unreachable;
+        const combined_string = std.fmt.allocPrint(this.allocator, "{f}:{f}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
         const jsval = out_.toJS(this.global_object);
         const out = jsval.toBunString(this.global_object) catch @panic("unreachable");

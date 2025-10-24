@@ -1280,6 +1280,112 @@ describe("bins", () => {
     expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
     expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
   });
+
+  test('are included even if not included in "files"', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-and-files-1",
+          version: "2.2.2",
+          files: ["dist"],
+          bin: "bin.js",
+        }),
+      ),
+      write(join(packageDir, "dist", "hi.js"), "console.log('hi!')"),
+      write(join(packageDir, "bin.js"), "console.log('hello')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-and-files-1-2.2.2.tgz"));
+
+    expect(tarball.entries).toMatchObject([
+      {
+        pathname: "package/package.json",
+      },
+      {
+        pathname: "package/bin.js",
+      },
+      {
+        pathname: "package/dist/hi.js",
+      },
+    ]);
+  });
+
+  test('"directories" works with "files"', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-and-files-2",
+          version: "1.2.3",
+          files: ["dist"],
+          directories: {
+            bin: "bins",
+          },
+        }),
+      ),
+      write(join(packageDir, "dist", "hi.js"), "console.log('hi!')"),
+      write(join(packageDir, "bins", "bin.js"), "console.log('hello')"),
+      write(join(packageDir, "bins", "what", "what.js"), "console.log('hello')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-and-files-2-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      {
+        pathname: "package/package.json",
+      },
+      {
+        pathname: "package/bins/bin.js",
+      },
+      {
+        pathname: "package/bins/what/what.js",
+      },
+      {
+        pathname: "package/dist/hi.js",
+      },
+    ]);
+  });
+
+  test('deduplicate with "files"', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-and-files-2",
+          version: "1.2.3",
+          files: ["dist", "bins/bin.js"],
+          directories: {
+            bin: "bins",
+          },
+        }),
+      ),
+      write(join(packageDir, "dist", "hi.js"), "console.log('hi!')"),
+      write(join(packageDir, "bins", "bin.js"), "console.log('hello')"),
+      write(join(packageDir, "bins", "what", "what.js"), "console.log('hello')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-and-files-2-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      {
+        pathname: "package/package.json",
+      },
+      {
+        pathname: "package/bins/bin.js",
+      },
+      {
+        pathname: "package/bins/what/what.js",
+      },
+      {
+        pathname: "package/dist/hi.js",
+      },
+    ]);
+  });
 });
 
 test("unicode", async () => {

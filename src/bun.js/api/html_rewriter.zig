@@ -545,7 +545,7 @@ pub const HTMLRewriter = struct {
                     sinkBodyValue.Locked.task = null;
                 }
                 if (is_async) {
-                    sinkBodyValue.toErrorInstance(err.dupe(sink.global), sink.global);
+                    sinkBodyValue.toErrorInstance(err.dupe(sink.global), sink.global) catch {}; // TODO: properly propagate exception upwards
                 } else {
                     var ret_err = createLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
@@ -575,7 +575,7 @@ pub const HTMLRewriter = struct {
 
             sink.rewriter.?.write(bytes) catch {
                 if (is_async) {
-                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -586,7 +586,7 @@ pub const HTMLRewriter = struct {
                 if (!is_async) response.finalize();
                 sink.response = undefined;
                 if (is_async) {
-                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -619,7 +619,7 @@ pub const HTMLRewriter = struct {
                 bodyValue,
                 this.global,
                 null,
-            );
+            ) catch {}; // TODO: properly propagate exception upwards
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {

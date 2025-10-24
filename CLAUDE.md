@@ -23,12 +23,15 @@ Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.jso
 
 ### Test Organization
 
+If a test is for a specific numbered GitHub Issue, it should be placed in `test/regression/issue/${issueNumber}.test.ts`. Ensure the issue number is **REAL** and not a placeholder!
+
+If no valid issue number is provided, find the best existing file to modify instead, such as;
+
 - `test/js/bun/` - Bun-specific API tests (http, crypto, ffi, shell, etc.)
 - `test/js/node/` - Node.js compatibility tests
 - `test/js/web/` - Web API tests (fetch, WebSocket, streams, etc.)
 - `test/cli/` - CLI command tests (install, run, test, etc.)
-- `test/regression/issue/` - Regression tests (create one per bug fix)
-- `test/bundler/` - Bundler and transpiler tests
+- `test/bundler/` - Bundler and transpiler tests. Use `itBundled` helper.
 - `test/integration/` - End-to-end integration tests
 - `test/napi/` - N-API compatibility tests
 - `test/v8/` - V8 C++ API compatibility tests
@@ -61,15 +64,20 @@ test("my feature", async () => {
     proc.exited,
   ]);
 
-  expect(exitCode).toBe(0);
   // Prefer snapshot tests over expect(stdout).toBe("hello\n");
   expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
+
+  // Assert the exit code last. This gives you a more useful error message on test failure.
+  expect(exitCode).toBe(0);
 });
 ```
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
 - Use `normalizeBunSnapshot` to normalize snapshot output of the test.
 - NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
+- Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
+- When spawning processes, tests should assert the output BEFORE asserting the exit code. This gives you a more useful error message on test failure.
+- **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 
 ## Code Architecture
 
@@ -78,7 +86,7 @@ test("my feature", async () => {
 - **Zig code** (`src/*.zig`): Core runtime, JavaScript bindings, package manager
 - **C++ code** (`src/bun.js/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many files are auto-generated from `.classes.ts` and other sources
+- **Generated code**: Many files are auto-generated from `.classes.ts` and other sources. Bun will automatically rebuild these files when you make changes to them.
 
 ### Core Source Organization
 
@@ -178,3 +186,5 @@ Built-in JavaScript modules use special syntax and are organized as:
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scopeName>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
+
+**ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.

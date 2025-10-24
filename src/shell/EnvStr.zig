@@ -72,6 +72,21 @@ pub const EnvStr = packed struct(u128) {
         };
     }
 
+    pub fn memoryCost(this: EnvStr) usize {
+        const divisor: usize = brk: {
+            if (this.asRefCounted()) |refc| {
+                break :brk refc.refcount;
+            }
+            break :brk 1;
+        };
+        if (divisor == 0) {
+            @branchHint(.unlikely);
+            return 0;
+        }
+
+        return this.len / divisor;
+    }
+
     pub fn ref(this: EnvStr) void {
         if (this.asRefCounted()) |refc| {
             refc.ref();

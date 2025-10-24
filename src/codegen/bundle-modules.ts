@@ -204,7 +204,7 @@ const config_cli = [
   process.execPath,
   "build",
   ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax"]),
+  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
   "--root",
   TMP_DIR,
   "--target",

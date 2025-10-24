@@ -80,7 +80,7 @@ pub fn onData(
     this: *@This(),
     stream: streams.Result,
     allocator: std.mem.Allocator,
-) void {
+) bun.JSTerminated!void {
     jsc.markBinding(@src());
     if (this.done) {
         if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
@@ -115,8 +115,7 @@ pub fn onData(
 
             log("ByteStream.onData err  action.reject()", .{});
 
-            action.reject(this.parent().globalThis, stream.err);
-            return;
+            return action.reject(this.parent().globalThis, stream.err);
         }
 
         if (this.has_received_last_chunk) {
@@ -128,7 +127,7 @@ pub fn onData(
                 log("ByteStream.onData done and action.fulfill()", .{});
 
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
+                try action.fulfill(this.parent().globalThis, &blob);
                 return;
             }
             if (this.buffer.capacity == 0 and stream == .owned_and_done) {
@@ -136,7 +135,7 @@ pub fn onData(
 
                 this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
+                try action.fulfill(this.parent().globalThis, &blob);
                 return;
             }
             defer {
@@ -148,8 +147,7 @@ pub fn onData(
 
             bun.handleOom(this.buffer.appendSlice(chunk));
             var blob = this.toAnyBlob().?;
-            action.fulfill(this.parent().globalThis, &blob);
-
+            try action.fulfill(this.parent().globalThis, &blob);
             return;
         } else {
             bun.handleOom(this.buffer.appendSlice(chunk));
@@ -355,7 +353,7 @@ pub fn onCancel(this: *@This()) void {
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        action.reject(global, .{ .AbortReason = .UserAbort });
+        action.reject(global, .{ .AbortReason = .UserAbort }) catch {}; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }

@@ -21,7 +21,7 @@ pub const FileCopier = struct {
         };
     }
 
-    pub fn deinit(this: *const FileCopier) void {
+    pub fn deinit(this: *FileCopier) void {
         this.walker.deinit();
     }
 

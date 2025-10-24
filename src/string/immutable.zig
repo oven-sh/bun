@@ -10,6 +10,19 @@ pub const Encoding = enum {
     utf16,
 };
 
+pub const AsciiStatus = enum {
+    unknown,
+    all_ascii,
+    non_ascii,
+
+    pub fn fromBool(is_all_ascii: ?bool) AsciiStatus {
+        return if (is_all_ascii orelse return .unknown)
+            .all_ascii
+        else
+            .non_ascii;
+    }
+};
+
 /// Returned by classification functions that do not discriminate between utf8 and ascii.
 pub const EncodingNonAscii = enum {
     utf8,
@@ -2306,6 +2319,9 @@ pub const visibleCodepointWidthType = visible_.visibleCodepointWidthType;
 pub const escapeHTMLForLatin1Input = escapeHTML_.escapeHTMLForLatin1Input;
 pub const escapeHTMLForUTF16Input = escapeHTML_.escapeHTMLForUTF16Input;
 
+pub const escapeRegExp = escapeRegExp_.escapeRegExp;
+pub const escapeRegExpForPackageNameMatching = escapeRegExp_.escapeRegExpForPackageNameMatching;
+
 pub const addNTPathPrefix = paths_.addNTPathPrefix;
 pub const addNTPathPrefixIfNeeded = paths_.addNTPathPrefixIfNeeded;
 pub const addLongPathPrefix = paths_.addLongPathPrefix;
@@ -2347,6 +2363,7 @@ pub const CodePoint = i32;
 const string = []const u8;
 
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
+const escapeRegExp_ = @import("./escapeRegExp.zig");
 const paths_ = @import("./immutable/paths.zig");
 const std = @import("std");
 const unicode = @import("./immutable/unicode.zig");

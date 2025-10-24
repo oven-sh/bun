@@ -26,18 +26,17 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     static NullableType nullValue() { return JSC::jsUndefined(); }
     static bool isNullValue(const NullableType& value) { return value.isUndefined(); }
     static ImplementationType extractValueFromNullable(const NullableType& value) { return value; }
-    static constexpr auto humanReadableName() { return std::to_array("any"); }
 };
 
 // For use in unions, to represent a nullable union.
-struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {
-    static constexpr auto humanReadableName() { return std::to_array("null"); }
-};
+struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 
 // For use in unions, to represent an optional union.
-struct IDLStrictUndefined : WebCore::IDLType<std::monostate> {
-    static constexpr auto humanReadableName() { return std::to_array("undefined"); }
-};
+struct IDLStrictUndefined : WebCore::IDLType<std::monostate> {};
+
+// Treats all falsy values as null.
+template<typename IDL>
+struct IDLLooseNullable : WebCore::IDLNullable<IDL> {};
 
 template<std::integral T>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
@@ -45,6 +44,10 @@ struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
 struct IDLFiniteDouble : WebCore::IDLDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
+
+// Converts to a number first.
+template<std::integral T>
+struct IDLLooseInteger : IDLStrictInteger<T> {};
 
 template<typename... IDL>
 struct IDLOrderedUnion : WebCore::IDLType<std::variant<typename IDL::ImplementationType...>> {};

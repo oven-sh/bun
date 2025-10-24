@@ -331,3 +331,15 @@ describe("iterator", () => {
   `);
   });
 });
+
+describe("invalid delete usage", () => {
+  test("invalid usage does not crash", () => {
+    expect(() => {
+      const v1 = Bun.CookieMap;
+      // @ts-ignore
+      const v2 = new v1(v1, v1, Bun, v1);
+      // @ts-ignore
+      v2.delete(v2);
+    }).toThrow("Cookie name is required");
+  });
+});

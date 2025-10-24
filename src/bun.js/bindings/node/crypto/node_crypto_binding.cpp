@@ -197,7 +197,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.len);
+    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.len);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(bufferResult);

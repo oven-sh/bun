@@ -74,4 +74,15 @@ describe("path.relative", () => {
     });
     assert.strictEqual(failures.length, 0, failures.join(""));
   });
+
+  test("very long paths", () => {
+    // Regression test: buffer overflow with very long paths
+    // This used to panic because the buffer didn't account for the null terminator
+    const longPath1 = "/home/" + "a".repeat(50000);
+    const longPath2 = "/home/" + "b".repeat(50000);
+    const result = path.relative(longPath1, longPath2);
+    // Should return something like "../bbb...bbb"
+    assert.ok(result.startsWith(".."));
+    assert.ok(result.includes("b"));
+  });
 });

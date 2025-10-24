@@ -35,6 +35,13 @@ pub fn refSelf(this: *IOReader) *IOReader {
     return this;
 }
 
+pub fn memoryCost(this: *const IOReader) usize {
+    var size: usize = @sizeOf(IOReader);
+    size += this.buf.allocatedSlice().len;
+    size += this.readers.memoryCost();
+    return size;
+}
+
 pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
@@ -222,6 +229,14 @@ pub const IOReaderChildPtr = struct {
             .ptr = ChildPtrRaw.init(p),
             // .ptr = @ptrCast(p),
         };
+    }
+
+    pub fn memoryCost(this: IOReaderChildPtr) usize {
+        if (this.ptr.is(Interpreter.Builtin.Cat)) {
+            // TODO:
+            return @sizeOf(Interpreter.Builtin.Cat);
+        }
+        return 0;
     }
 
     /// Return true if the child should be deleted

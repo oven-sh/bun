@@ -97,7 +97,7 @@ describe.concurrent("socket", () => {
           data() {},
         },
       }),
-    ).toThrow(`Expected \"port\" to be a number between 0 and 65535`);
+    ).toThrow("port must be in the range [0, 65535]");
   });
 
   it("should keep process alive only when active", async () => {

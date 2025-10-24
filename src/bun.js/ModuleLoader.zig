@@ -2530,37 +2530,17 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target)) |replacement| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target, .{ .rewrite_jest_for_tests = transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
-                if (transpiler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
-                        import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
-                        import_record.path.text = "test";
-                        import_record.is_external_without_side_effects = true;
-                        continue;
-                    }
-                }
-
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.is_external_without_side_effects = true;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
                 }
             }
 
@@ -2642,7 +2622,7 @@ pub const HardcodedModule = enum {
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
-    @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
+    @"bun:test",
     @"bun:wrap",
     @"bun:sqlite",
     @"node:assert",
@@ -2993,7 +2973,7 @@ pub const HardcodedModule = enum {
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
-            .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
+            .{ "bun:test", .{ .path = "bun:test" } },
             .{ "bun:app", .{ .path = "bun:app" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
@@ -3025,6 +3005,11 @@ pub const HardcodedModule = enum {
             .{ "next/dist/compiled/undici", .{ .path = "undici" } },
         };
 
+        const bun_test_extra_alias_kvs = [_]struct { string, Alias }{
+            .{ "@jest/globals", .{ .path = "bun:test" } },
+            .{ "vitest", .{ .path = "bun:test" } },
+        };
+
         const node_extra_alias_kvs = [_]struct { string, Alias }{
             nodeEntry("node:inspector/promises"),
             nodeEntry("inspector/promises"),
@@ -3032,14 +3017,20 @@ pub const HardcodedModule = enum {
 
         const node_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_extra_alias_kvs);
         const bun_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
+        const bun_test_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs ++ bun_test_extra_alias_kvs);
 
-        pub fn has(name: []const u8, target: options.Target) bool {
-            return get(name, target) != null;
+        const Cfg = struct { rewrite_jest_for_tests: bool = false };
+        pub fn has(name: []const u8, target: options.Target, cfg: Cfg) bool {
+            return get(name, target, cfg) != null;
         }
 
-        pub fn get(name: []const u8, target: options.Target) ?Alias {
+        pub fn get(name: []const u8, target: options.Target, cfg: Cfg) ?Alias {
             if (target.isBun()) {
-                return bun_aliases.get(name);
+                if (cfg.rewrite_jest_for_tests) {
+                    return bun_test_aliases.get(name);
+                } else {
+                    return bun_aliases.get(name);
+                }
             } else if (target.isNode()) {
                 return node_aliases.get(name);
             }

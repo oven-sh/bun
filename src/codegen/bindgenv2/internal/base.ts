@@ -5,10 +5,12 @@ import type { NullableType, OptionalType } from "./optional";
 export type CodeStyle = "compact" | "pretty";
 
 export abstract class Type {
+  /** Treats `undefined` as a not-provided value. */
   get optional(): OptionalType {
     return require("./optional").optional(this);
   }
 
+  /** Treats `null` or `undefined` as a not-provided value. */
   get nullable(): NullableType {
     return require("./optional").nullable(this);
   }

@@ -136,6 +136,7 @@ pub const E = enum(u16) {
     UNKNOWN = 134,
     CHARSET = 135,
     EOF = 136,
+    FTYPE = 137,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -439,6 +440,7 @@ pub const SystemErrno = enum(u16) {
     EUNKNOWN = 134,
     ECHARSET = 135,
     EOF = 136,
+    EFTYPE = 137,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -527,7 +529,7 @@ pub const SystemErrno = enum(u16) {
     UV_EUNATCH = -uv.UV_EUNATCH,
     UV_ENOEXEC = -uv.UV_ENOEXEC,
 
-    pub const max = 137;
+    pub const max = 138;
 
     pub const Error = error{
         EPERM,
@@ -666,6 +668,7 @@ pub const SystemErrno = enum(u16) {
         EUNKNOWN,
         ECHARSET,
         EOF,
+        EFTYPE,
         Unexpected,
     };
 
@@ -811,6 +814,7 @@ pub const SystemErrno = enum(u16) {
         errors[@intFromEnum(SystemErrno.EUNKNOWN)] = error.EUNKNOWN;
         errors[@intFromEnum(SystemErrno.ECHARSET)] = error.ECHARSET;
         errors[@intFromEnum(SystemErrno.EOF)] = error.EOF;
+        errors[@intFromEnum(SystemErrno.EFTYPE)] = error.EFTYPE;
         break :brk errors;
     };
 
@@ -952,6 +956,7 @@ pub const SystemErrno = enum(u16) {
             error.EUNKNOWN => SystemErrno.EUNKNOWN,
             error.ECHARSET => SystemErrno.ECHARSET,
             error.EOF => SystemErrno.EOF,
+            error.EFTYPE => SystemErrno.EFTYPE,
             else => return null,
         };
     }

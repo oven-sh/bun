@@ -18,6 +18,21 @@ pub const DecodedJSValue = extern struct {
     pub fn encode(self: Self) jsc.JSValue {
         return @enumFromInt(self.u.asInt64);
     }
+
+    fn asU64(self: Self) u64 {
+        return @bitCast(self.u.asInt64);
+    }
+
+    /// Equivalent to `JSC::JSValue::isCell`. Note that like JSC, this method treats 0 as a cell.
+    pub fn isCell(self: Self) bool {
+        return self.asU64() & ffi.NotCellMask == 0;
+    }
+
+    /// Equivalent to `JSC::JSValue::asCell`.
+    pub fn asCell(self: Self) ?*jsc.JSCell {
+        bun.assertf(self.isCell(), "not a cell: 0x{x}", .{self.asU64()});
+        return self.u.ptr;
+    }
 };
 
 comptime {
@@ -30,4 +45,5 @@ comptime {
 }
 
 const bun = @import("bun");
+const ffi = @import("./FFI.zig");
 const jsc = bun.bun_js.jsc;

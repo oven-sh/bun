@@ -5575,6 +5575,9 @@ describe("css tests", () => {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
       minify_test(`:root::${name}(foo):only-child {position: fixed}`, `:root::${name}(foo):only-child{position:fixed}`);
+      // Test class selector syntax (.class-name)
+      minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
+      minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",

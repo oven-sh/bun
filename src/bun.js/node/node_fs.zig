@@ -287,7 +287,7 @@ pub const Async = struct {
                 this.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSTerminated!void {
                 defer this.deinit();
 
                 const globalObject = this.globalObject;
@@ -308,10 +308,10 @@ pub const Async = struct {
 
                 switch (success) {
                     false => {
-                        promise.reject(globalObject, result);
+                        try promise.reject(globalObject, result);
                     },
                     true => {
-                        promise.resolve(globalObject, result);
+                        try promise.resolve(globalObject, result);
                     },
                 }
             }
@@ -387,7 +387,7 @@ pub const Async = struct {
                 this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSTerminated!void {
                 defer this.deinit();
                 const globalObject = this.globalObject;
 
@@ -409,17 +409,17 @@ pub const Async = struct {
                 if (have_abort_signal) check_abort: {
                     const signal = this.args.signal orelse break :check_abort;
                     if (signal.reasonIfAborted(globalObject)) |reason| {
-                        promise.reject(globalObject, reason.toJS(globalObject));
+                        try promise.reject(globalObject, reason.toJS(globalObject));
                         return;
                     }
                 }
 
                 switch (success) {
                     false => {
-                        promise.reject(globalObject, result);
+                        try promise.reject(globalObject, result);
                     },
                     true => {
-                        promise.resolve(globalObject, result);
+                        try promise.resolve(globalObject, result);
                     },
                 }
             }
@@ -651,10 +651,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
-            this.runFromJSThread();
+            this.runFromJSThread() catch {}; // TODO: properly propagate exception upwards
         }
 
-        fn runFromJSThread(this: *ThisAsyncCpTask) void {
+        fn runFromJSThread(this: *ThisAsyncCpTask) bun.JSTerminated!void {
             if (comptime is_shell) {
                 this.shelltask.cpOnFinish(this.result);
                 this.deinit();
@@ -681,10 +681,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinit();
             switch (success) {
                 false => {
-                    promise.reject(globalObject, result);
+                    try promise.reject(globalObject, result);
                 },
                 true => {
-                    promise.resolve(globalObject, result);
+                    try promise.resolve(globalObject, result);
                 },
             }
         }
@@ -1212,7 +1212,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.result_list_count.store(0, .monotonic);
     }
 
-    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
+    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) bun.JSTerminated!void {
         const globalObject = this.globalObject;
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
@@ -1234,10 +1234,10 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.deinit();
         switch (success) {
             false => {
-                promise.reject(globalObject, result);
+                try promise.reject(globalObject, result);
             },
             true => {
-                promise.resolve(globalObject, result);
+                try promise.resolve(globalObject, result);
             },
         }
     }

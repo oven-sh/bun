@@ -373,21 +373,17 @@ pub const Result = union(Tag) {
             };
         }
 
-        pub fn fulfillPromise(
-            result: Writable,
-            promise: *JSPromise,
-            globalThis: *JSGlobalObject,
-        ) void {
+        pub fn fulfillPromise(result: Writable, promise: *JSPromise, globalThis: *JSGlobalObject) void {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis));
+                    promise.reject(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
                 .done => {
-                    promise.resolve(globalThis, .false);
+                    promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
                 },
                 else => {
-                    promise.resolve(globalThis, result.toJS(globalThis));
+                    promise.resolve(globalThis, result.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
             }
         }
@@ -537,21 +533,21 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value);
+                promise.reject(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
             .done => {
-                promise.resolve(globalThis, .false);
+                promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
                     result.* = .{ .temporary = .{} };
-                    promise.reject(globalThis, err);
+                    promise.reject(globalThis, err) catch {}; // TODO: properly propagate exception upwards
                     return;
                 };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
-                promise.resolve(globalThis, value);
+                promise.resolve(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
         }
     }
@@ -826,7 +822,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.has_backpressure = false;
             if (this.aborted) {
                 this.signal.close(null);
-                this.flushPromise();
+                this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                 this.finalize();
                 return false;
             }
@@ -841,7 +837,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (chunk.len == 0) {
                 if (this.done) {
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
@@ -857,14 +853,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                         res.clearOnWritable();
                     }
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
             }
 
             // flush the javascript promise from calling .flush()
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
@@ -887,7 +883,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.wrote = 0;
             this.wrote_at_start_of_flush = 0;
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             if (this.buffer.cap == 0) {
                 bun.assert(this.pooled_buffer == null);
@@ -1194,7 +1190,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             this.markDone();
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.signal.close(null);
             this.finalize();
 
@@ -1215,7 +1211,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.signal.close(null);
 
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.finalize();
         }
 
@@ -1308,15 +1304,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
-        pub fn flushPromise(this: *@This()) void {
+        pub fn flushPromise(this: *@This()) bun.JSTerminated!void {
             if (this.pending_flush) |prom| {
                 log("flushPromise()", .{});
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
-                this.wrote_at_start_of_flush = this.wrote;
+                defer this.wrote_at_start_of_flush = this.wrote;
+                try prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
             }
         }
 
@@ -1394,10 +1390,10 @@ pub const NetworkSink = struct {
         }
     }
 
-    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
+    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) bun.JSTerminated!void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
+            try this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
         }
     }
 
@@ -1548,16 +1544,16 @@ pub const BufferAction = union(enum) {
 
     pub const Tag = @typeInfo(BufferAction).@"union".tag_type.?;
 
-    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) void {
-        blob.wrap(.{ .normal = this.swap() }, global, this.*);
+    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) bun.JSTerminated!void {
+        return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) void {
-        this.swap().reject(global, err.toJSWeak(global)[0]);
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
+        return this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
-    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) void {
-        this.swap().resolve(global, result);
+    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {
+        return this.swap().resolve(global, result);
     }
 
     pub fn value(this: *BufferAction) jsc.JSValue {

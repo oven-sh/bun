@@ -25,6 +25,7 @@ pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObje
             globalObject.throwOutOfMemory() catch {};
             return null;
         },
+        error.JSTerminated => return null,
     });
 }
 

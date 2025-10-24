@@ -1769,9 +1769,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 line_indent: Indent,
                 multiline: bool = false,
 
-                pub fn done(ctx: *const @This()) Token(enc) {
+                pub fn done(ctx: *@This()) Token(enc) {
                     const scalar: Token(enc).Scalar = scalar: {
-                        const scalar_str = ctx.str_builder.done();
+                        var scalar_str = ctx.str_builder.done();
 
                         if (ctx.scalar) |scalar| {
                             if (scalar_str.len() == ctx.resolved_scalar_len) {
@@ -3117,7 +3117,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentEnd;
                     }
                     nl = false;
@@ -3127,7 +3127,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '-' => {
-                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentStart;
                     }
                     nl = false;
@@ -3212,22 +3212,26 @@ pub fn Parser(comptime enc: Encoding) type {
             const scalar_indent = self.line_indent;
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
 
+            var nl = false;
+
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentEnd;
                     }
+                    nl = false;
                     try text.append('.');
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '-' => {
-                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
                         return error.UnexpectedDocumentStart;
                     }
+                    nl = false;
                     try text.append('-');
                     self.inc(1);
                     continue :next self.next();
@@ -3248,12 +3252,14 @@ pub fn Parser(comptime enc: Encoding) type {
                             return error.UnexpectedCharacter;
                         }
                     }
+                    nl = true;
                     continue :next self.next();
                 },
 
                 ' ',
                 '\t',
                 => {
+                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
@@ -3264,6 +3270,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '"' => {
+                    nl = false;
                     self.inc(1);
                     return .scalar(.{
                         .start = start,
@@ -3280,6 +3287,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '\\' => {
+                    nl = false;
                     self.inc(1);
                     switch (self.next()) {
                         '\r',
@@ -3350,6 +3358,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 else => |c| {
+                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();
@@ -4521,7 +4530,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 };
             }
 
-            pub fn deinit(self: *const @This()) void {
+            pub fn deinit(self: *@This()) void {
                 switch (self.*) {
                     .range => {},
                     .list => |*list| list.deinit(),

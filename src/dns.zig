@@ -331,7 +331,7 @@ pub const GetAddrInfo = struct {
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
-                            try array.putIndex(globalThis, i, item.toJS(globalThis));
+                            try array.putIndex(globalThis, i, try item.toJS(globalThis));
                             i += 1;
                         }
                         break :brk array;
@@ -373,12 +373,9 @@ pub const GetAddrInfo = struct {
             };
         }
 
-        pub fn toJS(this: *const Result, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn toJS(this: *const Result, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             const obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, jsc.ZigString.static("address"), addressToJS(&this.address, globalThis) catch |err| return switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            });
+            obj.put(globalThis, jsc.ZigString.static("address"), try addressToJS(&this.address, globalThis));
             obj.put(globalThis, jsc.ZigString.static("family"), switch (this.address.any.family) {
                 std.posix.AF.INET => JSValue.jsNumber(4),
                 std.posix.AF.INET6 => JSValue.jsNumber(6),
@@ -449,7 +446,7 @@ pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *jsc.JSGlobalOb
             try array.putIndex(
                 globalThis,
                 j,
-                GetAddrInfo.Result.toJS(
+                try GetAddrInfo.Result.toJS(
                     &(GetAddrInfo.Result.fromAddrInfo(this_node) orelse continue),
                     globalThis,
                 ),

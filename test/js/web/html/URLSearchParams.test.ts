@@ -153,6 +153,62 @@ describe("URLSearchParams", () => {
 
       expect(JSON.stringify(params)).toBe("{}");
     });
+
+    it("should handle numeric string keys in .toJSON", () => {
+      const params = new URLSearchParams();
+      params.set("39208", "updated");
+      // @ts-ignore
+      expect(params.toJSON()).toEqual({ "39208": "updated" });
+    });
+
+    it("should handle various numeric keys in .toJSON", () => {
+      const params = new URLSearchParams();
+      params.set("0", "zero");
+      params.set("100", "hundred");
+      params.set("99999", "large");
+      // @ts-ignore
+      expect(params.toJSON()).toEqual({
+        "0": "zero",
+        "100": "hundred",
+        "99999": "large",
+      });
+    });
+
+    it("should handle mixed numeric and non-numeric keys in .toJSON", () => {
+      const params = new URLSearchParams();
+      params.set("name", "John");
+      params.set("123", "numeric");
+      params.set("age", "30");
+      params.set("456", "another");
+      // @ts-ignore
+      expect(params.toJSON()).toEqual({
+        "name": "John",
+        "123": "numeric",
+        "age": "30",
+        "456": "another",
+      });
+    });
+
+    it("should handle duplicate numeric keys in .toJSON", () => {
+      const params = new URLSearchParams();
+      params.append("100", "first");
+      params.append("100", "second");
+      params.append("name", "test");
+      // @ts-ignore
+      expect(params.toJSON()).toEqual({
+        "100": ["first", "second"],
+        "name": "test",
+      });
+    });
+
+    it("toJSON with extra arguments should not crash", () => {
+      const params = new URLSearchParams();
+      params.set("39208", "updated");
+      // toJSON should ignore extra arguments
+      // @ts-ignore - intentionally passing extra args
+      const result = params.toJSON({}, URLSearchParams, {}, "updated");
+      expect(result).toEqual({ "39208": "updated" });
+    });
   });
 });
 

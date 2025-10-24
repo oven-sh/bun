@@ -23,7 +23,11 @@ pub const ZigStackFrame = extern struct {
         var frame: api.StackFrame = comptime std.mem.zeroes(api.StackFrame);
         if (!this.function_name.isEmpty()) {
             var slicer = this.function_name.toUTF8(allocator);
-            frame.function_name = (try slicer.cloneIfNeeded(allocator)).slice();
+            frame.function_name = (try slicer.cloneIfBorrowed(allocator)).slice();
+            // TODO: Memory leak? `frame.function_name` may have just been allocated by this
+            // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
+            // make the ownership clearer, but would also make the memory leak worse without an
+            // additional free.
         }
 
         if (!this.source_url.isEmpty()) {

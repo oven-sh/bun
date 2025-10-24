@@ -7,6 +7,7 @@ pub const Installer = struct {
     installed: Bitset,
     install_node: ?*Progress.Node,
     scripts_node: ?*Progress.Node,
+    is_new_bun_modules: bool,
 
     manager: *PackageManager,
     command_ctx: Command.Context,
@@ -442,6 +443,7 @@ pub const Installer = struct {
             const entry_dependencies = entries.items(.dependencies);
             const entry_steps = entries.items(.step);
             const entry_scripts = entries.items(.scripts);
+            const entry_hoisted = entries.items(.hoisted);
 
             const nodes = installer.store.nodes.slice();
             const node_pkg_ids = nodes.items(.pkg_id);
@@ -459,7 +461,7 @@ pub const Installer = struct {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
-                    var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res.tag) {
+                    var pkg_cache_dir_subpath: bun.AutoRelPath = .from(switch (pkg_res.tag) {
                         else => |tag| pkg_cache_dir_subpath: {
                             const patch_info = try installer.packagePatchInfo(
                                 pkg_name,
@@ -643,10 +645,16 @@ pub const Installer = struct {
                                 bun.Output.flush();
                             }
 
-                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
+                            var cloner: FileCloner = .{
+                                .cache_dir = cache_dir,
+                                .cache_dir_subpath = pkg_cache_dir_subpath,
+                                .dest_subpath = dest_subpath,
+                            };
+
+                            switch (cloner.clone()) {
                                 .result => {},
-                                .err => |clonefile_err1| {
-                                    switch (clonefile_err1.getErrno()) {
+                                .err => |err| {
+                                    switch (err.getErrno()) {
                                         .XDEV => {
                                             installer.supported_backend.store(.copyfile, .monotonic);
                                             continue :backend .copyfile;
@@ -655,19 +663,8 @@ pub const Installer = struct {
                                             installer.supported_backend.store(.hardlink, .monotonic);
                                             continue :backend .hardlink;
                                         },
-                                        .NOENT => {
-                                            const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
-                                                return .failure(.{ .link_package = clonefile_err1 });
-                                            };
-                                            FD.cwd().makePath(u8, parent_dest_dir) catch {};
-                                            switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
-                                                .result => {},
-                                                .err => |clonefile_err2| return .failure(.{ .link_package = clonefile_err2 }),
-                                            }
-                                        },
                                         else => {
-                                            installer.supported_backend.store(.hardlink, .monotonic);
-                                            continue :backend .hardlink;
+                                            return .failure(.{ .link_package = err });
                                         },
                                     }
                                 },
@@ -894,40 +891,10 @@ pub const Installer = struct {
                         .local_tarball,
                         .remote_tarball,
                         => {
-                            const string_buf = lockfile.buffers.string_bytes.items;
-
-                            var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();
-                            defer hidden_hoisted_node_modules.deinit();
-
-                            hidden_hoisted_node_modules.append(
-                                "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
-                            );
-                            hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
-
-                            var target: bun.RelPath(.{ .sep = .auto }) = .init();
-                            defer target.deinit();
-
-                            target.append("..");
-                            if (strings.containsChar(pkg_name.slice(installer.lockfile.buffers.string_bytes.items), '/')) {
-                                target.append("..");
+                            if (!entry_hoisted[this.entry_id.get()]) {
+                                continue :next_step this.nextStep(current_step);
                             }
-
-                            target.appendFmt("{}/node_modules/{s}", .{
-                                Store.Entry.fmtStorePath(this.entry_id, installer.store, installer.lockfile),
-                                pkg_name.slice(string_buf),
-                            });
-
-                            var full_target: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
-                            defer full_target.deinit();
-
-                            installer.appendStorePath(&full_target, this.entry_id);
-
-                            const symlinker: Symlinker = .{
-                                .dest = hidden_hoisted_node_modules,
-                                .target = target,
-                                .fallback_junction_target = full_target,
-                            };
-                            _ = symlinker.ensureSymlink(.ignore_failure);
+                            installer.linkToHiddenNodeModules(this.entry_id);
                         },
                     }
 
@@ -1228,6 +1195,54 @@ pub const Installer = struct {
         return .none;
     }
 
+    pub fn linkToHiddenNodeModules(this: *const Installer, entry_id: Store.Entry.Id) void {
+        const string_buf = this.lockfile.buffers.string_bytes.items;
+
+        const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+        const pkg_id = this.store.nodes.items(.pkg_id)[node_id.get()];
+        const pkg_name = this.lockfile.packages.items(.name)[pkg_id];
+
+        var hidden_hoisted_node_modules: bun.Path(.{ .sep = .auto }) = .init();
+        defer hidden_hoisted_node_modules.deinit();
+
+        hidden_hoisted_node_modules.append(
+            "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
+        );
+        hidden_hoisted_node_modules.append(pkg_name.slice(string_buf));
+
+        var target: bun.RelPath(.{ .sep = .auto }) = .init();
+        defer target.deinit();
+
+        target.append("..");
+        if (strings.containsChar(pkg_name.slice(string_buf), '/')) {
+            target.append("..");
+        }
+
+        target.appendFmt("{}/node_modules/{s}", .{
+            Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
+            pkg_name.slice(string_buf),
+        });
+
+        var full_target: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+        defer full_target.deinit();
+
+        this.appendStorePath(&full_target, entry_id);
+
+        const symlinker: Symlinker = .{
+            .dest = hidden_hoisted_node_modules,
+            .target = target,
+            .fallback_junction_target = full_target,
+        };
+
+        // symlinks won't exist if node_modules/.bun is new
+        const link_strategy: Symlinker.Strategy = if (this.is_new_bun_modules)
+            .expect_missing
+        else
+            .expect_existing;
+
+        _ = symlinker.ensureSymlink(link_strategy);
+    }
+
     pub fn linkDependencyBins(this: *const Installer, parent_entry_id: Store.Entry.Id) !void {
         const lockfile = this.lockfile;
         const store = this.store;
@@ -1421,6 +1436,7 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const Symlinker = @import("./Symlinker.zig").Symlinker;

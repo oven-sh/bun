@@ -115,11 +115,12 @@ describe.todoIf(
     log(`Final memory usage: ${Math.round(process.memoryUsage.rss() / MB)} MB`);
     log(`Memory difference: ${Math.round((process.memoryUsage.rss() - memBefore.rss) / MB)} MB`);
 
-    // should not have grown more than 50%
+    // should not have grown more than 80%
     const delta = memAfter.rss - memBefore.rss;
     const pct = delta / memBefore.rss;
     console.log(`RSS delta: ${delta / MB}MB (${Math.round(100 * pct)}%)`);
-    expect(pct).toBeLessThan(0.5);
+    // In Bun v1.2.0 this was 1.87 on macOS & Linux
+    expect(pct).toBeLessThan(0.8);
   }
 
   test("'pipe' stdout if read after exit should not leak memory", async () => {

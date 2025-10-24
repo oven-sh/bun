@@ -173,8 +173,6 @@ pub const ImportRecord = struct {
         none,
         /// An import to 'bun'
         bun,
-        /// An import to 'bun:test'
-        bun_test,
         /// A builtin module, such as `node:fs` or `bun:sqlite`
         builtin,
         /// An import to the internal runtime

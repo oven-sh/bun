@@ -240,7 +240,7 @@ pub const All = struct {
                     // Side-effect: potentially call the StopIfNecessary timer.
                     if (min.tag == .WTFTimer) {
                         _ = this.timers.deleteMin();
-                        _ = min.fire(&now, vm);
+                        min.fire(&now, vm);
                         continue;
                     }
 
@@ -297,10 +297,7 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(&now, vm)) {
-                .disarm => {},
-                .rearm => {},
-            }
+            t.fire(&now, vm);
         }
     }
 

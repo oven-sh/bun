@@ -1148,6 +1148,9 @@ pub const Printer = struct {
         };
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        if (entries_option.* == .err) {
+            return entries_option.err.canonical_error;
+        }
 
         var env_loader: *DotEnv.Loader = brk: {
             const map = try allocator.create(DotEnv.Map);

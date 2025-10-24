@@ -67,7 +67,7 @@ public:
     }
     size_t memoryCostForGC() const
     {
-        return sizeof(DOMURL) + m_initialURLCostForGC;
+        return sizeof(DOMURL) + static_cast<size_t>(m_initialURLCostForGC);
     }
 
 private:
@@ -79,7 +79,7 @@ private:
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
-    short m_initialURLCostForGC { 0 };
+    uint16_t m_initialURLCostForGC { 0 };
 };
 
 } // namespace WebCore

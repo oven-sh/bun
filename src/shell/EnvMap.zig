@@ -26,6 +26,17 @@ pub fn init(alloc: Allocator) EnvMap {
     return .{ .map = MapType.init(alloc) };
 }
 
+pub fn memoryCost(this: *const EnvMap) usize {
+    var size: usize = @sizeOf(EnvMap);
+    size += std.mem.sliceAsBytes(this.map.keys()).len;
+    size += std.mem.sliceAsBytes(this.map.values()).len;
+    for (this.map.keys(), this.map.values()) |key, value| {
+        size += key.memoryCost();
+        size += value.memoryCost();
+    }
+    return size;
+}
+
 pub fn initWithCapacity(alloc: Allocator, cap: usize) EnvMap {
     var map = MapType.init(alloc);
     bun.handleOom(map.ensureTotalCapacity(cap));

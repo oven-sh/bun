@@ -80,7 +80,7 @@
 
 #define INIT_NATIVE_MODULE(numberOfExportNames)                                \
   Zig::GlobalObject *globalObject =                                            \
-      reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);              \
+      static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \

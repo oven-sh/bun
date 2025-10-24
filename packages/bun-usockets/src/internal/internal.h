@@ -173,6 +173,7 @@ struct us_socket_flags {
     bool is_ipc: 1;
     bool is_readable: 1;
     bool is_writable: 1;
+    bool writable_emitted: 1;
     bool has_error: 1;
     bool has_received_eof: 1;
 
@@ -230,6 +231,7 @@ struct us_udp_socket_t {
     bool connected : 1;
     bool is_readable: 1;
     bool is_writable: 1;
+    bool writable_emitted: 1;
     bool has_error: 1;
     bool has_received_eof: 1;
     struct us_udp_socket_t *next;

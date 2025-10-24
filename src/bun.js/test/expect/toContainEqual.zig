@@ -90,13 +90,13 @@ pub fn toContainEqual(
     const value_fmt = value.toFmt(&formatter);
     const expected_fmt = expected.toFmt(&formatter);
     if (not) {
-        const expected_line = "Expected to not contain: <green>{any}<r>\n";
+        const expected_line = "Expected to not contain: <green>{f}<r>\n";
         const signature = comptime getSignature("toContainEqual", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{expected_fmt});
     }
 
-    const expected_line = "Expected to contain: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected to contain: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toContainEqual", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }

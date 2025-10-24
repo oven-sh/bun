@@ -12,7 +12,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {f}", .{value.toFmt(&formatter)});
     }
 
     const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
@@ -26,7 +26,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
         if (!lastCallValue.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Expected value must be a mock function with calls: {f}", .{value.toFmt(&formatter)});
         }
 
         if (try lastCallValue.getLength(globalThis) != arguments.len) {

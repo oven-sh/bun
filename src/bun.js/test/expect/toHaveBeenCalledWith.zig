@@ -12,7 +12,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {f}", .{value.toFmt(&formatter)});
     }
 
     var pass = false;
@@ -62,14 +62,14 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
 
     if (this.flags.not) {
         const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected mock function not to have been called with: <green>{any}<r>\nBut it was.", .{
+        return this.throw(globalThis, signature, "\n\nExpected mock function not to have been called with: <green>{f}<r>\nBut it was.", .{
             expected_args_js_array.toFmt(&formatter),
         });
     }
     const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false);
 
     if (calls_count == 0) {
-        return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
+        return this.throw(globalThis, signature, "\n\nExpected: <green>{f}<r>\nBut it was not called.", .{
             expected_args_js_array.toFmt(&formatter),
         });
     }
@@ -83,7 +83,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
             .globalThis = globalThis,
             .not = false,
         };
-        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+        return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_format});
     }
 
     // If there are multiple calls, list them all to help debugging.

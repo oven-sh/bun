@@ -67,15 +67,20 @@ const CI = enum {
     woodpecker,
     @"xcode-cloud",
     @"xcode-server",
+    unknown,
 
     pub var once = std.once(struct {
         pub fn once() void {
             var name: []const u8 = "";
             defer ci_name = name;
 
+            var ci_env_is_true = false;
             if (bun.getenvZ("CI")) |ci| {
                 if (strings.eqlComptime(ci, "false")) {
                     return;
+                }
+                if (strings.eqlComptime(ci, "true")) {
+                    ci_env_is_true = true;
                 }
             }
 
@@ -109,6 +114,11 @@ const CI = enum {
                     name = @tagName(Array.Indexer.keyForIndex(i));
                     return;
                 }
+            }
+
+            // If CI=true but no specific CI was detected, return "unknown"
+            if (ci_env_is_true) {
+                name = "unknown";
             }
         }
     }.once);
@@ -412,6 +422,10 @@ const CI = enum {
             &.{
                 .{ "XCS", "" },
             },
+        },
+        .unknown = .{
+            false,
+            &.{},
         },
     });
 };

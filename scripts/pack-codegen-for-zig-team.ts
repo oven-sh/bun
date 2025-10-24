@@ -66,7 +66,7 @@ for (const file of resolvedZigFiles) {
   }
 
   if (!file.endsWith(".zig")) continue;
-  const imports = content.matchAll(/@(import|embedFile)\("([^"]+)"\)/g);
+  const imports = content.matchAll(/@(?:import|embedFile)\("([^"]+)"\)/g);
   for (const [_, imported] of imports) {
     if (!imported.includes("/") && !imported.includes(".")) continue;
     const resolved = join(dirname(file), imported);
@@ -93,11 +93,11 @@ await Bun.write(
       }
       return arg;
     })
-    .join(" ")`,
+    .join(" "),
 );
 
 const spawned = Bun.spawn({
-  cmd: ["tar", "--no-xattrs", "-zcf", out, out_sh, ...resolvedZigFiles],
+  cmd: ["tar", "--no-xattrs", "-zcf", out, out_args, ...resolvedZigFiles],
   stdio: ["inherit", "inherit", "inherit"],
 });
 await spawned.exited;

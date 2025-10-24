@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdio.h>
 #ifndef WIN32
 #include <fcntl.h>
 #endif
@@ -387,7 +388,6 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
             total_written += written;
         }
     } while(remaining > 0);
-
     return total_written;
 }
 

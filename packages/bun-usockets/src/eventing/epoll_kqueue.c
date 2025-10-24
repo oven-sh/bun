@@ -276,7 +276,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
-            events &= us_poll_events(poll);
             us_internal_update_ready_poll_state(poll, error, eof, events);
             if (events || error || eof) {
                 #ifdef LIBUS_USE_EPOLL

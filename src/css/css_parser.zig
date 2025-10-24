@@ -6129,9 +6129,7 @@ pub const Token = union(TokenKind) {
 
     pub fn format(
         this: *const Token,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         return switch (this.*) {
             .ident => |value| try serializer.serializeIdentifier(value, writer),

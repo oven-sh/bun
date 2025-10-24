@@ -285,7 +285,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             string_buf: string,
             // opts: String.StorePathFormatter.Options,
 
-            pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+            pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const string_buf = this.string_buf;
                 const res = this.res.value;
                 switch (this.res.tag) {
@@ -379,16 +379,16 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 
             buf: []const u8,
 
-            pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+            pub fn format(formatter: URLFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const buf = formatter.buf;
                 const value = formatter.resolution.value;
                 switch (formatter.resolution.tag) {
                     .npm => try writer.writeAll(value.npm.url.slice(formatter.buf)),
-                    .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = .posix }).format("", {}, writer),
+                    .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = .posix }).format(writer),
                     .folder => try writer.writeAll(value.folder.slice(formatter.buf)),
                     .remote_tarball => try writer.writeAll(value.remote_tarball.slice(formatter.buf)),
-                    .git => try value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                    .github => try value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                    .git => try value.git.formatAs("git+", formatter.buf, writer),
+                    .github => try value.github.formatAs("github:", formatter.buf, writer),
                     .workspace => try writer.print("workspace:{s}", .{value.workspace.slice(formatter.buf)}),
                     .symlink => try writer.print("link:{s}", .{value.symlink.slice(formatter.buf)}),
                     .single_file_module => try writer.print("module:{s}", .{value.single_file_module.slice(formatter.buf)}),

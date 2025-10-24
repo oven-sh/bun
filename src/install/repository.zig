@@ -274,9 +274,9 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
-        return try formatter.format(layout, opts, writer);
+        return try formatter.format(writer);
     }
 
     pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
@@ -292,7 +292,7 @@ pub const Repository = extern struct {
         label: string,
         string_buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+        pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.print("{}", .{Install.fmtStorePath(this.label)});
 
             if (!this.repo.owner.isEmpty()) {

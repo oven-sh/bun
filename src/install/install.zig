@@ -22,7 +22,7 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
 pub const StorePathFormatter = struct {
     str: string,
 
-    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+    pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;

@@ -728,7 +728,7 @@ pub const FormatOptions = struct {
             level: ErrorDisplayLevel,
             enable_colors: bool,
             colon: Colon,
-            pub fn format(this: @This(), comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 if (this.enable_colors) {
                     switch (this.level) {
                         .normal => try writer.writeAll(Output.prettyFmt("<r>", true)),
@@ -738,7 +738,7 @@ pub const FormatOptions = struct {
                 }
 
                 if (!this.name.isEmpty()) {
-                    try this.name.format("", opts, writer);
+                    try this.name.format(writer);
                 } else if (this.level == .warn) {
                     try writer.writeAll("warn");
                 } else {

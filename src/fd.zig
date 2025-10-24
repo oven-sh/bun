@@ -435,24 +435,10 @@ pub const FD = packed struct(backing_int) {
         };
     };
 
-    pub fn format(fd: FD, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(fd: FD, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (!fd.isValid()) {
             try writer.writeAll("[invalid_fd]");
             return;
-        }
-
-        if (fmt.len != 0) {
-            // The reason for fd error is because formatting FD as an integer on windows is
-            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
-            //
-            // Remember fd formatter will
-            // - on posix, print the number
-            // - on windows, print if it is a handle or a libuv file descriptor
-            // - in debug on all platforms, print the path of the file descriptor
-            //
-            // Not having fd error caused a linux+debug only crash in bun.sys.getFdPath because
-            // we forgot to change the thing being printed to "fd.native()" when the FD was introduced.
-            @compileError("invalid format string for bun.FD.format. must be empty like '{}'");
         }
 
         switch (os) {

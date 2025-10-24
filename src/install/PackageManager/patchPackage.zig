@@ -362,9 +362,7 @@ pub fn doPatchCommit(
 
                     pub fn format(
                         this: *const @This(),
-                        comptime _: []const u8,
-                        _: std.fmt.FormatOptions,
-                        writer: anytype,
+                        writer: *std.Io.Writer,
                     ) !void {
                         const truncate_stderr = this.stderr.items.len > 256;
                         if (truncate_stderr) {

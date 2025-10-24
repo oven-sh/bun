@@ -1940,7 +1940,7 @@ pub const JSValue = enum(i64) {
         globalObject: *jsc.JSGlobalObject,
 
         pub fn format(this: StringFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const str = try this.value.toBunString(this.globalObject);
+            const str = this.value.toBunString(this.globalObject) catch |e| return bun.deprecated.jsErrorToWriteError(e);
             defer str.deref();
             try str.format(writer);
         }

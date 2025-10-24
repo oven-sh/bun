@@ -31,7 +31,7 @@ const Libc = enum {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self == .musl) {
             try writer.writeAll("-musl");
         }
@@ -40,7 +40,7 @@ const Libc = enum {
 
 const BaselineFormatter = struct {
     baseline: bool = false,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.baseline) {
             try writer.writeAll("-baseline");
         }
@@ -112,7 +112,7 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
     };
 }
 
-pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print(
         // bun-darwin-x64-baseline-v1.0.0
         // This doesn't match up 100% with npm, but that's okay.

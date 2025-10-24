@@ -107,7 +107,7 @@ pub fn Table(
 pub const RedactedNpmUrlFormatter = struct {
     url: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var i: usize = 0;
         while (i < this.url.len) {
             if (strings.startsWithUUID(this.url[i..])) {
@@ -193,7 +193,7 @@ pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
     return struct {
         bytes: [sha.SHA512.digest]u8,
 
-        pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
             const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
 
@@ -366,7 +366,7 @@ pub const FormatUTF16 = struct {
 pub const FormatUTF8 = struct {
     buf: []const u8,
     path_fmt_opts: ?PathFormatOptions = null,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.path_fmt_opts) |opts| {
             if (opts.path_sep == .any and opts.escape_backslashes == false) {
                 try writer.writeAll(self.buf);
@@ -1434,7 +1434,7 @@ pub const SizeFormatter = struct {
         space_between_number_and_unit: bool = true,
     };
 
-    pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SizeFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const math = std.math;
         const value = self.value;
         if (value == 0) {
@@ -1446,7 +1446,7 @@ pub const SizeFormatter = struct {
         }
 
         if (value < 512) {
-            try fmt.formatInt(self.value, 10, .lower, opts, writer);
+            try writer.print("{d}", .{self.value});
             if (self.opts.space_between_number_and_unit) {
                 return writer.writeAll(" bytes");
             } else {
@@ -1469,11 +1469,11 @@ pub const SizeFormatter = struct {
             return;
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
-        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.print("{d:.[1]}", .{ new_value, precision });
         if (self.opts.space_between_number_and_unit) {
-            try writer.writeAll(&.{ ' ', suffix, 'B' });
+            try writer.print(" {c}B", .{suffix});
         } else {
-            try writer.writeAll(&.{ suffix, 'B' });
+            try writer.print("{c}B", .{suffix});
         }
     }
 };

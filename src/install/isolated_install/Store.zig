@@ -128,7 +128,7 @@ pub const Store = struct {
             store: *const Store,
             lockfile: *const Lockfile,
 
-            pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const store = this.store;
                 const entries = store.entries.slice();
                 const entry_peer_hashes = entries.items(.peer_hash);

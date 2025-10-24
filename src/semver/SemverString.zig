@@ -175,7 +175,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) std.Io.Writer.Error!void {
+        pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             for (this.str.slice(this.buf)) |c| {
                 const n = switch (c) {
                     '/' => '+',

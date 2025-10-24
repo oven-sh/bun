@@ -1941,7 +1941,7 @@ pub const PackCommand = struct {
             raw,
         };
 
-        pub fn format(this: TarballNameFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: TarballNameFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             if (this.style == .raw) {
                 return writer.print("{s}-{s}.tgz", .{ this.package_name, this.package_version });
             }

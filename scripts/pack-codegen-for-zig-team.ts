@@ -25,11 +25,17 @@ const args = process.argv.slice(2).filter((arg, i) => {
   return true;
 });
 if (args.length === 0) {
-  console.error("Usage: pack-codegen-for-zig-team.ts <full crashing zig command>");
+  console.error(`Usage: bun scripts/pack-codegen-for-zig-team <full crashing zig command>
+
+The full command should be displayed in the build failure message. It should start with /path/to/zig build-obj ..... and end with --listen=-`);
   process.exit(1);
 }
 if (!args[0].includes("zig")) {
   console.error("First argument must be a zig command: ", args[0]);
+  process.exit(1);
+}
+if (args[1] === "build") {
+  console.error("build not supported. Expected a `zig build-obj` command.");
   process.exit(1);
 }
 args.shift();

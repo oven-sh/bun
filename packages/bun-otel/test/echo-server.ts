@@ -1,10 +1,11 @@
 // Simple echo server for testing - returns all request headers as JSON
 // Run as a separate process to avoid instrumentation
-
+import { bunEnv, bunExe } from "../../../test/harness";
+import { $ } from "bun";
 if (import.meta.main) {
   const server = Bun.serve({
     port: parseInt(process.env.PORT || "0"),
-    fetch(req) {
+    fetch(req: Request): Response {
       const url = new URL(req.url);
 
       // Shutdown endpoint for clean teardown
@@ -31,9 +32,7 @@ export class EchoServer {
   private port: number | null = null;
 
   async start(): Promise<void> {
-    const { bunEnv, bunExe } = await import("../../../test/harness");
-
-    this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test/echo-server.ts"], {
+    this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test-echo-server.ts"], {
       env: { ...bunEnv, PORT: "0" }, // ensure ephemeral port regardless of CI env
       stdout: "pipe",
       stderr: "inherit",
@@ -46,7 +45,8 @@ export class EchoServer {
     try {
       this.port = await Promise.race([
         (async () => {
-          for await (const chunk of this.proc!.stdout) {
+          // @ts-expect-error stdout is ReadableStream
+          for await (const chunk of this.proc?.stdout) {
             const text = decoder.decode(chunk);
             const match = text.match(/listening on (\d+)/);
             if (match) return parseInt(match[1]);
@@ -71,7 +71,6 @@ export class EchoServer {
     if (this.port) {
       // Send graceful shutdown request
       try {
-        const { $ } = await import("bun");
         await $`curl -s http://localhost:${this.port}/shutdown`.quiet();
       } catch {
         // Ignore errors during shutdown request

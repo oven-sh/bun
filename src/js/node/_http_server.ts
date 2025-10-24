@@ -6,7 +6,7 @@ const { validateObject, validateLinkHeaderValue, validateBoolean, validateIntege
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const telemetryHttp = require("internal/telemetry_http");
+
 const {
   kInternalSocketData,
   serverSymbol,
@@ -553,12 +553,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
-        // Telemetry: notify about incoming request
         try {
-          telemetryHttp.handleIncomingRequest(http_req, http_res);
-        } catch {
-          // Telemetry failures should not crash the request path
-        }
+          Bun.telemetry?.nativeHooks()?.notifyStart(1, 0, { http_req, http_res });
+        } catch {}
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
@@ -755,12 +752,11 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
       if (!socket.destroyed) {
         socket.destroy();
       }
-      // Error handling is done via Bun.telemetry.configure() callbacks
+
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-      // Error handling is done via Bun.telemetry.configure() callbacks
       break;
     }
   }
@@ -1203,9 +1199,12 @@ function _writeHead(statusCode, reason, obj, response) {
 
   // Telemetry: notify about response headers
   try {
-    telemetryHttp.handleWriteHead(response, statusCode);
+    Bun.telemetry?.nativeHooks()?.notifyInject(1, 0, {
+      http_req: response.req,
+      http_res: response,
+    });
   } catch {
-    // Telemetry failures should not crash the request path
+    /* ignore */
   }
 }
 

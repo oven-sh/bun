@@ -17,6 +17,10 @@
  * @module bun-otel
  */
 
+// Re-export BunSDK (main entry point)
+export { BunSDK } from "./src/BunSDK";
+export type { BunSDKConfiguration } from "./src/BunSDK";
+
 // Re-export instrumentations
 export { BunFetchInstrumentation, BunHttpInstrumentation } from "./src/instruments";
 export type { BunFetchInstrumentationConfig, BunHttpInstrumentationConfig } from "./src/instruments";

@@ -77,6 +77,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__detach);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__isEnabledFor);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__listInstruments);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__getActiveSpan);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyStart);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyEnd);
 BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyError);
@@ -476,7 +477,12 @@ static JSValue constructTelemetryObject(VM& vm, JSObject* bunObject)
     nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setConfigurationProperty"_s), 2, Bun__Telemetry__nativeHooks__setConfigurationProperty, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
-    telemetryObject->putDirect(vm, JSC::Identifier::fromString(vm, "nativeHooks"_s), nativeHooksObject, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    // Store nativeHooks object in a private property for jsNativeHooks() to return
+    telemetryObject->putDirect(vm, JSC::Identifier::fromString(vm, "_nativeHooksObject"_s), nativeHooksObject, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+
+    // Add nativeHooks() function that returns the object if telemetry is enabled, undefined otherwise
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "nativeHooks"_s), 0, Bun__Telemetry__nativeHooks, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
 
     return telemetryObject;
 }

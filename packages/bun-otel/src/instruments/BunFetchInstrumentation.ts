@@ -8,19 +8,11 @@
  * @module bun-otel/instruments/BunFetchInstrumentation
  */
 
-import {
-  context,
-  propagation,
-  SpanKind,
-  SpanStatusCode,
-  trace,
-  type MeterProvider,
-  type Span,
-  type TracerProvider,
-} from "@opentelemetry/api";
+import { SpanKind, SpanStatusCode, type MeterProvider, type Span, type TracerProvider } from "@opentelemetry/api";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
 import { InstrumentKind } from "../../types";
 import { validateCaptureAttributes } from "../validation";
+import { InstrumentRef } from "bun";
 
 /**
  * Configuration options for BunFetchInstrumentation.
@@ -73,7 +65,7 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
 
   private _config: BunFetchInstrumentationConfig;
   private _tracerProvider?: TracerProvider;
-  private _instrumentId?: number;
+  private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
 
   constructor(config: BunFetchInstrumentationConfig = {}) {
@@ -220,13 +212,16 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
           return undefined;
         }
 
-        // Inject W3C TraceContext into headers using propagator
-        const headers: Record<string, string> = {};
-        context.with(trace.setSpan(context.active(), span), () => {
-          propagation.inject(context.active(), headers);
-        });
+        // Construct W3C traceparent header from span context
+        // Per contract: specs/001-opentelemetry-support/contracts/telemetry-http.md lines 131-138
+        const spanContext = span.spanContext();
+        const traceparent = `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`;
 
-        return headers;
+        // Extract tracestate if present
+        const tracestate = spanContext.traceState?.serialize() || "";
+
+        // Return array matching injectHeaders.request order: ["traceparent", "tracestate"]
+        return [traceparent, tracestate];
       },
     });
   }

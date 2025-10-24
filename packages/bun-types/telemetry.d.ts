@@ -53,7 +53,7 @@ declare module "bun" {
    *
    * @internal Used internally by hooks - users don't create these directly
    */
-  export type RequestId = number & { readonly __brand: unique symbol };
+  export type OpId = number & { readonly __brand: unique symbol };
 
   /**
    * Reference to an attached instrument, returned by Bun.telemetry.attach().
@@ -168,7 +168,7 @@ declare module "bun" {
      *
      * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/hook-lifecycle.md
      */
-    onOperationStart?: (id: RequestId, attributes: Record<string, any>) => void;
+    onOperationStart?: (id: OpId, attributes: Record<string, any>) => void;
 
     /**
      * Called during long-running operations to report progress (optional).
@@ -184,7 +184,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Progress-specific attributes
      */
-    onOperationProgress?: (id: RequestId, attributes: Record<string, any>) => void;
+    onOperationProgress?: (id: OpId, attributes: Record<string, any>) => void;
 
     /**
      * Called when an operation completes successfully.
@@ -199,7 +199,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Result attributes following OpenTelemetry semantic conventions
      */
-    onOperationEnd?: (id: RequestId, attributes: Record<string, any>) => void;
+    onOperationEnd?: (id: OpId, attributes: Record<string, any>) => void;
 
     /**
      * Called when an operation fails.
@@ -215,7 +215,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Error attributes following OpenTelemetry semantic conventions
      */
-    onOperationError?: (id: RequestId, attributes: Record<string, any>) => void;
+    onOperationError?: (id: OpId, attributes: Record<string, any>) => void;
 
     /**
      * Called to inject context into outgoing operations (optional).
@@ -243,7 +243,7 @@ declare module "bun" {
      * }
      * ```
      */
-    onOperationInject?: (id: RequestId, data?: unknown) => Record<string, string> | void;
+    onOperationInject?: (id: OpId, data?: unknown) => any;
   }
 
   /**

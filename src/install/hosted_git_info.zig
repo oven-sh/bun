@@ -529,7 +529,7 @@ pub const WellDefinedProtocol = enum {
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-fn isGithubShorthand(npa_str: []const u8) bool {
+pub fn isGithubShorthand(npa_str: []const u8) bool {
     // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
     // single-pass algorithm for better performance.
     //

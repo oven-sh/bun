@@ -893,7 +893,7 @@ pub const Bin = extern struct {
                     // for normalizing `target`
                     const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
-                    const unscoped_package_name = Dependency.NpaBridge.unscopedPackageName(this.package_name.slice());
+                    const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[unscoped_package_name.len..];
                     abs_dest_buf_remain[0] = 0;
@@ -995,7 +995,7 @@ pub const Bin = extern struct {
             switch (this.bin.tag) {
                 .none => {},
                 .file => {
-                    const unscoped_package_name = Dependency.NpaBridge.unscopedPackageName(this.package_name.slice());
+                    const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[unscoped_package_name.len..];
                     abs_dest_buf_remain[0] = 0;

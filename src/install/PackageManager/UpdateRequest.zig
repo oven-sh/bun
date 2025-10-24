@@ -143,7 +143,7 @@ fn parseWithError(
 
         var value = input;
         var alias: ?string = null;
-        if (!Dependency.NpaBridge.isTarballPath(input) and strings.isNPMPackageName(input)) {
+        if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
             alias = input;
             value = input[input.len..];
         } else if (input.len > 1) {
@@ -157,7 +157,7 @@ fn parseWithError(
         }
 
         const placeholder = String.from("@@@");
-        var version = Dependency.NpaBridge.parseWithOptionalTag(
+        var version = Dependency.parseWithOptionalTag(
             allocator,
             if (alias) |name| String.init(input, name) else placeholder,
             if (alias) |name| String.Builder.stringHash(name) else null,
@@ -180,7 +180,7 @@ fn parseWithError(
             return error.UnrecognizedDependencyFormat;
         };
         if (alias != null and version.tag == .git) {
-            if (Dependency.NpaBridge.parseWithOptionalTag(
+            if (Dependency.parseWithOptionalTag(
                 allocator,
                 placeholder,
                 null,

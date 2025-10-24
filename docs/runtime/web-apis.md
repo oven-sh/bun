@@ -125,4 +125,23 @@ The following Web APIs are partially or completely supported.
 
 ---
 
+- WebAssembly
+- [`WebAssembly`](https://developer.mozilla.org/en-US/docs/WebAssembly)
+  [`WebAssembly.Module`](https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Module)
+  [`WebAssembly.Instance`](https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Instance)
+
+---
+
 {% /table %}
+
+## WebAssembly
+
+Bun supports WebAssembly through JavaScriptCore's implementation. As of Bun v1.2.3, WebAssembly execution uses the IPInt (in-place interpreter) by default, which provides faster startup times and lower memory usage compared to the previous LLInt interpreter.
+
+The IPInt interpreter executes WebAssembly code directly in its stored format, reducing the time needed before code can start running and minimizing memory overhead. Hot-path functions are still JIT-compiled for maximum performance.
+
+If you encounter issues with WebAssembly modules, you can revert to the previous interpreter:
+
+```bash
+BUN_JSC_useWasmIPInt=0 bun run your-script.js
+```

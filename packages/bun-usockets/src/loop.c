@@ -395,6 +395,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                         s->flags.is_ipc = 0;
                         s->flags.is_readable = true;
                         s->flags.is_writable = true;
+                        s->flags.writable_emitted = true;
                         s->flags.has_error = false;
                         s->flags.has_received_eof = false;
 

@@ -324,6 +324,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.is_ipc = ipc;
     s->flags.is_readable = true;
     s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
     s->connect_state = NULL;

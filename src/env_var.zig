@@ -342,8 +342,8 @@ const kind = struct {
             deser: struct {
                 /// Control how deserializing and deserialization errors are handled.
                 error_handling: enum {
-                    /// panic on deserialization errors.
-                    panic,
+                    /// debug_warn on deserialization errors.
+                    debug_warn,
                     /// Ignore deserialization errors and treat the variable as not set.
                     not_set,
                     /// Fallback to default.
@@ -356,7 +356,7 @@ const kind = struct {
                     /// Note: Most values are considered truthy, except for "", "0", "false", "no",
                     /// and "off".
                     truthy_cast,
-                } = .panic,
+                } = .debug_warn,
 
                 /// Control what empty strings are treated as.
                 empty_string_as: union(enum) {
@@ -444,8 +444,10 @@ const kind = struct {
                         "fallback to default on {s}, but no default is set.";
 
                     switch (ip.opts.deser.error_handling) {
-                        .panic => {
-                            bun.Output.panic(fmt, .{ ip.var_name, raw_env });
+                        .debug_warn => {
+                            bun.Output.debugWarn(fmt, .{ ip.var_name, raw_env });
+                            self.value.store(not_set_sentinel, .monotonic);
+                            return null;
                         },
                         .not_set => {
                             self.value.store(not_set_sentinel, .monotonic);

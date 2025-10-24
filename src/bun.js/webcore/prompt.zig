@@ -198,7 +198,7 @@ pub const prompt = struct {
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     /// This implementation has two modes:
     /// 1. If stdin is an interactive TTY, it switches the terminal to raw mode to
-    ///    provide a rich editing experience with cursor movement and history.
+    ///    provide a rich editing experience with cursor movement.
     /// 2. If stdin is not a TTY (e.g., piped input), it falls back to a simple
     ///    buffered line reader.
     pub fn call(

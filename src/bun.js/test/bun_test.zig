@@ -77,7 +77,11 @@ pub const js_fns = struct {
                     .execution => {
                         const active = bunTest.getCurrentStateData();
                         const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
-                            return globalThis.throw("Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.", .{@tagName(tag)});
+                            const message = if (tag == .onTestFinished)
+                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent."
+                            else
+                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.";
+                            return globalThis.throw(message, .{@tagName(tag)});
                         };
 
                         const append_point = switch (tag) {

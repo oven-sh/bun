@@ -68,6 +68,29 @@ describe("async onTestFinished", () => {
   });
 });
 
+// Test that onTestFinished throws proper error in concurrent tests
+describe("onTestFinished errors", () => {
+  test.concurrent("cannot be called in concurrent test 1", () => {
+    expect(() => {
+      onTestFinished(() => {
+        console.log("should not run");
+      });
+    }).toThrow(
+      "Cannot call onTestFinished() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
+    );
+  });
+
+  test.concurrent("cannot be called in concurrent test 2", () => {
+    expect(() => {
+      onTestFinished(() => {
+        console.log("should not run");
+      });
+    }).toThrow(
+      "Cannot call onTestFinished() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
+    );
+  });
+});
+
 // Test onTestFinished with afterEach and afterAll together
 describe("onTestFinished with all hooks", () => {
   const output: string[] = [];

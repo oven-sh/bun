@@ -154,6 +154,27 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
+    fn consumeModifierSequence(reader: anytype) !void {
+        // Check for a modifier sequence like '1;5'
+        var byte = reader.readByte() catch return;
+        if (byte == '1') {
+            byte = reader.readByte() catch return;
+            if (byte == ';') {
+                // Read the modifier number (e.g., '5')
+                byte = reader.readByte() catch return;
+                if (byte >= '0' and byte <= '9') {
+                    // Modifier consumed
+                    return;
+                }
+            }
+        }
+        // If it wasn't a modifier sequence, push the last read byte back
+        // Since we don't have a pushback reader, we'll just rely on the caller's logic
+        // to handle the next byte if this function returns early.
+        // Given the current structure, this is tricky. I will integrate the logic directly
+        // into the main switch for simplicity and to avoid complex reader logic.
+    }
+
     fn utf8Prev(slice: []const u8, index: usize) ?usize {
         if (index == 0) return null;
         var i = index - 1;
@@ -412,7 +433,18 @@ pub const prompt = struct {
                             if (byte2 != '[') {
                                 continue;
                             }
-                            switch (reader.readByte() catch continue) {
+
+                            var final_byte = reader.readByte() catch continue;
+
+                            // Check for modifier sequence (e.g., ESC [ 1 ; 5 D)
+                            if (final_byte >= '0' and final_byte <= '9') {
+                                // Consume the rest of the modifier sequence (e.g., '1', ';', '5')
+                                while (final_byte != 'A' and final_byte != 'B' and final_byte != 'C' and final_byte != 'D' and final_byte != '~') {
+                                    final_byte = reader.readByte() catch break;
+                                }
+                            }
+
+                            switch (final_byte) {
                                 'D' => { // Left arrow
                                     if (cursor_index > 0) {
                                         const old_cursor_index = cursor_index;

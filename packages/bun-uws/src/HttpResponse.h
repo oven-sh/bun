@@ -691,6 +691,7 @@ public:
         if(this->isWritable() && httpResponseData->onWritable) {
             this->cork([&]() {
                 httpResponseData->callOnWritable(this, httpResponseData->offset);
+                this->flush();
             });
         }
         return this;

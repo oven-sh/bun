@@ -111,7 +111,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
             \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
             \\  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
-            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r> 
+            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r>
             \\  <d>├<r> <cyan>set<r> <d>key=value ...<r>
             \\  <d>├<r> <cyan>delete<r> <d>key ...<r>
             \\  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
@@ -200,7 +200,7 @@ pub const PackageManagerCommand = struct {
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
-                        if (bun.getenvZ("PATH")) |path| {
+                        if (bun.env_var.PATH.get()) |path| {
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {

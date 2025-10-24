@@ -82,6 +82,10 @@ function generate(name) {
       development: {
         getter: "getDevelopment",
       },
+      accept: {
+        fn: "doAccept",
+        length: 1,
+      },
     },
     klass: {},
     finalize: true,

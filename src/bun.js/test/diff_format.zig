@@ -6,7 +6,7 @@ pub const DiffFormatter = struct {
     globalThis: *JSGlobalObject,
     not: bool = false,
 
-    pub fn format(this: DiffFormatter, writer: *std.Io.Writer) !void {
+    pub fn format(this: DiffFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var scope = bun.AllocationScope.init(default_allocator);
         // defer scope.deinit(); // TODO: fix leaks
         const allocator = scope.allocator();

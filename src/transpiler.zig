@@ -573,8 +573,7 @@ pub const Transpiler = struct {
             .whitespace = .indent_2,
         };
         Output.flush();
-        var ow = Output.writer().adaptToNewApi(&.{});
-        var w: std.json.Stringify = .{ .writer = &ow.new_interface, .options = opts };
+        var w: std.json.Stringify = .{ .writer = Output.writer(), .options = opts };
         w.write(transpiler.env.map.*) catch unreachable;
         Output.flush();
     }

@@ -2011,10 +2011,10 @@ pub const mock = struct {
         calls: JSValue,
         formatter: *jsc.ConsoleObject.Formatter,
 
-        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var printed_once = false;
 
-            const calls_count = @as(u32, @intCast(try self.calls.getLength(self.globalThis)));
+            const calls_count = @as(u32, @intCast(self.calls.getLength(self.globalThis) catch |e| return bun.deprecated.jsErrorToWriteError(e)));
             if (calls_count == 0) {
                 try writer.writeAll("(no calls)");
                 return;
@@ -2025,7 +2025,7 @@ pub const mock = struct {
                 printed_once = true;
 
                 try writer.print("           {d: >4}: ", .{i + 1});
-                const call_args = try self.calls.getIndex(self.globalThis, @intCast(i));
+                const call_args = self.calls.getIndex(self.globalThis, @intCast(i)) catch |e| return bun.deprecated.jsErrorToWriteError(e);
                 try writer.print("{any}", .{call_args.toFmt(self.formatter)});
             }
         }
@@ -2045,22 +2045,22 @@ pub const mock = struct {
         returns: JSValue,
         formatter: *jsc.ConsoleObject.Formatter,
 
-        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var printed_once = false;
 
             var num_returns: i32 = 0;
             var num_calls: i32 = 0;
 
-            var iter = try self.returns.arrayIterator(self.globalThis);
-            while (try iter.next()) |item| {
+            var iter = self.returns.arrayIterator(self.globalThis) catch |e| return bun.deprecated.jsErrorToWriteError(e);
+            while (iter.next() catch |e| return bun.deprecated.jsErrorToWriteError(e)) |item| {
                 if (printed_once) try writer.writeAll("\n");
                 printed_once = true;
 
                 num_calls += 1;
                 try writer.print("           {d: >2}: ", .{num_calls});
 
-                const value = try jestMockReturnObject_value(self.globalThis, item);
-                switch (try jestMockReturnObject_type(self.globalThis, item)) {
+                const value = jestMockReturnObject_value(self.globalThis, item) catch |e| return bun.deprecated.jsErrorToWriteError(e);
+                switch (jestMockReturnObject_type(self.globalThis, item) catch |e| return bun.deprecated.jsErrorToWriteError(e)) {
                     .@"return" => {
                         try writer.print("{any}", .{value.toFmt(self.formatter)});
                         num_returns += 1;

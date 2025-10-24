@@ -71,24 +71,24 @@ const OptionToken = struct {
         globalThis: *JSGlobalObject,
 
         /// Formats the raw name of the arg (includes any dashes and excludes inline values)
-        pub fn format(this: RawNameFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: RawNameFormatter, writer: *std.Io.Writer) !void {
             const token = this.token;
             const raw = token.raw.asBunString(this.globalThis);
             if (token.optgroup_idx) |optgroup_idx| {
-                try raw.substringWithLen(optgroup_idx, optgroup_idx + 1).format(fmt, opts, writer);
+                try raw.substringWithLen(optgroup_idx, optgroup_idx + 1).format(writer);
             } else {
                 switch (token.parse_type) {
                     .lone_short_option, .lone_long_option => {
-                        try raw.format(fmt, opts, writer);
+                        try raw.format(writer);
                     },
                     .short_option_and_value => {
                         var susbtr = raw.substringWithLen(0, 2);
-                        try susbtr.format(fmt, opts, writer);
+                        try susbtr.format(writer);
                     },
                     .long_option_and_value => {
                         const equal_index = raw.indexOfAsciiChar('=').?;
                         var substr = raw.substringWithLen(0, equal_index);
-                        try substr.format(fmt, opts, writer);
+                        try substr.format(writer);
                     },
                 }
             }

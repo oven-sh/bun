@@ -651,7 +651,7 @@ pub const ElapsedFormatter = struct {
     colors: bool,
     duration_ns: u64 = 0,
 
-    pub fn format(self: ElapsedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer_: anytype) !void {
+    pub fn format(self: ElapsedFormatter, writer_: *std.Io.Writer) !void {
         switch (self.duration_ns) {
             0...std.time.ns_per_ms * 10 => {
                 const fmt_str = "<r><d>[{d:>.2}ms<r><d>]<r>";
@@ -919,24 +919,17 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             lock.lock();
             defer lock.unlock();
 
-            if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-            } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
+            switch (enable_ansi_colors_stdout and source_set and scopedWriter() == rawWriter()) {
+                inline else => |use_ansi| {
+                    out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, use_ansi), args) catch {
+                        really_disable.store(true, .monotonic);
+                        return;
+                    };
+                    buffered_writer.flush() catch {
+                        really_disable.store(true, .monotonic);
+                        return;
+                    };
+                },
             }
         }
     };

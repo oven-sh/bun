@@ -333,7 +333,7 @@ pub fn build(b: *Build) !void {
         var step = b.step("check", "Check for semantic analysis errors");
         var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
-        bun_check_obj.use_llvm = false;
+        // bun_check_obj.use_llvm = false;
         step.dependOn(&bun_check_obj.step);
 
         // The default install step will run zig build check. This is so ZLS

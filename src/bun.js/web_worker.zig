@@ -403,14 +403,12 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
 
     var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
-    var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
 
-    var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
-    const writer = buffered_writer.writer();
+    const writer = &array.writer;
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
@@ -436,11 +434,11 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         }
         error_instance = globalObject.tryTakeException().?;
     };
-    buffered_writer.flush() catch {
+    writer.flush() catch {
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
+    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);

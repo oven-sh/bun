@@ -2039,11 +2039,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         const PathnameFormatter = struct {
             ctx: *RequestContext,
 
-            pub fn format(formatter: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
                 var this = formatter.ctx;
 
                 if (!this.pathname.isEmpty()) {
-                    try this.pathname.format(fmt, opts, writer);
+                    try this.pathname.format(writer);
                     return;
                 }
 

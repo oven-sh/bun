@@ -3510,10 +3510,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return a.get() < b.get();
         }
 
-        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
-            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return writer.print("{d}", .{@intFromEnum(this)});
         }
 
         pub const Optional = enum(backing_int) {

@@ -1064,7 +1064,7 @@ pub const CommandLineReporter = struct {
 
         // --- LCOV ---
         var lcov_name_buf: bun.PathBuffer = undefined;
-        const lcov_file, const lcov_name, const lcov_buffered_writer, const lcov_writer = brk: {
+        const lcov_file, const lcov_name, const lcov_buffered_writer = brk: {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
@@ -1101,23 +1101,19 @@ pub const CommandLineReporter = struct {
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                        const ptr = try bun.default_allocator.create(bun.deprecated.BufferedWriter(64 * 1024, bun.sys.File.Writer));
-                        ptr.* = .{
-                            .end = 0,
-                            .unbuffered_writer = writer,
-                        };
-                        break :buffered_writer ptr;
+                        const buffer = try bun.default_allocator.alloc(u8, 64 * 1024);
+                        break :buffered_writer writer.adaptToNewApi(buffer);
                     };
 
                     break :brk .{
                         f,
                         path,
                         buffered,
-                        buffered.writer(),
                     };
                 },
             }
         };
+        const lcov_writer = &lcov_buffered_writer.new_interface;
         errdefer {
             if (comptime reporters.lcov) {
                 lcov_file.close();

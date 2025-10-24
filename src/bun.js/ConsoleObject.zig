@@ -1054,19 +1054,19 @@ pub const Formatter = struct {
         value: JSValue,
 
         pub const WriteError = error{UhOh};
-        pub fn format(self: ZigFormatter, writer: *std.Io.Writer) !void {
+        pub fn format(self: ZigFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             self.formatter.remaining_values = &[_]JSValue{self.value};
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
-            try self.formatter.format(
-                try Tag.get(self.value, self.formatter.globalThis),
+            self.formatter.format(
+                Tag.get(self.value, self.formatter.globalThis) catch |e| return bun.deprecated.jsErrorToWriteError(e),
                 @TypeOf(writer),
                 writer,
                 self.value,
                 self.formatter.globalThis,
                 false,
-            );
+            ) catch |e| return bun.deprecated.jsErrorToWriteError(e);
         }
     };
 

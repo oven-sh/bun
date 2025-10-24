@@ -981,7 +981,7 @@ pub fn initWithModuleGraph(
     const allocator = opts.allocator;
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    console.init(Output.rawErrorWriter(), Output.rawWriter());
     const log = opts.log.?;
     const transpiler = try Transpiler.init(
         allocator,
@@ -1266,7 +1266,7 @@ pub fn initWorker(
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.raw_error_stream, Output.raw_stream);
+    console.init(Output.rawErrorWriter(), Output.rawWriter());
     const transpiler = try Transpiler.init(
         allocator,
         log,
@@ -1364,7 +1364,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    console.init(Output.rawErrorWriter(), Output.rawWriter());
     const transpiler = try Transpiler.init(
         allocator,
         log,

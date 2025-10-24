@@ -354,7 +354,7 @@ pub const DebugUTF32PathFormatter = struct {
 pub const FormatUTF16 = struct {
     buf: []const u16,
     path_fmt_opts: ?PathFormatOptions = null,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.path_fmt_opts) |opts| {
             try formatUTF16TypeWithPathOptions(self.buf, writer, opts);
         } else {
@@ -1356,7 +1356,7 @@ pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.enum
             }
             break :brk text;
         };
-        pub fn format(_: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(_: @This(), writer: *std.Io.Writer) !void {
             try writer.writeAll(output);
         }
     };
@@ -1542,7 +1542,7 @@ pub fn HexIntFormatter(comptime Int: type, comptime lower: bool) type {
             return buf;
         }
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const value = self.value;
             try writer.writeAll(&getOutBuf(value));
         }
@@ -1662,9 +1662,9 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
     return struct {
         slice: T,
 
-        pub fn format(self: @This(), comptime format_str: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.slice.len == 0) return;
-            const f = "{" ++ format_str ++ "}";
+            const f = "{s}";
             try writer.print(f, .{self.slice[0]});
             for (self.slice[1..]) |item| {
                 if (delim.len > 0) try writer.writeAll(delim);
@@ -1696,7 +1696,7 @@ pub const FormatDouble = struct {
         return buf[0..len];
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         var buf: [124]u8 = undefined;
         const slice = dtoa(&buf, self.number);
         try writer.writeAll(slice);
@@ -1712,9 +1712,9 @@ pub fn NullableFallback(comptime T: type) type {
         value: T,
         null_fallback: []const u8,
 
-        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.value) |value| {
-                try std.fmt.formatType(value, template, opts, writer, 4);
+                try writer.print("{}", .{value});
             } else {
                 try writer.writeAll(self.null_fallback);
             }

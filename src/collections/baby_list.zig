@@ -533,11 +533,8 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn format(
             this: Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
-            _ = .{ fmt, options };
             return writer.print(
                 "BabyList({s}){{{any}}}",
                 .{ @typeName(Type), this.list() },

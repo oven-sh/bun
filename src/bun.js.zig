@@ -507,13 +507,8 @@ noinline fn dumpBuildError(vm: *jsc.VirtualMachine) void {
 
     Output.flush();
 
-    const error_writer = Output.errorWriter();
-    var buffered_writer = bun.deprecated.bufferedWriter(error_writer);
-    defer {
-        buffered_writer.flush() catch {};
-    }
-
-    const writer = buffered_writer.writer();
+    const writer = Output.errorWriterBuffered();
+    defer Output.flush();
 
     vm.log.print(writer) catch {};
 }

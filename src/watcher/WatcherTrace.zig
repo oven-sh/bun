@@ -28,11 +28,12 @@ pub fn init() void {
 pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_files: []?[:0]u8) void {
     const file = trace_file orelse return;
 
-    var buffered = bun.deprecated.bufferedWriter(file.writer());
-    defer buffered.flush() catch |err| {
+    var buffer: [4096]u8 = undefined;
+    var buffered = file.writer().adaptToNewApi(&buffer);
+    defer buffered.new_interface.flush() catch |err| {
         bun.Output.err(err, "Failed to flush watcher trace file", .{});
     };
-    const writer = buffered.writer();
+    const writer = &buffered.new_interface;
 
     // Get current timestamp
     const timestamp = std.time.milliTimestamp();

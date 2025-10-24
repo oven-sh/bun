@@ -744,17 +744,14 @@ pub const StandaloneModuleGraph = struct {
 
                 var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
-                const BufferedWriter = bun.deprecated.BufferedWriter(512 * 1024, @TypeOf(writer));
-                var buffered_writer = bun.handleOom(bun.default_allocator.create(BufferedWriter));
-                buffered_writer.* = .{
-                    .unbuffered_writer = writer,
-                };
-                macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
+                var buffer: [512 * 1024]u8 = undefined;
+                var buffered_writer = writer.adaptToNewApi(&buffer);
+                macho_file.buildAndSign(&buffered_writer.new_interface) catch |err| {
                     Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
                 };
-                buffered_writer.flush() catch |err| {
+                buffered_writer.new_interface.flush() catch |err| {
                     Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;

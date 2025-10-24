@@ -340,7 +340,7 @@ pub const MachoFile = struct {
         }
     }
 
-    pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
+    pub fn buildAndSign(self: *MachoFile, writer: *std.Io.Writer) !void {
         if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
             var data = std.array_list.Managed(u8).init(self.allocator);
             defer data.deinit();
@@ -446,7 +446,7 @@ pub const MachoFile = struct {
             self.allocator.destroy(self);
         }
 
-        pub fn sign(self: *MachoSigner, writer: anytype) !void {
+        pub fn sign(self: *MachoSigner, writer: *std.Io.Writer) !void {
             const PAGE_SIZE: usize = 1 << 12;
             const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 

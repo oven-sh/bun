@@ -69,18 +69,12 @@ const hex_to_nibble = [256]u8{
 
 pub fn format(
     self: UUID,
-    comptime layout: []const u8,
-    options: fmt.FormatOptions,
-    writer: anytype,
+    writer: *std.Io.Writer,
 ) !void {
-    _ = options; // currently unused
-
-    if (comptime layout.len != 0 and layout[0] != 's')
-        @compileError("Unsupported format specifier for UUID type: '" ++ layout ++ "'.");
     var buf: [36]u8 = undefined;
     self.print(&buf);
 
-    try fmt.format(writer, "{s}", .{buf});
+    try writer.print("{s}", .{buf});
 }
 
 fn printBytes(

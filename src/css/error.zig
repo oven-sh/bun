@@ -107,9 +107,9 @@ pub fn ParserErrorKind(comptime T: type) type {
         /// A parse error reported by downstream consumer code.
         custom: T,
 
-        pub fn format(this: @This(), comptime formatter: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
             return switch (this) {
-                inline else => |kind| try kind.format(formatter, options, writer),
+                inline else => |kind| try kind.format(writer),
             };
         }
     };
@@ -128,9 +128,7 @@ pub const BasicParseErrorKind = union(enum) {
     /// A qualified rule was encountered that was invalid.
     qualified_rule_invalid,
 
-    pub fn format(this: BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: BasicParseErrorKind, writer: *std.Io.Writer) !void {
         return switch (this) {
             .unexpected_token => |token| {
                 try writer.print("unexpected token: {}", .{token});

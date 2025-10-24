@@ -1309,7 +1309,7 @@ const TraceString = struct {
         view_trace,
     };
 
-    pub fn format(self: TraceString, writer: *std.Io.Writer) !void {
+    pub fn format(self: TraceString, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         encodeTraceString(self, writer) catch return;
     }
 };

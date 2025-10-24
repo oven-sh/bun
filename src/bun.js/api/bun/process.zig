@@ -603,7 +603,7 @@ pub const Status = union(enum) {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.signalCode()) |signal_code| {
             if (signal_code.toExitCode()) |code| {
                 try writer.print("code: {d}", .{code});

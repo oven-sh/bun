@@ -192,7 +192,7 @@ pub const WatchEvent = struct {
             };
         }
 
-        pub fn format(op: Op, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+        pub fn format(op: Op, w: *std.Io.Writer) !void {
             try w.writeAll("{");
             var first = true;
             inline for (comptime std.meta.fieldNames(Op)) |name| {

@@ -1939,10 +1939,10 @@ pub const JSValue = enum(i64) {
         value: jsc.JSValue,
         globalObject: *jsc.JSGlobalObject,
 
-        pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: StringFormatter, writer: *std.Io.Writer) !void {
             const str = try this.value.toBunString(this.globalObject);
             defer str.deref();
-            try str.format(text, opts, writer);
+            try str.format(writer);
         }
     };
 

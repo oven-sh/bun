@@ -1204,9 +1204,7 @@ pub const String = struct {
         }
     }
 
-    pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
-
+    pub fn format(s: String, writer: *std.Io.Writer) !void {
         try writer.writeAll("E.String");
         if (s.next == null) {
             try writer.writeAll("(");

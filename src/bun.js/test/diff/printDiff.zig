@@ -34,7 +34,7 @@ fn removeTrailingNewline(text: []const u8) []const u8 {
     return text[0 .. text.len - 1];
 }
 
-pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []const u8, expected_slice: []const u8, writer: anytype, config: DiffConfig) !void {
+pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []const u8, expected_slice: []const u8, writer: anytype, config: DiffConfig) std.Io.Writer.Error!void {
     if (not) {
         switch (config.enable_ansi_colors) {
             true => try writer.print("Expected: not " ++ colors.red ++ "{s}" ++ colors.reset, .{expected_slice}),
@@ -55,35 +55,35 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
 
     var dmp = DMPUsize.default;
     dmp.config.diff_timeout = 200;
-    const linesToChars = try DMP.diffLinesToChars(arena, expected_slice, received_slice);
-    const charDiffs = try dmp.diff(arena, linesToChars.chars_1, linesToChars.chars_2, false);
-    const diffs = try DMP.diffCharsToLines(arena, &charDiffs, linesToChars.line_array.items);
+    const linesToChars = bun.handleOom(DMP.diffLinesToChars(arena, expected_slice, received_slice));
+    const charDiffs = bun.handleOom(dmp.diff(arena, linesToChars.chars_1, linesToChars.chars_2, false));
+    const diffs = bun.handleOom(DMP.diffCharsToLines(arena, &charDiffs, linesToChars.line_array.items));
 
     var diff_segments = std.array_list.Managed(DiffSegment).init(arena);
     for (diffs.items) |diff| {
         if (diff.operation == .delete) {
-            try diff_segments.append(DiffSegment{
+            bun.handleOom(diff_segments.append(DiffSegment{
                 .removed = diff.text,
                 .inserted = "",
                 .mode = .removed,
-            });
+            }));
         } else if (diff.operation == .insert) {
             if (diff_segments.items.len > 0 and diff_segments.items[diff_segments.items.len - 1].mode == .removed) {
                 diff_segments.items[diff_segments.items.len - 1].inserted = diff.text;
                 diff_segments.items[diff_segments.items.len - 1].mode = .modified;
             } else {
-                try diff_segments.append(DiffSegment{
+                bun.handleOom(diff_segments.append(DiffSegment{
                     .removed = "",
                     .inserted = diff.text,
                     .mode = .inserted,
-                });
+                }));
             }
         } else if (diff.operation == .equal) {
-            try diff_segments.append(DiffSegment{
+            bun.handleOom(diff_segments.append(DiffSegment{
                 .removed = diff.text,
                 .inserted = diff.text,
                 .mode = .equal,
-            });
+            }));
         }
     }
 
@@ -102,15 +102,15 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
             if (diff_segment.mode == .equal) {
                 var split = std.mem.splitScalar(u8, diff_segment.removed, '\n');
                 while (split.next()) |line| {
-                    try new_diff_segments.append(DiffSegment{
+                    bun.handleOom(new_diff_segments.append(DiffSegment{
                         .removed = line,
                         .inserted = line,
                         .mode = .equal,
                         .skip = true,
-                    });
+                    }));
                 }
             } else {
-                try new_diff_segments.append(diff_segment);
+                bun.handleOom(new_diff_segments.append(diff_segment));
             }
         }
 
@@ -404,7 +404,7 @@ fn printModifiedSegment(
     writer: anytype,
     config: DiffConfig,
     modified_style: ModifiedStyle,
-) !void {
+) std.Io.Writer.Error!void {
     const removed_prefix = switch (modified_style.single_line) {
         true => prefix_styles.single_line_removed,
         false => prefix_styles.removed,
@@ -418,8 +418,8 @@ fn printModifiedSegment(
         return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
-    var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
-    try DMP.diffCleanupSemantic(arena, &char_diff);
+    var char_diff = bun.handleOom(DMP.default.diff(arena, segment.removed, segment.inserted, true));
+    bun.handleOom(DMP.diffCleanupSemantic(arena, &char_diff));
 
     var deleted_highlighted_length: usize = 0;
     var inserted_highlighted_length: usize = 0;
@@ -515,7 +515,7 @@ pub fn printDiff(
     writer: anytype,
     diff_segments: []const DiffSegment,
     config: DiffConfig,
-) !void {
+) std.Io.Writer.Error!void {
     var removed_line_number: usize = 1;
     var inserted_line_number: usize = 1;
     var removed_diff_lines: usize = 0;

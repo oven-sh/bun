@@ -66,7 +66,7 @@ for (const file of resolvedZigFiles) {
   }
 
   if (!file.endsWith(".zig")) continue;
-  const imports = content.matchAll(/@import\("([^"]+)"\)/g);
+  const imports = content.matchAll(/@(import|embedFile)\("([^"]+)"\)/g);
   for (const [_, imported] of imports) {
     if (!imported.includes("/") && !imported.includes(".")) continue;
     const resolved = join(dirname(file), imported);
@@ -76,17 +76,16 @@ for (const file of resolvedZigFiles) {
 
 // now, create zip
 
-const out_sh = "build/out.sh";
+const out_args = "build/all.args";
 const out = "codegen-for-zig-team.tar.gz";
 try {
   await Bun.file(out).delete();
 } catch (e) {}
 
+const a0 = args.shift();
 await Bun.write(
-  out_sh,
-  `#!/bin/sh
-  
-$1 ${args
+  out_args,
+  args
     .map(arg => {
       if (arg.includes("=")) {
         const [flag, value] = arg.split("=");
@@ -94,7 +93,7 @@ $1 ${args
       }
       return arg;
     })
-    .join(" ")}`,
+    .join(" ")`,
 );
 
 const spawned = Bun.spawn({
@@ -120,7 +119,7 @@ Download codegen-for-zig-team.tar.gz
 cd /empty/folder
 wget ....
 tar -xvzf codegen-for-zig-team.tar.gz
-sh ./build/out.sh /path/to/zig
+zig ${a0} @${out_args}
 \`\`\`
 `);
 console.log("->", out);

@@ -67,6 +67,12 @@ export function describeValkey(
   };
 
   beforeEach(async () => {
+    // If the client was closed by a previous test, reset it
+    if (clientInstance && !clientInstance.connected) {
+      clientInstance = null;
+      clientConnected = false;
+    }
+
     const client = await context.connectedClient();
     await client.send("FLUSHALL", ["SYNC"]);
   });

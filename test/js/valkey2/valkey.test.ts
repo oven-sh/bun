@@ -88,6 +88,19 @@ describeValkey(
       });
     });
 
+    describe("supports closing", async () => {
+      it("closes the connection when requested", async () => {
+        const redis = await ctx.connectedClient();
+        expect(redis.connected).toBe(true);
+        redis.close();
+        expect(redis.connected).toBe(false);
+
+        // Attempting to set something shouldn't try to kick the client into a new connection since it is "requested"
+        // closed.
+        expect(async () => { await redis.set("foo", "bar"); }).toThrow();
+      });
+    });
+
     describe("is compatible with legacy behavior", () => {
       test("should increment and decrement counters", async () => {
         const redis = await ctx.connectedClient();

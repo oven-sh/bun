@@ -33,7 +33,7 @@ pub const RedisError = error{
     IdleTimeout,
 };
 
-pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: RedisError) jsc.JSValue {
+pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, err: RedisError, comptime msg_fmt: ?[]const u8, comptime msg_args: anytype) jsc.JSValue {
     const error_code: jsc.Error = switch (err) {
         error.ConnectionClosed => .REDIS_CONNECTION_CLOSED,
         error.InvalidResponse => .REDIS_INVALID_RESPONSE,
@@ -65,8 +65,8 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
             return globalObject.takeException(error.JSError),
     };
 
-    if (message) |msg| {
-        return error_code.fmt(globalObject, "{s}", .{msg});
+    if (msg_fmt) |fmt| {
+        return error_code.fmt(globalObject, fmt, msg_args);
     }
     return error_code.fmt(globalObject, "Valkey error: {s}", .{@errorName(err)});
 }
@@ -264,7 +264,7 @@ pub const RESPValue = union(RESPType) {
     pub fn toJSWithOptions(self: *RESPValue, globalObject: *jsc.JSGlobalObject, options: ToJSOptions) bun.JSError!jsc.JSValue {
         switch (self.*) {
             .SimpleString => |str| return valkeyStrToJSValue(globalObject, str, &options),
-            .Error => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidResponse),
+            .Error => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(globalObject, "{s}", .{str}),
             .Integer => |int| return jsc.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
@@ -284,7 +284,7 @@ pub const RESPValue = union(RESPType) {
             .Null => return jsc.JSValue.jsNull(),
             .Double => |d| return jsc.JSValue.jsNumber(d),
             .Boolean => |b| return jsc.JSValue.jsBoolean(b),
-            .BlobError => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidBlobError),
+            .BlobError => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(globalObject, "{s}", .{str}),
             .VerbatimString => |verbatim| return valkeyStrToJSValue(globalObject, verbatim.content, &options),
             .Map => |entries| {
                 var js_obj = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);

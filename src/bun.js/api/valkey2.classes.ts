@@ -179,7 +179,7 @@ export default [
       zunion: { fn: "zunion", length: 2 },
       zunionstore: { fn: "zunionstore", length: 3 },
     },
-    //values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+    //values: ["onclose", "hello", "subscriptionCallbackMap"],
     values: [
       "connectionPromise", // Used to track the progress of the connection. Not exposed to JS.
     ],

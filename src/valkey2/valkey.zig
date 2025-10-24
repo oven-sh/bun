@@ -143,7 +143,12 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
 
         /// Deinitialize the Valkey client instance.
         pub fn deinit(self: *Self) void {
-            _ = self;
+            self.close();
+
+            self._inflight_queue.deinit();
+            self._outbound_queue.deinit();
+            self._connection_params.deinit();
+            self._callbacks.onDeinit();
         }
 
         /// Create a new copy of this client.
@@ -178,8 +183,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
         }
 
         /// Attempt to close the connection to the Valkey server.
-        pub fn close(self: *Self) Error!void {
-            _ = self;
+        pub fn close(self: *Self) void {
+            self._state.transition(.{ .closed = .{} }) catch {
+                var state = State{ .closed = .{} };
+                self._state.warnIllegalTransition(&state);
+            };
         }
 
         /// Invoked whenever a slice of bytes is received from the socket. You need to figure out a
@@ -447,13 +455,24 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             _ = self;
         }
 
-        /// TODO(markovejnovic): When is it invoked?
-        pub fn onConnectError(
-            self: *Self,
-            _: i32,
-        ) void {
-            // TODO(markovejnovic): Please implement me!!!
-            _ = self;
+        /// Invoked when a connection attempt fails.
+        ///
+        /// This happens when the socket fails to connect to the server (e.g., connection refused,
+        /// network unreachable, etc.)
+        pub fn onConnectError(self: *Self, error_code: i32) void {
+            Self.debug("{*}.onConnectError(error_code={})", .{ self, error_code });
+
+            // Notify the listener first
+            if (comptime std.meta.hasFn(ValkeyListener, "onConnectError")) {
+                self._callbacks.onConnectError();
+            }
+
+            // When a connection error occurs, we need to transition back to disconnected so the
+            // client can retry or be used again.
+            self._state.transition(.{ .disconnected = .{} }) catch {
+                var state = State{ .disconnected = .{} };
+                self._state.warnIllegalTransition(&state);
+            };
         }
 
         /// Invoked whenever a connection is ended but not cleanly closed.
@@ -549,7 +568,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
         ///
         /// This does not need to handle illegal transitions, the state machine handles that for
         /// you.
-        fn onStateTransition(self: *Self, from_state: *const State) !void {
+        fn onStateTransition(self: *Self, from_state: *State) !void {
             const to_state = &self._state;
 
             Self.debug("{*}.onStateTransition(from={s}, to={s})", .{
@@ -564,6 +583,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                     switch (to_state.*) {
                         .opening => {
                             try self.onStateDisconnectedToOpening();
+                        },
+                        .closed => {
+                            try self.onStateAnyToClosed();
                         },
                         else => {
                             from_state.warnIllegalTransition(to_state);
@@ -581,10 +603,24 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                                 else => {},
                             }
                         },
+                        .disconnected => {
+                            // Connection failed, go back to disconnected state
+                            // No special cleanup needed here
+                        },
+                        .closed => {
+                            try self.onStateAnyToClosed();
+                        },
                         else => {},
                     }
                 },
                 .linked => |*l_state| {
+                    switch (to_state.*) {
+                        .linked => {},
+                        else => {
+                            try self.onStateLinkedToAny(from_state);
+                        },
+                    }
+
                     switch (l_state.state) {
                         .authenticating => {
                             switch (to_state.*) {
@@ -605,11 +641,62 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                         },
                         else => {},
                     }
+
+                    switch (to_state.*) {
+                        .closed => {
+                            try self.onStateAnyToClosed();
+                        },
+                        else => {},
+                    }
                 },
-                else => {},
+                .closed => {},
+                else => {
+                    switch (to_state.*) {
+                        .closed => {
+                            try self.onStateAnyToClosed();
+                        },
+                        else => {},
+                    }
+                },
             }
 
             self.runAfterStateTransitionCallback(from_state, to_state);
+        }
+
+        /// Invoked when transitioning out of the linked state to any other state.
+        fn onStateLinkedToAny(self: *Self, from_state: *State) !void {
+            from_state.*.linked._egress_buffer.deinit(self._allocator);
+            from_state.*.linked._ingress_buffer.deinit(self._allocator);
+        }
+
+        /// Invoked when any state is transitioning to the closed state.
+        ///
+        /// TODO(markovejnovic): It's kind of not clean that this doesn't handle the
+        ///                      deinitialization of the linked state. It would be better if it
+        ///                      also encapsulated the logic saying: "is the from-state a linked
+        ///                      one and if so, deinit its buffers".
+        fn onStateAnyToClosed(self: *Self) !void {
+            Self.debug("{*} Socket is closing...", .{self});
+
+            self.unregisterAutoFlusher();
+            self._socket_io.close();
+
+            // We also want to fail all the pending requests.
+            for (self._inflight_queue.readableSlice(0)) |*req| {
+                self._callbacks.onRequestDropped(&req.context);
+                // TODO(markovejnovic): Pretty sure this cast is wrong.
+                @constCast(req).deinit(self._allocator);
+            }
+            self._inflight_queue.discard(self._inflight_queue.readableLength());
+
+            for (self._outbound_queue.readableSlice(0)) |*req| {
+                self._callbacks.onRequestDropped(&req.context);
+                // TODO(markovejnovic): Pretty sure this cast is wrong.
+                @constCast(req).deinit(self._allocator);
+            }
+            self._outbound_queue.discard(self._outbound_queue.readableLength());
+
+            self._callbacks.onClose();
         }
 
         fn onStateAuthenticatingToNormalOrSubscriber(self: *Self) !void {
@@ -740,6 +827,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                             @panic("Not implemneted");
                         },
                     }
+                },
+                .closed => {
+                    // We're closed, we can't send requests until the user asks for us to
+                    // reconnect, explicitly.
+                    return error.ConnectionClosed;
                 },
                 else => {
                     Self.debug(
@@ -946,8 +1038,9 @@ pub fn SocketIO(ValkeyClientType: type) type {
             };
         }
 
-        pub fn deinit(self: *Self) void {
+        pub fn close(self: *Self) void {
             self._context.deinit(false);
+            self._socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } };
         }
 
         /// Create a new uWS context given the TLS configuration.
@@ -1597,9 +1690,7 @@ pub fn ClientState(ValkeyClientType: type) type {
                 return err;
             };
 
-            Self.debug("State transition to={s} is complete.", .{
-                @tagName(self.*),
-            });
+            Self.debug("State transition to={s} is complete.", .{@tagName(self.*)});
         }
 
         /// Fetch the ValkeyClient which owns this SocketIO.
@@ -1650,6 +1741,10 @@ fn QueuedRequest(Context: type) type {
                 .pipelinable = req.command.canBePipelined(),
                 .returns_bool = req.command.returnsBool(),
             };
+        }
+
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.serialized_data);
         }
     };
 }

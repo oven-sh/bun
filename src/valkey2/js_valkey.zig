@@ -106,11 +106,56 @@ pub const JsValkey = struct {
             }
         }
 
+        pub fn onConnectError(self: *@This()) void {
+            const pp = self.parent();
+            const go = pp._global_obj;
+            const js_this = pp._js_this.tryGet() orelse return;
+            const conn_promise = JsValkey.js.connectionPromiseGetCached(js_this) orelse return;
+
+            if (conn_promise.asPromise()) |promise| {
+                promise.reject(go, go.ERR(
+                    .SOCKET_CLOSED_BEFORE_CONNECTION,
+                    "Connection error: failed to connect to Valkey.",
+                    .{},
+                ).toJS());
+            }
+
+            JsValkey.js.connectionPromiseSetCached(js_this, go, .zero);
+        }
+
+        pub fn onClose(self: *@This()) void {
+            _ = self;
+        }
+
+        pub fn onDeinit(self: *@This()) void {
+            _ = self;
+        }
+
+        /// Invoked by the ZigClient whenever a message which is in-flight is dropped. This happens
+        /// when the connection drops or the client is closed.
+        pub fn onRequestDropped(self: *@This(), ctx: *const RequestContext) void {
+            const go = self.parent()._global_obj;
+
+            switch (ctx.*) {
+                .user_request => |*ur| {
+                    // Reject the promise with a connection error
+                    // TODO(markovejnovic): This constCast sucks
+                    @constCast(ur).reject(go, go.ERR(
+                        .SOCKET_CLOSED_BEFORE_CONNECTION,
+                        "Request dropped: connection closed or lost",
+                        .{},
+                    ).toJS());
+                },
+            }
+        }
+
         pub fn afterStateTransition(
             self: *@This(),
             old_state: *const ZigClient.State,
             new_state: *const ZigClient.State,
         ) void {
+            _ = old_state;
+
             self.updateRefCount(new_state);
             self.updateJsThisRef(new_state);
             self.updateEventLoop(new_state);
@@ -123,17 +168,7 @@ pub const JsValkey = struct {
                 const js_this = pp._js_this.tryGet().?;
                 js_this.ensureStillAlive();
 
-                // Call onconnect callback if defined by the user
-                if (JsValkey.js.onconnectGetCached(js_this)) |on_connect| {
-                    if (on_connect.isCallable()) {
-                        pp._global_obj.bunVM().eventLoop().runCallback(
-                            on_connect,
-                            pp._global_obj,
-                            js_this,
-                            &.{},
-                        );
-                    }
-                }
+                self.tryCallOnConnect();
 
                 // Means we just connected to Valkey. Let's resolve the connection promise.
                 const js_promise = JsValkey.js.connectionPromiseGetCached(js_this) orelse {
@@ -151,8 +186,30 @@ pub const JsValkey = struct {
 
                 JsValkey.js.connectionPromiseSetCached(js_this, pp._global_obj, .zero);
             }
+        }
 
-            _ = old_state;
+        fn tryCallOnConnect(self: *@This()) void {
+            const pp = self.parent();
+            const js_this = pp._js_this.tryGet().?;
+
+            if (JsValkey.js.onconnectGetCached(js_this)) |on_connect| {
+                if (on_connect.isCallable()) {
+                    // Bind the callback to js_this so it receives the correct 'this' context
+                    // when called as a microtask
+                    const bound_callback = on_connect.bind(
+                        pp._global_obj,
+                        js_this,
+                        &bun.String.empty,
+                        0,
+                        &[_]bun.jsc.JSValue{},
+                    ) catch |err| {
+                        // If binding fails, report the error but continue with connection
+                        pp._global_obj.reportActiveExceptionAsUnhandled(err);
+                        return;
+                    };
+                    pp._global_obj.queueMicrotask(bound_callback, &[_]bun.jsc.JSValue{});
+                }
+            }
         }
 
         /// Update the event loop reference count based on the new state.
@@ -380,21 +437,30 @@ pub const JsValkey = struct {
         return bun.jsc.JSValue.jsNumber(self._client.bufferedBytesCount());
     }
 
-    pub fn getOnConnect(_: *const Self, js_this: bun.jsc.JSValue, _: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
+    pub fn getOnConnect(
+        _: *const Self,
+        js_this: bun.jsc.JSValue,
+        _: *bun.jsc.JSGlobalObject,
+    ) bun.jsc.JSValue {
         if (Self.js.onconnectGetCached(js_this)) |value| {
             return value;
         }
         return .js_undefined;
     }
 
-    pub fn setOnConnect(_: *Self, js_this: bun.jsc.JSValue, go: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) void {
+    pub fn setOnConnect(
+        _: *Self,
+        js_this: bun.jsc.JSValue,
+        go: *bun.jsc.JSGlobalObject,
+        value: bun.jsc.JSValue,
+    ) void {
         Self.js.onconnectSetCached(js_this, go, value);
     }
 
-    pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.jsc.JSValue {
-        _ = self;
-        _ = go;
+    pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) !bun.jsc.JSValue {
         _ = cf;
+        _ = go;
+        self._client.close();
         return .js_undefined;
     }
 
@@ -424,7 +490,7 @@ pub const JsValkey = struct {
         _: bun.jsc.JSValue,
         command: Command,
         options: RequestOptions,
-    ) !*bun.jsc.JSPromise {
+    ) *bun.jsc.JSPromise {
         // The goal of this function is to transform Command -> RequestType. To achieve that, we
         // need to enrich the Command with promise.
         var req: ZigClient.RequestType = .{
@@ -434,8 +500,15 @@ pub const JsValkey = struct {
             },
         };
 
-        try self._client.request(&req);
+        self._client.request(&req) catch |err| {
+            // Synchronous error: swap() gives us the promise and destroys the Strong
+            const promise = req.context.user_request._promise.swap();
+            const error_value = protocol.valkeyErrorToJS(go, err, null, .{});
+            promise.reject(go, error_value);
+            return promise;
+        };
 
+        // Success: request is queued, the Strong gets copied into the queue and managed there
         return req.context.user_request.promise();
     }
 
@@ -504,9 +577,7 @@ pub const JsValkey = struct {
         defer cmd_str.deinit();
         const promise = self.request(go, cf.this(), Command.initDirect(cmd_str.slice(), .{
             .args = args.items,
-        }), .{}) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send command", err);
-        };
+        }), .{});
         return promise.toJS();
     }
 
@@ -606,10 +677,7 @@ pub const JsValkey = struct {
             cf.this(),
             Command.initById(command, .{ .slices = args.items }),
             .{},
-        ) catch |err| {
-            const msg = "Failed to send " ++ @tagName(command) ++ " command";
-            return protocol.valkeyErrorToJS(go, msg, err);
-        };
+        );
 
         return promise.toJS();
     }
@@ -683,9 +751,7 @@ pub const JsValkey = struct {
             cf.this(),
             Command.initById(.HMGET, .{ .args = args.items }),
             .{},
-        ) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send HMGET command", err);
-        };
+        );
         return promise.toJS();
     }
 
@@ -715,9 +781,7 @@ pub const JsValkey = struct {
         const promise = this.request(go, cf.this(), Command.initById(
             .PING,
             .{ .args = args_slice },
-        ), .{}) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send PING command", err);
-        };
+        ), .{});
         return promise.toJS();
     }
 
@@ -736,9 +800,7 @@ pub const JsValkey = struct {
             cf.this(),
             Command.initById(.GET, .{ .args = &.{key} }),
             .{},
-        ) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send GET command", err);
-        };
+        );
         return promise.toJS();
     }
 
@@ -780,9 +842,7 @@ pub const JsValkey = struct {
             cf.this(),
             Command.initById(.SET, .{ .args = args.items }),
             .{},
-        ) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send SET command", err);
-        };
+        );
 
         return promise.toJS();
     }
@@ -816,9 +876,7 @@ pub const JsValkey = struct {
             cf.this(),
             Command.initById(.EXPIRE, .{ .args = &.{ key, seconds_arg } }),
             .{},
-        ) catch |err| {
-            return protocol.valkeyErrorToJS(go, "Failed to send EXPIRE command", err);
-        };
+        );
         return promise.toJS();
     }
 
@@ -998,13 +1056,7 @@ const MetFactory = struct {
                 const promise = self.request(go, cf.this(), .{
                     .command = .{ .command_id = command_descriptor },
                     .args = .{ .args = &.{} },
-                }, .{}) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command_descriptor),
-                        err,
-                    );
-                };
+                }, .{});
                 return promise.toJS();
             }
         };
@@ -1032,13 +1084,7 @@ const MetFactory = struct {
                     cf.this(),
                     Command.initById(command, .{ .args = &.{key} }),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1067,13 +1113,7 @@ const MetFactory = struct {
                     cf.this(),
                     Command.initById(command, .{ .args = &.{key} }),
                     options,
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1106,13 +1146,7 @@ const MetFactory = struct {
                     cf.this(),
                     Command.initById(command, .{ .args = &.{ key, value } }),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1155,13 +1189,7 @@ const MetFactory = struct {
                     cf.this(),
                     Command.initById(command, .{ .args = args.items }),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1217,13 +1245,7 @@ const MetFactory = struct {
                         .{ .args = args.items },
                     ),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1263,13 +1285,7 @@ const MetFactory = struct {
                         .{ .args = &.{ key, value, value2 } },
                     ),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };
@@ -1316,13 +1332,7 @@ const MetFactory = struct {
                     callframe.this(),
                     Command.initById(command, .{ .args = args.items }),
                     .{},
-                ) catch |err| {
-                    return protocol.valkeyErrorToJS(
-                        go,
-                        "Failed to send " ++ @tagName(command),
-                        err,
-                    );
-                };
+                );
                 return promise.toJS();
             }
         };

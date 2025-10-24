@@ -894,7 +894,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             lock.lock();
             defer lock.unlock();
 
-            switch (enable_ansi_colors_stdout and source_set and scopedWriter() == rawWriter()) {
+            switch (enable_ansi_colors_stdout and source_set and scopedWriter().context.handle == rawWriter().handle) {
                 inline else => |use_ansi| {
                     out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, use_ansi), args) catch {
                         really_disable.store(true, .monotonic);
@@ -1144,10 +1144,10 @@ pub const DebugTimer = struct {
 
     pub const WriteError = error{};
 
-    pub fn format(self: DebugTimer, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) WriteError!void {
+    pub fn format(self: DebugTimer, w: *std.Io.Writer) std.Io.Writer.Error!void {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
-            w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
+            try w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms});
         }
     }
 };

@@ -765,7 +765,7 @@ pub const GetAddrInfoRequest = struct {
                         if (hints) |*hint| hint else null,
                         &addrinfo,
                     );
-                    bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                    bun.sys.syslog("getaddrinfo({s}, {s}) = {d} ({any})", .{
                         query.name,
                         portZ,
                         err,

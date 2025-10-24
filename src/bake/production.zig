@@ -350,7 +350,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
-        log("src_index={any} side={s} src={s} dest={s} - {d}\n", .{
+        log("src_index={any} side={s} src={s} dest={s} - {?d}\n", .{
             file.source_index.unwrap(),
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,

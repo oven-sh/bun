@@ -200,6 +200,8 @@ pub const Snapshots = struct {
                 this.allocator.free(key.*);
             }
             this.counts.clearAndFree();
+
+            this._current_file = null;
         }
     }
 
@@ -475,9 +477,7 @@ pub const Snapshots = struct {
     }
 
     fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !bun.sys.Maybe(void) {
-        if (this._current_file == null or this._current_file.?.id != file_id) {
-            try this.writeSnapshotFile();
-
+        if (this._current_file == null) {
             const test_file = Jest.runner.?.files.get(file_id);
             const test_filename = test_file.source.path.name.filename;
             const dir_path = test_file.source.path.name.dirWithTrailingSlash();

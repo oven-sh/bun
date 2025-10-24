@@ -2217,7 +2217,6 @@ const Bin = Install.Bin;
 const Dependency = Install.Dependency;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
-const PackageManager = bun.install.PackageManager;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = Install.Repository;
 const Resolution = Install.Resolution;

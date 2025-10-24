@@ -393,8 +393,8 @@ const Dependency = bun.install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = bun.install.PackageManager;
-const invalid_package_id = install.invalid_package_id;
 const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;

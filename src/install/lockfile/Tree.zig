@@ -701,7 +701,6 @@ const PackageID = install.PackageID;
 const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
 
 const Lockfile = install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;

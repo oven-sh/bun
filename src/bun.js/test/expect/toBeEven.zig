@@ -34,7 +34,7 @@ pub fn toBeEven(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
     }
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };

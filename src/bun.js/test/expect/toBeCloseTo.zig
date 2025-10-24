@@ -43,7 +43,7 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     }
 
     if (std.math.isPositiveInf(expected) and std.math.isPositiveInf(received)) {
-        return .js_undefined;
+        return this.returnMatcherValue(globalThis);
     }
 
     const expected_diff = bun.pow(10, -precision) / 2;
@@ -53,7 +53,7 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     const not = this.flags.not;
     if (not) pass = !pass;
 
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

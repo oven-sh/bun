@@ -9,7 +9,7 @@ pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
     const not = this.flags.not;
     const pass = (value.isBoolean() and value.toBoolean()) != not;
 
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

@@ -1,6 +1,7 @@
 const Buffers = @This();
 
 trees: Tree.List = .{},
+/// List of all dependency ids installed by `trees`. To be sliced with `tree.dependencies`.
 hoisted_dependencies: DependencyIDList = .{},
 /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
 /// Should be the same length as `dependencies`
@@ -273,7 +274,7 @@ pub fn save(
 pub fn legacyPackageToDependencyID(this: Buffers, dependency_visited: ?*Bitset, package_id: PackageID) !DependencyID {
     switch (package_id) {
         0 => return Tree.root_dep_id,
-        invalid_package_id => return invalid_package_id,
+        invalid_package_id => return invalid_dependency_id,
         else => for (this.resolutions.items, 0..) |pkg_id, dep_id| {
             if (pkg_id == package_id) {
                 if (dependency_visited) |visited| {
@@ -394,6 +395,7 @@ const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const invalid_package_id = install.invalid_package_id;
+const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = bun.install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;

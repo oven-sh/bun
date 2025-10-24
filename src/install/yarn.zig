@@ -1120,8 +1120,8 @@ pub fn migrateYarnLockfile(
     try this.buffers.hoisted_dependencies.ensureTotalCapacity(allocator, this.buffers.dependencies.items.len * 2);
 
     try this.buffers.trees.append(allocator, Tree{
-        .id = 0,
-        .parent = Tree.invalid_id,
+        .id = .root,
+        .parent = .invalid,
         .dependency_id = Tree.root_dep_id,
         .dependencies = .{
             .off = 0,

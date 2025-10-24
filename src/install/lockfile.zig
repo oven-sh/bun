@@ -594,7 +594,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
+    return id == .root or this.buffers.dependencies.items[this.buffers.trees.items[id.get()].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -930,14 +930,14 @@ pub fn hoist(
 
     try (Tree{}).processSubtree(
         Tree.root_dep_id,
-        Tree.invalid_id,
+        .invalid,
         method,
         &builder,
     );
 
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
-        try builder.list.items(.tree)[item.tree_id].processSubtree(
+        try builder.list.items(.tree)[item.tree_id.get()].processSubtree(
             item.dependency_id,
             item.hoist_root_id,
             method,

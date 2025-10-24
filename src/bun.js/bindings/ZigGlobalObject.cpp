@@ -3527,10 +3527,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     }
 }
 
-napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+Ref<NapiEnv> GlobalObject::makeNapiEnv(const napi_module& mod)
 {
-    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
-    return m_napiEnvs.last().get();
+    m_napiEnvs.append(NapiEnv::create(this, mod));
+    return m_napiEnvs.last();
 }
 
 napi_env GlobalObject::makeNapiEnvForFFI()
@@ -3544,7 +3544,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
         .nm_priv = nullptr,
         .reserved = {},
     });
-    return out;
+    return &out.leakRef();
 }
 
 bool GlobalObject::hasNapiFinalizers() const

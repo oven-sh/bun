@@ -3430,16 +3430,22 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
     if (!nextTickFn) [[unlikely]] {
-        throwVMError(globalObject, scope, "Faild to call nextTick"_s);
-        return;
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
     }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);

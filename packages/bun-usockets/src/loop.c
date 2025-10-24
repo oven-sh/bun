@@ -339,6 +339,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if (eof != 0) {
                 u->has_received_eof = true;
             }
+            break;
         }
     }
 }

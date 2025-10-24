@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const StatsCommand = @import("./cli/stats_command.zig").StatsCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -619,6 +620,7 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("stats") => .StatsCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -788,6 +790,11 @@ pub const Command = struct {
             .WhyCommand => {
                 const ctx = try Command.init(allocator, log, .WhyCommand);
                 try WhyCommand.exec(ctx);
+                return;
+            },
+            .StatsCommand => {
+                const ctx = try Command.init(allocator, log, .StatsCommand);
+                try StatsCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -963,6 +970,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        StatsCommand,
 
         /// Used by crash reports.
         ///
@@ -1000,6 +1008,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .StatsCommand => 'S',
             };
         }
 
@@ -1306,6 +1315,19 @@ pub const Command = struct {
                         \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
+                .StatsCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun stats<r>
+                        \\Generate a comprehensive code statistics report for your project
+                        \\
+                        \\Shows file counts, lines of code, imports/exports, and more.
+                        \\Analyzes JavaScript, TypeScript, CSS, and JSON files.
                         \\
                     ;
 

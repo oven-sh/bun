@@ -1,3 +1,5 @@
+- [ ] something is wrong in the diff for napi.zig. how come it adds a `pub fn enqueue(this: *Finalizer)` and a `pub fn deinit(this: *Finalizer)`. did I mess up a merge
+- [ ] how come it adds code in b/test/js/bun/css/css.test.ts
 - [ ] migrate {} to {f} by adding a compileError
 - [ ] remove deprecated.BufferedWriter and BufferedReader
 

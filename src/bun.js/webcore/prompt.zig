@@ -154,6 +154,34 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
+    fn utf8Prev(slice: []const u8, index: usize) ?usize {
+        if (index == 0) return null;
+        var i = index - 1;
+        // Search backward for the start byte of a codepoint.
+        // A continuation byte starts with 0b10xxxxxx.
+        while (i > 0 and (slice[i] & 0b11000000) == 0b10000000) {
+            i -= 1;
+        }
+        // If we found a start byte, return its index.
+        // This handles ASCII (0xxxxxxx) and multibyte start bytes (11xxxxxx).
+        // If we stopped at 0, it's either a valid start byte or an invalid continuation byte.
+        // We return i, and the caller's logic will handle the deletion.
+        return i;
+    }
+
+    fn utf8Next(slice: []const u8, index: usize) ?usize {
+        if (index >= slice.len) return null;
+        // Use the project's internal function to get the byte length of the codepoint.
+        const len = bun.strings.utf8ByteSequenceLength(slice[index]);
+        const next_index = index + len;
+        if (next_index > slice.len) return null;
+        return next_index;
+    }
+
+    fn columnWidth(slice: []const u8) usize {
+        return bun.strings.visible.width.utf8(slice);
+    }
+
     /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to only append
     /// and assume capacity.
     pub fn readUntilDelimiterArrayListAppendAssumeCapacity(
@@ -330,10 +358,22 @@ pub const prompt = struct {
                         8, 127 => {
                             if (cursor_index > 0) {
                                 const old_cursor_index = cursor_index;
-                                const prev_codepoint_start = std.unicode.utf8Prev(input.items, old_cursor_index);
+                                const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
+                                
+                                var deleted_slice: []const u8 = undefined;
+                                if (prev_codepoint_start) |start| {
+                                    deleted_slice = input.items[start..old_cursor_index];
+                                } else {
+                                    deleted_slice = input.items[old_cursor_index - 1 .. old_cursor_index];
+                                }
+                                const deleted_width = columnWidth(deleted_slice);
+
                                 if (prev_codepoint_start) |start| {
                                     // Remove the codepoint bytes
-                                    _ = input.orderedRemoveRange(start, old_cursor_index);
+                                    var i: usize = 0;
+                                    while (i < old_cursor_index - start) : (i += 1) {
+                                        _ = input.orderedRemove(start);
+                                    }
                                     cursor_index = start;
                                 } else {
                                     // Fallback for invalid UTF-8 or start of string: delete one byte
@@ -342,10 +382,18 @@ pub const prompt = struct {
                                 }
 
                                 // Redraw the line from the cursor
-                                _ = stdout_writer.writeAll("\x1b[D") catch {}; // Move cursor left (1 column)
+                                _ = stdout_writer.print("\x1b[{d}D", .{deleted_width}) catch {}; // Move cursor left (W columns)
                                 _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
-                                _ = stdout_writer.writeAll(" ") catch {}; // Clear the character at the end (1 column)
-                                _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index + 1}) catch {}; // Move cursor back
+                                
+                                // Clear the space left by the deleted character
+                                var i: usize = 0;
+                                while (i < deleted_width) : (i += 1) {
+                                    _ = stdout_writer.writeAll(" ") catch {};
+                                }
+                                
+                                // Move cursor back to its correct position
+                                const redrawn_width = columnWidth(input.items[cursor_index..]);
+                                _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width + deleted_width}) catch {};
                                 bun.Output.flush();
                             }
                         },
@@ -367,15 +415,31 @@ pub const prompt = struct {
                             switch (reader.readByte() catch continue) {
                                 'D' => { // Left arrow
                                     if (cursor_index > 0) {
-                                        cursor_index = std.unicode.utf8Prev(input.items, cursor_index) orelse cursor_index - 1;
-                                        _ = stdout_writer.writeAll("\x1b[D") catch {};
+                                        const old_cursor_index = cursor_index;
+                                        const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
+                                        
+                                        var move_width: usize = 1;
+                                        if (prev_codepoint_start) |start| {
+                                            move_width = columnWidth(input.items[start..old_cursor_index]);
+                                        }
+
+                                        cursor_index = prev_codepoint_start orelse old_cursor_index - 1;
+                                        _ = stdout_writer.print("\x1b[{d}D", .{move_width}) catch {};
                                         bun.Output.flush();
                                     }
                                 },
                                 'C' => { // Right arrow
                                     if (cursor_index < input.items.len) {
-                                        cursor_index = std.unicode.utf8Next(input.items, cursor_index) orelse cursor_index + 1;
-                                        _ = stdout_writer.writeAll("\x1b[C") catch {};
+                                        const old_cursor_index = cursor_index;
+                                        const next_codepoint_start = utf8Next(input.items, old_cursor_index);
+                                        
+                                        var move_width: usize = 1;
+                                        if (next_codepoint_start) |end| {
+                                            move_width = columnWidth(input.items[old_cursor_index..end]);
+                                        }
+
+                                        cursor_index = next_codepoint_start orelse old_cursor_index + 1;
+                                        _ = stdout_writer.print("\x1b[{d}C", .{move_width}) catch {};
                                         bun.Output.flush();
                                     }
                                 },
@@ -396,10 +460,22 @@ pub const prompt = struct {
                                     }
                                     // Handle Delete key: remove character under cursor
                                     if (cursor_index < input.items.len) {
-                                        const next_codepoint_start = std.unicode.utf8Next(input.items, cursor_index);
+                                        const next_codepoint_start = utf8Next(input.items, cursor_index);
+                                        
+                                        var deleted_slice: []const u8 = undefined;
+                                        if (next_codepoint_start) |end| {
+                                            deleted_slice = input.items[cursor_index..end];
+                                        } else {
+                                            deleted_slice = input.items[cursor_index..cursor_index + 1];
+                                        }
+                                        const deleted_width = columnWidth(deleted_slice);
+
                                         if (next_codepoint_start) |end| {
                                             // Remove the codepoint bytes
-                                            _ = input.orderedRemoveRange(cursor_index, end);
+                                            var i: usize = 0;
+                                            while (i < end - cursor_index) : (i += 1) {
+                                                _ = input.orderedRemove(cursor_index);
+                                            }
                                         } else {
                                             // Fallback: delete one byte if invalid UTF-8
                                             _ = input.orderedRemove(cursor_index);
@@ -407,8 +483,16 @@ pub const prompt = struct {
 
                                         // Redraw from cursor
                                         _ = stdout_writer.writeAll(input.items[cursor_index..]) catch {};
-                                        _ = stdout_writer.writeAll(" ") catch {};
-                                        _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index + 1}) catch {};
+                                        
+                                        // Clear the space left by the deleted character
+                                        var i: usize = 0;
+                                        while (i < deleted_width) : (i += 1) {
+                                            _ = stdout_writer.writeAll(" ") catch {};
+                                        }
+                                        
+                                        // Move cursor back to its correct position
+                                        const redrawn_width = columnWidth(input.items[cursor_index..]);
+                                        _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width + deleted_width}) catch {};
                                         bun.Output.flush();
                                     }
                                 },
@@ -429,7 +513,8 @@ pub const prompt = struct {
                             _ = stdout_writer.writeAll(input.items[cursor_index - 1 ..]) catch {};
                             // Move cursor back to its correct position
                             if (input.items.len > cursor_index) {
-                                _ = stdout_writer.print("\x1b[{d}D", .{input.items.len - cursor_index}) catch {};
+                                const redrawn_width = columnWidth(input.items[cursor_index..]);
+                                _ = stdout_writer.print("\x1b[{d}D", .{redrawn_width}) catch {};
                             }
                             bun.Output.flush();
                         },

@@ -40,7 +40,7 @@ pub fn format(this: Command, writer: *std.Io.Writer) !void {
 }
 
 pub fn byteLength(this: *const Command) usize {
-    return std.fmt.count("{}", .{this.*});
+    return std.fmt.count("{f}", .{this.*});
 }
 
 pub fn serialize(this: *const Command, allocator: std.mem.Allocator) ![]u8 {

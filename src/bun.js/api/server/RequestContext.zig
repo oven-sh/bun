@@ -160,7 +160,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .quote_strings = true,
                     };
                     defer formatter.deinit();
-                    Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
+                    Output.errGeneric("Expected a Response object, but received '{f}'", .{value.toFmt(&formatter)});
                 } else {
                     Output.errGeneric("Expected a Response object", .{});
                 }
@@ -2089,7 +2089,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     vm.log,
                     error.ExceptionOcurred,
                     exception_list.items,
-                    "<r><red>{s}<r> - <b>{}<r> failed",
+                    "<r><red>{s}<r> - <b>{f}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {

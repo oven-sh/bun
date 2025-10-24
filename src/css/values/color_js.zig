@@ -315,10 +315,10 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                     return jsc.JSValue.jsNumber(int);
                                 },
                                 .hex => {
-                                    break :color bun.String.createFormat("#{}{}{}", .{ bun.fmt.hexIntLower(rgba.red), bun.fmt.hexIntLower(rgba.green), bun.fmt.hexIntLower(rgba.blue) });
+                                    break :color bun.String.createFormat("#{f}{f}{f}", .{ bun.fmt.hexIntLower(rgba.red), bun.fmt.hexIntLower(rgba.green), bun.fmt.hexIntLower(rgba.blue) });
                                 },
                                 .HEX => {
-                                    break :color bun.String.createFormat("#{}{}{}", .{ bun.fmt.hexIntUpper(rgba.red), bun.fmt.hexIntUpper(rgba.green), bun.fmt.hexIntUpper(rgba.blue) });
+                                    break :color bun.String.createFormat("#{f}{f}{f}", .{ bun.fmt.hexIntUpper(rgba.red), bun.fmt.hexIntUpper(rgba.green), bun.fmt.hexIntUpper(rgba.blue) });
                                 },
                                 .rgb => {
                                     break :color bun.String.createFormat("rgb({d}, {d}, {d})", .{ rgba.red, rgba.green, rgba.blue });

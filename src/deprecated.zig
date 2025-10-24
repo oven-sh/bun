@@ -638,13 +638,16 @@ pub fn jsErrorToWriteError(e: bun.JSError) std.Io.Writer.Error {
     };
 }
 
-pub fn autoFormatLabel(comptime ty: type) []const u8 {
-    if (std.meta.hasFn(ty, "format")) {
+pub fn autoFormatLabelFallback(comptime ty: type, comptime fallback: []const u8) []const u8 {
+    comptime if (std.meta.hasFn(ty, "format")) {
         return "{f}";
     } else {
-        return "{s}";
-    }
-    // else return {any}
+        return fallback;
+    };
+}
+
+pub fn autoFormatLabel(comptime ty: type) []const u8 {
+    return autoFormatLabelFallback(ty, "{s}");
 }
 
 const bun = @import("bun");

@@ -757,7 +757,7 @@ fn buildRequestBody(
                 "Upgrade: websocket\r\n" ++
                 "Sec-WebSocket-Version: 13\r\n" ++
                 "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
-                "{s}" ++
+                "{f}" ++
                 "{s}" ++
                 "\r\n",
             .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
@@ -772,7 +772,7 @@ fn buildRequestBody(
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
-            "{s}" ++
+            "{f}" ++
             "{s}" ++
             "\r\n",
         .{ pathname_.slice(), host_fmt, pico_headers, extra_headers_buf.items },

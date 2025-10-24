@@ -11,7 +11,7 @@ pub const js_fns = struct {
         str: []const u8,
         pub fn format(this: Signature, writer: *std.Io.Writer) !void {
             switch (this) {
-                .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
+                .scope_functions => try writer.print("{f}", .{this.scope_functions.*}),
                 .str => try writer.print("{s}", .{this.str}),
             }
         }
@@ -19,19 +19,19 @@ pub const js_fns = struct {
     const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
     fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestRoot {
         if (bun.jsc.Jest.Jest.runner == null) {
-            return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
         }
         const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.bun_test_root;
         const vm = globalThis.bunVM();
         if (vm.is_in_preload and !cfg.allow_in_preload) {
-            return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} during preload.", .{cfg.signature});
         }
         return bunTestRoot;
     }
     pub fn cloneActiveStrong(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!BunTestPtr {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
         const bunTest = bunTestRoot.cloneActiveFile() orelse {
-            return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} outside of a test file.", .{cfg.signature});
         };
 
         return bunTest;

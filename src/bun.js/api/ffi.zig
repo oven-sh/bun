@@ -1390,7 +1390,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop});
+                return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{f}\"", .{prop});
             }
 
             var function: Function = .{ .allocator = allocator };
@@ -1891,7 +1891,7 @@ pub const FFI = struct {
             {
                 const ptr = @intFromPtr(globalObject);
                 const fmt = bun.fmt.hexIntUpper(ptr);
-                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}ULL\n", .{fmt});
+                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{f}ULL\n", .{fmt});
             }
 
             try writer.writeAll("#define IS_CALLBACK 1\n");

@@ -874,7 +874,7 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
 
 fn printResponse(response: picohttp.Response) void {
     @branchHint(.cold);
-    Output.prettyErrorln("{}", .{response});
+    Output.prettyErrorln("{f}", .{response});
     Output.flush();
 }
 

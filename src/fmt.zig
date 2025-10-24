@@ -1810,7 +1810,7 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             }
 
             if (comptime T == f64 or T == f32) {
-                try writer.print(" Received {}", .{double(self.value)});
+                try writer.print(" Received {f}", .{double(self.value)});
             } else if (comptime T == []const u8) {
                 try writer.print(" Received {s}", .{self.value});
             } else if (comptime std.meta.hasFn(@TypeOf(self.value), "format")) {

@@ -100,7 +100,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            return globalThis.throw("Expected array, got {}", .{this.each.toFmt(&formatter)});
+            return globalThis.throw("Expected array, got {f}", .{this.each.toFmt(&formatter)});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;
@@ -176,8 +176,8 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     // only allow in collection phase
     switch (bunTest.phase) {
         .collection => {}, // ok
-        .execution => return globalThis.throw("Cannot call {}() inside a test. Call it inside describe() instead.", .{this}),
-        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
+        .execution => return globalThis.throw("Cannot call {f}() inside a test. Call it inside describe() instead.", .{this}),
+        .done => return globalThis.throw("Cannot call {f}() after the test run has completed", .{this}),
     }
 
     // handle test reporter agent for debugger
@@ -326,7 +326,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
         return slice.intoOwnedSlice(gpa);
     }
 
-    return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
+    return globalThis.throwPretty("{f}() expects first argument to be a named class, named function, number, or string", .{signature});
 }
 
 pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
@@ -352,7 +352,7 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     } else if (callback.isFunction()) blk: {
         break :blk callback.withAsyncContextIfNeeded(globalThis);
     } else {
-        return globalThis.throw("{s} expects a function as the second argument", .{signature});
+        return globalThis.throw("{f} expects a function as the second argument", .{signature});
     };
 
     var result: ParseArgumentsResult = .{
@@ -367,30 +367,30 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     if (options.isNumber()) {
         timeout_option = options.asNumber();
     } else if (options.isFunction()) {
-        return globalThis.throw("{}() expects options to be a number or object, not a function", .{signature});
+        return globalThis.throw("{f}() expects options to be a number or object, not a function", .{signature});
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                return globalThis.throwPretty("{}() expects timeout to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects timeout to be a number", .{signature});
             }
             timeout_option = timeout.asNumber();
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                return globalThis.throwPretty("{}() expects retry to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects retry to be a number", .{signature});
             }
             result.options.retry = retries.asNumber();
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                return globalThis.throwPretty("{}() expects repeats to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects repeats to be a number", .{signature});
             }
             result.options.repeats = repeats.asNumber();
         }
     } else if (options.isUndefinedOrNull()) {
         // no options
     } else {
-        return globalThis.throw("{}() expects a number, object, or undefined as the third argument", .{signature});
+        return globalThis.throw("{f}() expects a number, object, or undefined as the third argument", .{signature});
     }
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);

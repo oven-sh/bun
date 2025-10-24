@@ -399,7 +399,7 @@ pub const JunitReporter = struct {
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
         const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
-        try this.contents.writer(bun.default_allocator).print(" time=\"{}\"", .{bun.fmt.trimmedPrecision(elapsed_seconds, 6)});
+        try this.contents.writer(bun.default_allocator).print(" time=\"{f}\"", .{bun.fmt.trimmedPrecision(elapsed_seconds, 6)});
 
         try this.contents.appendSlice(bun.default_allocator, " file=\"");
         try escapeXml(file, this.contents.writer(bun.default_allocator));
@@ -678,7 +678,7 @@ pub const CommandLineReporter = struct {
                 writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
 
             if (elapsed_ns > (std.time.ns_per_us * 10)) {
-                writer.print(" {any}", .{
+                writer.print(" {f}", .{
                     Output.ElapsedFormatter{
                         .colors = Output.enable_ansi_colors_stderr,
                         .duration_ns = elapsed_ns,

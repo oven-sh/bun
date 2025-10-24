@@ -487,7 +487,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
     defer formatter.deinit();
-    writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
+    writer.print("{f}", .{value.toFmt(&formatter)}) catch return .empty;
     writer.flush() catch return .empty;
     return bun.String.cloneUTF8(array.written());
 }
@@ -843,7 +843,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
         const allocator = stack.get();
         var arraylist = std.array_list.Managed(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
-        try arraylist.writer().print("{any}{any}", .{
+        try arraylist.writer().print("{f}{f}", .{
             errorable.result.value,
             query_string,
         });

@@ -56,6 +56,9 @@ pub const js_fns = struct {
                     .timeout = args.options.timeout,
                 };
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
+                    if (tag == .onTestFinished) {
+                        return globalThis.throw("Cannot call {s}() in preload. It can only be called inside a test.", .{@tagName(tag)});
+                    }
                     group.log("genericHook in preload", .{});
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, cfg, .{}, .preload);
@@ -64,12 +67,15 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
+                        if (tag == .onTestFinished) {
+                            return globalThis.throw("Cannot call {s}() outside of a test. It can only be called inside a test.", .{@tagName(tag)});
+                        }
                         _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, cfg, .{}, .collection);
 
                         return .js_undefined;
                     },
                     .execution => {
-                        if (tag == .afterAll or tag == .afterEach) {
+                        if (tag == .afterAll or tag == .afterEach or tag == .onTestFinished) {
                             // allowed
                             const active = bunTest.getCurrentStateData();
                             const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
@@ -83,6 +89,16 @@ pub const js_fns = struct {
                             } else false;
 
                             if (before_test_entry) append_point = sequence.test_entry;
+
+                            // For onTestFinished, we need to append at the end of the sequence
+                            if (tag == .onTestFinished) {
+                                // Find the last entry in the sequence
+                                var last_entry = append_point orelse return globalThis.throw("Cannot call {s}() here. Call it inside a test instead.", .{@tagName(tag)});
+                                while (last_entry.next) |next_entry| {
+                                    last_entry = next_entry;
+                                }
+                                append_point = last_entry;
+                            }
 
                             const append_point_value = append_point orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
 

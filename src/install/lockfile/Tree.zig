@@ -616,18 +616,13 @@ fn hoistDependency(
         // or hoist if peer version allows it
 
         if (dependency.behavior.isPeer()) {
-            if (dependency.version.tag == .npm) {
-                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
-                const version = dependency.version.value.npm.version;
-                if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                    return .hoisted; // 1
-                }
-            }
+            return .hoisted;
+        }
 
-            // Root dependencies are manually chosen by the user. Allow them
-            // to hoist other peers even if they don't satisfy the version
-            if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
-                // TODO: warning about peer dependency version mismatch
+        if (dependency.version.tag == .npm) {
+            const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+            const version = dependency.version.value.npm.version;
+            if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                 return .hoisted; // 1
             }
         }

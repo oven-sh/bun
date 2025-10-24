@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, onTestFinished, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, onTestFinished, test } from "bun:test";
 
 // Test the basic ordering of onTestFinished
 describe("onTestFinished ordering", () => {
@@ -21,16 +21,7 @@ describe("onTestFinished ordering", () => {
   test("test 2", () => {
     output.push("test 2");
     // After test 2, verify the order from test 1
-    if (output.length >= 4) {
-      const expected = ["test 1", "inner afterAll", "afterEach", "onTestFinished"];
-      for (let i = 0; i < expected.length; i++) {
-        if (output[i] !== expected[i]) {
-          throw new Error(
-            `Expected output[${i}] to be "${expected[i]}", but got "${output[i]}". Full output: ${JSON.stringify(output)}`,
-          );
-        }
-      }
-    }
+    expect(output.slice(0, 4)).toEqual(["test 1", "inner afterAll", "afterEach", "onTestFinished"]);
   });
 });
 
@@ -53,14 +44,7 @@ describe("multiple onTestFinished", () => {
   });
 
   test("verify order", () => {
-    const expected = ["test", "afterEach", "onTestFinished 1", "onTestFinished 2"];
-    for (let i = 0; i < expected.length; i++) {
-      if (output[i] !== expected[i]) {
-        throw new Error(
-          `Expected output[${i}] to be "${expected[i]}", but got "${output[i]}". Full output: ${JSON.stringify(output)}`,
-        );
-      }
-    }
+    expect(output).toEqual(["test", "afterEach", "onTestFinished 1", "onTestFinished 2"]);
   });
 });
 
@@ -81,14 +65,7 @@ describe("async onTestFinished", () => {
   });
 
   test("verify async order", () => {
-    const expected = ["test", "afterEach", "onTestFinished async"];
-    for (let i = 0; i < expected.length; i++) {
-      if (output[i] !== expected[i]) {
-        throw new Error(
-          `Expected output[${i}] to be "${expected[i]}", but got "${output[i]}". Full output: ${JSON.stringify(output)}`,
-        );
-      }
-    }
+    expect(output).toEqual(["test", "afterEach", "onTestFinished async"]);
   });
 });
 
@@ -112,13 +89,6 @@ describe("onTestFinished with all hooks", () => {
 
   test("verify complete order", () => {
     // Expected order: test body, inner afterAll, afterEach, onTestFinished
-    const expected = ["test", "inner afterAll", "afterEach", "onTestFinished"];
-    for (let i = 0; i < expected.length; i++) {
-      if (output[i] !== expected[i]) {
-        throw new Error(
-          `Expected output[${i}] to be "${expected[i]}", but got "${output[i]}". Full output: ${JSON.stringify(output)}`,
-        );
-      }
-    }
+    expect(output).toEqual(["test", "inner afterAll", "afterEach", "onTestFinished"]);
   });
 });

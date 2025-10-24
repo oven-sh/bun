@@ -433,8 +433,8 @@ pub const Source = struct {
                 enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
-            stdout_stream = new_source.stream;
-            stderr_stream = new_source.error_stream;
+            stdout_stream = stdout;
+            stderr_stream = stderr;
         }
     }
 };
@@ -1316,7 +1316,7 @@ pub fn initScopedDebugWriterAtStartup() void {
         }
     }
 
-    ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
+    ScopedDebugWriter.scoped_file_writer = source.raw_stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
     if (comptime !Environment.isDebug and !Environment.enable_logs) {

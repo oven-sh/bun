@@ -807,7 +807,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             } else if (bun.env_var.BUN_DEBUG_ALL.get()) |val| {
                 really_disable.store(val, .monotonic);
             } else if (bun.env_var.BUN_DEBUG_QUIET_LOGS.get()) |val| {
-                really_disable.store(really_disable.load(.monotonic) or !val, .monotonic);
+                really_disable.store(really_disable.load(.monotonic) or val, .monotonic);
             } else {
                 for (bun.argv) |arg| {
                     if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {

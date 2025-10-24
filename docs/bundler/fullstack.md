@@ -323,6 +323,64 @@ When adding a build step is too complicated, you can set `development: false` in
 - Enables `Cache-Control` headers and `ETag` headers
 - Minifies JavaScript/TypeScript/TSX/JSX files
 
+## Environment Variables
+
+You can inline environment variables into your bundled frontend code when using HTML routes. This is useful for passing configuration values from your backend to your frontend.
+
+### Configuration
+
+Configure environment variable inlining in your `bunfig.toml`:
+
+```toml#bunfig.toml
+[serve.static]
+# Inline all environment variables starting with "BUN_PUBLIC_"
+env = "BUN_PUBLIC_*"
+```
+
+{% codetabs %}
+
+```bash
+# Set environment variables
+export BUN_PUBLIC_API_URL="https://api.example.com"
+export BUN_PUBLIC_FEATURE_FLAG="true"
+export DATABASE_URL="postgres://..."  # Won't be inlined
+```
+
+```ts#frontend.ts
+// Will be replaced with the actual value during bundling
+console.log(process.env.BUN_PUBLIC_API_URL);
+// → console.log("https://api.example.com")
+
+// Won't be inlined (doesn't match the prefix)
+console.log(process.env.DATABASE_URL);
+// → console.log(process.env.DATABASE_URL)
+```
+
+{% /codetabs %}
+
+### Options
+
+```toml#bunfig.toml
+[serve.static]
+# Inline variables with a specific prefix (recommended)
+env = "PUBLIC_*"
+
+# Inline all environment variables
+# env = "*"  # ⚠️ Not recommended - may expose secrets
+
+# Inline all without a prefix
+# env = "inline"
+
+# Disable (default)
+# env = "disable"
+```
+
+### Security
+
+**Always use a prefix** to prevent accidentally exposing secrets to your frontend code. Variables without the prefix won't be inlined and will remain as `process.env` references.
+
+For more details on environment variable inlining, see the [HTML entrypoints documentation](/docs/bundler/html#environment-variables).
+
 ## Plugins
 
 Bun's [bundler plugins](https://bun.com/docs/bundler/plugins) are also supported when bundling static routes.

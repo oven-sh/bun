@@ -838,9 +838,16 @@ $ bun build ./index.tsx --outdir ./out --minify --keep-names
 
 {% /codetabs %}
 
-<!-- ### `treeshaking`
+#### DCE annotations
 
-boolean; -->
+Control dead code elimination annotations like `@__PURE__`:
+
+- `--emit-dce-annotations` - Re-emit DCE annotations in output (default: enabled unless `--minify-whitespace`)
+- `--ignore-dce-annotations` - Ignore tree-shaking annotations
+
+```bash
+$ bun build ./index.tsx --ignore-dce-annotations --minify
+```
 
 ### `external`
 

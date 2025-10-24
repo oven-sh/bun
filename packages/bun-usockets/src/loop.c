@@ -314,7 +314,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if ((events & LIBUS_SOCKET_READABLE) != 0) {
                 s->flags.is_readable = true;
             }
-            if ((events & LIBUS_SOCKET_WRITABLE) != 0) {
+            if ((events & LIBUS_SOCKET_WRITABLE) != 0 && !s->flags.is_writable) {
                 s->flags.is_writable = true;
                 s->flags.writable_emitted = false;
             }
@@ -331,7 +331,7 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if((events & LIBUS_SOCKET_READABLE) != 0) {
                 u->is_readable = true;
             }
-            if((events & LIBUS_SOCKET_WRITABLE) != 0) {
+            if ((events & LIBUS_SOCKET_WRITABLE) != 0 && !u->is_writable) {
                 u->is_writable = true;
                 u->writable_emitted = false;
             }

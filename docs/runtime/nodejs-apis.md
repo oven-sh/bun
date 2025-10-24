@@ -36,7 +36,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟢 Fully implemented. 92% of Node.js's test suite passes.
+🟢 Fully implemented. 92% of Node.js's test suite passes. `fs.fstatSync()` supports the `bigint` option.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -104,7 +104,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `secureHeapUsed` `setEngine` `setFips`
+🟡 Missing `secureHeapUsed` `setEngine` `setFips`. Supports X25519 curve for key generation with `crypto.generateKeyPair()`.
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 

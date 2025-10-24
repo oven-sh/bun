@@ -275,6 +275,7 @@ pub const Tag = enum(u8) {
     setsockopt,
     statx,
     rm,
+    getpwuid_r,
 
     uv_spawn,
     uv_pipe,
@@ -291,6 +292,10 @@ pub const Tag = enum(u8) {
     CloseHandle,
     SetFilePointerEx,
     SetEndOfFile,
+    OpenProcessToken,
+    GetUserProfileDirectoryW,
+    GetSystemWindowsDirectoryW,
+    GetTempPath2,
 
     pub fn isWindows(this: Tag) bool {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
@@ -4258,6 +4263,34 @@ pub fn dlsymImpl(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     }
 
     @compileError("dlsym unimplemented for this target");
+}
+
+/// Matches the POSIX sysconf function, except returns rich error information.
+pub fn sysconf(name: c_int) !u32 {
+    // This function follows the documentation of sysconf(3) under POSIX.1-2008.
+    if (comptime !bun.Environment.isPosix) {
+        @compileError("sysconf is not supported on this platform. Either provide a default " ++
+            "value or avoid calling sysconf on this platform.");
+    }
+
+    // Man page says we need to set errno to 0 before calling sysconf.
+    std.c._errno().* = 0;
+    const ret = std.c.sysconf(name);
+    if (ret >= 0) {
+        return @intCast(ret);
+    }
+
+    // Lots of different error cases that may happen in sysconf.
+    const err_code: std.posix.E = @enumFromInt(std.c._errno().*);
+    return switch (err_code) {
+        // If name corresponds to a maximum or minimum limit, and that limit is indeterminate, -1
+        // is returned and errno is not changed. (To  distinguish  an indeterminate  limit from
+        // an error, set errno to zero before the call, and then check whether errno is nonzero
+        // when -1 is returned.)
+        .SUCCESS => error.IndeterminateLimit,
+        .INVAL => error.InvalidName,
+        else => std.posix.unexpectedErrno(err_code),
+    };
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {

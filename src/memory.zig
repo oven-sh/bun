@@ -202,6 +202,25 @@ pub fn dropSentinel(ptr: anytype, allocator: std.mem.Allocator) blk: {
     return allocator.dupe(Child, slice);
 }
 
+extern "C" fn __lsan_ignore_object(object: *const anyopaque) callconv(.C) void;
+
+/// Mark the given object as intentionally leaked, so that leak sanitizers do not report it.
+pub fn INTENTIONALLY_LEAK(
+    comptime alloc: anytype,
+    object: *anyopaque,
+    comptime why: []const u8,
+) void {
+    _ = why;
+
+    if (comptime bun.Environment.isDebug) {
+        if (comptime bun.allocators.isDefault(alloc)) {
+            __lsan_ignore_object(object);
+        } else {
+            @compileError("INTENTIONALLY_LEAK is not yet implemented for non-default allocators");
+        }
+    }
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

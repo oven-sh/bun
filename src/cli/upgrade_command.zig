@@ -557,7 +557,7 @@ pub const UpgradeCommand = struct {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Global.exit(1);
                     }
-                } else if (Environment.isWindows) {
+                } else if (comptime Environment.isWindows) {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
@@ -572,7 +572,13 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const system_root = switch (bun.os.win32.queryWinDir()) {
+                                .err => {
+                                    Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                                    Global.exit(1);
+                                },
+                                .result => |v| v,
+                            };
                             const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
                             if (bun.sys.exists(hardcoded_system_powershell)) {
                                 break :hardcoded_system_powershell hardcoded_system_powershell;

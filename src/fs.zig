@@ -530,43 +530,15 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var win_tempdir_cache: ?[]const u8 = undefined;
-
         pub fn platformTempDir() []const u8 {
-            return switch (Environment.os) {
-                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
-                            break :brk std.fmt.allocPrint(
-                                bun.default_allocator,
-                                "{s}\\Temp",
-                                .{strings.withoutTrailingSlash(windir)},
-                            ) catch |err| bun.handleOom(err);
-                        }
-
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
-                            var buf: bun.PathBuffer = undefined;
-                            var parts = [_]string{"AppData\\Local\\Temp"};
-                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
-                        }
-
-                        var tmp_buf: bun.PathBuffer = undefined;
-                        const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
-                        const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}\\Windows\\Temp",
-                            .{strings.withoutTrailingSlash(root)},
-                        ) catch |err| bun.handleOom(err);
-                    };
-                    win_tempdir_cache = value;
-                    return value;
+            switch (bun.os.querySysTmpDir()) {
+                .result => |s| {
+                    return s;
                 },
-                .mac => "/private/tmp",
-                else => "/tmp",
-            };
+                .err => |e| {
+                    bun.Output.panic("Could not retrieve the system temporary directory: {}", .{e});
+                },
+            }
         }
 
         pub const Tmpfile = switch (Environment.os) {

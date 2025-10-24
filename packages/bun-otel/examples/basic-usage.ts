@@ -1,49 +1,62 @@
 /**
- * Example: Basic usage of BunFetchInstrumentation and BunHttpInstrumentation
+ * Example: Basic usage of BunSDK for OpenTelemetry instrumentation
  *
- * This example shows how to set up OpenTelemetry instrumentation for Bun's
- * native HTTP server and fetch client using the standard OTel SDK.
+ * This example shows the simplest way to set up OpenTelemetry in Bun applications
+ * using BunSDK - a drop-in replacement for @opentelemetry/sdk-node.
+ *
+ * BunSDK automatically instruments:
+ * - Bun.serve() HTTP server (creates SERVER spans)
+ * - fetch() client (creates CLIENT spans)
  */
 
-import { BasicTracerProvider, ConsoleSpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { BunFetchInstrumentation, BunHttpInstrumentation } from "bun-otel";
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
+import { BunSDK } from "bun-otel";
 
-// 1. Create a TracerProvider with ConsoleSpanExporter (for demo purposes)
-const provider = new BasicTracerProvider();
-provider.addSpanProcessor(new SimpleSpanProcessor(new ConsoleSpanExporter()));
+// 1. Create and configure BunSDK using `using` for automatic cleanup
+using sdk = new BunSDK({
+  // Exporter for sending traces (ConsoleSpanExporter prints to console)
+  traceExporter: new ConsoleSpanExporter(),
 
-// 2. Create and configure BunHttpInstrumentation for Bun.serve()
-const httpInstrumentation = new BunHttpInstrumentation({
-  captureAttributes: {
-    requestHeaders: ["user-agent", "content-type", "x-request-id"],
-    responseHeaders: ["content-type", "x-trace-id"],
-  },
+  // Service name identifies your application in distributed traces
+  serviceName: "bun-example-service",
+
+  // Optional: Customize instrumentation behavior
+  // Uncomment to override defaults:
+  // instrumentations: [
+  //   new BunHttpInstrumentation({
+  //     headersToSpanAttributes: {
+  //       server: {
+  //         requestHeaders: ["user-agent", "content-type", "x-request-id"],
+  //         responseHeaders: ["content-type", "x-trace-id"],
+  //       },
+  //     },
+  //   }),
+  //   new BunFetchInstrumentation({
+  //     headersToSpanAttributes: {
+  //       client: {
+  //         requestHeaders: ["content-type"],
+  //         responseHeaders: ["content-type", "cache-control"],
+  //       },
+  //     },
+  //   }),
+  // ],
 });
 
-httpInstrumentation.setTracerProvider(provider);
-httpInstrumentation.enable();
+// 2. Start the SDK and register graceful shutdown handlers
+// Handles SIGINT/SIGTERM and ensures telemetry is flushed before exit
+await sdk.startAndRegisterSystemShutdownHooks();
 
-// 3. Create and configure BunFetchInstrumentation for fetch()
-const fetchInstrumentation = new BunFetchInstrumentation({
-  captureAttributes: {
-    requestHeaders: ["content-type"],
-    responseHeaders: ["content-type", "cache-control"],
-  },
-});
+console.log("✓ BunSDK initialized - OpenTelemetry active");
 
-fetchInstrumentation.setTracerProvider(provider);
-fetchInstrumentation.enable();
-
-console.log("✓ OpenTelemetry instrumentations enabled");
-
-// 4. Start a Bun.serve() server - requests will be automatically traced
+// 3. Start a Bun.serve() server - requests are automatically traced!
 Bun.serve({
   port: 3000,
   async fetch(req) {
     const url = new URL(req.url);
 
     if (url.pathname === "/api/users") {
-      // Make an outbound fetch request - will be traced as CLIENT span
+      // Make an outbound fetch request - automatically traced as CLIENT span
+      // Parent-child relationship is maintained automatically
       const response = await fetch("https://jsonplaceholder.typicode.com/users/1");
       const data = await response.json();
 
@@ -52,12 +65,38 @@ Bun.serve({
       });
     }
 
-    return new Response("Hello from Bun!", {
+    return new Response("Hello from Bun with OpenTelemetry!", {
       headers: { "content-type": "text/plain" },
     });
   },
 });
 
-console.log("Server listening on http://localhost:3000");
+console.log("\nServer listening on http://localhost:3000");
 console.log("Try: curl http://localhost:3000/api/users");
-console.log("\nSpans will be printed to console (using ConsoleSpanExporter)");
+console.log("\nSpans will be printed to console:");
+console.log("  - SERVER span for incoming HTTP request");
+console.log("  - CLIENT span for outbound fetch request");
+console.log("\nPress Ctrl+C for graceful shutdown");
+
+/**
+ * Alternative patterns:
+ *
+ * 1. With custom cleanup callback:
+ *    using sdk = new BunSDK({ ... });
+ *    await sdk.startAndRegisterSystemShutdownHooks(async () => {
+ *      console.log("Closing database...");
+ *      await db.close();
+ *    });
+ *
+ * 2. Manual start without shutdown hooks:
+ *    using sdk = new BunSDK({ ... });
+ *    sdk.start();
+ *    // ... run your app ...
+ *    // sdk.shutdown() called automatically when scope exits
+ *
+ * 3. Explicit shutdown (for tests):
+ *    const sdk = new BunSDK({ ... });
+ *    sdk.start();
+ *    // ... run your app ...
+ *    await sdk.shutdown();
+ */

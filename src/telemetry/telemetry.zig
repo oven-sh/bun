@@ -20,10 +20,10 @@ pub const AttributeKeys = attributes_module.AttributeKeys;
 pub const OpId = u64;
 
 /// HTTP server telemetry support
-pub const http = @import("http.zig");
+pub const http = @import("hooks-http.zig");
 
 /// Fetch client telemetry support
-pub const fetch = @import("fetch.zig");
+pub const fetch = @import("hooks-fetch.zig");
 
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
 /// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
@@ -34,6 +34,7 @@ pub const InstrumentKind = enum(u8) {
     sql = 3,
     redis = 4,
     s3 = 5,
+    node = 6,
 
     pub const COUNT = @typeInfo(InstrumentKind).@"enum".fields.len;
 };
@@ -51,7 +52,7 @@ pub const OperationStep = enum(u8) {
 };
 
 /// Parse an instrument kind from a string JSValue.
-/// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3".
+/// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3", "node".
 /// Returns .custom (0) if the value is not a string or does not match a known kind.
 pub fn parseStringInstrumentType(globalObject: *JSGlobalObject, val: JSValue) InstrumentKind {
     if (!val.isString()) return .custom;

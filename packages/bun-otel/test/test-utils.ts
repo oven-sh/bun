@@ -3,6 +3,22 @@
  */
 import type { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { $ } from "bun";
+import type { NativeHooks } from "../types";
+
+export function getNativeHooks(): NativeHooks {
+  if (typeof Bun === "undefined" || !Bun.telemetry) {
+    throw new TypeError(
+      "Bun.telemetry is not available. This utility requires Bun runtime. " + "Install from https://bun.sh",
+    );
+  }
+
+  // @ts-expect-error for some reason the module isn't loading...
+  const nativeHooks = Bun.telemetry._nativeHooksObject as NativeHooks;
+  if (!nativeHooks) {
+    throw new Error("Bun.telemetry.nativeHooks() returned undefined");
+  }
+  return nativeHooks;
+}
 
 /**
  * Wait for exported spans with polling instead of fixed sleep.

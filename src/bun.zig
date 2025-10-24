@@ -3399,7 +3399,7 @@ pub const timespec = extern struct {
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");
-pub const telemetry = @import("./telemetry/main.zig");
+pub const telemetry = @import("./telemetry/telemetry.zig");
 
 /// An abstract number of element in a sequence. The sequence has a first element.
 /// This type should be used instead of integer because 2 contradicting traditions can

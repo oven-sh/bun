@@ -12,3 +12,6 @@ export type { BunFetchInstrumentationConfig } from "./BunFetchInstrumentation";
 
 export { BunHttpInstrumentation } from "./BunHttpInstrumentation";
 export type { BunHttpInstrumentationConfig } from "./BunHttpInstrumentation";
+
+export { BunNodeInstrumentation } from "./BunNodeInstrumentation";
+export type { BunNodeInstrumentationConfig } from "./BunNodeInstrumentation";

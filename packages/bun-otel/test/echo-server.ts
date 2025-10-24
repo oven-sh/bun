@@ -32,7 +32,7 @@ export class EchoServer {
   private port: number | null = null;
 
   async start(): Promise<void> {
-    this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test-echo-server.ts"], {
+    this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test/echo-server.ts"], {
       env: { ...bunEnv, PORT: "0" }, // ensure ephemeral port regardless of CI env
       stdout: "pipe",
       stderr: "inherit",

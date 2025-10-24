@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const bun = @import("bun");
-const jsc = bun.jsc;
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;

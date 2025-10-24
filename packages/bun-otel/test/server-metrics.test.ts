@@ -1,75 +1,26 @@
-import { context } from "@opentelemetry/api";
+/**
+ * Tests for BunHttpInstrumentation metrics collection
+ *
+ * Validates:
+ * - http.server.request.duration histogram metric
+ * - http.server.requests.total counter metric
+ * - Metric attributes (http.request.method, url.path, http.response.status_code)
+ * - Metrics work independently of tracing
+ * - Multiple endpoints tracked separately
+ */
+
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
   MeterProvider,
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createBunTelemetryConfig } from "../otel-core";
-
-// Test helpers to reduce duplication
-interface TestTelemetryContext {
-  tracerProvider: NodeTracerProvider;
-  meterProvider: MeterProvider;
-  metricExporter: InMemoryMetricExporter;
-  metricsInstrumentation?: unknown;
-  flush: () => Promise<void>;
-  getResourceMetrics: () => ReturnType<InMemoryMetricExporter["getMetrics"]>;
-  findMetric: (name: string) => any;
-}
-
-function createTestTelemetry(): TestTelemetryContext {
-  // Some versions of the OTEL SDK require an explicit AggregationTemporality
-  const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE as any);
-  const metricReader = new PeriodicExportingMetricReader({
-    exporter: metricExporter,
-    exportIntervalMillis: 100,
-  });
-
-  const meterProvider = new MeterProvider({ readers: [metricReader] });
-  const tracerProvider = new NodeTracerProvider();
-
-  const { config, metricsInstrumentation } = createBunTelemetryConfig({
-    tracerProvider,
-    meterProvider,
-  });
-
-  Bun.telemetry.configure(config);
-
-  async function flush() {
-    await meterProvider.forceFlush();
-  }
-
-  function getResourceMetrics() {
-    return metricExporter.getMetrics();
-  }
-
-  function findMetric(name: string) {
-    const resourceMetrics = metricExporter.getMetrics();
-    for (const rm of resourceMetrics) {
-      for (const sm of rm.scopeMetrics) {
-        const match = sm.metrics.find(m => m.descriptor.name === name);
-        if (match) return match;
-      }
-    }
-    return undefined;
-  }
-
-  return {
-    tracerProvider,
-    meterProvider,
-    metricExporter,
-    metricsInstrumentation,
-    flush,
-    getResourceMetrics,
-    findMetric,
-  };
-}
+import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { BunHttpInstrumentation } from "../src/instruments/BunHttpInstrumentation";
 
 // Helper to normalize histogram/counter data point values across OTEL versions
-function getDataPointSum(dp: any): number {
+function getDataPointValue(dp: any): number {
   if (!dp) return 0;
   const v: any = dp.value;
   if (typeof v === "number") return v;
@@ -77,167 +28,255 @@ function getDataPointSum(dp: any): number {
   return 0;
 }
 
-describe("HTTP Server Metrics", () => {
-  let ctx: TestTelemetryContext;
-  // Track providers created during tests for cleanup
-  const providers: { shutdown: () => Promise<void> }[] = [];
+describe("BunHttpInstrumentation - Metrics", () => {
+  let metricExporter: InMemoryMetricExporter;
+  let meterProvider: MeterProvider;
+  let spanExporter: InMemorySpanExporter;
+  let tracerProvider: BasicTracerProvider;
+  let instrumentation: BunHttpInstrumentation;
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  let serverUrl: string;
 
-  beforeEach(() => {
-    ctx = createTestTelemetry();
-    providers.push(ctx.tracerProvider);
-    providers.push(ctx.meterProvider);
-  });
-
-  afterEach(async () => {
-    Bun.telemetry.disable();
-
-    // Shutdown all providers created during tests
-    await Promise.all(providers.map(p => p.shutdown()));
-    providers.length = 0;
-
-    // Clear global context manager to prevent test isolation issues
-    context.disable();
-  });
-
-  test("records http.server.request.duration metric", async () => {
-    expect(ctx.metricsInstrumentation).toBeDefined();
-
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response("Hello, metrics!"),
+  beforeAll(async () => {
+    // Setup metric provider with in-memory exporter
+    metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE as any);
+    const metricReader = new PeriodicExportingMetricReader({
+      exporter: metricExporter,
+      exportIntervalMillis: 100,
     });
+    meterProvider = new MeterProvider({ readers: [metricReader] });
 
-    const response = await fetch(`http://localhost:${server.port}/test`);
-    expect((response as any).status).toBe(200);
-    await (response as any).text();
+    // Setup tracer provider (metrics can work with or without tracing)
+    spanExporter = new InMemorySpanExporter();
+    tracerProvider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spanExporter)] });
 
-    await ctx.flush();
-    const resourceMetrics = ctx.getResourceMetrics();
-    expect(resourceMetrics.length).toBeGreaterThan(0);
+    // Create and enable instrumentation
+    instrumentation = new BunHttpInstrumentation();
+    instrumentation.setTracerProvider(tracerProvider);
+    instrumentation.setMeterProvider(meterProvider);
+    instrumentation.enable();
 
-    const scopeMetrics = resourceMetrics[0].scopeMetrics[0];
-    const durationMetric = scopeMetrics.metrics.find(m => m.descriptor.name === "http.server.request.duration");
-
-    expect(durationMetric).toBeDefined();
-    expect(durationMetric!.descriptor.description).toBe("Duration of HTTP server requests");
-    expect(durationMetric!.descriptor.unit).toBe("s");
-
-    expect(durationMetric!.dataPoints.length).toBe(1);
-    const dataPoint = durationMetric!.dataPoints[0];
-    const durationSum = getDataPointSum(dataPoint);
-    expect(durationSum).toBeGreaterThan(0);
-    expect(durationSum).toBeLessThan(1);
-  });
-
-  test("records http.server.requests.total counter", async () => {
-    using server = Bun.serve({
+    // Start test server
+    server = Bun.serve({
       port: 0,
-      fetch: () => new Response("OK"),
-    });
+      fetch(req: Request): Response {
+        const url = new URL(req.url);
 
-    for (let i = 0; i < 3; i++) {
-      await fetch(`http://localhost:${server.port}/test`);
-    }
-
-    await ctx.flush();
-    const resourceMetrics = ctx.getResourceMetrics();
-    const scopeMetrics = resourceMetrics[0].scopeMetrics[0];
-    const counterMetric = scopeMetrics.metrics.find(m => m.descriptor.name === "http.server.requests.total");
-
-    expect(counterMetric).toBeDefined();
-    expect(counterMetric!.descriptor.description).toBe("Total number of HTTP server requests");
-    expect(counterMetric!.dataPoints.length).toBe(1);
-    expect(counterMetric!.dataPoints[0].value).toBe(3);
-  });
-
-  test("metrics work without tracing enabled", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response("Metrics only!"),
-    });
-
-    await fetch(`http://localhost:${server.port}/`);
-
-    await ctx.flush();
-    const resourceMetrics = ctx.getResourceMetrics();
-    const scopeMetrics = resourceMetrics[0].scopeMetrics[0];
-    const durationMetric = scopeMetrics.metrics.find(m => m.descriptor.name === "http.server.request.duration");
-    const counterMetric = scopeMetrics.metrics.find(m => m.descriptor.name === "http.server.requests.total");
-
-    expect(durationMetric).toBeDefined();
-    expect(counterMetric).toBeDefined();
-  });
-
-  test("captures minimal attributes when request/response not available", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response("OK", { status: 200 }),
-    });
-
-    await fetch(`http://localhost:${server.port}/api/test`);
-
-    await ctx.flush();
-    const durationMetric = ctx.findMetric("http.server.request.duration");
-
-    expect(durationMetric).toBeDefined();
-    const dataPoint = durationMetric!.dataPoints[0];
-    const sum = getDataPointSum(dataPoint);
-    expect(sum).toBeGreaterThan(0);
-  });
-
-  test("multiple requests with different endpoints", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: req => {
-        const url = new URL((req as any).url);
-        if (url.pathname === "/api/users") {
-          return new Response("Users", { status: 200 });
-        } else if (url.pathname === "/api/posts") {
-          return new Response("Posts", { status: 200 });
+        if (url.pathname === "/hello") {
+          return new Response("Hello, World!");
         }
-        return new Response("Not Found", { status: 404 });
+
+        if (url.pathname === "/json") {
+          return Response.json({ message: "success" });
+        }
+
+        if (url.pathname === "/slow") {
+          // Simulate slow handler for duration testing
+          const start = Date.now();
+          while (Date.now() - start < 50) {
+            // Busy wait 50ms
+          }
+          return new Response("Slow response");
+        }
+
+        if (url.pathname === "/error") {
+          return new Response("Internal Server Error", { status: 500 });
+        }
+
+        return new Response("OK");
       },
     });
 
-    await fetch(`http://localhost:${server.port}/api/users`);
-    await fetch(`http://localhost:${server.port}/api/posts`);
-    await fetch(`http://localhost:${server.port}/api/unknown`);
+    serverUrl = `http://127.0.0.1:${server.port}`;
+  });
 
-    await ctx.flush();
-    const resourceMetrics = ctx.getResourceMetrics();
-    const scopeMetrics = resourceMetrics[0].scopeMetrics[0];
-    const counterMetric = scopeMetrics.metrics.find(m => m.descriptor.name === "http.server.requests.total");
+  afterAll(async () => {
+    instrumentation.disable();
+    server?.stop();
+    server = null;
+    await meterProvider.shutdown();
+    await tracerProvider.shutdown();
+  });
+
+  test("records http.server.request.duration histogram metric", async () => {
+    metricExporter.reset();
+
+    const response = await fetch(`${serverUrl}/hello`);
+    expect(response.ok).toBe(true);
+    await response.text();
+
+    // Force flush metrics
+    await meterProvider.forceFlush();
+
+    const resourceMetrics = metricExporter.getMetrics();
+    expect(resourceMetrics.length).toBeGreaterThan(0);
+
+    // Find the duration metric
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const durationMetric = scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.request.duration");
+
+    expect(durationMetric).toBeDefined();
+    expect(durationMetric!.descriptor.description).toContain("HTTP server");
+    expect(durationMetric!.descriptor.unit).toBe("s");
+
+    // Verify at least one data point exists
+    expect(durationMetric!.dataPoints.length).toBeGreaterThan(0);
+
+    // Verify duration is reasonable (>0 and <1 second)
+    const dataPoint = durationMetric!.dataPoints[0];
+    const durationSum = getDataPointValue(dataPoint);
+    expect(durationSum).toBeGreaterThan(0);
+    expect(durationSum).toBeLessThan(1);
+
+    // Verify metric attributes
+    expect(dataPoint.attributes["http.request.method"]).toBe("GET");
+    expect(dataPoint.attributes["url.path"]).toBe("/hello");
+    expect(dataPoint.attributes["http.response.status_code"]).toBe(200);
+  });
+
+  test("records http.server.requests.total counter metric", async () => {
+    metricExporter.reset();
+
+    // Make multiple requests
+    for (let i = 0; i < 3; i++) {
+      await fetch(`${serverUrl}/json`);
+    }
+
+    await meterProvider.forceFlush();
+
+    const resourceMetrics = metricExporter.getMetrics();
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const counterMetric = scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.requests.total");
+
+    expect(counterMetric).toBeDefined();
+    expect(counterMetric!.descriptor.description).toContain("Total");
+
+    // Should have data points for our requests
+    expect(counterMetric!.dataPoints.length).toBeGreaterThan(0);
+
+    // Find data point for /json endpoint
+    const jsonDataPoint = counterMetric!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/json");
+    expect(jsonDataPoint).toBeDefined();
+    expect(jsonDataPoint!.value).toBe(3);
+  });
+
+  test("metrics work without tracing (metrics-only mode)", async () => {
+    // Disable instrumentation briefly
+    instrumentation.disable();
+
+    // Create new instrumentation with ONLY metrics (no tracer provider)
+    const metricsOnlyInst = new BunHttpInstrumentation();
+    metricsOnlyInst.setMeterProvider(meterProvider);
+    metricsOnlyInst.enable();
+
+    metricExporter.reset();
+
+    try {
+      const response = await fetch(`${serverUrl}/hello`);
+      await response.text();
+
+      await meterProvider.forceFlush();
+
+      const resourceMetrics = metricExporter.getMetrics();
+      expect(resourceMetrics.length).toBeGreaterThan(0);
+
+      // Metrics should still be recorded
+      const scopeMetrics = resourceMetrics[0].scopeMetrics;
+      const durationMetric = scopeMetrics
+        .flatMap(sm => sm.metrics)
+        .find(m => m.descriptor.name === "http.server.request.duration");
+
+      expect(durationMetric).toBeDefined();
+      expect(durationMetric!.dataPoints.length).toBeGreaterThan(0);
+    } finally {
+      metricsOnlyInst.disable();
+      // Re-enable original instrumentation
+      instrumentation.enable();
+    }
+  });
+
+  test("tracks multiple endpoints separately with correct attributes", async () => {
+    metricExporter.reset();
+
+    // Make requests to different endpoints
+    await fetch(`${serverUrl}/hello`);
+    await fetch(`${serverUrl}/json`);
+    await fetch(`${serverUrl}/error`);
+
+    await meterProvider.forceFlush();
+
+    const resourceMetrics = metricExporter.getMetrics();
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const counterMetric = scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.requests.total");
 
     expect(counterMetric).toBeDefined();
 
-    // For now, just verify total count across datapoints
-    expect(counterMetric!.dataPoints.length).toBeGreaterThan(0);
+    // Should have separate data points for each endpoint
+    const dataPoints = counterMetric!.dataPoints;
+    const endpoints = new Set(dataPoints.map((dp: any) => dp.attributes["url.path"]));
 
-    let totalRequests = 0;
-    for (const dp of counterMetric!.dataPoints) {
-      totalRequests += dp.value as number;
-    }
-    expect(totalRequests).toBe(3);
+    expect(endpoints.has("/hello")).toBe(true);
+    expect(endpoints.has("/json")).toBe(true);
+    expect(endpoints.has("/error")).toBe(true);
+
+    // Verify error endpoint has correct status code
+    const errorDataPoint = dataPoints.find((dp: any) => dp.attributes["url.path"] === "/error");
+    expect(errorDataPoint).toBeDefined();
+    expect(errorDataPoint!.attributes["http.response.status_code"]).toBe(500);
   });
 
   test("duration increases with slow handlers", async () => {
-    const DELAY_MS = 100;
-    using server = Bun.serve({
-      port: 0,
-      fetch: async () => {
-        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
-        return new Response("Slow response");
-      },
-    });
+    metricExporter.reset();
 
-    await fetch(`http://localhost:${server.port}/slow`);
+    // Make fast request
+    const fastResponse = await fetch(`${serverUrl}/hello`);
+    await fastResponse.text();
 
-    await ctx.flush();
-    const durationMetric = ctx.findMetric("http.server.request.duration");
+    await meterProvider.forceFlush();
+    const metrics1 = metricExporter.getMetrics();
+    const durationMetric1 = metrics1[0].scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.request.duration");
+    const fastDuration = getDataPointValue(durationMetric1!.dataPoints[0]);
 
-    expect(durationMetric).toBeDefined();
+    metricExporter.reset();
+
+    // Make slow request
+    const slowResponse = await fetch(`${serverUrl}/slow`);
+    await slowResponse.text();
+
+    await meterProvider.forceFlush();
+    const metrics2 = metricExporter.getMetrics();
+    const durationMetric2 = metrics2[0].scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.request.duration");
+    const slowDuration = getDataPointValue(durationMetric2!.dataPoints[0]);
+
+    // Slow request should take longer (at least 50ms = 0.05s)
+    expect(slowDuration).toBeGreaterThan(fastDuration);
+    expect(slowDuration).toBeGreaterThan(0.05);
+  });
+
+  test("metrics include server.address and server.port attributes", async () => {
+    metricExporter.reset();
+
+    await fetch(`${serverUrl}/hello`);
+    await meterProvider.forceFlush();
+
+    const resourceMetrics = metricExporter.getMetrics();
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const durationMetric = scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.request.duration");
+
     const dataPoint = durationMetric!.dataPoints[0];
-    const durationSeconds = getDataPointSum(dataPoint);
-    expect(durationSeconds).toBeGreaterThanOrEqual(DELAY_MS / 1000);
+    expect(dataPoint.attributes["server.address"]).toBe("127.0.0.1");
+    expect(dataPoint.attributes["server.port"]).toBe(server!.port);
   });
 });

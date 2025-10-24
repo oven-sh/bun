@@ -554,7 +554,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         });
 
         try {
-          Bun.telemetry?.nativeHooks()?.notifyStart(1, 0, { http_req, http_res });
+          Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentKind.Node = 6
         } catch {}
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);

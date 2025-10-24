@@ -1,0 +1,11 @@
+{
+  "name": "bun-telemetry-integration-test",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.54.0",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0"
+  }
+}

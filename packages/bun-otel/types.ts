@@ -24,6 +24,7 @@ export enum InstrumentKind {
   SQL = 3,
   Redis = 4,
   S3 = 5,
+  Node = 6,
 }
 
 /**
@@ -71,11 +72,12 @@ export function getInstrumentKindValue(type: string): InstrumentKind {
     sql: InstrumentKind.SQL,
     redis: InstrumentKind.Redis,
     s3: InstrumentKind.S3,
+    node: InstrumentKind.Node,
   };
 
   const value = map[type];
   if (value === undefined) {
-    throw new Error(`Unknown instrument type: ${type}. Valid types: custom, http, fetch, sql, redis, s3`);
+    throw new Error(`Unknown instrument type: ${type}. Valid types: custom, http, fetch, sql, redis, s3, node`);
   }
 
   return value;

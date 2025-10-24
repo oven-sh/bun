@@ -40,12 +40,14 @@ import { context, diag, propagation, type TextMapPropagator } from "@opentelemet
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { type Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
-  type DetectorSync,
-  detectResourcesSync,
+  detectResources,
+  emptyResource,
   envDetector,
   hostDetector,
   processDetector,
   Resource,
+  type ResourceDetector,
+  resourceFromAttributes,
 } from "@opentelemetry/resources";
 import { type MetricReader } from "@opentelemetry/sdk-metrics";
 import {
@@ -90,9 +92,9 @@ export interface BunSDKConfiguration {
    * Resource detectors to use for auto-detecting resource attributes.
    * @default [envDetector, processDetector, hostDetector]
    */
-  resourceDetectors?: DetectorSync[];
+  resourceDetectors?: ResourceDetector[];
   /** @deprecated Use resourceDetectors instead */
-  resourceDetector?: DetectorSync; // deprecated singular form
+  resourceDetector?: ResourceDetector; // deprecated singular form
   /**
    * Whether to automatically detect resources using resourceDetectors.
    * @default true
@@ -231,18 +233,22 @@ export interface BunSDKConfiguration {
 export class BunSDK implements AsyncDisposable {
   private _config: BunSDKConfiguration;
   private _tracerProvider?: NodeTracerProvider;
+  private _meterProvider?: MeterProvider;
   private _resource: Resource;
   private _spanProcessors: SpanProcessor[] = [];
+  private _metricReaders: MetricReader[] = [];
   private _serviceName?: string;
   private _instrumentations: Instrumentation[];
   private _instrumentationCleanup?: () => void;
+  private _shutdownOnce = false;
+  private _signalHandlersRegistered = false;
 
   constructor(config: BunSDKConfiguration = {}) {
     this._config = config;
     this._serviceName = config.serviceName;
 
     // Initialize resource
-    this._resource = config.resource ?? Resource.empty();
+    this._resource = config.resource ?? emptyResource();
 
     // handle deprecated singular resourceDetector
     const resourceDetectors =
@@ -252,7 +258,7 @@ export class BunSDK implements AsyncDisposable {
     // Setup resource detectors
     if (config.autoDetectResources !== false) {
       if (resourceDetectors.length > 0) {
-        const detected = detectResourcesSync({ detectors: resourceDetectors });
+        const detected = detectResources({ detectors: resourceDetectors });
         this._resource = this._resource.merge(detected);
       }
     }
@@ -265,6 +271,9 @@ export class BunSDK implements AsyncDisposable {
           ? [new BatchSpanProcessor(config.traceExporter)]
           : []);
 
+    // Setup metric readers
+    this._metricReaders = config.metricReaders ?? (config.metricReader ? [config.metricReader] : []);
+
     // Setup instrumentations (auto-register Bun instrumentations if not provided)
     // Per spec lines 86-87: "If `instrumentations` not provided or empty: BunSDK auto-registers
     // BunHttpInstrumentation and BunFetchInstrumentation"
@@ -274,11 +283,14 @@ export class BunSDK implements AsyncDisposable {
     } else {
       // Auto-register Bun instrumentations with default configuration
       // Per spec lines 381-388 for default configuration
+      // Use new headersToSpanAttributes format (Node.js SDK-compatible)
       this._instrumentations = [
         new BunHttpInstrumentation({
-          captureAttributes: {
-            requestHeaders: ["content-type", "content-length", "user-agent", "accept"],
-            responseHeaders: ["content-type", "content-length"],
+          headersToSpanAttributes: {
+            server: {
+              requestHeaders: ["content-type", "content-length", "user-agent", "accept"],
+              responseHeaders: ["content-type", "content-length"],
+            },
           },
         }),
         new BunFetchInstrumentation({
@@ -294,13 +306,14 @@ export class BunSDK implements AsyncDisposable {
   }
 
   /**
-   * Start the SDK: configure context manager, propagator, create tracer provider,
+   * Start the SDK: configure context manager, propagator, create providers,
    * and register instrumentations.
    *
+   * Per Node.js SDK: Supports tracing-only, metrics-only, or both modes.
    * Per spec lines 151-193
    */
   start(): void {
-    if (this._tracerProvider) {
+    if (this._tracerProvider || this._meterProvider) {
       diag.warn("BunSDK already started");
       return;
     }
@@ -319,33 +332,46 @@ export class BunSDK implements AsyncDisposable {
     // 2. Merge serviceName into resource
     let resource = this._resource;
     if (this._serviceName) {
-      const serviceResource = new Resource({ "service.name": this._serviceName });
+      const serviceResource = resourceFromAttributes({ "service.name": this._serviceName });
       resource = resource.merge(serviceResource);
     }
 
-    // 3. Create NodeTracerProvider
-    this._tracerProvider = new NodeTracerProvider({
-      sampler: this._config.sampler,
-      spanLimits: this._config.spanLimits,
-      idGenerator: this._config.idGenerator,
-      spanProcessors: this._spanProcessors,
-      resource,
-    });
+    // 3. Create TracerProvider if tracing is configured
+    // Per Node.js SDK: Optional - gracefully degrades to noop if not provided
+    if (this._spanProcessors.length > 0 || this._config.traceExporter) {
+      this._tracerProvider = new NodeTracerProvider({
+        sampler: this._config.sampler,
+        spanLimits: this._config.spanLimits,
+        idGenerator: this._config.idGenerator,
+        spanProcessors: this._spanProcessors,
+        resource,
+      });
 
-    // 4. Add span processors
-    for (const processor of this._spanProcessors) {
-      this._tracerProvider.addSpanProcessor(processor);
+      // Register as global tracer provider
+      // This MUST happen before registerInstrumentations() so instrumentations
+      // can access the global provider
+      this._tracerProvider.register();
+      debugLog("TracerProvider created and registered globally");
     }
 
-    // 5. Register as global tracer provider
-    // This MUST happen before registerInstrumentations() so instrumentations
-    // can access the global provider
-    this._tracerProvider.register();
+    // 4. Create MeterProvider if metrics is configured
+    // Per Node.js SDK: Optional - gracefully degrades to noop if not provided
+    if (this._metricReaders.length > 0) {
+      this._meterProvider = new MeterProvider({
+        resource,
+        readers: this._metricReaders,
+      });
 
-    // 6. Register instrumentations
+      // Register as global meter provider
+      metrics.setGlobalMeterProvider(this._meterProvider);
+      debugLog("MeterProvider created and registered globally");
+    }
+
+    // 5. Register instrumentations
     // Per spec lines 157-161: "If instrumentations not provided in constructor:
     //   - Create BunHttpInstrumentation with default configuration
     //   - Create BunFetchInstrumentation with default configuration"
+    // Per Node.js SDK: Pass both providers (will use global APIs if not provided)
     debugLog(
       "Registering instrumentations:",
       this._instrumentations.map(i => i.instrumentationName),
@@ -353,6 +379,7 @@ export class BunSDK implements AsyncDisposable {
     this._instrumentationCleanup = registerInstrumentations({
       instrumentations: this._instrumentations,
       tracerProvider: this._tracerProvider,
+      meterProvider: this._meterProvider,
     });
     debugLog("Instrumentations registered, cleanup function:", typeof this._instrumentationCleanup);
 
@@ -361,12 +388,21 @@ export class BunSDK implements AsyncDisposable {
   }
 
   /**
-   * Shutdown the SDK: disable instrumentations and shutdown tracer provider.
-   * Flushes any pending spans and cleans up resources.
+   * Shutdown the SDK: disable instrumentations and shutdown providers.
+   * Flushes any pending spans/metrics and cleans up resources.
+   *
+   * Safe to call multiple times - only shuts down once.
    *
    * Per spec lines 197-226
    */
   async shutdown(): Promise<void> {
+    // Guard against multiple shutdown calls
+    if (this._shutdownOnce) {
+      debugLog("shutdown() already called, skipping");
+      return;
+    }
+    this._shutdownOnce = true;
+
     debugLog("shutdown() called, cleaning up instrumentations...");
 
     // 1. Disable instrumentations (unpatch and detach from Bun.telemetry)
@@ -404,6 +440,88 @@ export class BunSDK implements AsyncDisposable {
       await this._tracerProvider.shutdown();
       this._tracerProvider = undefined;
     }
+
+    // 4. Shutdown meter provider (flushes pending metrics to exporters)
+    if (this._meterProvider) {
+      await this._meterProvider.shutdown();
+      this._meterProvider = undefined;
+    }
+  }
+
+  /**
+   * Start the SDK and register system signal handlers for graceful shutdown.
+   *
+   * This is a convenience method that:
+   * 1. Calls start() if not already started
+   * 2. Registers SIGINT and SIGTERM handlers
+   * 3. Ensures shutdown() is called only once even if multiple signals arrive
+   * 4. Calls optional callback before shutdown
+   * 5. Exits process with code 0
+   *
+   * Recommended for production applications to ensure proper cleanup on exit.
+   *
+   * @param beforeShutdown - Optional callback to run before SDK shutdown (e.g., close database connections)
+   *
+   * @example Basic usage
+   * ```typescript
+   * const sdk = new BunSDK({ traceExporter: new ConsoleSpanExporter() });
+   * await sdk.startAndRegisterSystemShutdownHooks();
+   * // SDK started and shutdown handlers registered
+   * ```
+   *
+   * @example With cleanup callback
+   * ```typescript
+   * const sdk = new BunSDK({ traceExporter: new ConsoleSpanExporter() });
+   * await sdk.startAndRegisterSystemShutdownHooks(async () => {
+   *   console.log("Closing database connections...");
+   *   await db.close();
+   * });
+   * ```
+   */
+  async startAndRegisterSystemShutdownHooks(beforeShutdown?: () => void | Promise<void>): Promise<void> {
+    // Start SDK if not already started
+    this.start();
+
+    // Only register signal handlers once
+    if (this._signalHandlersRegistered) {
+      debugLog("Signal handlers already registered, skipping");
+      return;
+    }
+    this._signalHandlersRegistered = true;
+
+    // Create shutdown handler that can only run once
+    const shutdownHandler = async (signal: string) => {
+      // Check if already shutting down
+      if (this._shutdownOnce) {
+        debugLog(`${signal} received but shutdown already in progress, ignoring`);
+        return;
+      }
+
+      console.log(`\n${signal} received, shutting down gracefully...`);
+
+      try {
+        // Run user callback before SDK shutdown
+        if (beforeShutdown) {
+          await beforeShutdown();
+        }
+
+        // Shutdown SDK (will set _shutdownOnce = true)
+        await this.shutdown();
+
+        console.log("✓ Shutdown complete");
+        process.exit(0);
+      } catch (error) {
+        console.error("Error during shutdown:", error);
+        process.exit(1);
+      }
+    };
+
+    // Register both SIGINT (Ctrl+C) and SIGTERM (kill) handlers
+    // Both call the same handler which ensures shutdown only happens once
+    process.on("SIGINT", () => shutdownHandler("SIGINT"));
+    process.on("SIGTERM", () => shutdownHandler("SIGTERM"));
+
+    debugLog("System shutdown hooks registered (SIGINT, SIGTERM)");
   }
 
   /**

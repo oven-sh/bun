@@ -3,7 +3,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-tr
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
 import { BunFetchInstrumentation, BunSDK } from "../index";
-import { EchoServer } from "./test-echo-server";
+import { EchoServer } from "./echo-server";
 import { waitForSpans } from "./test-utils";
 
 /** NOTE: Critical to understand what is being tested here
@@ -100,7 +100,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     expect(capturedSpanId).toBe(serverSpan.spanContext().spanId);
 
     // Verify the span has the correct parent
-    expect(serverSpan.parentSpanId).toBe(upstreamSpanId);
+    expect(serverSpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
   });
 
@@ -168,10 +168,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
 
     // 2. Server A's span should be a child of the incoming request
-    expect(serverASpan.parentSpanId).toBe(upstreamSpanId);
+    expect(serverASpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
 
     // 3. Fetch CLIENT span should be a child of server A's span
-    expect(fetchClientSpan.parentSpanId).toBe(serverASpan.spanContext().spanId);
+    expect(fetchClientSpan.parentSpanContext?.spanId).toBe(serverASpan.spanContext().spanId);
 
     // 4. Verify traceparent was actually injected into the fetch request (echo server returns it)
     expect(result.downstream.headers.traceparent).toBeDefined();
@@ -258,11 +258,11 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
 
     // Server span should be child of incoming request
-    expect(serverSpan.parentSpanId).toBe(upstreamSpanId);
+    expect(serverSpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
 
     // CRITICAL: CLIENT span created inside setTimeout should still be child of server span
     // This proves AsyncLocalStorage context propagates across async boundaries
-    expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(fetchClientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
 
     // Verify traceparent was injected into the fetch request (via echo server response)
     expect(echoData.headers.traceparent).toBeDefined();
@@ -334,7 +334,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
-    expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(fetchClientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
   });
 
   test("propagates trace context through nested async functions in Node.js server", async () => {
@@ -401,7 +401,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
-    expect(fetchClientSpan.parentSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(fetchClientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
   });
 
   test("propagates trace context through async generator in Node.js server", async () => {
@@ -474,7 +474,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     // All CLIENT spans created by generator should be children of SERVER span
     for (const clientSpan of clientSpans) {
-      expect(clientSpan.parentSpanId).toBe(serverSpan!.spanContext().spanId);
+      expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan!.spanContext().spanId);
     }
   });
 
@@ -550,7 +550,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     expect(fetchClientSpans).toHaveLength(3);
 
     for (const fetchSpan of fetchClientSpans) {
-      expect(fetchSpan.parentSpanId).toBe(gatewaySpan!.spanContext().spanId);
+      expect(fetchSpan.parentSpanContext?.spanId).toBe(gatewaySpan!.spanContext().spanId);
     }
 
     // Verify traceparent was injected in all 3 parallel requests

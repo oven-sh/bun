@@ -35,8 +35,7 @@ describe("BunHttpInstrumentation", () => {
   beforeAll(async () => {
     // Setup tracer provider with in-memory exporter
     exporter = new InMemorySpanExporter();
-    provider = new BasicTracerProvider();
-    provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+    provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
 
     // Create and enable instrumentation BEFORE starting server
     instrumentation = new BunHttpInstrumentation({
@@ -52,7 +51,7 @@ describe("BunHttpInstrumentation", () => {
     // Start test server
     server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch(req: Request) {
         const url = new URL(req.url);
 
         if (url.pathname === "/hello") {
@@ -204,7 +203,7 @@ describe("BunHttpInstrumentation", () => {
     // Verify span has correct parent context
     expect(serverSpan?.spanContext().traceId).toBe(parentTraceId);
     // Parent span ID should be referenced (not the same as current span)
-    expect(serverSpan?.parentSpanId).toBe(parentSpanId);
+    expect(serverSpan?.parentSpanContext?.spanId).toBe(parentSpanId);
   });
 
   test("span name follows 'METHOD path' pattern", async () => {

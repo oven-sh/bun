@@ -21,6 +21,7 @@
  */
 
 import { ConfigurationProperty } from "../types";
+import { getNativeHooks } from "./test-utils";
 
 export class TempConfig {
   private originalValues: Map<ConfigurationProperty, any> = new Map();
@@ -36,11 +37,11 @@ export class TempConfig {
       }
 
       // Save original value
-      const originalValue = Bun.telemetry.nativeHooks.getConfigurationProperty(propertyId);
+      const originalValue = getNativeHooks().getConfigurationProperty(propertyId);
       this.originalValues.set(propertyId, originalValue);
 
       // Set new value
-      Bun.telemetry.nativeHooks.setConfigurationProperty(propertyId, value);
+      getNativeHooks().setConfigurationProperty(propertyId, value);
     }
   }
 
@@ -51,7 +52,7 @@ export class TempConfig {
   [Symbol.dispose](): void {
     // Restore all original values
     for (const [propertyId, originalValue] of this.originalValues.entries()) {
-      Bun.telemetry.nativeHooks.setConfigurationProperty(propertyId, originalValue);
+      getNativeHooks().setConfigurationProperty(propertyId, originalValue);
     }
     this.originalValues.clear();
   }

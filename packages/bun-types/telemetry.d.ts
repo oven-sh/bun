@@ -80,7 +80,7 @@ declare module "bun" {
    *
    * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#instrumentkind-enum
    */
-  export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3";
+  export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node";
 
   /**
    * User-facing API for registering instrumentations with Bun's native telemetry hooks.

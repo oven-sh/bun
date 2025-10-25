@@ -1,13 +1,16 @@
 /**
- * OpenTelemetry instrumentation for Node.js HTTP (http.createServer and http.request).
+ * OpenTelemetry instrumentation for Node.js HTTP server (http.createServer).
  *
  * This instrumentation uses Bun's native telemetry hooks (Bun.telemetry.attach)
- * to create SERVER spans for incoming HTTP requests and CLIENT spans for outgoing requests,
- * automatically handling W3C TraceContext headers for distributed tracing.
+ * to create SERVER spans for incoming HTTP requests, automatically handling
+ * W3C TraceContext headers for distributed tracing.
+ *
+ * Note: This instrumentation ONLY handles http.createServer() SERVER spans.
+ * CLIENT spans for http.request() are handled by BunFetchInstrumentation,
+ * since Bun's http.request() implementation uses fetch() internally.
  *
  * Supports:
  * - Node.js http.createServer() - SERVER spans managed via .once() listeners on ServerResponse
- * - Node.js http.request() - CLIENT spans managed via .once() listeners on ClientRequest
  *
  * @module bun-otel/instruments/BunNodeInstrumentation
  */
@@ -30,7 +33,6 @@ import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentRef, OpId } from "bun";
 import { InstrumentKind } from "../../types";
 
-import type { ClientRequest } from "http";
 import { IncomingMessage, ServerResponse } from "http";
 import { validateCaptureAttributes } from "../validation";
 
@@ -39,6 +41,9 @@ const kSpan = Symbol("kOtelSpan");
 
 /**
  * Configuration options for BunNodeInstrumentation.
+ *
+ * Note: This instrumentation is SERVER-only. CLIENT spans for http.request()
+ * are handled by BunFetchInstrumentation since Bun's http.request() uses fetch() internally.
  */
 export interface BunNodeInstrumentationConfig extends InstrumentationConfig {
   /**
@@ -61,18 +66,21 @@ export interface BunNodeInstrumentationConfig extends InstrumentationConfig {
 }
 
 /**
- * OpenTelemetry instrumentation for Node.js HTTP (both server and client).
+ * OpenTelemetry instrumentation for Node.js HTTP server (http.createServer).
  *
  * Unlike the official Node.js instrumentations that use monkey-patching via InstrumentationBase,
  * this implementation uses Bun's native telemetry hooks for zero-overhead instrumentation.
  *
  * Key features:
  * - Creates SERVER spans for all http.createServer() requests
- * - Creates CLIENT spans for all http.request() calls
- * - Automatically extracts/injects trace context via traceparent header
+ * - Automatically extracts trace context from incoming traceparent header
  * - Maps attributes to OTel semantic conventions v1.23.0+
  * - Handles errors and HTTP error status codes
  * - Uses .once() listeners for deferred attribute capture
+ *
+ * Note: CLIENT spans for http.request() are NOT handled by this instrumentation.
+ * They are handled by BunFetchInstrumentation, since Bun's http.request() implementation
+ * uses fetch() internally.
  *
  * @example
  * ```typescript
@@ -90,18 +98,12 @@ export interface BunNodeInstrumentationConfig extends InstrumentationConfig {
  * instrumentation.setTracerProvider(provider);
  * instrumentation.enable();
  *
- * // Now all http.createServer() and http.request() calls will be traced
+ * // Now all http.createServer() requests will be traced
  * import http from 'node:http';
  *
- * // Server will be instrumented
  * http.createServer((req, res) => {
  *   res.end('Hello from Node.js http!');
  * }).listen(3001);
- *
- * // Client will be instrumented
- * http.request('http://example.com', (res) => {
- *   // ...
- * }).end();
  * ```
  */
 export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrumentationConfig> {
@@ -118,11 +120,9 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   // Track start times for manual duration calculation (Node.js bypasses onOperationEnd)
   private _startTimes: Map<number, number> = new Map();
 
-  // Metric instruments for tracking HTTP duration (server + client)
+  // Metric instruments for tracking HTTP server duration
   private _oldHttpServerDurationHistogram?: Histogram;
   private _stableHttpServerDurationHistogram?: Histogram;
-  private _oldHttpClientDurationHistogram?: Histogram;
-  private _stableHttpClientDurationHistogram?: Histogram;
 
   constructor(config: BunNodeInstrumentationConfig = {}) {
     // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
@@ -148,23 +148,6 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
         attributes["http_res"] &&
         attributes["http_req"] instanceof IncomingMessage &&
         attributes["http_res"] instanceof ServerResponse,
-    );
-  }
-
-  /**
-   * Check if attributes contain Node.js client request object.
-   * Client may or may not have a response yet (response arrives asynchronously).
-   */
-  private isNodeClientAttributes(attributes: Record<string, any>): attributes is {
-    http_req: ClientRequest;
-    http_res?: IncomingMessage;
-  } {
-    return Boolean(
-      attributes["http_req"] &&
-        // Check if it's a ClientRequest (has methods like abort, setHeader, etc.)
-        typeof attributes["http_req"] === "object" &&
-        "abort" in attributes["http_req"] &&
-        "setHeader" in attributes["http_req"],
     );
   }
 
@@ -299,136 +282,8 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   }
 
   /**
-   * Setup .once() listeners on Node.js ClientRequest to capture CLIENT span lifecycle.
-   * Handles both successful responses and errors.
-   */
-  private setupNodeJsClientRequestListeners(id: OpId, span: Span, req: ClientRequest, res?: IncomingMessage): void {
-    // Store span on request object
-    (req as any)[kSpan] = span;
-
-    // Handle successful response
-    req.once("response", (response: IncomingMessage) => {
-      // Capture response status code
-      const statusCode = response.statusCode || 0;
-      span.setAttribute("http.response.status_code", statusCode);
-
-      // Capture content-length if available
-      const contentLength = this.extractContentLength(response);
-      if (contentLength > 0) {
-        span.setAttribute("http.response.body.size", contentLength);
-      }
-
-      // Add captured response headers if configured
-      if (this._config.captureAttributes?.responseHeaders) {
-        for (const headerName of this._config.captureAttributes.responseHeaders) {
-          const value = response.headers[headerName];
-          if (value !== undefined) {
-            const attrKey = `http.response.header.${headerName}`;
-            span.setAttribute(attrKey, Array.isArray(value) ? value[0] : String(value));
-          }
-        }
-      }
-
-      // Set span status based on HTTP status code
-      if (statusCode >= 500) {
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: `HTTP ${statusCode}`,
-        });
-      } else {
-        span.setStatus({ code: SpanStatusCode.OK });
-      }
-
-      // Wait for response to end before ending span
-      response.once("end", () => {
-        // Record metrics if meter provider is configured
-        const startTime = this._startTimes.get(id);
-        if (this._oldHttpClientDurationHistogram && startTime !== undefined) {
-          const durationMs = performance.now() - startTime;
-          const durationS = durationMs / 1000;
-
-          // Build metric attributes (subset of span attributes for cardinality control)
-          const metricAttributes: Record<string, any> = {
-            "http.request.method": (req as any).method || "GET",
-            "http.response.status_code": statusCode,
-          };
-
-          // Record to old histogram (milliseconds)
-          this._oldHttpClientDurationHistogram.record(durationMs, metricAttributes);
-
-          // Record to stable histogram (seconds)
-          if (this._stableHttpClientDurationHistogram) {
-            this._stableHttpClientDurationHistogram.record(durationS, metricAttributes);
-          }
-        }
-        this._startTimes.delete(id);
-
-        span.end();
-        this._activeSpans.delete(id);
-      });
-
-      // Handle response errors
-      response.once("error", (err: unknown) => {
-        const error = err instanceof Error ? err : new Error(String(err ?? "Unknown error"));
-        span.recordException(error);
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error.message,
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      });
-    });
-
-    // Handle request errors (connection errors, timeouts, etc.)
-    req.once("error", (err: unknown) => {
-      // Only record error if span hasn't ended already
-      if (this._activeSpans.has(id)) {
-        const error = err instanceof Error ? err : new Error(String(err ?? "Unknown error"));
-        span.recordException(error);
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error.message,
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      }
-    });
-
-    // Handle request abort
-    req.once("abort", () => {
-      if (this._activeSpans.has(id)) {
-        span.recordException(new Error("Request aborted"));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: "Request aborted",
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      }
-    });
-
-    // Handle request timeout
-    req.once("timeout", () => {
-      if (this._activeSpans.has(id)) {
-        span.recordException(new Error("Request timeout"));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: "Request timeout",
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      }
-    });
-  }
-
-  /**
    * Enable instrumentation by attaching to Bun's native telemetry hooks.
-   * Creates SERVER spans for http.createServer() and CLIENT spans for http.request().
+   * Creates SERVER spans for http.createServer() requests.
    */
   enable(): void {
     // Check if running in Bun environment
@@ -459,14 +314,10 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       },
 
       onOperationStart: (id: OpId, attributes: Record<string, any>) => {
-        // Determine if this is a server or client operation
-        const isServer = this.isNodeServerAttributes(attributes);
-        const isClient = this.isNodeClientAttributes(attributes);
-
-        if (isServer) {
+        // Only handle SERVER operations (http.createServer)
+        // CLIENT operations (http.request) are handled by BunFetchInstrumentation
+        if (this.isNodeServerAttributes(attributes)) {
           this.handleServerOperationStart(id, attributes, tracer);
-        } else if (isClient) {
-          this.handleClientOperationStart(id, attributes, tracer);
         }
       },
 
@@ -476,9 +327,8 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
           return;
         }
 
-        // For Node.js operations, the .once() listeners handle span lifecycle
+        // For Node.js SERVER operations, the .once() listeners handle span lifecycle
         // Skip processing here to avoid duplicate span.end() calls
-        // The listeners will handle both server and client operations
       },
 
       onOperationError: (id: number, attributes: Record<string, any>) => {
@@ -586,68 +436,6 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   }
 
   /**
-   * Handle CLIENT operation start (http.request).
-   */
-  private handleClientOperationStart(
-    id: OpId,
-    attributes: Record<string, any>,
-    tracer: ReturnType<TracerProvider["getTracer"]>,
-  ): void {
-    const nodeRequest = attributes["http_req"] as ClientRequest;
-    const nodeResponse = attributes["http_res"] as IncomingMessage | undefined;
-
-    // Store OpId on request object for subsequent telemetry calls
-    (nodeRequest as any)._telemetry_op_id = id;
-
-    // Extract request details from ClientRequest
-    // ClientRequest has method, protocol, path, host, port properties
-    const method = (nodeRequest as any).method || "GET";
-    const protocol = (nodeRequest as any).protocol || "http:";
-    const path = (nodeRequest as any).path || "/";
-    const host = (nodeRequest as any).host || "localhost";
-
-    // Extract span name from HTTP method and path
-    const spanName = `${method} ${path}`;
-
-    // Create CLIENT span
-    const span = tracer.startSpan(
-      spanName,
-      {
-        kind: SpanKind.CLIENT,
-        attributes: {
-          // Map ClientRequest attributes to OTel semantic conventions
-          "http.request.method": method,
-          "url.path": path,
-          "url.scheme": protocol.replace(":", ""),
-          "server.address": host,
-        },
-      },
-      context.active(),
-    );
-
-    // Add captured request headers if configured
-    if (this._config.captureAttributes?.requestHeaders) {
-      const headers = (nodeRequest as any).getHeaders?.() || {};
-      for (const headerName of this._config.captureAttributes.requestHeaders) {
-        const value = headers[headerName];
-        if (value !== undefined) {
-          const attrKey = `http.request.header.${headerName}`;
-          span.setAttribute(attrKey, Array.isArray(value) ? value[0] : String(value));
-        }
-      }
-    }
-
-    // Store span for later retrieval
-    this._activeSpans.set(id, span);
-
-    // Track start time for manual duration calculation
-    this._startTimes.set(id, performance.now());
-
-    // Setup .once() listeners to capture response
-    this.setupNodeJsClientRequestListeners(id, span, nodeRequest, nodeResponse);
-  }
-
-  /**
    * Disable instrumentation by detaching from Bun's native hooks.
    */
   disable(): void {
@@ -669,7 +457,7 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
 
   /**
    * Set the MeterProvider and create metric instruments.
-   * Creates histograms for tracking HTTP server and client request duration.
+   * Creates histograms for tracking HTTP server request duration.
    */
   setMeterProvider(meterProvider: MeterProvider): void {
     this._meterProvider = meterProvider;
@@ -685,23 +473,6 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
     // Stable convention: http.server.request.duration (seconds)
     this._stableHttpServerDurationHistogram = meter.createHistogram("http.server.request.duration", {
       description: "Duration of HTTP server requests.",
-      unit: "s",
-      valueType: ValueType.DOUBLE,
-      advice: {
-        explicitBucketBoundaries: [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10],
-      },
-    });
-
-    // Old convention: http.client.duration (milliseconds)
-    this._oldHttpClientDurationHistogram = meter.createHistogram("http.client.duration", {
-      description: "Measures the duration of outbound HTTP requests.",
-      unit: "ms",
-      valueType: ValueType.DOUBLE,
-    });
-
-    // Stable convention: http.client.request.duration (seconds)
-    this._stableHttpClientDurationHistogram = meter.createHistogram("http.client.request.duration", {
-      description: "Duration of HTTP client requests.",
       unit: "s",
       valueType: ValueType.DOUBLE,
       advice: {

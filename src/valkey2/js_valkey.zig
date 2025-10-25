@@ -133,18 +133,36 @@ pub const JsValkey = struct {
 
         /// Invoked by the ZigClient whenever a message which is in-flight is dropped. This happens
         /// when the connection drops or the client is closed.
-        pub fn onRequestDropped(self: *@This(), ctx: *const RequestContext) void {
+        pub fn onRequestDropped(
+            self: *@This(),
+            ctx: *const RequestContext,
+            reason: Client.DropReason,
+        ) void {
+            // TODO(markovejnovic): The original implementation handled failures inside finalizers.
+            // We are unable to run promises inside finalizers, so we need to handle that.
             const go = self.parent()._global_obj;
+
+            const js_err: bun.jsc.JSValue = switch (reason) {
+                .closing => go.ERR(
+                    .SOCKET_CLOSED_BEFORE_CONNECTION,
+                    "Request dropped: connection closed or lost",
+                    .{},
+                ).toJS(),
+                .irrecoverable_failure => |failure| switch (failure) {
+                    .auth_err => |err| protocol.valkeyErrorToJS(
+                        go,
+                        protocol.RedisError.AuthenticationFailed,
+                        "{s}",
+                        .{err.msg},
+                    ),
+                },
+            };
 
             switch (ctx.*) {
                 .user_request => |*ur| {
                     // Reject the promise with a connection error
                     // TODO(markovejnovic): This constCast sucks
-                    @constCast(ur).reject(go, go.ERR(
-                        .SOCKET_CLOSED_BEFORE_CONNECTION,
-                        "Request dropped: connection closed or lost",
-                        .{},
-                    ).toJS());
+                    @constCast(ur).reject(go, js_err);
                 },
             }
         }

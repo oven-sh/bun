@@ -6572,6 +6572,53 @@ describeValkey(
         expect(setMembers).toContain("green");
       });
     });
+
+    describe("Connection Options", () => {
+      test("connection errors", async () => {
+        const url = new URL(ctx.serverUrl);
+        url.username = "badusername";
+        url.password = "secretpassword";
+        const customRedis = new RedisClient2(url.toString(), {
+          tls: false,
+        });
+
+        expect(async () => {
+          await customRedis.get("test");
+        }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
+      });
+
+      const testKeyUniquePerDb = crypto.randomUUID();
+      // TODO(markovejnovic): Don't skip this.
+      test.skip.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+        const redis = createClient(connectionType, {}, dbId);
+
+        const testValue = await redis.get(testKeyUniquePerDb);
+        expect(testValue).toBeNull();
+
+        redis.close();
+      });
+    });
+
+    describe("Reconnections", () => {
+      // TODO(markovejnovic): Don't skip this.
+      test.skip("should automatically reconnect after connection drop", async () => {
+        const TEST_KEY = "test-key";
+        const TEST_VALUE = "test-value";
+
+        const valueBeforeStart = await (await ctx.connectedClient()).get(TEST_KEY);
+        expect(valueBeforeStart).toBeNull();
+
+        await (await ctx.connectedClient()).set(TEST_KEY, TEST_VALUE);
+        const valueAfterSet = await (await ctx.connectedClient()).get(TEST_KEY);
+        expect(valueAfterSet).toBe(TEST_VALUE);
+
+        await ctx.restartServer();
+
+        const valueAfterStop = await ctx.connectedClient().get(TEST_KEY);
+        expect(valueAfterStop).toBe(TEST_VALUE);
+      });
+    });
+
   },
   { server: "redis://localhost:6379" },
 );

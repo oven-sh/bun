@@ -33,7 +33,12 @@ pub const RedisError = error{
     IdleTimeout,
 };
 
-pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, err: RedisError, comptime msg_fmt: ?[]const u8, comptime msg_args: anytype) jsc.JSValue {
+pub fn valkeyErrorToJS(
+    globalObject: *jsc.JSGlobalObject,
+    err: RedisError,
+    comptime msg_fmt: ?[:0]const u8,
+    msg_args: anytype,
+) jsc.JSValue {
     const error_code: jsc.Error = switch (err) {
         error.ConnectionClosed => .REDIS_CONNECTION_CLOSED,
         error.InvalidResponse => .REDIS_INVALID_RESPONSE,

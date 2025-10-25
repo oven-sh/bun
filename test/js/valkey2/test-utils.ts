@@ -24,6 +24,9 @@ export interface ValkeyContext {
 
   /** Create a new disconnected client. Each invocation creates a new instance. */
   newDisconnectedClient: () => RedisClient2,
+
+  /** Restart the server. */
+  restartServer: () => Promise<void>,
 };
 
 /**
@@ -64,6 +67,13 @@ export function describeValkey(
       return client;
     },
     newDisconnectedClient: () => new RedisClient2(context.serverUrl),
+
+    restartServer: async () => {
+      if (options.server !== "docker") {
+        // We're not the ones managing the server, so there's absolutely nothing we can do here.
+        throw new Error("This test is not supported when running against a non-Docker server.");
+      }
+    },
   };
 
   beforeEach(async () => {

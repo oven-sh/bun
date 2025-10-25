@@ -393,21 +393,17 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             Self.debug("Processing HELLO response", .{});
             switch (value.*) {
                 .Error => |err| {
-                    // TODO(markovejnovic): Enable
-                    //self.fail(err, protocol.RedisError.AuthenticationFailed);
-                    _ = err;
-                    return;
+                    Self.debug("Authentication failed: {s}", .{err});
+                    self.failIrrecoverably(.{ .auth_err = .{ .msg = err } });
                 },
                 .SimpleString => |str| {
                     if (std.mem.eql(u8, str, "OK")) {
                         try self._state.transition(.{ .linked = .{ .state = .normal } });
                         return;
                     }
-                    // TODO(markovejnovic): Enable
-                    //self.fail("Authentication failed (unexpected response)",
-                    // protocol.RedisError.AuthenticationFailed,);
 
-                    return;
+                    self.failIrrecoverably(.{ .auth_err = .{ .msg = "Unexpected response" } });
+                    try self._state.transition(.{ .disconnected = .{} });
                 },
                 .Map => |map| {
                     // This is the HELLO response map
@@ -433,13 +429,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                     }
 
                     try self._state.transition(.{ .linked = .{ .state = .normal } });
-                    return;
                 },
                 else => {
-                    // TODO(markovejnovic): Enable
-                    //this.fail("Authentication failed with unexpected response",
-                    //protocol.RedisError.AuthenticationFailed);
-                    return;
+                    self.failIrrecoverably(.{ .auth_err = .{ .msg = "Unexpected response" } });
                 },
             }
         }
@@ -566,6 +558,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
         /// This means that any side-effects that happened before the error was thrown will not be
         /// rolled back. Be very careful with this.
         ///
+        /// The listener is not allowed to throw errors when transitioning into the disconnected
+        /// state.
+        ///
         /// This does not need to handle illegal transitions, the state machine handles that for
         /// you.
         fn onStateTransition(self: *Self, from_state: *State) !void {
@@ -682,19 +677,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             self._socket_io.close();
 
             // We also want to fail all the pending requests.
-            for (self._inflight_queue.readableSlice(0)) |*req| {
-                self._callbacks.onRequestDropped(&req.context);
-                // TODO(markovejnovic): Pretty sure this cast is wrong.
-                @constCast(req).deinit(self._allocator);
-            }
-            self._inflight_queue.discard(self._inflight_queue.readableLength());
-
-            for (self._outbound_queue.readableSlice(0)) |*req| {
-                self._callbacks.onRequestDropped(&req.context);
-                // TODO(markovejnovic): Pretty sure this cast is wrong.
-                @constCast(req).deinit(self._allocator);
-            }
-            self._outbound_queue.discard(self._outbound_queue.readableLength());
+            self.dropAllQueuedMessages(.{ .closing = {} });
 
             self._callbacks.onClose();
         }
@@ -730,18 +713,15 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             // TODO(markovejnovic): This was taken from the original
             // implementation. Vet this.
             var hello_args_buf: [4][]const u8 = .{ "3", "AUTH", "", "" };
-            var hello_args: []const []const u8 = undefined;
 
             const username = self._connection_params.username;
             const password = self._connection_params.password;
+
+            var hello_args: []const []const u8 = hello_args_buf[0..1];
             if (username.len > 0 or password.len > 0) {
-                hello_args_buf[2] = if (username.len > 0)
-                    username
-                else
-                    "default";
+                hello_args_buf[2] = if (username.len > 0) username else "default";
                 hello_args_buf[3] = password;
-            } else {
-                hello_args = hello_args_buf[0..1];
+                hello_args = &hello_args_buf;
             }
 
             var hello_cmd = Command.initById(.HELLO, .{ .raw = hello_args });
@@ -779,6 +759,74 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             // TODO(markovejnovic): This should live in the linked state, not here, so it is
             // type-safer.
             return .{ .context = self };
+        }
+
+        /// A critical error occurred and we are unable to continue.
+        pub const IrrecoverableFailureReason = union(enum) {
+            /// Authentication with the server failed.
+            auth_err: struct { msg: []const u8 },
+        };
+
+        /// Why was a request dropped.
+        pub const DropReason = union(enum) {
+            /// A critical error occurred and we are unable to continue.
+            irrecoverable_failure: IrrecoverableFailureReason,
+            /// The client is nominally closing.
+            closing: void,
+        };
+
+        /// If there's any outbound, drop them and notify the listener.
+        fn dropAllOutboundMessages(self: *Self, reason: DropReason) void {
+            for (self._outbound_queue.readableSlice(0)) |*req| {
+                self._callbacks.onRequestDropped(&req.context, reason);
+                // TODO(markovejnovic): Pretty sure this cast is wrong.
+                @constCast(req).deinit(self._allocator);
+            }
+            self._outbound_queue.discard(self._outbound_queue.readableLength());
+        }
+
+        /// If there's any in-flight, drop them and notify the listener.
+        fn dropAllInFlightMessages(self: *Self, reason: DropReason) void {
+            for (self._inflight_queue.readableSlice(0)) |*req| {
+                self._callbacks.onRequestDropped(&req.context, reason);
+                // TODO(markovejnovic): Pretty sure this cast is wrong.
+                @constCast(req).deinit(self._allocator);
+            }
+            self._inflight_queue.discard(self._inflight_queue.readableLength());
+        }
+
+        /// If there's any queued messages, drop them and notify the listener.
+        fn dropAllQueuedMessages(self: *Self, reason: DropReason) void {
+            self.dropAllOutboundMessages(reason);
+            self.dropAllInFlightMessages(reason);
+        }
+
+        /// Some sort of critical error has been observed and we cannot continue.
+        ///
+        /// This will drop all queued messages and transition the client into the disconnected
+        /// state.
+        fn failIrrecoverably(self: *Self, reason: IrrecoverableFailureReason) void {
+            self.dropAllQueuedMessages(.{ .irrecoverable_failure = reason });
+        }
+
+        /// Force the client to enter the disconnected state.
+        ///
+        /// If the state transition fails, this will forcibly set the state to the disconnected
+        /// mode.
+        fn dangerouslyForceClientIntoDisconnectedState(self: *Self) void {
+            self.dropAllQueuedMessages(.{ .closing = {} });
+            self._state.transition(.{ .disconnected = {} }) catch |err| {
+                // In the case that we observe an error to transition to closed, that's a bug in
+                // Bun. TODO(markovejnovic): Analytics.
+                bun.Output.debugWarn(
+                    "{*} Failed to transition to disconnected after irrecoverable failure: " ++
+                        "{any}. This means that the listener returned an error when " ++
+                        "transitioning to the disconnected state.",
+                    .{ self, err },
+                );
+
+                self._state = .{ .disconnected = {} };
+            };
         }
 
         /// Write data to the socket buffer

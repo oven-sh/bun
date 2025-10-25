@@ -930,3 +930,264 @@ describe("--tolerate-republish", async () => {
     expect(err).not.toContain("error:");
   });
 });
+
+describe("publishConfig field overrides", () => {
+  test("publishConfig.exports overrides exports field", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-exports");
+
+    const pkgJson = {
+      name: "publishconfig-test-1",
+      version: "1.0.0",
+      exports: "./src/index.ts",
+      publishConfig: {
+        exports: "./dist/index.js",
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-1"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+      write(join(packageDir, "src", "index.ts"), "export const hello = 'world';"),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-1", "package.json"),
+    ).json();
+    expect(installedPkgJson.exports).toBe("./dist/index.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+
+    const originalPkgJson = await file(packageJson).json();
+    expect(originalPkgJson.exports).toBe("./src/index.ts");
+  });
+
+  test("publishConfig.main overrides main field", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-main");
+
+    const pkgJson = {
+      name: "publishconfig-test-2",
+      version: "1.0.0",
+      main: "./src/main.ts",
+      publishConfig: {
+        main: "./dist/main.js",
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-2"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-2", "package.json"),
+    ).json();
+    expect(installedPkgJson.main).toBe("./dist/main.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+
+  test("multiple publishConfig overrides work together", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-multiple");
+
+    const pkgJson = {
+      name: "publishconfig-test-3",
+      version: "1.0.0",
+      main: "./src/index.ts",
+      module: "./src/index.ts",
+      types: "./src/index.ts",
+      exports: {
+        ".": "./src/index.ts",
+      },
+      publishConfig: {
+        main: "./dist/index.cjs",
+        module: "./dist/index.js",
+        types: "./dist/index.d.ts",
+        exports: {
+          ".": {
+            import: "./dist/index.js",
+            require: "./dist/index.cjs",
+            types: "./dist/index.d.ts",
+          },
+        },
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-3", "package.json"),
+    ).json();
+
+    expect(installedPkgJson.main).toBe("./dist/index.cjs");
+    expect(installedPkgJson.module).toBe("./dist/index.js");
+    expect(installedPkgJson.types).toBe("./dist/index.d.ts");
+    expect(installedPkgJson.exports).toEqual({
+      ".": {
+        import: "./dist/index.js",
+        require: "./dist/index.cjs",
+        types: "./dist/index.d.ts",
+      },
+    });
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+
+  test("publishConfig.bin overrides bin field", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-bin");
+
+    const pkgJson = {
+      name: "publishconfig-test-4",
+      version: "1.0.0",
+      bin: "./src/cli.ts",
+      publishConfig: {
+        bin: "./dist/cli.js",
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-4"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-4", "package.json"),
+    ).json();
+    expect(installedPkgJson.bin).toBe("./dist/cli.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+
+  test("publishConfig without field override preserves original values", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-preserve");
+
+    const pkgJson = {
+      name: "publishconfig-test-5",
+      version: "1.0.0",
+      main: "./index.js",
+      exports: "./index.js",
+      publishConfig: {
+        access: "public",
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-5"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-5", "package.json"),
+    ).json();
+
+    expect(installedPkgJson.main).toBe("./index.js");
+    expect(installedPkgJson.exports).toBe("./index.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+
+  test("publishConfig adds fields not in root", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-add-fields");
+
+    const pkgJson = {
+      name: "publishconfig-test-6",
+      version: "1.0.0",
+      main: "./index.js",
+      publishConfig: {
+        types: "./dist/index.d.ts",
+        module: "./dist/index.mjs",
+        bin: "./dist/cli.js",
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-6"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-6", "package.json"),
+    ).json();
+
+    expect(installedPkgJson.types).toBe("./dist/index.d.ts");
+    expect(installedPkgJson.module).toBe("./dist/index.mjs");
+    expect(installedPkgJson.bin).toBe("./dist/cli.js");
+    expect(installedPkgJson.main).toBe("./index.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+
+  test("publishConfig mixed: add and override fields", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("publishconfig-mixed");
+
+    const pkgJson = {
+      name: "publishconfig-test-7",
+      version: "1.0.0",
+      main: "./src/index.ts",
+      publishConfig: {
+        main: "./dist/index.js",      // Override
+        types: "./dist/index.d.ts",   // Add
+        browser: "./dist/browser.js", // Add
+      },
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "publishconfig-test-7"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    const { exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const installedPkgJson = await file(
+      join(packageDir, "node_modules", "publishconfig-test-7", "package.json"),
+    ).json();
+
+    expect(installedPkgJson.main).toBe("./dist/index.js");
+    expect(installedPkgJson.types).toBe("./dist/index.d.ts");
+    expect(installedPkgJson.browser).toBe("./dist/browser.js");
+    expect(installedPkgJson.publishConfig).toBeUndefined();
+  });
+});

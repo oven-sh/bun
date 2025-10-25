@@ -1187,8 +1187,10 @@ pub const PackCommand = struct {
             .entry => |entry| entry,
         };
 
+        var maybe_publish_config: ?*const Expr = null;
         if (comptime for_publish) {
             if (json.root.get("publishConfig")) |config| {
+                maybe_publish_config = &config;
                 if (manager.options.publish_config.tag.len == 0) {
                     if (try config.getStringCloned(ctx.allocator, "tag")) |tag| {
                         manager.options.publish_config.tag = tag;
@@ -1235,7 +1237,7 @@ pub const PackCommand = struct {
             }
         }
 
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json, maybe_publish_config);
 
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 
@@ -2073,6 +2075,7 @@ pub const PackCommand = struct {
         allocator: std.mem.Allocator,
         maybe_lockfile: ?*Lockfile,
         json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
+        maybe_publish_config: ?*const Expr,
     ) OOM!string {
         for ([_]string{
             "dependencies",
@@ -2205,6 +2208,104 @@ pub const PackCommand = struct {
                     },
                     else => {},
                 }
+            }
+        }
+
+        // Apply publishConfig field overrides
+        if (maybe_publish_config) |publish_config| {
+            // package.json root must be an object
+            bun.assertWithLocation(json.root.data == .e_object, @src());
+
+            const fields_to_override = [_]string{
+                "exports",
+                "main",
+                "module",
+                "types",
+                "typings",
+                "bin",
+                "browser",
+                "imports",
+            };
+
+            const properties = json.root.data.e_object.properties.slice();
+            var new_properties = std.ArrayList(bun.ast.G.Property).init(allocator);
+            errdefer new_properties.deinit();
+
+            inline for (fields_to_override) |field_name| {
+                if (publish_config.get(field_name)) |override_value| {
+                    const cloned_value = try override_value.deepClone(allocator);
+
+                    var isFound = false;
+                    for (properties) |*prop| {
+                        const key = prop.key orelse continue;
+                        const key_str = key.asString(allocator) orelse continue;
+
+                        if (strings.eqlComptime(key_str, field_name)) {
+                            prop.value = cloned_value;
+                            isFound = true;
+                            break;
+                        }
+                    }
+
+                    if (!isFound) {
+                        const new_property = bun.ast.G.Property{
+                            .key = Expr.allocate(
+                                allocator,
+                                E.String,
+                                .{ .data = field_name },
+                                .{},
+                            ),
+                            .value = cloned_value,
+                        };
+
+                        try new_properties.append(new_property);
+                    }
+                }
+            }
+
+            if (new_properties.items.len > 0) {
+                const total_len = properties.len + new_properties.items.len;
+                var combined = try bun.BabyList(bun.ast.G.Property).initCapacity(
+                    allocator,
+                    total_len,
+                );
+                combined.len = @intCast(total_len);
+
+                @memcpy(combined.slice()[0..properties.len], properties);
+                @memcpy(combined.slice()[properties.len..], new_properties.items);
+
+                json.root.data.e_object.properties = combined;
+            }
+
+            new_properties.deinit();
+
+            const final_properties = json.root.data.e_object.properties.slice();
+            var filtered_properties = try std.ArrayList(bun.ast.G.Property).initCapacity(allocator, final_properties.len);
+            defer filtered_properties.deinit();
+
+            for (final_properties) |prop| {
+                const key = prop.key orelse {
+                    try filtered_properties.append(prop);
+                    continue;
+                };
+                const key_str = key.asString(allocator) orelse {
+                    try filtered_properties.append(prop);
+                    continue;
+                };
+
+                if (!strings.eqlComptime(key_str, "publishConfig")) {
+                    try filtered_properties.append(prop);
+                }
+            }
+
+            if (filtered_properties.items.len != final_properties.len) {
+                var without_publish_config = try bun.BabyList(bun.ast.G.Property).initCapacity(
+                    allocator,
+                    filtered_properties.items.len,
+                );
+                without_publish_config.len = @intCast(filtered_properties.items.len);
+                @memcpy(without_publish_config.slice(), filtered_properties.items);
+                json.root.data.e_object.properties = without_publish_config;
             }
         }
 

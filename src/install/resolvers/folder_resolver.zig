@@ -150,7 +150,6 @@ pub const FolderResolution = union(Tag) {
     fn readPackageJSONFromDisk(
         manager: *PackageManager,
         abs: stringZ,
-        version: Dependency.Version,
         comptime features: Features,
         comptime ResolverType: type,
         resolver: *ResolverType,
@@ -224,7 +223,7 @@ pub const FolderResolution = union(Tag) {
 
         package.meta.setHasInstallScript(has_scripts);
 
-        if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
+        if (manager.lockfile.getPackageID(package.name_hash, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;
             manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);
@@ -265,7 +264,6 @@ pub const FolderResolution = union(Tag) {
                 break :global readPackageJSONFromDisk(
                     manager,
                     abs,
-                    version,
                     Features.link,
                     SymlinkResolver,
                     &resolver,
@@ -279,7 +277,6 @@ pub const FolderResolution = union(Tag) {
                     break :folder readPackageJSONFromDisk(
                         manager,
                         abs,
-                        version,
                         Features.folder,
                         Resolver,
                         &resolver,
@@ -292,7 +289,6 @@ pub const FolderResolution = union(Tag) {
                     break :workspace readPackageJSONFromDisk(
                         manager,
                         abs,
-                        version,
                         Features.workspace,
                         WorkspaceResolver,
                         &resolver,
@@ -307,7 +303,6 @@ pub const FolderResolution = union(Tag) {
                 break :cache_folder readPackageJSONFromDisk(
                     manager,
                     abs,
-                    version,
                     Features.npm,
                     CacheFolderResolver,
                     &resolver,

@@ -283,7 +283,7 @@ pub const PatchTask = struct {
 
         const dummy_node_modules: PackageManager.PackageInstaller.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
-            .tree_id = 0,
+            .tree_id = .root,
         };
 
         const resolution_label, const resolution_tag = brk: {

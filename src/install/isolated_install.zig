@@ -415,7 +415,7 @@ pub fn installIsolatedPackages(
         defer entry_queue.deinit();
 
         try entry_queue.writeItem(.{
-            .node_id = .from(0),
+            .node_id = .root,
             .entry_parent_id = .invalid,
         });
 
@@ -1136,7 +1136,6 @@ pub fn installIsolatedPackages(
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
                     },
-                    true,
                     pkg_manager.options.log_level,
                 ) catch |err| {
                     wait.err = err;

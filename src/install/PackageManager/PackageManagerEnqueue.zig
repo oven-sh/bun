@@ -4,13 +4,11 @@ pub fn enqueueDependencyWithMain(
     /// This must be a *const to prevent UB
     dependency: *const Dependency,
     resolution: PackageID,
-    install_peer: bool,
 ) !void {
     return this.enqueueDependencyWithMainAndSuccessFn(
         id,
         dependency,
         resolution,
-        install_peer,
         assignResolution,
         null,
     );
@@ -62,7 +60,6 @@ pub fn enqueueDependencyList(
             i,
             &dependency,
             resolution,
-            false,
         ) catch |err| {
             const note = .{
                 .fmt = "error occurred while resolving {}",
@@ -304,7 +301,7 @@ pub fn enqueueDependencyToRoot(
 
         builder.allocate() catch |err| return .{ .failure = err };
 
-        const dep = dummy.cloneWithDifferentBuffers(this, name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+        const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
         builder.clamp();
         const index = this.lockfile.buffers.dependencies.items.len;
         this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -318,7 +315,6 @@ pub fn enqueueDependencyToRoot(
             dep_id,
             &this.lockfile.buffers.dependencies.items[dep_id],
             invalid_package_id,
-            false,
             assignRootResolution,
             failRootResolution,
         ) catch |err| {
@@ -348,7 +344,6 @@ pub fn enqueueDependencyToRoot(
                                         .onPackageManifestError = {},
                                         .onPackageDownloadError = {},
                                     },
-                                    false,
                                     manager.options.log_level,
                                 ) catch |err| {
                                     closure.err = err;
@@ -439,7 +434,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     /// This must be a *const to prevent UB
     dependency: *const Dependency,
     resolution: PackageID,
-    install_peer: bool,
     comptime successFn: SuccessFn,
     comptime failFn: ?FailFn,
 ) !void {
@@ -452,29 +446,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     };
 
     const version = version: {
-        if (dependency.version.tag == .npm) {
-            if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                const group = dependency.version.value.npm.version;
-                const buf = this.lockfile.buffers.string_bytes.items;
-                var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
-                while (curr_list) |queries| {
-                    var curr: ?*const Semver.Query = &queries.head;
-                    while (curr) |query| {
-                        if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
-                            name = aliased.value.npm.name;
-                            name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                            break :version aliased;
-                        }
-                        curr = query.next;
-                    }
-                    curr_list = queries.next;
-                }
-
-                // fallthrough. a package that matches the name of an alias but does not match
-                // the version should be enqueued as a normal npm dependency, overrides allowed
-            }
-        }
-
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
@@ -525,7 +496,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     dependency.behavior,
                     id,
                     resolution,
-                    install_peer,
                     successFn,
                 );
 
@@ -705,86 +675,79 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                 },
                             );
 
-                        if (!dependency.behavior.isPeer() or install_peer) {
-                            if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                const needs_extended_manifest = this.options.minimum_release_age_ms != null;
-                                if (this.options.enable.manifest_cache) {
-                                    var expired = false;
-                                    if (this.manifests.byNameHashAllowExpired(
-                                        this,
-                                        this.scopeForPackageName(name_str),
-                                        name_hash,
-                                        &expired,
-                                        .load_from_memory_fallback_to_disk,
-                                        needs_extended_manifest,
-                                    )) |manifest| {
-                                        loaded_manifest = manifest.*;
+                        if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
+                            const needs_extended_manifest = this.options.minimum_release_age_ms != null;
+                            if (this.options.enable.manifest_cache) {
+                                var expired = false;
+                                if (this.manifests.byNameHashAllowExpired(
+                                    this,
+                                    this.scopeForPackageName(name_str),
+                                    name_hash,
+                                    &expired,
+                                    .load_from_memory_fallback_to_disk,
+                                    needs_extended_manifest,
+                                )) |manifest| {
+                                    loaded_manifest = manifest.*;
 
-                                        // If it's an exact package version already living in the cache
-                                        // We can skip the network request, even if it's beyond the caching period
-                                        if (version.tag == .npm and version.value.npm.version.isExact()) {
-                                            if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                if (this.options.minimum_release_age_ms) |min_age_ms| {
-                                                    if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
-                                                        const package_name = this.lockfile.str(&name);
-                                                        const min_age_seconds = min_age_ms / std.time.ms_per_s;
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
-                                                        return;
-                                                    }
-                                                }
-                                                if (getOrPutResolvedPackageWithFindResult(
-                                                    this,
-                                                    name_hash,
-                                                    name,
-                                                    dependency,
-                                                    version,
-                                                    id,
-                                                    dependency.behavior,
-                                                    &loaded_manifest.?,
-                                                    find_result,
-                                                    install_peer,
-                                                    successFn,
-                                                ) catch null) |new_resolve_result| {
-                                                    resolve_result_ = new_resolve_result;
-                                                    _ = this.network_dedupe_map.remove(task_id);
-                                                    continue :retry_with_new_resolve_result;
+                                    // If it's an exact package version already living in the cache
+                                    // We can skip the network request, even if it's beyond the caching period
+                                    if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                        if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                            if (this.options.minimum_release_age_ms) |min_age_ms| {
+                                                if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
+                                                    const package_name = this.lockfile.str(&name);
+                                                    const min_age_seconds = min_age_ms / std.time.ms_per_s;
+                                                    this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
+                                                    return;
                                                 }
                                             }
-                                        }
-
-                                        // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and !expired) {
-                                            _ = this.network_dedupe_map.remove(task_id);
-                                            continue :retry_from_manifests_ptr;
+                                            if (getOrPutResolvedPackageWithFindResult(
+                                                this,
+                                                name_hash,
+                                                name,
+                                                dependency,
+                                                version,
+                                                id,
+                                                &loaded_manifest.?,
+                                                find_result,
+                                                successFn,
+                                            ) catch null) |new_resolve_result| {
+                                                resolve_result_ = new_resolve_result;
+                                                _ = this.network_dedupe_map.remove(task_id);
+                                                continue :retry_with_new_resolve_result;
+                                            }
                                         }
                                     }
+
+                                    // Was it recent enough to just load it without the network call?
+                                    if (this.options.enable.manifest_cache_control and !expired) {
+                                        _ = this.network_dedupe_map.remove(task_id);
+                                        continue :retry_from_manifests_ptr;
+                                    }
                                 }
-
-                                if (PackageManager.verbose_install) {
-                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
-                                }
-
-                                var network_task = this.getNetworkTask();
-                                network_task.* = .{
-                                    .package_manager = this,
-                                    .callback = undefined,
-                                    .task_id = task_id,
-                                    .allocator = this.allocator,
-                                };
-
-                                try network_task.forManifest(
-                                    name_str,
-                                    this.allocator,
-                                    this.scopeForPackageName(name_str),
-                                    if (loaded_manifest) |*manifest| manifest else null,
-                                    dependency.behavior.isOptional(),
-                                    needs_extended_manifest,
-                                );
-                                this.enqueueNetworkTask(network_task);
                             }
-                        } else {
-                            try this.peer_dependencies.writeItem(id);
-                            return;
+
+                            if (PackageManager.verbose_install) {
+                                Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
+                            }
+
+                            var network_task = this.getNetworkTask();
+                            network_task.* = .{
+                                .package_manager = this,
+                                .callback = undefined,
+                                .task_id = task_id,
+                                .allocator = this.allocator,
+                            };
+
+                            try network_task.forManifest(
+                                name_str,
+                                this.allocator,
+                                this.scopeForPackageName(name_str),
+                                if (loaded_manifest) |*manifest| manifest else null,
+                                dependency.behavior.isOptional(),
+                                needs_extended_manifest,
+                            );
+                            this.enqueueNetworkTask(network_task);
                         }
 
                         var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -810,7 +773,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the git package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -854,13 +817,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     try entry.value_ptr.append(this.allocator, ctx);
                 }
 
-                if (dependency.behavior.isPeer()) {
-                    if (!install_peer) {
-                        try this.peer_dependencies.writeItem(id);
-                        return;
-                    }
-                }
-
                 if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
 
                 this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
@@ -877,13 +833,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 if (!entry.found_existing) entry.value_ptr.* = .{};
                 try entry.value_ptr.append(this.allocator, ctx);
 
-                if (dependency.behavior.isPeer()) {
-                    if (!install_peer) {
-                        try this.peer_dependencies.writeItem(id);
-                        return;
-                    }
-                }
-
                 if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
                 this.task_batch.push(ThreadPool.Batch.from(enqueueGitClone(this, clone_id, alias, dep, id, dependency, &res, null)));
@@ -899,7 +848,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the github package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -927,13 +876,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
             try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
-            if (dependency.behavior.isPeer()) {
-                if (!install_peer) {
-                    try this.peer_dependencies.writeItem(id);
-                    return;
-                }
-            }
-
             if (try this.generateNetworkTaskForTarball(
                 task_id,
                 url,
@@ -960,7 +902,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 dependency.behavior,
                 id,
                 resolution,
-                install_peer,
                 successFn,
             ) catch |err| brk: {
                 if (err == error.MissingPackageJSON) {
@@ -1085,7 +1026,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             };
 
             // First: see if we already loaded the tarball package in-memory
-            if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+            if (this.lockfile.getPackageID(name_hash, &res)) |pkg_id| {
                 successFn(this, id, pkg_id);
                 return;
             }
@@ -1114,13 +1055,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
             try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
-
-            if (dependency.behavior.isPeer()) {
-                if (!install_peer) {
-                    try this.peer_dependencies.writeItem(id);
-                    return;
-                }
-            }
 
             switch (version.value.tarball.uri) {
                 .local => {
@@ -1366,23 +1300,23 @@ fn getOrPutResolvedPackageWithFindResult(
     dependency: *const Dependency,
     version: Dependency.Version,
     dependency_id: DependencyID,
-    behavior: Behavior,
     manifest: *const Npm.PackageManifest,
     find_result: Npm.PackageManifest.FindResult,
-    install_peer: bool,
     comptime successFn: SuccessFn,
 ) !?ResolvedPackageResult {
-    const should_update = this.to_update and
-        // If updating, only update packages in the current workspace
-        this.lockfile.isRootDependency(this, dependency_id) and
-        // no need to do a look up if update requests are empty (`bun update` with no args)
-        (this.update_requests.len == 0 or
-            this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
+    _ = version;
+
+    // TODO
+    // const should_update = this.to_update and
+    //     // If updating, only update packages in the current workspace
+    //     this.lockfile.isRootDependency(this, dependency_id) and
+    //     // no need to do a look up if update requests are empty (`bun update` with no args)
+    //     (this.update_requests.len == 0 or
+    //         this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
 
     // Was this package already allocated? Let's reuse the existing one.
     if (this.lockfile.getPackageID(
         name_hash,
-        if (should_update) null else version,
         &.{
             .tag = .npm,
             .value = .{
@@ -1398,13 +1332,10 @@ fn getOrPutResolvedPackageWithFindResult(
             .package = this.lockfile.packages.get(id),
             .is_first_time = false,
         };
-    } else if (behavior.isPeer() and !install_peer) {
-        return null;
     }
 
     // appendPackage sets the PackageID on the package
     const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
-        this,
         this.allocator,
         this.lockfile,
         this.log,
@@ -1497,87 +1428,8 @@ fn getOrPutResolvedPackage(
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
-    install_peer: bool,
     comptime successFn: SuccessFn,
 ) !?ResolvedPackageResult {
-    if (install_peer and behavior.isPeer()) {
-        if (this.lockfile.package_index.get(name_hash)) |index| {
-            const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
-            switch (index) {
-                .id => |existing_id| {
-                    if (existing_id < resolutions.len) {
-                        const existing_resolution = resolutions[existing_id];
-                        if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
-                            successFn(this, dependency_id, existing_id);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_id),
-                            };
-                        }
-
-                        const res_tag = resolutions[existing_id].tag;
-                        const ver_tag = version.tag;
-                        if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                            const existing_package = this.lockfile.packages.get(existing_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
-                            successFn(this, dependency_id, existing_id);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_id),
-                            };
-                        }
-                    }
-                },
-                .ids => |list| {
-                    for (list.items) |existing_id| {
-                        if (existing_id < resolutions.len) {
-                            const existing_resolution = resolutions[existing_id];
-                            if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
-                                successFn(this, dependency_id, existing_id);
-                                return .{
-                                    .package = this.lockfile.packages.get(existing_id),
-                                };
-                            }
-                        }
-                    }
-
-                    if (list.items[0] < resolutions.len) {
-                        const res_tag = resolutions[list.items[0]].tag;
-                        const ver_tag = version.tag;
-                        if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                            const existing_package_id = list.items[0];
-                            const existing_package = this.lockfile.packages.get(existing_package_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
-                            successFn(this, dependency_id, list.items[0]);
-                            return .{
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                .package = this.lockfile.packages.get(existing_package_id),
-                            };
-                        }
-                    }
-                },
-            }
-        }
-    }
-
     if (resolution < this.lockfile.packages.len) {
         return .{ .package = this.lockfile.packages.get(resolution) };
     }
@@ -1712,10 +1564,8 @@ fn getOrPutResolvedPackage(
                 dependency,
                 version,
                 dependency_id,
-                behavior,
                 manifest,
                 find_result,
-                install_peer,
                 successFn,
             );
         },

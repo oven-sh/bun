@@ -483,7 +483,6 @@ fn processDeps(
     deps_buf: []Dependency,
     res_buf: []Install.PackageID,
     log: *logger.Log,
-    manager: *Install.PackageManager,
     yarn_entry_to_package_id: []const Install.PackageID,
 ) ![]Install.PackageID {
     var deps_it = deps.iterator();
@@ -520,7 +519,6 @@ fn processDeps(
                     parsed_version,
                     &Semver.SlicedString.init(parsed_version, parsed_version),
                     log,
-                    manager,
                 ) orelse Dependency.Version{},
                 .behavior = .{
                     .prod = dep_type == .production,
@@ -714,7 +712,7 @@ pub fn migrateYarnLockfile(
             if (string_builder.cap > 0) {
                 try string_builder.allocate();
             }
-            try this.overrides.parseAppend(manager, this, &root_package, log, &package_json_source, package_json, &string_builder);
+            try this.overrides.parseAppend(this, &root_package, log, &package_json_source, package_json, &string_builder);
             this.packages.set(0, root_package);
         }
     }
@@ -1043,7 +1041,6 @@ pub fn migrateYarnLockfile(
                         version_string.slice(this.buffers.string_bytes.items),
                         &version_string.sliced(this.buffers.string_bytes.items),
                         log,
-                        manager,
                     ) orelse Dependency.Version{},
                     .behavior = .{
                         .prod = dep.dep_type == .production,
@@ -1079,25 +1076,25 @@ pub fn migrateYarnLockfile(
         const dependencies_start = dependencies_buf.ptr;
         const resolutions_start = resolutions_buf.ptr;
         if (entry.dependencies) |deps| {
-            const processed = try processDeps(deps, .production, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .production, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.optionalDependencies) |deps| {
-            const processed = try processDeps(deps, .optional, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .optional, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.peerDependencies) |deps| {
-            const processed = try processDeps(deps, .peer, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .peer, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
 
         if (entry.devDependencies) |deps| {
-            const processed = try processDeps(deps, .development, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, manager, yarn_entry_to_package_id);
+            const processed = try processDeps(deps, .development, &yarn_lock, &string_buf, dependencies_buf, resolutions_buf, log, yarn_entry_to_package_id);
             dependencies_buf = dependencies_buf[processed.len..];
             resolutions_buf = resolutions_buf[processed.len..];
         }
@@ -1120,8 +1117,8 @@ pub fn migrateYarnLockfile(
     try this.buffers.hoisted_dependencies.ensureTotalCapacity(allocator, this.buffers.dependencies.items.len * 2);
 
     try this.buffers.trees.append(allocator, Tree{
-        .id = 0,
-        .parent = Tree.invalid_id,
+        .id = .root,
+        .parent = .invalid,
         .dependency_id = Tree.root_dep_id,
         .dependencies = .{
             .off = 0,
@@ -1435,7 +1432,6 @@ pub fn migrateYarnLockfile(
                 dep_version_string.slice(this.buffers.string_bytes.items),
                 &sliced_string,
                 log,
-                manager,
             ) orelse Dependency.Version{};
 
             parsed_version.literal = dep_version_string;
@@ -1501,7 +1497,6 @@ pub fn migrateYarnLockfile(
                     dep_version_string.slice(this.buffers.string_bytes.items),
                     &sliced_string,
                     log,
-                    manager,
                 ) orelse Dependency.Version{};
 
                 parsed_version.literal = dep_version_string;
@@ -1545,7 +1540,6 @@ pub fn migrateYarnLockfile(
                     dep_version_string.slice(this.buffers.string_bytes.items),
                     &sliced_string,
                     log,
-                    manager,
                 ) orelse Dependency.Version{};
 
                 parsed_version.literal = dep_version_string;
@@ -1589,7 +1583,6 @@ pub fn migrateYarnLockfile(
                     dep_version_string.slice(this.buffers.string_bytes.items),
                     &sliced_string,
                     log,
-                    manager,
                 ) orelse Dependency.Version{};
 
                 parsed_version.literal = dep_version_string;
@@ -1633,7 +1626,6 @@ pub fn migrateYarnLockfile(
                     dep_version_string.slice(this.buffers.string_bytes.items),
                     &sliced_string,
                     log,
-                    manager,
                 ) orelse Dependency.Version{};
 
                 parsed_version.literal = dep_version_string;

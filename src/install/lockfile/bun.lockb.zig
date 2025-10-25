@@ -459,7 +459,6 @@ pub fn load(
                     .allocator = allocator,
                     .log = log,
                     .buffer = lockfile.buffers.string_bytes.items,
-                    .package_manager = manager,
                 };
                 for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
                     map.putAssumeCapacity(name, Dependency.toDependency(value, context));
@@ -523,7 +522,6 @@ pub fn load(
                     .allocator = allocator,
                     .log = log,
                     .buffer = lockfile.buffers.string_bytes.items,
-                    .package_manager = manager,
                 };
 
                 for (default_dep_names.items, default_deps.items) |dep_name, dep| {

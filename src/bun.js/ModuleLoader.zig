@@ -179,7 +179,6 @@ pub const AsyncModule = struct {
                         .onPackageDownloadError = onPackageDownloadError,
                         .progress_bar = true,
                     },
-                    true,
                     PackageManager.Options.LogLevel.default,
                 ) catch unreachable;
             } else {
@@ -192,7 +191,6 @@ pub const AsyncModule = struct {
                         .onPackageManifestError = onPackageManifestError,
                         .onPackageDownloadError = onPackageDownloadError,
                     },
-                    true,
                     PackageManager.Options.LogLevel.default_no_progress,
                 ) catch unreachable;
             }

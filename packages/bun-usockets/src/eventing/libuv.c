@@ -24,8 +24,10 @@
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
-                                  events);
+  int error = status < 0 && status != UV_EOF;
+  int eof = status == UV_EOF;
+  us_internal_update_ready_poll_state((struct us_poll_t *)p->data, error, eof, events);
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data);
 }
 
 static void prepare_cb(uv_prepare_t *p) {

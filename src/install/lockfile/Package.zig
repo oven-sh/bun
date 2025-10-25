@@ -1172,50 +1172,55 @@ pub fn Package(comptime SemverIntType: type) type {
                                 .auto,
                                 false,
                             );
+                            if (rel.len == 0) {
+                                break :brk ".";
+                            }
                             if (comptime Environment.isWindows) {
                                 bun.path.dangerouslyConvertPathToPosixInPlace(u8, Path.relative_to_common_path_buf[0..rel.len]);
                             }
                             break :brk rel;
                         });
-                        if (comptime Environment.allow_assert) {
-                            assert(path.len() > 0);
-                            assert(!std.fs.path.isAbsolute(path.slice(buf)));
-                        }
-                        dependency_version.value.workspace = path;
 
-                        const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                        const found_matching_workspace = workspace_entry.found_existing;
-
-                        if (workspace_version) |ver| {
-                            try lockfile.workspace_versions.put(allocator, name_hash, ver);
-                            for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                                if (switch (package_dep.version.tag) {
-                                    // `dependencies` & `workspaces` defined within the same `package.json`
-                                    .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                        package_dep.version.value.npm.version.satisfies(ver, buf, buf),
-                                    // `workspace:*`
-                                    .workspace => found_matching_workspace and
-                                        String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
-                                    else => false,
-                                }) {
-                                    package_dep.version = dependency_version;
-                                    workspace_entry.value_ptr.* = path;
-                                    return null;
-                                }
+                        if (path.len() != 1 or path.inlineSlice()[0] != '.') {
+                            if (comptime Environment.allow_assert) {
+                                assert(!std.fs.path.isAbsolute(path.slice(buf)));
                             }
-                        } else if (workspace_entry.found_existing) {
-                            for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                                if (package_dep.version.tag == .workspace and
-                                    String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
-                                {
-                                    package_dep.version = dependency_version;
-                                    return null;
-                                }
-                            }
-                            return error.InstallFailed;
-                        }
+                            dependency_version.value.workspace = path;
 
-                        workspace_entry.value_ptr.* = path;
+                            const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                            const found_matching_workspace = workspace_entry.found_existing;
+
+                            if (workspace_version) |ver| {
+                                try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                                for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                                    if (switch (package_dep.version.tag) {
+                                        // `dependencies` & `workspaces` defined within the same `package.json`
+                                        .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                            package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                        // `workspace:*`
+                                        .workspace => found_matching_workspace and
+                                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                                        else => false,
+                                    }) {
+                                        package_dep.version = dependency_version;
+                                        workspace_entry.value_ptr.* = path;
+                                        return null;
+                                    }
+                                }
+                            } else if (workspace_entry.found_existing) {
+                                for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                                    if (package_dep.version.tag == .workspace and
+                                        String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
+                                    {
+                                        package_dep.version = dependency_version;
+                                        return null;
+                                    }
+                                }
+                                return error.InstallFailed;
+                            }
+
+                            workspace_entry.value_ptr.* = path;
+                        }
                     }
                 },
                 else => {},

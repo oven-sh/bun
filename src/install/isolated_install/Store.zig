@@ -312,28 +312,33 @@ pub const Store = struct {
 
     pub fn OrderedArraySet(comptime T: type, comptime Ctx: type) type {
         return struct {
+            const Self = @This();
+
             list: std.ArrayListUnmanaged(T) = .empty,
+            #allocator: std.mem.Allocator,
 
-            pub const empty: @This() = .{};
+            pub fn init(allocator: std.mem.Allocator) Self {
+                return .{ .#allocator = allocator };
+            }
 
-            pub fn initCapacity(allocator: std.mem.Allocator, n: usize) OOM!@This() {
+            pub fn initCapacity(allocator: std.mem.Allocator, n: usize) OOM!Self {
                 const list: std.ArrayListUnmanaged(T) = try .initCapacity(allocator, n);
-                return .{ .list = list };
+                return .{ .list = list, .#allocator = allocator };
             }
 
-            pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
-                this.list.deinit(allocator);
+            pub fn deinit(self: *Self) void {
+                self.list.deinit(self.#allocator);
             }
 
-            pub fn slice(this: *const @This()) []const T {
-                return this.list.items;
+            pub fn slice(self: *const Self) []const T {
+                return self.list.items;
             }
 
-            pub fn len(this: *const @This()) usize {
-                return this.list.items.len;
+            pub fn len(self: *const Self) usize {
+                return self.list.items.len;
             }
 
-            pub fn eql(l: *const @This(), r: *const @This(), ctx: *const Ctx) bool {
+            pub fn eql(l: *const Self, r: *const Self, ctx: *const Ctx) bool {
                 if (l.list.items.len != r.list.items.len) {
                     return false;
                 }
@@ -347,9 +352,9 @@ pub const Store = struct {
                 return true;
             }
 
-            pub fn insert(this: *@This(), allocator: std.mem.Allocator, new: T, ctx: *const Ctx) OOM!void {
-                for (0..this.list.items.len) |i| {
-                    const existing = this.list.items[i];
+            pub fn insert(self: *Self, new: T, ctx: *const Ctx) OOM!void {
+                for (0..self.list.items.len) |i| {
+                    const existing = self.list.items[i];
                     if (ctx.eql(new, existing)) {
                         return;
                     }
@@ -361,17 +366,17 @@ pub const Store = struct {
                     }
 
                     if (order == .lt) {
-                        try this.list.insert(allocator, i, new);
+                        try self.list.insert(self.#allocator, i, new);
                         return;
                     }
                 }
 
-                try this.list.append(allocator, new);
+                try self.list.append(self.#allocator, new);
             }
 
-            pub fn insertAssumeCapacity(this: *@This(), new: T, ctx: *const Ctx) void {
-                for (0..this.list.items.len) |i| {
-                    const existing = this.list.items[i];
+            pub fn insertAssumeCapacity(self: *Self, new: T, ctx: *const Ctx) void {
+                for (0..self.list.items.len) |i| {
+                    const existing = self.list.items[i];
                     if (ctx.eql(new, existing)) {
                         return;
                     }
@@ -383,12 +388,12 @@ pub const Store = struct {
                     }
 
                     if (order == .lt) {
-                        this.list.insertAssumeCapacity(i, new);
+                        self.list.insertAssumeCapacity(i, new);
                         return;
                     }
                 }
 
-                this.list.appendAssumeCapacity(new);
+                self.list.appendAssumeCapacity(new);
             }
         };
     }
@@ -401,7 +406,7 @@ pub const Store = struct {
         parent_id: Id,
 
         dependencies: std.ArrayListUnmanaged(Ids) = .empty,
-        peers: Peers = .empty,
+        peers: Peers,
 
         // each node in this list becomes a symlink in the package's node_modules
         nodes: std.ArrayListUnmanaged(Id) = .empty,

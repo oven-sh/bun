@@ -772,7 +772,7 @@ pub const BunxCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit| {
                 if (exit.signal.valid()) {
-                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                         bun.crash_handler.suppressReporting();
                     }
 
@@ -784,7 +784,7 @@ pub const BunxCommand = struct {
                 }
             },
             .signaled => |signal| {
-                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                     bun.crash_handler.suppressReporting();
                 }
 

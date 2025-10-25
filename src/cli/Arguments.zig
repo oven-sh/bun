@@ -242,9 +242,14 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
-        var paths = [_]string{".bunfig.toml"};
+    var paths = [_]string{".bunfig.toml"};
+
+    if (bun.env_var.XDG_CONFIG_HOME.get()) |data_dir| {
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
+    }
+
+    if (bun.env_var.HOME.get()) |home_dir| {
+        return resolve_path.joinAbsStringBufZ(home_dir, buf, &paths, .auto);
     }
 
     return null;
@@ -595,7 +600,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
             const preloads3 = args.options("--import");
-            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+            const preload4 = bun.env_var.BUN_INSPECT_PRELOAD.get();
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
@@ -803,10 +808,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         } else if (use_system_ca) {
             Bun__Node__CAStore = .system;
         } else {
-            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
-                if (val.len > 0 and val[0] == '1') {
-                    Bun__Node__CAStore = .system;
-                }
+            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+                Bun__Node__CAStore = .system;
             }
         }
 

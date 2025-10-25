@@ -536,8 +536,8 @@ pub const FileSystem = struct {
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                    const value = bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse brk: {
+                        if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
                             break :brk std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}\\Temp",
@@ -545,7 +545,7 @@ pub const FileSystem = struct {
                             ) catch |err| bun.handleOom(err);
                         }
 
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
+                        if (bun.env_var.HOME.get()) |profile| {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
@@ -578,7 +578,7 @@ pub const FileSystem = struct {
         pub var tmpdir_path_set = false;
         pub fn tmpdirPath(_: *const @This()) []const u8 {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -587,7 +587,7 @@ pub const FileSystem = struct {
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -636,7 +636,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+            return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
         }
 
         pub fn setTempdir(path: ?string) void {

@@ -171,7 +171,7 @@ pub const Update = struct {
 };
 
 pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
-    if (bun.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL_GLOBAL_DIR.get()) |home_dir| {
         return try std.fs.cwd().makeOpenPath(home_dir, .{});
     }
 
@@ -179,34 +179,25 @@ pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(explicit_global_dir, .{});
     }
 
-    if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{ "install", "global" };
         const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (!Environment.isWindows) {
-        if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
-        }
-    } else {
-        if (bun.getenvZ("USERPROFILE")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
-        }
+    if (bun.env_var.XDG_CACHE_HOME.get() orelse bun.env_var.HOME.get()) |home_dir| {
+        var buf: bun.PathBuffer = undefined;
+        var parts = [_]string{ ".bun", "install", "global" };
+        const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+        return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
     return error.@"No global directory found";
 }
 
 pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
-    if (bun.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL_BIN.get()) |home_dir| {
         return try std.fs.cwd().makeOpenPath(home_dir, .{});
     }
 
@@ -218,7 +209,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         }
     }
 
-    if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "bin",
@@ -227,7 +218,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+    if (bun.env_var.XDG_CACHE_HOME.get() orelse bun.env_var.HOME.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             ".bun",
@@ -751,7 +742,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
-const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const Output = bun.Output;

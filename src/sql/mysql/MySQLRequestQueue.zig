@@ -32,7 +32,7 @@ pub inline fn markAsPrepared(this: *@This()) void {
     }
 }
 pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING.get()) {
         @branchHint(.unlikely);
         return false;
     }

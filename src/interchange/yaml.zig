@@ -4758,7 +4758,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     return this.str.len();
                 }
 
-                pub fn done(self: *const @This()) String {
+                pub fn done(self: *@This()) String {
                     self.parser.whitespace_buf.clearRetainingCapacity();
                     return self.str;
                 }

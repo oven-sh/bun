@@ -190,7 +190,7 @@ pub const MachoFile = struct {
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
             linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
 
-            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
+            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
                 // We also update the sizes of the LINKEDIT segment to account for the hashes we're adding
                 linkedit_seg.filesize += @as(usize, @intCast(size_of_new_hashes));
                 linkedit_seg.vmsize += @as(usize, @intCast(size_of_new_hashes));
@@ -341,7 +341,7 @@ pub const MachoFile = struct {
     }
 
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
-        if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
+        if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
             var data = std.ArrayList(u8).init(self.allocator);
             defer data.deinit();
             try self.build(data.writer());

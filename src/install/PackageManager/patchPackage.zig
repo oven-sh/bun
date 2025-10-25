@@ -320,7 +320,7 @@ pub fn doPatchCommit(
             },
         };
         var gitbuf: bun.PathBuffer = undefined;
-        const git = bun.which(&gitbuf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+        const git = bun.which(&gitbuf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.prettyError(
                 "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
                 .{},

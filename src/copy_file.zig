@@ -147,7 +147,7 @@ pub fn canUseCopyFileRangeSyscall() bool {
     const result = can_use_copy_file_range.load(.monotonic);
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
-        if (bun.getenvZ("BUN_CONFIG_DISABLE_COPY_FILE_RANGE") != null) {
+        if (bun.env_var.BUN_CONFIG_DISABLE_COPY_FILE_RANGE.get()) {
             debug("copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{});
             can_use_copy_file_range.store(-1, .monotonic);
             return false;
@@ -179,7 +179,7 @@ pub fn can_use_ioctl_ficlone() bool {
     const result = can_use_ioctl_ficlone_.load(.monotonic);
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
-        if (bun.getenvZ("BUN_CONFIG_DISABLE_ioctl_ficlonerange") != null) {
+        if (bun.env_var.BUN_CONFIG_DISABLE_ioctl_ficlonerange.get()) {
             debug("ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{});
             can_use_ioctl_ficlone_.store(-1, .monotonic);
             return false;

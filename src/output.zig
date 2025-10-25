@@ -80,31 +80,22 @@ pub const Source = struct {
     }
 
     pub fn isNoColor() bool {
-        const no_color = bun.getenvZ("NO_COLOR") orelse return false;
-        // https://no-color.org/
-        // "when present and not an empty string (regardless of its value)"
-        return no_color.len != 0;
+        return bun.env_var.NO_COLOR.get();
     }
 
     pub fn getForceColorDepth() ?ColorDepth {
-        const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
+        const force_color = bun.env_var.FORCE_COLOR.get() orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
         // - "0" to indicate no color support
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
-            return ColorDepth.@"16";
-        }
-
-        if (strings.eqlComptime(force_color, "2")) {
-            return ColorDepth.@"256";
-        }
-        if (strings.eqlComptime(force_color, "3")) {
-            return ColorDepth.@"16m";
-        }
-
-        return ColorDepth.none;
+        return switch (force_color) {
+            0 => .none,
+            1 => .@"16",
+            2 => .@"256",
+            else => .@"16m",
+        };
     }
 
     pub fn isForceColor() bool {
@@ -273,29 +264,22 @@ pub const Source = struct {
             return;
         }
 
-        const term = bun.getenvZ("TERM") orelse "";
+        const term = bun.env_var.TERM.get() orelse "";
         if (strings.eqlComptime(term, "dumb")) {
             return;
         }
 
-        if (bun.getenvZ("TMUX") != null) {
+        if (bun.env_var.TMUX.get() != null) {
             lazy_color_depth = .@"256";
             return;
         }
 
-        if (bun.getenvZ("CI")) |ci| {
-            inline for (.{ "APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS" }) |ci_env| {
-                if (strings.eqlComptime(ci, ci_env)) {
-                    lazy_color_depth = .@"256";
-                    return;
-                }
-            }
-
+        if (bun.env_var.CI.get() != null) {
             lazy_color_depth = .@"16";
             return;
         }
 
-        if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
+        if (bun.env_var.TERM_PROGRAM.get()) |term_program| {
             const use_16m = .{
                 "ghostty",
                 "MacTerm",
@@ -313,7 +297,7 @@ pub const Source = struct {
 
         var has_color_term_set = false;
 
-        if (bun.getenvZ("COLORTERM")) |color_term| {
+        if (bun.env_var.COLORTERM.get()) |color_term| {
             if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
                 lazy_color_depth = .@"16m";
                 return;
@@ -450,10 +434,9 @@ pub inline fn isEmojiEnabled() bool {
 }
 
 pub fn isGithubAction() bool {
-    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true") and
-            // Do not print github annotations for AI agents because that wastes the context window.
-            !isAIAgent();
+    if (bun.env_var.GITHUB_ACTIONS.get()) {
+        // Do not print github annotations for AI agents because that wastes the context window.
+        return !isAIAgent();
     }
     return false;
 }
@@ -462,7 +445,7 @@ pub fn isAIAgent() bool {
     const get_is_agent = struct {
         var value = false;
         fn evaluate() bool {
-            if (bun.getenvZ("AGENT")) |env| {
+            if (bun.env_var.AGENT.get()) |env| {
                 return strings.eqlComptime(env, "1");
             }
 
@@ -471,12 +454,12 @@ pub fn isAIAgent() bool {
             }
 
             // Claude Code.
-            if (bun.getenvTruthy("CLAUDECODE")) {
+            if (bun.env_var.CLAUDECODE.get()) {
                 return true;
             }
 
             // Replit.
-            if (bun.getenvTruthy("REPL_ID")) {
+            if (bun.env_var.REPL_ID.get()) {
                 return true;
             }
 
@@ -509,12 +492,7 @@ pub fn isAIAgent() bool {
 
 pub fn isVerbose() bool {
     // Set by Github Actions when a workflow is run using debug mode.
-    if (bun.getenvZ("RUNNER_DEBUG")) |value| {
-        if (strings.eqlComptime(value, "1")) {
-            return true;
-        }
-    }
-    return false;
+    return bun.env_var.RUNNER_DEBUG.get();
 }
 
 pub fn enableBuffering() void {
@@ -826,10 +804,10 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
         fn evaluateIsVisible() void {
             if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
                 really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
-            } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
-                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
-            } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
-                really_disable.store(really_disable.load(.monotonic) or !strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.env_var.BUN_DEBUG_ALL.get()) |val| {
+                really_disable.store(!val, .monotonic);
+            } else if (bun.env_var.BUN_DEBUG_QUIET_LOGS.get()) |val| {
+                really_disable.store(really_disable.load(.monotonic) or val, .monotonic);
             } else {
                 for (bun.argv) |arg| {
                     if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
@@ -1266,7 +1244,7 @@ extern "c" fn getpid() c_int;
 pub fn initScopedDebugWriterAtStartup() void {
     bun.debugAssert(source_set);
 
-    if (bun.getenvZ("BUN_DEBUG")) |path| {
+    if (bun.env_var.BUN_DEBUG.get()) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
             if (std.fs.path.dirname(path)) |dir| {
                 std.fs.cwd().makePath(dir) catch {};

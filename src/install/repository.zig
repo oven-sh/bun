@@ -16,21 +16,10 @@ const SloppyGlobalGitConfig = struct {
     }
 
     pub fn loadAndParse() void {
-        const home_dir_path = brk: {
-            if (comptime Environment.isWindows) {
-                if (bun.getenvZ("USERPROFILE")) |env|
-                    break :brk env;
-            } else {
-                if (bun.getenvZ("HOME")) |env|
-                    break :brk env;
-            }
-
-            // won't find anything
-            return;
-        };
+        const home_dir = bun.env_var.HOME.get() orelse return;
 
         var config_file_path_buf: bun.PathBuffer = undefined;
-        const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
+        const config_file_path = bun.path.joinAbsStringBufZ(home_dir, &config_file_path_buf, &.{".gitconfig"}, .auto);
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
         const allocator = stack_fallback.get();
         const source = File.toSource(config_file_path, allocator, .{ .convert_bom = true }).unwrap() catch {

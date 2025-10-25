@@ -675,4 +675,12 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
   getConfig(): BunHttpInstrumentationConfig {
     return { ...this._config };
   }
+
+  /**
+   * Implement Symbol.dispose for use with `using` declarations.
+   * Automatically calls disable() when the instrumentation goes out of scope.
+   */
+  [Symbol.dispose](): void {
+    this.disable();
+  }
 }

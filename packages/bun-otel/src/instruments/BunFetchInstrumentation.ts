@@ -304,4 +304,12 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
   getConfig(): BunFetchInstrumentationConfig {
     return { ...this._config };
   }
+
+  /**
+   * Implement Symbol.dispose for use with `using` declarations.
+   * Automatically calls disable() when the instrumentation goes out of scope.
+   */
+  [Symbol.dispose](): void {
+    this.disable();
+  }
 }

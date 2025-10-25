@@ -12,46 +12,26 @@
 
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { BunFetchInstrumentation } from "../src/instruments/BunFetchInstrumentation";
-import { _nativeHooksObject, ConfigurationProperty } from "../types";
-import { TempConfig } from "./config-helper";
 import { EchoServer } from "./echo-server";
 import { waitForSpans } from "./test-utils";
 
 describe("BunFetchInstrumentation", () => {
   let exporter: InMemorySpanExporter;
   let provider: BasicTracerProvider;
-  let instrumentation: BunFetchInstrumentation;
-
-  using _globalConfig = new TempConfig({
-    [ConfigurationProperty.http_capture_headers_fetch_request]: ["content-type", "x-custom-header"],
-    [ConfigurationProperty.http_capture_headers_fetch_response]: ["content-type", "x-response-header"],
-    [ConfigurationProperty.http_propagate_headers_fetch_request]: ["traceparent", "tracestate"],
-  });
 
   beforeAll(() => {
     // Setup tracer provider with in-memory exporter
     exporter = new InMemorySpanExporter();
     provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-
-    // Create and enable instrumentation
-    instrumentation = new BunFetchInstrumentation({
-      captureAttributes: {
-        requestHeaders: ["content-type", "x-custom-header"],
-        responseHeaders: ["content-type", "x-response-header"],
-      },
-    });
-
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
-  });
-
-  afterAll(() => {
-    instrumentation.disable();
   });
 
   test("implements Instrumentation interface", () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     expect(instrumentation.instrumentationName).toBe("@opentelemetry/instrumentation-bun-fetch");
     expect(instrumentation.instrumentationVersion).toBe("0.1.0");
     expect(typeof instrumentation.enable).toBe("function");
@@ -62,6 +42,15 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("getConfig returns current configuration", () => {
+    using instrumentation = new BunFetchInstrumentation({
+      captureAttributes: {
+        requestHeaders: ["content-type", "x-custom-header"],
+        responseHeaders: ["content-type", "x-response-header"],
+      },
+    });
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     const config = instrumentation.getConfig();
     expect(config.enabled).toBe(true);
     expect(config.captureAttributes?.requestHeaders).toEqual(["content-type", "x-custom-header"]);
@@ -69,6 +58,10 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("creates CLIENT span for successful fetch request", async () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     await using echoServer = new EchoServer();
     await echoServer.start();
 
@@ -110,15 +103,15 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("captures configured request headers as span attributes", async () => {
-    await using echoServer = new EchoServer();
-    await using configHelper = new TempConfig({
-      [ConfigurationProperty.http_capture_headers_fetch_request]: ["content-type", "x-custom-header"],
-      [ConfigurationProperty.http_capture_headers_fetch_response]: ["content-type", "x-response-header"],
+    using instrumentation = new BunFetchInstrumentation({
+      captureAttributes: {
+        requestHeaders: ["content-type", "x-custom-header"],
+      },
     });
-    // must restart for config changes to take effect
-    instrumentation.disable();
+    instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
+    await using echoServer = new EchoServer();
     await echoServer.start();
     exporter.reset();
 
@@ -135,13 +128,17 @@ describe("BunFetchInstrumentation", () => {
     const spans = exporter.getFinishedSpans();
     const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
     expect(fetchSpan).toBeDefined();
-    console.log("Captured span attributes:", fetchSpan?.attributes);
+
     expect(fetchSpan?.attributes["http.request.header.content-type"]).toBe("application/json");
     expect(fetchSpan?.attributes["http.request.header.x-custom-header"]).toBe("my-value");
     expect(fetchSpan?.attributes["http.request.header.x-uncaptured-header"]).toBeUndefined();
   });
 
   test("injects traceparent header for distributed tracing", async () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     await using echoServer = new EchoServer();
     await echoServer.start();
 
@@ -172,6 +169,10 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("sets span status to ERROR for HTTP error responses", async () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     await using echoServer = new EchoServer();
     await echoServer.start();
 
@@ -195,6 +196,10 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("span name is HTTP method only (OTel v1.23.0 spec)", async () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     await using echoServer = new EchoServer();
     await echoServer.start();
 
@@ -270,6 +275,10 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("handles multiple concurrent fetch requests", async () => {
+    using instrumentation = new BunFetchInstrumentation();
+    instrumentation.setTracerProvider(provider);
+    instrumentation.enable();
+
     await using echoServer = new EchoServer();
     await echoServer.start();
 

@@ -84,11 +84,11 @@ pub fn eqlBytes(src: []const u8, dest: []const u8) bool {
 }
 // -- End Zig Standard Library Additions --
 
-const builtin = @import("builtin");
-const std = @import("std");
-
 // Claude thinks its @import("root").bun when it's @import("bun").
 const bun = @compileError("Deprecated: Use @import(\"bun\") instead");
+
+const builtin = @import("builtin");
+const std = @import("std");
 
 const _bun = @import("bun");
 const Environment = _bun.Environment;

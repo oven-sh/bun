@@ -41,6 +41,66 @@
 
 #include "BunProcess.h"
 
+// ModuleResult structure definitions - match Zig side
+extern "C" {
+
+struct TranspiledSourceFlags {
+    bool is_commonjs : 1;
+    bool is_already_bundled : 1;
+    uint32_t _padding : 30;
+};
+
+struct TranspiledSource {
+    BunString source_code;
+    BunString source_url;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_len;
+    TranspiledSourceFlags flags;
+};
+
+enum class SpecialModuleTag : uint8_t {
+    exports_object,
+    export_default_object,
+    custom_extension,
+};
+
+struct SpecialModule {
+    SpecialModuleTag tag;
+    JSC::EncodedJSValue jsvalue;
+};
+
+enum class ModuleResultTag : uint8_t {
+    transpiled,
+    special,
+    builtin,
+};
+
+struct ModuleResult {
+    ModuleResultTag tag;
+    union {
+        TranspiledSource transpiled;
+        SpecialModule special;
+        uint32_t builtin_id;
+    } value;
+};
+
+struct ErrorableModuleResult {
+    bool success;
+    union {
+        ModuleResult value;
+        struct {
+            JSC::EncodedJSValue value;
+        } err;
+    } result;
+};
+
+}
+
+// C bridge function to create BunSourceProvider from TranspiledSource
+extern "C" JSC::SourceProvider* Bun__createSourceProvider(
+    Zig::GlobalObject* globalObject,
+    const TranspiledSource* source);
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -457,17 +517,16 @@ static JSValue handleVirtualModuleResult(
 extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
-    ErrorableResolvedSource* res,
+    ErrorableModuleResult* result,
     BunString* specifier,
     BunString* referrer)
 {
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
-    if (!res->success) {
-        RELEASE_AND_RETURN(scope, promise->reject(globalObject, JSValue::decode(res->result.err.value)));
+    if (!result->success) {
+        RELEASE_AND_RETURN(scope, promise->reject(globalObject, JSValue::decode(result->result.err.value)));
     }
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);
@@ -492,25 +551,70 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
 
-        if (res->result.value.isCommonJSModule) {
-            auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
-            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
-            if (created.has_value()) {
-                JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
-                promise->resolve(globalObject, code);
-                scope.assertNoExceptionExceptTermination();
-            } else {
-                auto* exception = scope.exception();
-                if (!vm.isTerminationException(exception)) {
-                    scope.clearException();
-                    promise->reject(globalObject, exception);
+        // Handle ModuleResult based on its tag
+        switch (result->result.value.tag) {
+        case ModuleResultTag::transpiled: {
+            auto& transpiled = result->result.value.value.transpiled;
+
+            // Create source provider using new C bridge
+            // The function returns a leaked ref that we need to adopt
+            Ref<JSC::SourceProvider> provider = adoptRef(*Bun__createSourceProvider(globalObject, &transpiled));
+
+            // Check if it's CommonJS vs ESM based on flags
+            if (transpiled.flags.is_commonjs) {
+                // For CommonJS, we need to create a CommonJS module wrapper
+                // This uses the existing createCommonJSModule path which expects ResolvedSource
+                // We'll need to construct a temporary ResolvedSource for now
+                // TODO: Update createCommonJSModule to accept TranspiledSource directly
+                ResolvedSource tempRes = {};
+                tempRes.source_code = transpiled.source_code;
+                tempRes.source_url = transpiled.source_url;
+                tempRes.isCommonJSModule = true;
+                tempRes.already_bundled = transpiled.flags.is_already_bundled;
+                tempRes.bytecode_cache = transpiled.bytecode_cache;
+                tempRes.bytecode_cache_size = transpiled.bytecode_cache_len;
+                tempRes.needsDeref = false; // Ownership transferred via ModuleResult
+
+                auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, tempRes);
+                EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+                if (created.has_value()) {
+                    JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
+                    promise->resolve(globalObject, code);
                     scope.assertNoExceptionExceptTermination();
+                } else {
+                    auto* exception = scope.exception();
+                    if (!vm.isTerminationException(exception)) {
+                        scope.clearException();
+                        promise->reject(globalObject, exception);
+                        scope.assertNoExceptionExceptTermination();
+                    }
                 }
+            } else {
+                // ESM module - use provider directly
+                promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
+                scope.assertNoExceptionExceptTermination();
             }
-        } else {
-            auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            break;
+        }
+
+        case ModuleResultTag::special: {
+            // Special modules (exports_object, export_default_object, custom_extension)
+            // should not reach async module fulfillment - they're handled synchronously
+            auto* exception = JSC::createTypeError(globalObject, "Special modules cannot be used in async import"_s);
+            scope.clearException();
+            promise->reject(globalObject, exception);
             scope.assertNoExceptionExceptTermination();
+            break;
+        }
+
+        case ModuleResultTag::builtin: {
+            // Builtin modules should not reach async module fulfillment
+            auto* exception = JSC::createTypeError(globalObject, "Builtin modules cannot be used in async import"_s);
+            scope.clearException();
+            promise->reject(globalObject, exception);
+            scope.assertNoExceptionExceptTermination();
+            break;
+        }
         }
     } else {
         // the module has since been deleted from the registry.

@@ -544,14 +544,12 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         defer if (scope.exception()) |_| scope.clearException();
         break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
     };
-    const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
-        "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
-        "{s}" ++
-        "\".";
+    const msg_1 = "This error originated either by throwing inside of an async function without a catch block, " ++
+        "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"";
     if (reasonStr.isString()) {
-        return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{reasonStr.asString().view(globalObject)}).toJS();
+        return globalObject.ERR(.UNHANDLED_REJECTION, msg_1 ++ "{f}\".", .{reasonStr.asString().view(globalObject)}).toJS();
     }
-    return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{"undefined"}).toJS();
+    return globalObject.ERR(.UNHANDLED_REJECTION, msg_1 ++ "{s}\".", .{"undefined"}).toJS();
 }
 
 pub fn unhandledRejection(this: *jsc.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {

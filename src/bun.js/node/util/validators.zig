@@ -33,7 +33,7 @@ pub fn throwErrInvalidArgType(
 ) bun.JSError {
     @branchHint(.cold);
     const actual_type = getTypeName(globalThis, value);
-    return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
+    return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {f}", name_args ++ .{ expected_type, actual_type });
 }
 
 pub fn throwRangeError(
@@ -223,7 +223,7 @@ pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name
 pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime min_length: ?i32) bun.JSError!void {
     if (!value.jsType().isArray()) {
         const actual_type = getTypeName(globalThis, value);
-        return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be an instance of Array, got {s}", name_args ++ .{actual_type});
+        return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be an instance of Array, got {f}", name_args ++ .{actual_type});
     }
     if (comptime min_length != null) {
         if (value.getLength(globalThis) < min_length) {

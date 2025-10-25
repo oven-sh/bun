@@ -1083,10 +1083,10 @@ pub const JestPrettyFormat = struct {
                     }
 
                     if (message_string.isEmpty()) {
-                        writer.print("[{s}]", .{classname});
+                        writer.print("[{f}]", .{classname});
                         return;
                     }
-                    writer.print("[{s}: {s}]", .{ classname, message_string });
+                    writer.print("[{f}: {f}]", .{ classname, message_string });
                     return;
                 },
                 .Class => {
@@ -1745,7 +1745,7 @@ pub const JestPrettyFormat = struct {
                         try value.getClassName(this.globalThis, &object_name);
 
                         if (!object_name.eqlComptime("Object")) {
-                            writer.print("{s} {{}}", .{object_name});
+                            writer.print("{f} {{}}", .{object_name});
                         } else {
                             // don't write "Object"
                             writer.writeAll("{}");

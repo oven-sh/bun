@@ -2232,7 +2232,7 @@ pub const Formatter = struct {
 
                     if (!strings.eqlComptime(number_name.slice(), "Number")) {
                         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({f}): {f}]<r>", enable_ansi_colors), .{
                             number_name,
                             number_value,
                         });
@@ -2240,7 +2240,7 @@ pub const Formatter = struct {
                     }
 
                     this.addForNewLine(number_name.len + number_value.len + 4);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[{f}: {f}]<r>", enable_ansi_colors), .{
                         number_name,
                         number_value,
                     });
@@ -2716,14 +2716,14 @@ pub const Formatter = struct {
 
                     if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
                         this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]<r>", enable_ansi_colors), .{
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({f}): {f}]<r>", enable_ansi_colors), .{
                             bool_name,
                             bool_value,
                         });
                         return;
                     }
                     this.addForNewLine(bool_value.len + "[Boolean: ]".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {f}]<r>", enable_ansi_colors), .{bool_value});
                     return;
                 }
                 if (value.toBoolean()) {

@@ -2,8 +2,7 @@
 // This test verifies that FinalizationRegistry callbacks execute correctly
 // after the JSCScheduler fix that drains microtasks after deferred work tasks.
 
-import { test, expect, describe } from "bun:test";
-import { gcTick } from "harness";
+import { describe, expect, test } from "bun:test";
 
 describe("FinalizationRegistry", () => {
   test("callback executes after GC", async () => {

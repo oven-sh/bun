@@ -49,6 +49,10 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             html: ?u32 = 0,
         },
         added_head_tags: bool,
+        /// Track where we found script tags: null = not found, false = in head, true = in body
+        script_in_body: ?bool = null,
+        /// Track which section we're currently in
+        current_section: enum { none, head, body } = .none,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));
@@ -58,7 +62,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             Output.panic("Parsing HTML during replacement phase errored, which should never happen since the first pass succeeded: {s}", .{err});
         }
 
-        pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
+        pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, kind: ImportKind) void {
             if (this.current_import_record_index >= this.import_records.len) {
                 Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
             }
@@ -73,6 +77,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()]
             else
                 .file;
+
+            // Track if this is a script tag and where it's located
+            const is_script = kind == .stmt and loader.isJavaScriptLike();
+            if (is_script and this.script_in_body == null) {
+                // First script tag - record its location
+                this.script_in_body = (this.current_section == .body);
+            }
 
             if (import_record.is_external_without_side_effects) {
                 debug("Leaving external import: {s}", .{import_record.path.text});
@@ -114,6 +125,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         }
 
         pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
+            this.current_section = .head;
             element.onEndTag(endHeadTagHandler, this) catch return true;
             return false;
         }
@@ -124,6 +136,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         }
 
         pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
+            this.current_section = .body;
             element.onEndTag(endBodyTagHandler, this) catch return true;
             return false;
         }
@@ -150,7 +163,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 array.appendAssumeCapacity(link_tag);
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                // type="module" scripts do not block rendering, and are typically placed at the end of body
+                // type="module" scripts do not block rendering, placement is determined by original script location
                 const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
                 array.appendAssumeCapacity(script);
             }
@@ -160,8 +173,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                // Don't inject here - wait for body or html end tag
-                _ = end;
+                // Inject here if scripts were in head (script_in_body == false)
+                // or if no scripts were found yet (script_in_body == null)
+                const inject_in_head = if (this.script_in_body) |in_body| !in_body else false;
+                if (inject_in_head) {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.head = @intCast(this.output.items.len);
             }
@@ -171,8 +188,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                // Inject at end of body (preferred location for scripts)
-                this.addHeadTags(end) catch return .stop;
+                // Inject here if scripts were in body (script_in_body == true)
+                // or if no scripts were found yet (script_in_body == null) - default to body
+                const inject_in_body = if (this.script_in_body) |in_body| in_body else true;
+                if (inject_in_body) {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.body = @intCast(this.output.items.len);
             }
@@ -182,7 +203,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                // Fallback: inject at end of html if no body tag exists
+                // Fallback: inject at end of html if no head or body tags injected yet
                 this.addHeadTags(end) catch return .stop;
             } else {
                 this.end_tag_indices.html = @intCast(this.output.items.len);
@@ -219,19 +240,36 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         sources[chunk.entry_point.source_index].contents,
     ) catch std.debug.panic("unexpected error from HTMLProcessor.run", .{});
 
-    // There are some cases where invalid HTML will make it so </body> is
+    // There are some cases where invalid HTML will make it so the end tag is
     // never emitted, even if the literal text DOES appear. These cases are
     // along the lines of having a self-closing tag for a non-self closing
-    // element. In this case, body_end_tag_index will be 0, and a simple
-    // search through the page is done to find the "</body>"
+    // element. In this case, we do a simple search through the page.
     // See https://github.com/oven-sh/bun/issues/17554
     const script_injection_offset: u32 = if (c.dev_server != null) brk: {
-        if (html_loader.end_tag_indices.body) |body|
-            break :brk body;
-        if (bun.strings.indexOf(html_loader.output.items, "</body>")) |body|
-            break :brk @intCast(body);
-        if (html_loader.end_tag_indices.head) |head|
-            break :brk head;
+        // Respect the user's original script location preference
+        const prefer_body = if (html_loader.script_in_body) |in_body| in_body else true;
+
+        if (prefer_body) {
+            // Try body first (user had scripts in body or no scripts at all)
+            if (html_loader.end_tag_indices.body) |body|
+                break :brk body;
+            if (bun.strings.indexOf(html_loader.output.items, "</body>")) |body|
+                break :brk @intCast(body);
+            // Fall back to head
+            if (html_loader.end_tag_indices.head) |head|
+                break :brk head;
+        } else {
+            // Try head first (user had scripts in head)
+            if (html_loader.end_tag_indices.head) |head|
+                break :brk head;
+            if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
+                break :brk @intCast(head);
+            // Fall back to body
+            if (html_loader.end_tag_indices.body) |body|
+                break :brk body;
+        }
+
+        // Final fallback
         if (html_loader.end_tag_indices.html) |html|
             break :brk html;
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.

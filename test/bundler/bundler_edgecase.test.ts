@@ -672,15 +672,16 @@ describe("bundler", () => {
     },
     outdir: "/out",
     entryPointsRaw: ["./entry.zig"],
-    runtimeFiles: {
-      "/exec.js": `
-        import assert from 'node:assert';
-        import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-z5artd5z.zig');
-      `,
-    },
-    run: {
-      file: "./exec.js",
+    // With the new behavior, asset entrypoints (file loader) are copied directly
+    // without creating JS wrappers. Need to specify expected output path explicitly.
+    outputPaths: ["/out/entry.zig"],
+    onAfterBundle(api) {
+      const fs = require("fs");
+      const path = require("path");
+      const outPath = path.join(api.outdir, "entry.zig");
+      api.assertFileExists("out/entry.zig");
+      const content = fs.readFileSync(outPath, "utf8");
+      expect(content).toContain("Hello, world!");
     },
   });
   itBundled("edgecase/ExportDefaultUndefined", {

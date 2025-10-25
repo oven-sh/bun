@@ -180,7 +180,7 @@ pub const Request = struct {
                 _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
             }
             _ = try writer.write("> ");
-            try writer.print("{s}\n", .{header});
+            try writer.print("{f}\n", .{header});
         }
     }
 
@@ -249,7 +249,7 @@ pub const Response = struct {
         }
 
         try writer.print(
-            "< {} {s}\n",
+            "< {f} {s}\n",
             .{
                 StatusCodeFormatter{
                     .code = self.status_code,
@@ -263,7 +263,7 @@ pub const Response = struct {
             }
 
             _ = try writer.write("< ");
-            try writer.print("{s}\n", .{header});
+            try writer.print("{f}\n", .{header});
         }
     }
 

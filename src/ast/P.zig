@@ -3724,7 +3724,7 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default: {any}", .{s2});
+                                        Output.panic("Unexpected type in export default", .{});
                                     },
                                 }
                             },

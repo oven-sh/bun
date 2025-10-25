@@ -22,7 +22,7 @@ pub fn toContainKey(
 
     const not = this.flags.not;
     if (!value.isObject()) {
-        return globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
+        return globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {f}", .{value.toFmt(&formatter)});
     }
 
     var pass = try value.hasOwnPropertyValue(globalThis, expected);

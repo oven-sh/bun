@@ -374,7 +374,7 @@ pub fn Visit(
                     st.kind = p.selectLocalKind(st.kind);
                 },
                 else => {
-                    p.panic("Unexpected stmt in visitForLoopInit: {any}", .{stmt});
+                    p.panic("Unexpected stmt in visitForLoopInit", .{});
                 },
             }
 

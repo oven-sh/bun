@@ -864,10 +864,10 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
     request_.path = url;
 
     if (curl) {
-        Output.prettyErrorln("{}", .{request_.curl(ignore_insecure, body)});
+        Output.prettyErrorln("{f}", .{request_.curl(ignore_insecure, body)});
     }
 
-    Output.prettyErrorln("{}", .{request_});
+    Output.prettyErrorln("{f}", .{request_});
 
     Output.flush();
 }

@@ -171,7 +171,7 @@ pub fn Parse(
 
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
-                        switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
+                        switch ((property.key orelse p.panic("Internal error: Expected property to have a key.", .{})).data) {
                             .e_string => |str| {
                                 if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;

@@ -299,13 +299,13 @@ pub const MacroEntryPoint = struct {
                 \\//Auto-generated file
                 \\var Macros;
                 \\try {{
-                \\  Macros = await import('{s}{s}');
+                \\  Macros = await import('{f}{f}');
                 \\}} catch (err) {{
                 \\   console.error("Error importing macro");
                 \\   throw err;
                 \\}}
                 \\if (!('{s}' in Macros)) {{
-                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\  throw new Error("Macro '{s}' not found in '{f}{f}'");
                 \\}}
                 \\
                 \\Bun.registerMacro({d}, Macros['{s}']);

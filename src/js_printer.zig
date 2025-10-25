@@ -2552,7 +2552,7 @@ fn NewPrinter(
                     if (e.func.name) |sym| {
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(sym.loc);
-                        p.printSymbol(sym.ref orelse Output.panic("internal error: expected E.Function's name symbol to have a ref\n{any}", .{e.func}));
+                        p.printSymbol(sym.ref orelse Output.panic("internal error: expected E.Function's name symbol to have a ref", .{}));
                     }
 
                     p.printFunc(e.func);
@@ -2573,7 +2573,7 @@ fn NewPrinter(
                     if (e.class_name) |name| {
                         p.print(" ");
                         p.addSourceMapping(name.loc);
-                        p.printSymbol(name.ref orelse Output.panic("internal error: expected E.Class's name symbol to have a ref\n{any}", .{e}));
+                        p.printSymbol(name.ref orelse Output.panic("internal error: expected E.Class's name symbol to have a ref", .{}));
                     }
                     p.printClass(e.*);
                     if (wrap) {
@@ -3693,8 +3693,8 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
-                    const name = s.func.name orelse Output.panic("Internal error: expected func to have a name ref\n{any}", .{s});
-                    const nameRef = name.ref orelse Output.panic("Internal error: expected func to have a name\n{any}", .{s});
+                    const name = s.func.name orelse Output.panic("Internal error: expected func to have a name ref", .{});
+                    const nameRef = name.ref orelse Output.panic("Internal error: expected func to have a name", .{});
 
                     if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
@@ -3822,7 +3822,7 @@ fn NewPrinter(
 
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Output.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
+                                        p.printSymbol(name.ref orelse Output.panic("Internal error: Expected class to have a name ref", .{}));
                                     } else {
                                         p.print("class");
                                     }
@@ -3832,7 +3832,7 @@ fn NewPrinter(
                                     p.printNewline();
                                 },
                                 else => {
-                                    Output.panic("Internal error: unexpected export default stmt data {any}", .{s});
+                                    Output.panic("Internal error: unexpected export default stmt data", .{});
                                 },
                             }
                         },
@@ -4184,7 +4184,7 @@ fn NewPrinter(
                     }
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
-                    p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name {any}", .{s}));
+                    p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name", .{}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
@@ -4780,7 +4780,7 @@ fn NewPrinter(
                 // for(;)
                 .s_empty => {},
                 else => {
-                    Output.panic("Internal error: Unexpected stmt in for loop {any}", .{initSt});
+                    Output.panic("Internal error: Unexpected stmt in for loop", .{});
                 },
             }
         }

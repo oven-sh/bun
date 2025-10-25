@@ -3136,7 +3136,9 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
         @compileError(std.fmt.comptimePrint("Assertion failure: {any} != {any}", .{ a, b }));
     }
     if (!Environment.allow_assert) return;
-    Output.panic("Assertion failure: " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(a), "{any}") ++ " != " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(b), "{any}"), .{ a, b });
+    // Output.panic("Assertion failure: " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(a), "{f}") ++ " != " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(b), "{any}"), .{ a, b });
+    // TODO
+    Output.panic("Assertion failure.", .{});
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into

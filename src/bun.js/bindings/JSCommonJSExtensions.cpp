@@ -260,9 +260,8 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
-    ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
+    ModuleResult res;
+    memset(&res, 0, sizeof res);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),

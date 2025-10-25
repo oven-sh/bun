@@ -1,18 +1,12 @@
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { describe, expect, test } from "bun:test";
-import { BunSDK } from "../index";
-import { waitForSpans } from "./test-utils";
 import { resourceFromAttributes } from "@opentelemetry/resources";
+import { describe, expect, test } from "bun:test";
+import { TestSDK } from "./test-utils";
 
 describe("BunSDK resource configuration", () => {
   test("sets service name in resource", async () => {
-    const exporter = new InMemorySpanExporter();
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "test-service",
     });
-
-    sdk.start();
 
     using server = Bun.serve({
       port: 0,
@@ -22,21 +16,14 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await waitForSpans(exporter, 2);
-
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(2);
+    const spans = await tsdk.waitForSpans(2);
 
     const resource = spans[0].resource;
     expect(resource.attributes["service.name"]).toBe("test-service");
   });
 
   test("merges custom resources with auto-detected resources", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    // Import Resource here to avoid linter issues
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       resource: resourceFromAttributes({
         "deployment.environment": "production",
         "service.version": "1.0.0",
@@ -45,8 +32,6 @@ describe("BunSDK resource configuration", () => {
       autoDetectResources: true,
     });
 
-    sdk.start();
-
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -55,10 +40,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
+    const spans = await tsdk.waitForSpans(1, 500, s => s.server());
 
     const resource = spans[0].resource;
     // Check custom attributes
@@ -71,17 +53,12 @@ describe("BunSDK resource configuration", () => {
   });
 
   test("can disable auto-detect resources", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       resource: resourceFromAttributes({
         "custom.attribute": "value",
       }),
       autoDetectResources: false,
     });
-
-    sdk.start();
 
     using server = Bun.serve({
       port: 0,
@@ -91,10 +68,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
+    const spans = await tsdk.waitForSpans(1, 500, s => s.server());
 
     const resource = spans[0].resource;
     expect(resource.attributes["custom.attribute"]).toBe("value");

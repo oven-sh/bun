@@ -2,27 +2,15 @@ import { context, SpanKind, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
-import { BunFetchInstrumentation, BunSDK } from "../index";
+import { BunSDK } from "../index";
 import { EchoServer } from "./echo-server";
 import { waitForSpans } from "./test-utils";
 
-/** NOTE: Critical to understand what is being tested here
+/**
+ * Tests trace propagation: uninstrumented client → UUT (http.createServer) → fetch → echo server
  *
- * Client --> (UUT: ServerA using Node.js HTTP) --> Echo Server
- *
- * The goal is to ensure that traces are properly propagated from the client
- * through the UUT (ServerA using Node.js http.createServer) to the Echo Server.
- * This tests that the Node.js HTTP server implementation properly propagates
- * OpenTelemetry context through AsyncLocalStorage, just like Bun.serve does.
- *
- * We use an external echo server (separate process) to avoid instrumentation
- * interference, just like in the Bun.serve tests.
- *
- * The handleIncomingRequest function in otel-core.ts calls contextStorage.enterWith()
- * to set up the async context, enabling:
- * - context.active() to return the current span in request handlers
- * - fetch calls to inherit the correct parent trace context
- * - async boundaries (setTimeout, setImmediate, generators) to maintain trace context
+ * This verifies that http.createServer properly extracts context from incoming traceparent,
+ * creates a SERVER span, and propagates context to outgoing fetch CLIENT spans.
  */
 describe("Distributed tracing with Node.js HTTP server", () => {
   // Shared echo server for all tests - runs in separate process to avoid instrumentation
@@ -110,7 +98,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-distributed-tracing-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();
@@ -191,7 +179,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-settimeout-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();
@@ -280,7 +268,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-setimmediate-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();
@@ -343,7 +331,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-nested-async-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();
@@ -410,7 +398,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-async-generator-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();
@@ -484,7 +472,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "node-http-parallel-fetch-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
 
     sdk.start();

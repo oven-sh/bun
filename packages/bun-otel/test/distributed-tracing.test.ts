@@ -1,22 +1,15 @@
 import { context, SpanKind, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { BunFetchInstrumentation, BunSDK } from "../index";
+import { BunSDK } from "../index";
 import { EchoServer } from "./echo-server";
 import { waitForSpans } from "./test-utils";
 
-/** NOTE: Critical to understand what is being tested here
+/**
+ * Tests trace propagation: uninstrumented client → UUT (Bun.serve) → fetch → echo server
  *
- * Client --> (UUT: ServerA) --> Echo Server
- *
- * The goal is to ensure that traces are properly propagated from the client
- * through the UUT (ServerA) to the Echo Server. We don't need to test that
- * fetch is instrumented - that is the responsibility of the BunFetchInstrumentation tests.
- *
- * Trying to use inline Bun.serve for ServerB (the echo server) would interfere with
- * the instrumentation of the UUT (ServerA) since both would be in the same process
- * and share the same global fetch. Therefore, we run the echo server in a separate
- * Bun process so that only the UUT is instrumented.
+ * This verifies that Bun.serve properly extracts context from incoming traceparent,
+ * creates a SERVER span, and propagates context to outgoing fetch CLIENT spans.
  */
 describe("Distributed tracing with fetch propagation", () => {
   // Shared echo server for all tests - runs in separate process to avoid instrumentation
@@ -101,7 +94,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "distributed-tracing-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();
@@ -168,7 +161,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "settimeout-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();
@@ -240,7 +233,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "setimmediate-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();
@@ -291,7 +284,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "nested-async-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();
@@ -344,7 +337,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "async-generator-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();
@@ -409,7 +402,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "parallel-fetch-test",
-      instrumentations: [new BunFetchInstrumentation()],
+      // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
 
     sdk.start();

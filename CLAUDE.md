@@ -188,3 +188,4 @@ Built-in JavaScript modules use special syntax and are organized as:
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
+- When adding code to `.ts` files that will require new `import`(s), you MUST write the usage site first to stop the linter from removing the `import` as unused code. Always make edits in this order: Update(implementation) Update(imports)

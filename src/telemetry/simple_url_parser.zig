@@ -81,6 +81,46 @@ fn parsePathOnly(url: []const u8) URLParts {
     return parts;
 }
 
+/// Parse a Host header value to extract host and port
+/// Handles: example.com, example.com:8080, 192.168.1.1:3000, [::1]:8080, [2001:db8::1]
+pub fn parseHostHeader(host_header: []const u8) URLParts {
+    var parts: URLParts = .{};
+
+    if (host_header.len == 0) {
+        return parts;
+    }
+
+    // Handle IPv6: [::1]:8080 or [2001:db8::1]
+    if (host_header[0] == '[') {
+        const close_bracket = std.mem.indexOf(u8, host_header, "]") orelse {
+            // Malformed IPv6, return empty
+            return parts;
+        };
+
+        parts.host = host_header[1..close_bracket];
+
+        // Check for port after closing bracket
+        if (close_bracket + 1 < host_header.len and host_header[close_bracket + 1] == ':') {
+            const port_str = host_header[close_bracket + 2 ..];
+            parts.port = std.fmt.parseInt(u16, port_str, 10) catch null;
+        }
+
+        return parts;
+    }
+
+    // Handle IPv4 and domain: example.com:8080 or 192.168.1.1:3000
+    if (std.mem.lastIndexOf(u8, host_header, ":")) |colon_idx| {
+        parts.host = host_header[0..colon_idx];
+        const port_str = host_header[colon_idx + 1 ..];
+        parts.port = std.fmt.parseInt(u16, port_str, 10) catch null;
+    } else {
+        // No port specified
+        parts.host = host_header;
+    }
+
+    return parts;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -142,4 +182,60 @@ test "parseURL: IPv4 address" {
     try std.testing.expectEqualStrings("192.168.1.1", parts.host);
     try std.testing.expectEqual(@as(u16, 8080), parts.port.?);
     try std.testing.expectEqualStrings("/api", parts.path);
+}
+
+test "parseHostHeader: domain with port" {
+    const host = "example.com:8080";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("example.com", parts.host);
+    try std.testing.expectEqual(@as(u16, 8080), parts.port.?);
+}
+
+test "parseHostHeader: domain without port" {
+    const host = "example.com";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("example.com", parts.host);
+    try std.testing.expectEqual(@as(?u16, null), parts.port);
+}
+
+test "parseHostHeader: IPv4 with port" {
+    const host = "127.0.0.1:3000";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("127.0.0.1", parts.host);
+    try std.testing.expectEqual(@as(u16, 3000), parts.port.?);
+}
+
+test "parseHostHeader: IPv4 without port" {
+    const host = "192.168.1.1";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("192.168.1.1", parts.host);
+    try std.testing.expectEqual(@as(?u16, null), parts.port);
+}
+
+test "parseHostHeader: IPv6 with port" {
+    const host = "[::1]:8080";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("::1", parts.host);
+    try std.testing.expectEqual(@as(u16, 8080), parts.port.?);
+}
+
+test "parseHostHeader: IPv6 without port" {
+    const host = "[2001:db8::1]";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("2001:db8::1", parts.host);
+    try std.testing.expectEqual(@as(?u16, null), parts.port);
+}
+
+test "parseHostHeader: empty string" {
+    const host = "";
+    const parts = parseHostHeader(host);
+
+    try std.testing.expectEqualStrings("", parts.host);
+    try std.testing.expectEqual(@as(?u16, null), parts.port);
 }

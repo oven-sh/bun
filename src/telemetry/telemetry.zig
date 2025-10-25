@@ -19,6 +19,36 @@ pub const AttributeKeys = attributes_module.AttributeKeys;
 /// Prevents accidental mixing of operation IDs with other numeric values
 pub const OpId = u64;
 
+/// Operation timestamp type for telemetry timing
+/// Uses i128 to store nanoseconds since epoch without overflow (until year 2262)
+/// Can be changed to u64 if we switch to relative timing (bun.getRoughTickCountMs)
+pub const OpTime = i128;
+
+// ============================================================================
+// Timing Utilities
+// ============================================================================
+
+/// Get high-precision timestamp for operation start
+/// Returns nanoseconds since epoch as i128
+///
+/// PERFORMANCE NOTE: std.time.nanoTimestamp() requires a syscall on most platforms.
+/// For rough timing (~1ms precision), consider using bun.getRoughTickCountMs() instead.
+/// Current choice: High precision for OpenTelemetry compliance (nanosecond granularity).
+/// Alternative: Return u64 from bun.getRoughTickCountMs() for faster but less accurate timing.
+pub inline fn getOperationStartTime() OpTime {
+    return std.time.nanoTimestamp();
+}
+
+/// Calculate operation duration in nanoseconds from start timestamp
+/// Returns u64 (sufficient for any realistic operation duration - max ~584 years)
+/// Handles negative durations (clock skew) by returning 0
+pub inline fn calculateDuration(start_time: OpTime) u64 {
+    const end_time = std.time.nanoTimestamp();
+    const duration_signed = end_time - start_time;
+    // Guard against clock skew or invalid timestamps
+    return if (duration_signed < 0) 0 else @intCast(duration_signed);
+}
+
 /// HTTP server telemetry support
 pub const http = @import("hooks-http.zig");
 
@@ -183,6 +213,8 @@ pub const InstrumentRecord = struct {
         return op_fn.callWithGlobalThis(globalObject, &args) catch |err| {
             // Defensive isolation: telemetry failures must not crash the application
             std.debug.print("Telemetry: operation hook failed: {}\n", .{err});
+            // Clear the pending JavaScript exception to avoid assertion failures
+            _ = globalObject.takeException(err);
             return .js_undefined;
         };
     }
@@ -274,6 +306,25 @@ pub const TelemetryContext = struct {
         self.config.deinit();
 
         self.allocator.destroy(self);
+    }
+
+    /// Enter async context by calling AsyncLocalStorage.enterWith(context)
+    /// Called from Zig hooks after creating span to propagate context across async boundaries
+    ///
+    /// @param globalObject The JavaScript global object
+    /// @param spanContext The OTel span context object to enter (has { requestId, traceId, spanId })
+    pub fn enterContext(self: *TelemetryContext, globalObject: *JSGlobalObject, spanContext: JSValue) void {
+        // Get context storage from configuration property
+        const storage = self.getConfigurationProperty(@intFromEnum(ConfigurationProperty._context_storage));
+        if (storage.isEmptyOrUndefinedOrNull()) return;
+
+        // Get enterWith method from AsyncLocalStorage instance
+        const enter_with = storage.get(globalObject, "enterWith") catch return;
+        if (enter_with) |ew| {
+            if (!ew.isCallable()) return;
+            // Call storage.enterWith(spanContext)
+            _ = ew.call(globalObject, storage, &.{spanContext}) catch {};
+        }
     }
 
     /// Generate a new unique instrument ID (thread-safe)
@@ -703,8 +754,16 @@ pub fn jsAttach(
         return .js_undefined;
     }
 
+    // Initialize global telemetry on first attach (zero-cost until used)
+    if (getGlobalTelemetry() == null) {
+        initGlobalTelemetry(bun.default_allocator, globalObject) catch {
+            globalObject.throw("Failed to initialize telemetry", .{}) catch {};
+            return .js_undefined;
+        };
+    }
+
     const telemetry = getGlobalTelemetry() orelse {
-        globalObject.throw("Telemetry not initialized", .{}) catch {};
+        globalObject.throw("Telemetry initialization failed", .{}) catch {};
         return .js_undefined;
     };
 
@@ -870,7 +929,12 @@ inline fn jsNotifyOperationGeneric(
     if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) return .js_undefined;
 
     const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
-    const id = @as(u64, @intFromFloat(id_value.asNumber()));
+    var id = @as(u64, @intFromFloat(id_value.asNumber()));
+
+    // Auto-generate OpId if 0 is provided (starts at 1)
+    if (id == 0) {
+        id = telemetry.generateId();
+    }
 
     // Get instruments for this kind
     const kind_index = @intFromEnum(kind);

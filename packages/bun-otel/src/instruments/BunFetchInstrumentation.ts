@@ -8,11 +8,21 @@
  * @module bun-otel/instruments/BunFetchInstrumentation
  */
 
-import { SpanKind, SpanStatusCode, type MeterProvider, type Span, type TracerProvider } from "@opentelemetry/api";
+import {
+  context,
+  SpanKind,
+  SpanStatusCode,
+  trace,
+  type MeterProvider,
+  type Context as OtelContext,
+  type Span,
+  type TracerProvider,
+} from "@opentelemetry/api";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { AsyncLocalStorage } from "async_hooks";
+import { InstrumentRef } from "bun";
 import { InstrumentKind } from "../../types";
 import { validateCaptureAttributes } from "../validation";
-import { InstrumentRef } from "bun";
 
 /**
  * Configuration options for BunFetchInstrumentation.
@@ -28,6 +38,13 @@ export interface BunFetchInstrumentationConfig extends InstrumentationConfig {
     /** Response headers to capture (e.g., ["content-type", "cache-control"]) */
     responseHeaders?: string[];
   };
+
+  /**
+   * Shared AsyncLocalStorage instance for context propagation.
+   * Provided by BunSDK to enable trace context sharing between instrumentations.
+   * @internal
+   */
+  contextStorage?: AsyncLocalStorage<OtelContext>;
 }
 
 /**
@@ -67,9 +84,13 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
   private _tracerProvider?: TracerProvider;
   private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
+  private _contextStorage?: AsyncLocalStorage<OtelContext>;
 
   constructor(config: BunFetchInstrumentationConfig = {}) {
-    this._config = { enabled: true, ...config };
+    // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
+    // registerInstrumentations() will call enable() after setting TracerProvider
+    this._config = { enabled: false, ...config };
+    this._contextStorage = config.contextStorage;
 
     // Validate configuration at construction time
     if (this._config.captureAttributes) {
@@ -82,14 +103,6 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
    * Creates CLIENT spans for all outbound fetch requests.
    */
   enable(): void {
-    if (!this._config.enabled) {
-      return;
-    }
-
-    if (!this._tracerProvider) {
-      throw new Error("TracerProvider not set. Call setTracerProvider() before enable().");
-    }
-
     // Check if running in Bun environment
     if (typeof Bun === "undefined" || !Bun.telemetry) {
       throw new TypeError(
@@ -97,7 +110,14 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
       );
     }
 
-    const tracer = this._tracerProvider.getTracer(this.instrumentationName, this.instrumentationVersion);
+    // Mark as enabled
+    this._config.enabled = true;
+
+    // Get tracer (use explicit provider if set, otherwise use global API)
+    // Per Node.js SDK: gracefully degrades if no provider is set (uses noop tracer from global API)
+    const tracer =
+      this._tracerProvider?.getTracer(this.instrumentationName, this.instrumentationVersion) ||
+      trace.getTracer(this.instrumentationName, this.instrumentationVersion);
 
     // Attach to Bun's native fetch hooks
     this._instrumentId = Bun.telemetry.attach({
@@ -110,24 +130,40 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
       },
 
       onOperationStart: (id: number, attributes: Record<string, any>) => {
+        // Skip fetch operations triggered by http.request() to avoid double instrumentation.
+        // When http.request triggers an internal fetch, url.full is just a path (e.g., "/test")
+        // instead of a full URL (e.g., "http://localhost:3000/test").
+        // BunNodeInstrumentation already creates a span for http.request, so we skip here.
+        const urlFull = attributes["url.full"];
+        if (urlFull && !urlFull.startsWith("http://") && !urlFull.startsWith("https://")) {
+          return;
+        }
+
         // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
         // Incorrect: "GET https://api.example.com" (high cardinality, causes metric explosions)
         // Correct: "GET" (low cardinality, URL captured in attributes)
         const method = attributes["http.request.method"] || "GET";
         const spanName = method;
 
-        // Create CLIENT span
-        const span = tracer.startSpan(spanName, {
-          kind: SpanKind.CLIENT,
-          attributes: {
-            // Map native attributes to OTel semantic conventions
-            "http.request.method": attributes["http.request.method"],
-            "url.full": attributes["url.full"],
-            "server.address": attributes["server.address"],
-            "server.port": attributes["server.port"],
-            "url.scheme": attributes["url.scheme"],
+        // Get active context (may contain SERVER span from BunHttpInstrumentation)
+        const activeContext = context.active();
+
+        // Create CLIENT span as child of active context
+        const span = tracer.startSpan(
+          spanName,
+          {
+            kind: SpanKind.CLIENT,
+            attributes: {
+              // Map native attributes to OTel semantic conventions
+              "http.request.method": attributes["http.request.method"],
+              "url.full": attributes["url.full"],
+              "server.address": attributes["server.address"],
+              "server.port": attributes["server.port"],
+              "url.scheme": attributes["url.scheme"],
+            },
           },
-        });
+          activeContext,
+        );
 
         // Add captured request headers if configured
         if (this._config.captureAttributes?.requestHeaders) {
@@ -141,6 +177,12 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
 
         // Store span for later retrieval
         this._activeSpans.set(id, span);
+
+        // NOTE: We do NOT call enterWith() for CLIENT spans because:
+        // 1. The span is already created with the correct parent (activeContext)
+        // 2. Calling enterWith() would overwrite the parent context (e.g., SERVER span)
+        // 3. This would break nested fetch calls and async generators
+        // The CLIENT span will still be exported correctly because it's stored in _activeSpans
       },
 
       onOperationEnd: (id: number, attributes: Record<string, any>) => {

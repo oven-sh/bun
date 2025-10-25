@@ -14,16 +14,19 @@
 
 import {
   context,
-  Histogram,
   propagation,
   SpanKind,
   SpanStatusCode,
+  trace,
   ValueType,
+  type Histogram,
   type MeterProvider,
+  type Context as OtelContext,
   type Span,
   type TracerProvider,
 } from "@opentelemetry/api";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentRef, OpId } from "bun";
 import { InstrumentKind } from "../../types";
 
@@ -48,6 +51,13 @@ export interface BunNodeInstrumentationConfig extends InstrumentationConfig {
     /** Response headers to capture (e.g., ["content-type", "x-trace-id"]) */
     responseHeaders?: string[];
   };
+
+  /**
+   * Shared AsyncLocalStorage instance for context propagation.
+   * Provided by BunSDK to enable trace context sharing between instrumentations.
+   * @internal
+   */
+  contextStorage?: AsyncLocalStorage<OtelContext>;
 }
 
 /**
@@ -103,6 +113,7 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   private _meterProvider?: MeterProvider;
   private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
+  private _contextStorage?: AsyncLocalStorage<OtelContext>;
 
   // Track start times for manual duration calculation (Node.js bypasses onOperationEnd)
   private _startTimes: Map<number, number> = new Map();
@@ -114,7 +125,10 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   private _stableHttpClientDurationHistogram?: Histogram;
 
   constructor(config: BunNodeInstrumentationConfig = {}) {
-    this._config = { enabled: true, ...config };
+    // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
+    // registerInstrumentations() will call enable() after setting TracerProvider
+    this._config = { enabled: false, ...config };
+    this._contextStorage = config.contextStorage;
 
     // Validate configuration at construction time
     if (this._config.captureAttributes) {
@@ -417,14 +431,6 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
    * Creates SERVER spans for http.createServer() and CLIENT spans for http.request().
    */
   enable(): void {
-    if (!this._config.enabled) {
-      return;
-    }
-
-    if (!this._tracerProvider) {
-      throw new Error("TracerProvider not set. Call setTracerProvider() before enable().");
-    }
-
     // Check if running in Bun environment
     if (typeof Bun === "undefined" || !Bun.telemetry) {
       throw new TypeError(
@@ -432,7 +438,14 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       );
     }
 
-    const tracer = this._tracerProvider.getTracer(this.instrumentationName, this.instrumentationVersion);
+    // Mark as enabled
+    this._config.enabled = true;
+
+    // Get tracer (use explicit provider if set, otherwise use global API)
+    // Per Node.js SDK: gracefully degrades if no provider is set (uses noop tracer from global API)
+    const tracer =
+      this._tracerProvider?.getTracer(this.instrumentationName, this.instrumentationVersion) ||
+      trace.getTracer(this.instrumentationName, this.instrumentationVersion);
 
     // Attach to Bun's native hooks for Node.js HTTP operations
     this._instrumentId = Bun.telemetry.attach({
@@ -508,6 +521,9 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
     const nodeRequest = attributes["http_req"] as IncomingMessage;
     const nodeResponse = attributes["http_res"] as ServerResponse;
 
+    // Store OpId on response object for subsequent telemetry calls (e.g., notifyInject)
+    (nodeResponse as any)._telemetry_op_id = id;
+
     // Extract span name from HTTP method and path
     const method = nodeRequest.method || "HTTP";
     const url = nodeRequest.url || "/";
@@ -558,6 +574,13 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
     // Track start time for manual duration calculation
     this._startTimes.set(id, performance.now());
 
+    // Update AsyncLocalStorage with SERVER span context
+    // This makes the span available via context.active() for downstream calls (e.g., fetch)
+    if (this._contextStorage) {
+      const spanContext = trace.setSpan(parentContext, span);
+      this._contextStorage.enterWith(spanContext);
+    }
+
     // Setup .once() listeners to capture response attributes
     this.setupNodeJsServerResponseListeners(id, span, nodeRequest, nodeResponse);
   }
@@ -572,6 +595,9 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
   ): void {
     const nodeRequest = attributes["http_req"] as ClientRequest;
     const nodeResponse = attributes["http_res"] as IncomingMessage | undefined;
+
+    // Store OpId on request object for subsequent telemetry calls
+    (nodeRequest as any)._telemetry_op_id = id;
 
     // Extract request details from ClientRequest
     // ClientRequest has method, protocol, path, host, port properties

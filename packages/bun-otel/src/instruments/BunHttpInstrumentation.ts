@@ -14,20 +14,19 @@
 
 import {
   context,
-  Counter,
-  Histogram,
   propagation,
-  Span,
   SpanKind,
   SpanStatusCode,
   trace,
   ValueType,
-  type Attributes,
+  type Counter,
+  type Histogram,
   type MeterProvider,
-  type Tracer,
+  type Span,
   type TracerProvider,
 } from "@opentelemetry/api";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentRef, OpId } from "bun";
 import type { IncomingMessage, ServerResponse } from "http";
 import { InstrumentKind } from "../../types";
@@ -164,6 +163,13 @@ export interface BunHttpInstrumentationConfig extends InstrumentationConfig {
    * @default false
    */
   enableSyntheticSourceDetection?: boolean;
+
+  /**
+   * Shared AsyncLocalStorage instance for context propagation.
+   * Provided by BunSDK to enable trace context sharing between instrumentations.
+   * @internal
+   */
+  contextStorage?: AsyncLocalStorage<OtelContext>;
 }
 
 /**
@@ -222,6 +228,8 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
   private _meterProvider?: MeterProvider;
   private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
+  private _activeMetricAttributes: Map<number, Record<string, any>> = new Map();
+  private _contextStorage?: AsyncLocalStorage<OtelContext>;
 
   // Metric instruments for tracking HTTP server duration and request count
   private _oldHttpServerDurationHistogram?: Histogram;
@@ -229,8 +237,11 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
   private _httpServerRequestsCounter?: Counter;
 
   constructor(config: BunHttpInstrumentationConfig = {}) {
-    // Per Node.js SDK: shallow copy with enabled: true default
-    this._config = { enabled: true, ...config };
+    // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
+    // registerInstrumentations() will call enable() after setting TracerProvider
+    // This ensures we have a real tracer (not noop) when Bun.telemetry.attach() is called
+    this._config = { enabled: false, ...config };
+    this._contextStorage = config.contextStorage;
 
     // Normalize legacy captureAttributes to headersToSpanAttributes
     if (this._config.captureAttributes && !this._config.headersToSpanAttributes) {
@@ -260,10 +271,6 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
    * Per Node.js SDK: gracefully degrades if no provider is set (uses noop tracer).
    */
   enable(): void {
-    if (!this._config.enabled) {
-      return;
-    }
-
     // Check if running in Bun environment
     if (typeof Bun === "undefined" || !Bun.telemetry) {
       throw new TypeError(
@@ -275,6 +282,9 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
     if (this._config.disableIncomingRequestInstrumentation) {
       return;
     }
+
+    // Mark as enabled
+    this._config.enabled = true;
 
     // Get tracer (use explicit provider if set, otherwise use global API)
     const tracer = this._tracer || trace.getTracer(this.instrumentationName, this.instrumentationVersion);
@@ -320,14 +330,15 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
         let parentContext = context.active();
         if (attributes["trace.parent.trace_id"] && attributes["trace.parent.span_id"]) {
           // Native Zig layer has already parsed traceparent header
+          const traceId = attributes["trace.parent.trace_id"];
+          const spanId = attributes["trace.parent.span_id"];
+          const flags = attributes["trace.parent.trace_flags"] || 0;
+          const reconstructed = `00-${traceId}-${spanId}-${flags.toString(16).padStart(2, "0")}`;
           parentContext = propagation.extract(context.active(), attributes, {
             get: (carrier, key) => {
               // Map OTel attribute names back to headers for propagator
               if (key === "traceparent") {
-                const traceId = carrier["trace.parent.trace_id"];
-                const spanId = carrier["trace.parent.span_id"];
-                const flags = carrier["trace.parent.trace_flags"] || 0;
-                return `00-${traceId}-${spanId}-${flags.toString(16).padStart(2, "0")}`;
+                return reconstructed;
               }
               if (key === "tracestate") {
                 return carrier["trace.parent.trace_state"];
@@ -394,6 +405,35 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
 
         // Store span for later retrieval
         this._activeSpans.set(id, span);
+
+        // Store metric attributes for later use (subset of span attributes for cardinality control)
+        // These will be augmented with response attributes when the request completes
+        const metricAttributes: Record<string, any> = {
+          "http.request.method": spanAttributes["http.request.method"],
+          "url.path": spanAttributes["url.path"],
+        };
+
+        // Add http.route if available (important for cardinality)
+        if (spanAttributes["http.route"]) {
+          metricAttributes["http.route"] = spanAttributes["http.route"];
+        }
+
+        // Add server.address and server.port if available
+        if (spanAttributes["server.address"]) {
+          metricAttributes["server.address"] = spanAttributes["server.address"];
+        }
+        if (spanAttributes["server.port"]) {
+          metricAttributes["server.port"] = spanAttributes["server.port"];
+        }
+
+        this._activeMetricAttributes.set(id, metricAttributes);
+
+        // Update AsyncLocalStorage frame with span context
+        // This makes the span available via context.active() for downstream calls (e.g., fetch)
+        if (this._contextStorage) {
+          const spanContext = trace.setSpan(parentContext, span);
+          this._contextStorage.enterWith(spanContext);
+        }
       },
 
       onOperationEnd: (id: number, attributes: Record<string, any>) => {
@@ -461,42 +501,30 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
           const durationMs = durationNs / 1_000_000; // Convert nanoseconds to milliseconds
           const durationS = durationMs / 1000; // Convert milliseconds to seconds
 
-          // Build metric attributes (subset of span attributes for cardinality control)
-          const metricAttributes: Record<string, any> = {
-            "http.request.method": attributes["http.request.method"],
-            "url.path": attributes["url.path"],
-            "http.response.status_code": statusCode,
-          };
+          // Retrieve metric attributes stored at request start
+          const metricAttributes = this._activeMetricAttributes.get(id);
+          if (metricAttributes) {
+            // Augment with response status code
+            metricAttributes["http.response.status_code"] = statusCode;
 
-          // Add http.route if available (important for cardinality)
-          if (attributes["http.route"]) {
-            metricAttributes["http.route"] = attributes["http.route"];
-          }
+            // Record to old histogram (milliseconds)
+            this._oldHttpServerDurationHistogram.record(durationMs, metricAttributes);
 
-          // Add server.address and server.port if available
-          if (attributes["server.address"]) {
-            metricAttributes["server.address"] = attributes["server.address"];
-          }
-          if (attributes["server.port"]) {
-            metricAttributes["server.port"] = attributes["server.port"];
-          }
+            // Record to stable histogram (seconds)
+            if (this._stableHttpServerDurationHistogram) {
+              this._stableHttpServerDurationHistogram.record(durationS, metricAttributes);
+            }
 
-          // Record to old histogram (milliseconds)
-          this._oldHttpServerDurationHistogram.record(durationMs, metricAttributes);
-
-          // Record to stable histogram (seconds)
-          if (this._stableHttpServerDurationHistogram) {
-            this._stableHttpServerDurationHistogram.record(durationS, metricAttributes);
-          }
-
-          // Increment request counter
-          if (this._httpServerRequestsCounter) {
-            this._httpServerRequestsCounter.add(1, metricAttributes);
+            // Increment request counter
+            if (this._httpServerRequestsCounter) {
+              this._httpServerRequestsCounter.add(1, metricAttributes);
+            }
           }
         }
 
         span.end();
         this._activeSpans.delete(id);
+        this._activeMetricAttributes.delete(id);
       },
 
       onOperationError: (id: number, attributes: Record<string, any>) => {
@@ -519,6 +547,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
 
         span.end();
         this._activeSpans.delete(id);
+        this._activeMetricAttributes.delete(id);
       },
 
       onOperationInject: (id: OpId, _data?: unknown) => {
@@ -550,8 +579,9 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       this._instrumentId = undefined;
     }
 
-    // Clean up any remaining spans
+    // Clean up any remaining spans and metric attributes
     this._activeSpans.clear();
+    this._activeMetricAttributes.clear();
   }
 
   /**

@@ -2079,7 +2079,32 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
             const headers = (prepared.js_request.get(this.globalThis, "headers") catch null) orelse .js_undefined;
-            bun.telemetry.http.notifyHttpRequestStart(&prepared.ctx.telemetry_ctx, this.globalThis, @tagName(prepared.ctx.method), req.url(), headers);
+
+            // Extract Host header for server.address/port (OpenTelemetry semantic conventions)
+            const host_header = req.header("host");
+
+            // Get fallback server address and port from server configuration
+            const fallback_address: ?[]const u8 = switch (this.config.address) {
+                .tcp => |tcp| if (tcp.hostname) |h| bun.sliceTo(@constCast(h), 0) else null,
+                else => null,
+            };
+            const fallback_port: ?u16 = if (this.listener) |l|
+                @intCast(l.getLocalPort())
+            else switch (this.config.address) {
+                .tcp => |tcp| tcp.port,
+                else => if (comptime ssl_enabled) 443 else 80,
+            };
+
+            bun.telemetry.http.notifyHttpRequestStart(
+                &prepared.ctx.telemetry_ctx,
+                this.globalThis,
+                @tagName(prepared.ctx.method),
+                req.url(),
+                headers,
+                host_header,
+                fallback_address,
+                fallback_port,
+            );
 
             bun.assert(this.config.onRequest != .zero);
 

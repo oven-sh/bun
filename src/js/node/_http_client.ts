@@ -265,13 +265,6 @@ function ClientRequest(input, options, cb) {
 
     fetching = true;
 
-    // Telemetry: Notify about outgoing client request
-    try {
-      Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req: this }); // InstrumentKind.Node = 6
-    } catch {
-      // Telemetry failures should not crash the request path
-    }
-
     const method = this[kMethod];
 
     let keepalive = true;

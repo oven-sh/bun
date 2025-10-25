@@ -62,10 +62,23 @@ export async function waitForSpans(
   // Timeout - fail with helpful message
   const spans = exporter.getFinishedSpans();
   const matchingSpans = options?.traceId ? spans.filter(s => s.spanContext().traceId === options.traceId) : spans;
+  if (options?.traceId || spans.length) printSpans(exporter);
   throw new Error(
     `Timeout waiting for spans. Expected: ${expectedCount}, Found: ${matchingSpans.length}` +
-      (options?.traceId ? ` with traceId ${options.traceId}` : ""),
+      (options?.traceId
+        ? ` with traceId ${options.traceId} (I do have ${spans.length} spans with traceIds [${[...new Set(spans.map(s => s.spanContext().traceId))].join(", ")}])`
+        : ""),
   );
+}
+
+export function printSpans(exporter: InMemorySpanExporter): void {
+  const spans = exporter.getFinishedSpans();
+  console.log(`Exported ${spans.length} spans:`);
+  for (const span of spans) {
+    console.log(
+      `- Name: ${span.name}, TraceId: ${span.spanContext().traceId}, SpanId: ${span.spanContext().spanId}, ParentSpanId: ${span.parentSpanContext?.spanId}, Status: ${span.status.code}`,
+    );
+  }
 }
 
 // Test helper: make HTTP request without instrumentation (uses curl)

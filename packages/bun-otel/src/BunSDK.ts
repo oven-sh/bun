@@ -36,7 +36,7 @@
  * @module bun-otel/BunSDK
  */
 
-import { context, diag, propagation, type TextMapPropagator } from "@opentelemetry/api";
+import { context, type Context, diag, propagation, type TextMapPropagator } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { type Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
@@ -49,7 +49,7 @@ import {
   type ResourceDetector,
   resourceFromAttributes,
 } from "@opentelemetry/resources";
-import { type MetricReader } from "@opentelemetry/sdk-metrics";
+import { MeterProvider, type MetricReader } from "@opentelemetry/sdk-metrics";
 import {
   BatchSpanProcessor,
   type IdGenerator,
@@ -59,8 +59,12 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { AsyncLocalStorage } from "async_hooks";
+import { _nativeHooksObject } from "../types";
+import { BunAsyncLocalStorageContextManager } from "./context/BunAsyncLocalStorageContextManager";
 import { BunFetchInstrumentation } from "./instruments/BunFetchInstrumentation";
 import { BunHttpInstrumentation } from "./instruments/BunHttpInstrumentation";
+import { BunNodeInstrumentation } from "./instruments/BunNodeInstrumentation";
 
 // Enable debug logging for SDK lifecycle (useful for troubleshooting test isolation issues)
 const ENABLE_DEBUG_LOGGING = false;
@@ -242,6 +246,8 @@ export class BunSDK implements AsyncDisposable {
   private _instrumentationCleanup?: () => void;
   private _shutdownOnce = false;
   private _signalHandlersRegistered = false;
+  private _contextStorage?: AsyncLocalStorage<Context>;
+  private _contextManager?: BunAsyncLocalStorageContextManager;
 
   constructor(config: BunSDKConfiguration = {}) {
     this._config = config;
@@ -274,6 +280,11 @@ export class BunSDK implements AsyncDisposable {
     // Setup metric readers
     this._metricReaders = config.metricReaders ?? (config.metricReader ? [config.metricReader] : []);
 
+    // Create shared AsyncLocalStorage for context propagation
+    // This must be created BEFORE instrumentations so we can pass it to them
+    this._contextStorage = new AsyncLocalStorage<Context>();
+    debugLog("Created shared AsyncLocalStorage for context propagation");
+
     // Setup instrumentations (auto-register Bun instrumentations if not provided)
     // Per spec lines 86-87: "If `instrumentations` not provided or empty: BunSDK auto-registers
     // BunHttpInstrumentation and BunFetchInstrumentation"
@@ -282,8 +293,7 @@ export class BunSDK implements AsyncDisposable {
       this._instrumentations = config.instrumentations.flat();
     } else {
       // Auto-register Bun instrumentations with default configuration
-      // Per spec lines 381-388 for default configuration
-      // Use new headersToSpanAttributes format (Node.js SDK-compatible)
+      // Pass shared contextStorage to enable trace propagation between instrumentations
       this._instrumentations = [
         new BunHttpInstrumentation({
           headersToSpanAttributes: {
@@ -292,16 +302,25 @@ export class BunSDK implements AsyncDisposable {
               responseHeaders: ["content-type", "content-length"],
             },
           },
+          contextStorage: this._contextStorage,
         }),
         new BunFetchInstrumentation({
           captureAttributes: {
             requestHeaders: ["content-type"],
             responseHeaders: ["content-type"],
           },
+          contextStorage: this._contextStorage,
+        }),
+        new BunNodeInstrumentation({
+          captureAttributes: {
+            requestHeaders: ["content-type", "content-length", "user-agent", "accept"],
+            responseHeaders: ["content-type", "content-length"],
+          },
+          contextStorage: this._contextStorage,
         }),
       ];
 
-      debugLog("Auto-registered Bun instrumentations (default configuration)");
+      debugLog("Auto-registered Bun instrumentations with shared contextStorage");
     }
   }
 
@@ -318,7 +337,20 @@ export class BunSDK implements AsyncDisposable {
       return;
     }
 
-    // 1. Setup propagator (default to W3C Trace Context + Baggage)
+    // 1. Setup context manager using shared AsyncLocalStorage created in constructor
+    // This allows Bun's native telemetry hooks and OTel instrumentations to share async context
+    if (this._contextStorage) {
+      this._contextManager = new BunAsyncLocalStorageContextManager(this._contextStorage);
+      context.setGlobalContextManager(this._contextManager);
+      debugLog("Shared AsyncLocalStorage context manager installed globally");
+
+      // Share AsyncLocalStorage with Bun's native telemetry for enterWith() calls
+      const ConfigurationProperty = { _context_storage: 7 };
+      _nativeHooksObject.setConfigurationProperty(ConfigurationProperty._context_storage, this._contextStorage);
+      debugLog("Context storage shared with native telemetry via configuration property");
+    }
+
+    // 2. Setup propagator (default to W3C Trace Context + Baggage)
     // Per spec lines 352-367
     if (this._config.textMapPropagator !== null) {
       const propagator =
@@ -329,14 +361,14 @@ export class BunSDK implements AsyncDisposable {
       propagation.setGlobalPropagator(propagator);
     }
 
-    // 2. Merge serviceName into resource
+    // 3. Merge serviceName into resource
     let resource = this._resource;
     if (this._serviceName) {
       const serviceResource = resourceFromAttributes({ "service.name": this._serviceName });
       resource = resource.merge(serviceResource);
     }
 
-    // 3. Create TracerProvider if tracing is configured
+    // 4. Create TracerProvider if tracing is configured
     // Per Node.js SDK: Optional - gracefully degrades to noop if not provided
     if (this._spanProcessors.length > 0 || this._config.traceExporter) {
       this._tracerProvider = new NodeTracerProvider({

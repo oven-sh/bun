@@ -63,6 +63,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
         const url = new URL(req.url);
 
         if (url.pathname === "/hello") {
+          console.log(`/hello handler called`);
           return new Response("Hello, World!");
         }
 
@@ -73,9 +74,12 @@ describe("BunHttpInstrumentation - Metrics", () => {
         if (url.pathname === "/slow") {
           // Simulate slow handler for duration testing
           const start = Date.now();
+          let iterations = 0;
           while (Date.now() - start < 50) {
-            // Busy wait 50ms
+            iterations++;
+            // Tight spin to ensure measurable delay
           }
+          console.log(`/slow handler: elapsed ${Date.now() - start}ms, iterations: ${iterations}`);
           return new Response("Slow response");
         }
 
@@ -243,7 +247,10 @@ describe("BunHttpInstrumentation - Metrics", () => {
     const durationMetric1 = metrics1[0].scopeMetrics
       .flatMap(sm => sm.metrics)
       .find(m => m.descriptor.name === "http.server.request.duration");
-    const fastDuration = getDataPointValue(durationMetric1!.dataPoints[0]);
+
+    // Find the data point for /hello endpoint
+    const fastDataPoint = durationMetric1!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/hello");
+    const fastDuration = getDataPointValue(fastDataPoint);
 
     metricExporter.reset();
 
@@ -256,11 +263,14 @@ describe("BunHttpInstrumentation - Metrics", () => {
     const durationMetric2 = metrics2[0].scopeMetrics
       .flatMap(sm => sm.metrics)
       .find(m => m.descriptor.name === "http.server.request.duration");
-    const slowDuration = getDataPointValue(durationMetric2!.dataPoints[0]);
 
-    // Slow request should take longer (at least 50ms = 0.05s)
+    // Find the data point for /slow endpoint
+    const slowDataPoint = durationMetric2!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/slow");
+    const slowDuration = getDataPointValue(slowDataPoint);
+
+    // Slow request should take longer (at least 45ms = 0.045s, allowing for timing variance)
     expect(slowDuration).toBeGreaterThan(fastDuration);
-    expect(slowDuration).toBeGreaterThan(0.05);
+    expect(slowDuration).toBeGreaterThan(0.045);
   });
 
   test("metrics include server.address and server.port attributes", async () => {

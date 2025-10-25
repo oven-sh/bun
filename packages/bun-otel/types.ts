@@ -404,4 +404,11 @@ export type NativeHooks = {
    */
   getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
 };
+
+/**
+ * INTERNAL USE ONLY
+ */
+export const _nativeHooksObject: NativeHooks = (Bun.telemetry as unknown as { _nativeHooksObject: NativeHooks })
+  ._nativeHooksObject;
+
 export {};

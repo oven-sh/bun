@@ -88,7 +88,7 @@ pub fn buildFetchStartAttributes(
 /// - http.response.header.*: string (if configured)
 pub fn buildFetchEndAttributes(
     globalObject: *JSGlobalObject,
-    start_timestamp_ns: u64,
+    start_timestamp_ns: telemetry.OpTime,
     metadata: ?http.HTTPResponseMetadata,
     content_length: u64,
 ) AttributeMap {
@@ -105,9 +105,8 @@ pub fn buildFetchEndAttributes(
     // Response body size
     attrs.set(otel.semconv.http_response_body_size, content_length);
 
-    // Operation duration
-    const end_timestamp_ns = std.time.nanoTimestamp();
-    const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
+    // Operation duration (uses centralized timing utility)
+    const duration_ns = telemetry.calculateDuration(start_timestamp_ns);
     attrs.set(otel.semconv.operation_duration, duration_ns);
 
     // Response headers (capture configured headers from picohttp response)
@@ -130,7 +129,7 @@ pub fn buildFetchEndAttributes(
 /// - operation.duration: number (nanoseconds)
 pub fn buildFetchErrorAttributes(
     globalObject: *JSGlobalObject,
-    start_timestamp_ns: u64,
+    start_timestamp_ns: telemetry.OpTime,
     error_type: []const u8,
     error_message: []const u8,
     stack_trace: ?[]const u8,
@@ -155,9 +154,8 @@ pub fn buildFetchErrorAttributes(
         attrs.set(otel.semconv.http_response_status_code, code);
     }
 
-    // Operation duration
-    const end_timestamp_ns = std.time.nanoTimestamp();
-    const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
+    // Operation duration (uses centralized timing utility)
+    const duration_ns = telemetry.calculateDuration(start_timestamp_ns);
     attrs.set(otel.semconv.operation_duration, duration_ns);
 
     return attrs;
@@ -396,7 +394,7 @@ fn injectFetchHeaders(
 pub fn notifyFetchEnd(
     globalObject: *JSGlobalObject,
     request_id: u64,
-    start_time_ns: u64,
+    start_time_ns: telemetry.OpTime,
     metadata: ?http.HTTPResponseMetadata,
     body: ?*bun.MutableString,
 ) void {
@@ -413,7 +411,7 @@ pub fn notifyFetchEnd(
 pub fn notifyFetchError(
     globalObject: *JSGlobalObject,
     request_id: u64,
-    start_time_ns: u64,
+    start_time_ns: telemetry.OpTime,
     fail_error: ?anyerror,
     error_message: bun.String,
     metadata: ?http.HTTPResponseMetadata,

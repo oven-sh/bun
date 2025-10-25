@@ -5,6 +5,7 @@ const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const Output = bun.Output;
 const telemetry = @import("telemetry.zig");
 const attributes = @import("attributes.zig");
 const AttributeMap = attributes.AttributeMap;
@@ -16,7 +17,7 @@ const simple_url_parser = @import("simple_url_parser.zig");
 /// Context for tracking HTTP request telemetry state
 pub const HttpTelemetryContext = struct {
     request_id: u64 = 0,
-    start_time_ns: u64 = 0,
+    start_time_ns: telemetry.OpTime = 0,
 
     pub inline fn isEnabled(self: *const HttpTelemetryContext) bool {
         return self.request_id != 0;
@@ -51,6 +52,9 @@ pub fn buildHttpStartAttributes(
     method: []const u8,
     url: []const u8,
     headers: ?JSValue,
+    host_header: ?[]const u8,
+    fallback_server_address: ?[]const u8,
+    fallback_server_port: ?u16,
 ) AttributeMap {
     const otel = telemetry.getGlobalTelemetry() orelse {
         return AttributeMap.init(globalObject);
@@ -85,10 +89,20 @@ pub fn buildHttpStartAttributes(
     } else {
         attrs.set(otel.semconv.url_scheme, "http");
     }
-    if (parsed.host.len > 0) {
-        attrs.set(otel.semconv.server_address, parsed.host);
+
+    // Server address and port: prioritize Host header, then fallback
+    // Per OpenTelemetry semantic conventions, Host header takes precedence
+    const host_parts = if (host_header) |h| simple_url_parser.parseHostHeader(h) else simple_url_parser.URLParts{};
+
+    if (host_parts.host.len > 0) {
+        attrs.set(otel.semconv.server_address, host_parts.host);
+    } else if (fallback_server_address) |addr| {
+        attrs.set(otel.semconv.server_address, addr);
     }
-    if (parsed.port) |port| {
+
+    if (host_parts.port) |port| {
+        attrs.set(otel.semconv.server_port, port);
+    } else if (fallback_server_port) |port| {
         attrs.set(otel.semconv.server_port, port);
     }
 
@@ -115,7 +129,7 @@ pub fn buildHttpStartAttributes(
 /// - http.response.header.*: string (if configured)
 pub fn buildHttpEndAttributes(
     globalObject: *JSGlobalObject,
-    start_timestamp_ns: u64,
+    start_timestamp_ns: telemetry.OpTime,
     status_code: u16,
     content_length: u64,
     headers: ?JSValue,
@@ -132,9 +146,8 @@ pub fn buildHttpEndAttributes(
     // Response body size
     attrs.set(otel.semconv.http_response_body_size, content_length);
 
-    // Operation duration
-    const end_timestamp_ns = std.time.nanoTimestamp();
-    const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
+    // Operation duration (uses centralized timing utility)
+    const duration_ns = telemetry.calculateDuration(start_timestamp_ns);
     attrs.set(otel.semconv.operation_duration, duration_ns);
 
     // Response headers capture
@@ -157,7 +170,7 @@ pub fn buildHttpEndAttributes(
 /// - operation.duration: number (nanoseconds)
 pub fn buildHttpErrorAttributes(
     globalObject: *JSGlobalObject,
-    start_timestamp_ns: u64,
+    start_timestamp_ns: telemetry.OpTime,
     error_type: []const u8,
     error_message: []const u8,
     stack_trace: ?[]const u8,
@@ -182,9 +195,8 @@ pub fn buildHttpErrorAttributes(
         attrs.set(otel.semconv.http_response_status_code, code);
     }
 
-    // Operation duration
-    const end_timestamp_ns = std.time.nanoTimestamp();
-    const duration_ns = @as(u64, @intCast(end_timestamp_ns - @as(i128, @intCast(start_timestamp_ns))));
+    // Operation duration (uses centralized timing utility)
+    const duration_ns = telemetry.calculateDuration(start_timestamp_ns);
     attrs.set(otel.semconv.operation_duration, duration_ns);
 
     return attrs;
@@ -259,10 +271,10 @@ fn extractTraceparent(
     };
     if (get_method == null or !get_method.?.isCallable()) return;
 
-    // Call headers.get("traceparent")
+    // Call headers.get("traceparent") with headers as `this` context
     const traceparent_key = ZigString.init("traceparent").toJS(globalObject);
     const args = [_]JSValue{traceparent_key};
-    const traceparent_value_js = get_method.?.callWithGlobalThis(globalObject, &args) catch {
+    const traceparent_value_js = get_method.?.call(globalObject, headers_jsvalue, &args) catch {
         _ = catch_scope.clearException();
         return;
     };
@@ -297,16 +309,28 @@ pub inline fn notifyHttpRequestStart(
     method: []const u8,
     url: []const u8,
     headers: JSValue,
+    host_header: ?[]const u8,
+    fallback_server_address: ?[]const u8,
+    fallback_server_port: ?u16,
 ) void {
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(.http)) return;
 
     // Generate unique request ID and store timestamp
     ctx.request_id = telemetry_inst.generateId();
-    ctx.start_time_ns = @intCast(std.time.nanoTimestamp());
+    ctx.start_time_ns = telemetry.getOperationStartTime();
 
     // Build and send start attributes
-    var start_attrs = buildHttpStartAttributes(globalObject, ctx.request_id, method, url, headers);
+    var start_attrs = buildHttpStartAttributes(
+        globalObject,
+        ctx.request_id,
+        method,
+        url,
+        headers,
+        host_header,
+        fallback_server_address,
+        fallback_server_port,
+    );
     telemetry_inst.notifyOperationStart(.http, ctx.request_id, &start_attrs);
 }
 

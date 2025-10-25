@@ -153,7 +153,7 @@
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "ZigGeneratedClasses.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -577,11 +577,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     }
 
     auto specifier = Bun::toString(moduleKey);
-    ErrorableResolvedSource res;
-    res.success = false;
+    ModuleResult res;
     // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
     // EncodedJSValues are empty, which our code should be handling
-    memset(&res.result, 0, sizeof res.result);
+    memset(&res, 0, sizeof res);
 
     JSValue result = Bun::fetchESMSourceCodeSync(
         globalObject,
@@ -3309,11 +3308,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto source = Bun::toString(sourceString);
     auto typeAttribute = Bun::toString(typeAttributeString);
-    ErrorableResolvedSource res;
-    res.success = false;
+    ModuleResult res;
     // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
     // EncodedJSValues are empty, which our code should be handling
-    memset(&res.result, 0, sizeof res.result);
+    memset(&res, 0, sizeof res);
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
         static_cast<Zig::GlobalObject*>(globalObject),

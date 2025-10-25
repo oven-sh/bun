@@ -66,7 +66,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -1311,14 +1311,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
+    ModuleResult res;
+    memset(&res, 0, sizeof res);
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (result) {
-        if (res.success)
+        if (res.tag != ModuleResultTag_err)
             return JSC::JSValue::encode(result);
     }
     throwScope.assertNoExceptionExceptTermination();

@@ -1,0 +1,29 @@
+/// Minimal POD struct for transpiled source code
+/// Can be safely created on worker threads (no JSValue fields)
+/// Thread-safe transpilation result
+const bun = @import("bun");
+
+/// Minimal POD struct for transpiled source code
+/// Can be safely created on worker threads
+pub const TranspiledSource = extern struct {
+    /// Transpiled source code (Latin1 or UTF16)
+    /// Ownership transfers to C++ on return
+    source_code: bun.String,
+
+    /// Module specifier for debugging/sourcemaps
+    source_url: bun.String,
+
+    /// Optional bytecode cache (for bun build --compile)
+    bytecode_cache: ?[*]u8 = null,
+    bytecode_cache_len: usize = 0,
+
+    /// Packed flags
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u32) {
+        is_commonjs: bool = false,
+        is_already_bundled: bool = false,
+        from_package_json_type_module: bool = false,
+        _padding: u29 = 0,
+    };
+};

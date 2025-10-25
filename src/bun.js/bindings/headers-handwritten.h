@@ -105,29 +105,6 @@ typedef struct ErrorableString {
     ErrorableStringResult result;
     bool success;
 } ErrorableString;
-typedef struct ResolvedSource {
-    BunString specifier;
-    BunString source_code;
-    BunString source_url;
-    bool isCommonJSModule;
-    JSC::EncodedJSValue cjsCustomExtension;
-    void* allocator;
-    JSC::EncodedJSValue jsvalue_for_export;
-    uint32_t tag;
-    bool needsDeref;
-    bool already_bundled;
-    uint8_t* bytecode_cache;
-    size_t bytecode_cache_size;
-} ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
-typedef union ErrorableResolvedSourceResult {
-    ResolvedSource value;
-    ZigErrorType err;
-} ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
-    ErrorableResolvedSourceResult result;
-    bool success;
-} ErrorableResolvedSource;
 
 typedef struct SystemError {
     int errno_;
@@ -342,6 +319,54 @@ typedef struct {
 
 #include "SyntheticModuleType.h"
 
+// New module result types for refactored SourceProvider
+typedef struct TranspiledSourceFlags {
+    uint32_t is_commonjs : 1;
+    uint32_t is_already_bundled : 1;
+    uint32_t from_package_json_type_module : 1;
+    uint32_t _padding : 29;
+} TranspiledSourceFlags;
+
+typedef struct TranspiledSource {
+    BunString source_code;
+    BunString source_url;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_len;
+    TranspiledSourceFlags flags;
+} TranspiledSource;
+
+typedef uint8_t SpecialModuleTag;
+const SpecialModuleTag SpecialModuleTag_exports_object = 0;
+const SpecialModuleTag SpecialModuleTag_export_default_object = 1;
+const SpecialModuleTag SpecialModuleTag_custom_extension = 2;
+
+typedef struct SpecialModule {
+    SpecialModuleTag tag;
+    JSC::EncodedJSValue jsvalue;
+} SpecialModule;
+
+typedef struct ErrorResult {
+    JSC::EncodedJSValue exception;
+} ErrorResult;
+
+typedef uint8_t ModuleResultTag;
+const ModuleResultTag ModuleResultTag_transpiled = 0;
+const ModuleResultTag ModuleResultTag_special = 1;
+const ModuleResultTag ModuleResultTag_builtin = 2;
+const ModuleResultTag ModuleResultTag_err = 3;
+
+typedef union ModuleResultValue {
+    TranspiledSource transpiled;
+    SpecialModule special;
+    uint32_t builtin_id;
+    ErrorResult err;
+} ModuleResultValue;
+
+typedef struct ModuleResult {
+    ModuleResultTag tag;
+    ModuleResultValue value;
+} ModuleResult;
+
 extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
@@ -354,7 +379,7 @@ extern "C" bool Bun__transpileVirtualModule(
     const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
@@ -366,7 +391,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result,
+    ModuleResult* result,
     bool allowPromise,
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType);
@@ -376,11 +401,11 @@ extern "C" bool Bun__fetchBuiltinModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,
     const BunString* specifier,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 // Used in process.version
 extern "C" const char* Bun__version;

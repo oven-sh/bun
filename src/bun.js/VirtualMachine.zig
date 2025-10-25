@@ -1863,7 +1863,7 @@ pub fn drainMicrotasks(this: *VirtualMachine) void {
     this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
-pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
     switch (log.msgs.items.len) {
         0 => {
             const msg: logger.Msg = brk: {

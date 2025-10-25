@@ -66,6 +66,43 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
 }
 
+/// Temporary shim to convert ModuleResult back to ResolvedSource
+/// TODO: Remove this once C++ side is fully converted to ModuleResult
+fn moduleResultToResolvedSource(result: jsc.ModuleResult) ResolvedSource {
+    return switch (result.tag) {
+        .transpiled => .{
+            .allocator = null,
+            .source_code = result.value.transpiled.source_code,
+            .source_url = result.value.transpiled.source_url,
+            .is_commonjs_module = result.value.transpiled.flags.is_commonjs,
+            .already_bundled = result.value.transpiled.flags.is_already_bundled,
+            .bytecode_cache = result.value.transpiled.bytecode_cache,
+            .bytecode_cache_size = result.value.transpiled.bytecode_cache_len,
+            .tag = if (result.value.transpiled.flags.from_package_json_type_module) .package_json_type_module else .javascript,
+        },
+        .special => .{
+            .allocator = null,
+            .source_code = bun.String.empty,
+            .jsvalue_for_export = result.value.special.jsvalue,
+            .tag = switch (result.value.special.tag) {
+                .exports_object => .exports_object,
+                .export_default_object => .export_default_object,
+                .custom_extension => .javascript, // TODO: handle custom_extension properly
+            },
+        },
+        .builtin => .{
+            .allocator = null,
+            .source_code = bun.String.empty,
+            .tag = @enumFromInt(result.value.builtin_id),
+        },
+        .err => .{
+            .allocator = null,
+            .source_code = bun.String.empty,
+            .tag = .javascript,
+        },
+    };
+}
+
 pub const AsyncModule = struct {
     // This is all the state used by the printer to print the module
     parse_result: ParseResult,
@@ -425,26 +462,15 @@ pub const AsyncModule = struct {
         defer log.deinit();
         var errorable: jsc.ErrorableResolvedSource = undefined;
         this.poll_ref.unref(jsc_vm);
-        outer: {
-            errorable = jsc.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
-                switch (err) {
-                    error.JSError => {
-                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError));
-                        break :outer;
-                    },
-                    else => {
-                        VirtualMachine.processFetchLog(
-                            this.globalThis,
-                            bun.String.init(this.specifier),
-                            bun.String.init(this.referrer),
-                            &log,
-                            &errorable,
-                            err,
-                        );
-                        break :outer;
-                    },
-                }
-            });
+
+        const module_result = this.resumeLoadingModule(&log);
+
+        // Convert ModuleResult to ErrorableResolvedSource for now
+        if (module_result.tag == .err) {
+            errorable = jsc.ErrorableResolvedSource.err(error.JSError, module_result.value.err.exception);
+        } else {
+            const resolved_source = moduleResultToResolvedSource(module_result);
+            errorable = jsc.ErrorableResolvedSource.ok(resolved_source);
         }
 
         var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
@@ -463,7 +489,7 @@ pub const AsyncModule = struct {
     pub fn fulfill(
         globalThis: *JSGlobalObject,
         promise: JSValue,
-        resolved_source: *ResolvedSource,
+        module_result: *jsc.ModuleResult,
         err: ?anyerror,
         specifier_: bun.String,
         referrer_: bun.String,
@@ -480,15 +506,10 @@ pub const AsyncModule = struct {
             scope.deinit();
         }
 
+        // TODO: Convert to use ModuleResult directly
+        // For now, we still need to convert to ErrorableResolvedSource for C++ compatibility
         var errorable: jsc.ErrorableResolvedSource = undefined;
         if (err) |e| {
-            defer {
-                if (resolved_source.source_code_needs_deref) {
-                    resolved_source.source_code_needs_deref = false;
-                    resolved_source.source_code.deref();
-                }
-            }
-
             if (e == error.JSError) {
                 errorable = jsc.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
             } else {
@@ -502,7 +523,10 @@ pub const AsyncModule = struct {
                 );
             }
         } else {
-            errorable = jsc.ErrorableResolvedSource.ok(resolved_source.*);
+            // Convert ModuleResult to ResolvedSource for now
+            // This is a temporary shim until C++ side is updated
+            const resolved_source = moduleResultToResolvedSource(module_result.*);
+            errorable = jsc.ErrorableResolvedSource.ok(resolved_source);
         }
         log.deinit();
 
@@ -704,7 +728,7 @@ pub const AsyncModule = struct {
         promise.rejectAsHandled(globalThis, error_instance);
     }
 
-    pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) !ResolvedSource {
+    pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) jsc.ModuleResult {
         debug("resumeLoadingModule: {s}", .{this.specifier});
         var parse_result = this.parse_result;
         const path = this.path;
@@ -725,14 +749,21 @@ pub const AsyncModule = struct {
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        try jsc_vm.transpiler.linker.link(
+        jsc_vm.transpiler.linker.link(
             path,
             &parse_result,
             jsc_vm.origin,
             .absolute_path,
             false,
             true,
-        );
+        ) catch |err| {
+            const exception = log.toJS(this.globalThis, jsc_vm.allocator, "Link error") catch JSValue.jsUndefined();
+            _ = err; // autofix
+            return jsc.ModuleResult{
+                .tag = .err,
+                .value = .{ .err = .{ .exception = exception } },
+            };
+        };
         this.parse_result = parse_result;
 
         var printer = VirtualMachine.source_code_printer.?.*;
@@ -741,13 +772,20 @@ pub const AsyncModule = struct {
         {
             var mapper = jsc_vm.sourceMapHandler(&printer);
             defer VirtualMachine.source_code_printer.?.* = printer;
-            _ = try jsc_vm.transpiler.printWithSourceMap(
+            _ = jsc_vm.transpiler.printWithSourceMap(
                 parse_result,
                 @TypeOf(&printer),
                 &printer,
                 .esm_ascii,
                 mapper.get(),
-            );
+            ) catch |err| {
+                const exception = log.toJS(this.globalThis, jsc_vm.allocator, "Print error") catch JSValue.jsUndefined();
+                _ = err; // autofix
+                return jsc.ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = .{ .exception = exception } },
+                };
+            };
         }
 
         if (comptime Environment.dump_source) {
@@ -773,15 +811,19 @@ pub const AsyncModule = struct {
 
             resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
 
+            // TODO: Convert refCountedResolvedSource to return ModuleResult
             return resolved_source;
         }
 
-        return ResolvedSource{
-            .allocator = null,
-            .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
-            .specifier = String.init(specifier),
-            .source_url = String.init(path.text),
-            .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+        return jsc.ModuleResult{
+            .tag = .transpiled,
+            .value = .{ .transpiled = .{
+                .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
+                .source_url = String.init(path.text),
+                .flags = .{
+                    .is_commonjs = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                },
+            } },
         };
     }
 
@@ -799,7 +841,7 @@ pub const AsyncModule = struct {
     extern "c" fn Bun__onFulfillAsyncModule(
         globalObject: *JSGlobalObject,
         promiseValue: JSValue,
-        res: *jsc.ErrorableResolvedSource,
+        res: *jsc.ModuleResult,
         specifier: *bun.String,
         referrer: *bun.String,
     ) void;
@@ -831,17 +873,18 @@ pub fn transpileSourceCode(
     source_code_printer: *js_printer.BufferPrinter,
     globalObject: ?*JSGlobalObject,
     comptime flags: FetchFlags,
-) !ResolvedSource {
+) jsc.ModuleResult {
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
         if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
             // Don't print "export default <file path>"
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.empty,
-                .specifier = input_specifier,
-                .source_url = input_specifier.createIfDifferent(path.text),
+            return jsc.ModuleResult{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = bun.String.empty,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                } },
             };
         }
     }
@@ -1024,7 +1067,12 @@ pub fn transpileSourceCode(
                         }
 
                         give_back_arena = false;
-                        return error.ParseError;
+                        const global = globalObject orelse jsc_vm.global;
+                        const exception = log.toJS(global, jsc_vm.allocator, "Parse error") catch JSValue.jsUndefined();
+                        return jsc.ModuleResult{
+                            .tag = .err,
+                            .value = .{ .err = .{ .exception = exception } },
+                        };
                     };
                 },
             };
@@ -1070,63 +1118,72 @@ pub fn transpileSourceCode(
 
             if (jsc_vm.transpiler.log.errors > 0) {
                 give_back_arena = false;
-                return error.ParseError;
+                const global = globalObject orelse jsc_vm.global;
+                const exception = jsc_vm.transpiler.log.toJS(global, jsc_vm.allocator, "Parse error") catch JSValue.jsUndefined();
+                return jsc.ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = .{ .exception = exception } },
+                };
             }
 
             if (loader == .json) {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.cloneUTF8(source.contents),
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = ResolvedSource.Tag.json_for_object_loader,
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.cloneUTF8(source.contents),
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                    } },
                 };
             }
 
             if (comptime disable_transpilying) {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = switch (comptime flags) {
-                        .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
-                        .print_source => bun.String.init(source.contents),
-                        else => @compileError("unreachable"),
-                    },
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = switch (comptime flags) {
+                            .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
+                            .print_source => bun.String.init(source.contents),
+                            else => @compileError("unreachable"),
+                        },
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                    } },
                 };
             }
 
             if (loader == .json or loader == .jsonc or loader == .toml or loader == .yaml) {
                 if (parse_result.empty) {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .specifier = input_specifier,
-                        .source_url = input_specifier.createIfDifferent(path.text),
-                        .jsvalue_for_export = JSValue.createEmptyObject(jsc_vm.global, 0),
-                        .tag = .exports_object,
+                    return jsc.ModuleResult{
+                        .tag = .special,
+                        .value = .{ .special = .{
+                            .tag = .exports_object,
+                            .jsvalue = JSValue.createEmptyObject(jsc_vm.global, 0),
+                        } },
                     };
                 }
 
-                return ResolvedSource{
-                    .allocator = null,
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
-                    .tag = .exports_object,
+                return jsc.ModuleResult{
+                    .tag = .special,
+                    .value = .{ .special = .{
+                        .tag = .exports_object,
+                        .jsvalue = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    } },
                 };
             }
 
             if (parse_result.already_bundled != .none) {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.cloneLatin1(source.contents),
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .already_bundled = true,
-                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
-                    .bytecode_cache_size = bytecode_slice.len,
-                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.cloneLatin1(source.contents),
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_len = bytecode_slice.len,
+                        .flags = .{
+                            .is_commonjs = parse_result.already_bundled.isCommonJS(),
+                            .is_already_bundled = true,
+                        },
+                    } },
                 };
             }
 
@@ -1136,13 +1193,15 @@ pub fn transpileSourceCode(
                     break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
                 };
                 if (was_cjs) {
-                    return .{
-                        .allocator = null,
-                        .source_code = bun.String.static("(function(){})"),
-                        .specifier = input_specifier,
-                        .source_url = input_specifier.createIfDifferent(path.text),
-                        .is_commonjs_module = true,
-                        .tag = .javascript,
+                    return jsc.ModuleResult{
+                        .tag = .transpiled,
+                        .value = .{ .transpiled = .{
+                            .source_code = bun.String.static("(function(){})"),
+                            .source_url = input_specifier.createIfDifferent(path.text),
+                            .flags = .{
+                                .is_commonjs = true,
+                            },
+                        } },
                     };
                 }
             }
@@ -1157,37 +1216,42 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = switch (entry.output_code) {
-                        .string => entry.output_code.string,
-                        .utf8 => brk: {
-                            const result = bun.String.cloneUTF8(entry.output_code.utf8);
-                            cache.output_code_allocator.free(entry.output_code.utf8);
-                            entry.output_code.utf8 = "";
-                            break :brk result;
-                        },
-                    },
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .is_commonjs_module = entry.metadata.module_type == .cjs,
-                    .tag = brk: {
-                        if (entry.metadata.module_type == .cjs and source.path.isFile()) {
-                            const actual_package_json: *PackageJSON = package_json orelse brk2: {
-                                // this should already be cached virtually always so it's fine to do this
-                                const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(source.path.name.dir) catch null) orelse
-                                    break :brk .javascript;
+                const from_package_json_type_module = brk: {
+                    if (entry.metadata.module_type == .cjs and source.path.isFile()) {
+                        const actual_package_json: *PackageJSON = package_json orelse brk2: {
+                            // this should already be cached virtually always so it's fine to do this
+                            const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(source.path.name.dir) catch null) orelse
+                                break :brk false;
 
-                                break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                            } orelse break :brk .javascript;
+                            break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                        } orelse break :brk false;
 
-                            if (actual_package_json.module_type == .esm) {
-                                break :brk ResolvedSource.Tag.package_json_type_module;
-                            }
+                        if (actual_package_json.module_type == .esm) {
+                            break :brk true;
                         }
+                    }
 
-                        break :brk ResolvedSource.Tag.javascript;
-                    },
+                    break :brk false;
+                };
+
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = switch (entry.output_code) {
+                            .string => entry.output_code.string,
+                            .utf8 => brk: {
+                                const result = bun.String.cloneUTF8(entry.output_code.utf8);
+                                cache.output_code_allocator.free(entry.output_code.utf8);
+                                entry.output_code.utf8 = "";
+                                break :brk result;
+                            },
+                        },
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .flags = .{
+                            .is_commonjs = entry.metadata.module_type == .cjs,
+                            .from_package_json_type_module = from_package_json_type_module,
+                        },
+                    } },
                 };
             }
 
@@ -1206,7 +1270,14 @@ pub fn transpileSourceCode(
 
             if (parse_result.pending_imports.len > 0) {
                 if (promise_ptr == null) {
-                    return error.UnexpectedPendingResolution;
+                    const global = globalObject orelse jsc_vm.global;
+                    const msg_str = std.fmt.allocPrint(jsc_vm.allocator, "Unexpected pending import in \"{}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().", .{input_specifier}) catch "Unexpected pending import";
+                    defer if (msg_str.ptr != "Unexpected pending import".ptr) jsc_vm.allocator.free(msg_str);
+                    const exception = JSValue.createTypeError(global, bun.String.init(msg_str), .{});
+                    return jsc.ModuleResult{
+                        .tag = .err,
+                        .value = .{ .err = .{ .exception = exception } },
+                    };
                 }
 
                 if (source.contents_is_recycled) {
@@ -1232,7 +1303,15 @@ pub fn transpileSourceCode(
                     },
                 );
                 give_back_arena = false;
-                return error.AsyncModule;
+                // Special case: async module loading in progress
+                // This signals to the caller that module loading is async
+                // The promise will be fulfilled later via AsyncModule.fulfill()
+                const global = globalObject.?;
+                const exception = JSValue.createTypeError(global, bun.String.static("AsyncModule"), .{});
+                return jsc.ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = .{ .exception = exception } },
+                };
             }
 
             if (!jsc_vm.macro_mode)
@@ -1267,40 +1346,39 @@ pub fn transpileSourceCode(
             if (jsc_vm.isWatcherEnabled()) {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
                 resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                // TODO: Convert refCountedResolvedSource to return ModuleResult
                 return resolved_source;
             }
 
-            // Pass along package.json type "module" if set.
-            const tag: ResolvedSource.Tag = switch (loader) {
-                .json, .jsonc => .json_for_object_loader,
+            // Determine if from package.json type module
+            const from_package_json_type_module = switch (loader) {
+                .json, .jsonc => false,
                 .js, .jsx, .ts, .tsx => brk: {
                     const module_type_ = if (package_json) |pkg| pkg.module_type else module_type;
-
-                    break :brk switch (module_type_) {
-                        .esm => .package_json_type_module,
-                        .cjs => .package_json_type_commonjs,
-                        else => .javascript,
-                    };
+                    break :brk module_type_ == .esm;
                 },
-                else => .javascript,
+                else => false,
             };
 
-            return .{
-                .allocator = null,
-                .source_code = brk: {
-                    const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
+            return jsc.ModuleResult{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = brk: {
+                        const written = printer.ctx.getWritten();
+                        const result = cache.output_code orelse bun.String.cloneLatin1(written);
 
-                    if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
-                        printer.ctx.buffer.deinit();
-                    }
+                        if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
+                            printer.ctx.buffer.deinit();
+                        }
 
-                    break :brk result;
-                },
-                .specifier = input_specifier,
-                .source_url = input_specifier.createIfDifferent(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
-                .tag = tag,
+                        break :brk result;
+                    },
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .flags = .{
+                        .is_commonjs = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                        .from_package_json_type_module = from_package_json_type_module,
+                    },
+                } },
             };
         },
         // provideFetch() should be called
@@ -1361,12 +1439,12 @@ pub fn transpileSourceCode(
                         );
                     }
                 }
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = .esm,
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                    } },
                 };
             }
 
@@ -1420,48 +1498,58 @@ pub fn transpileSourceCode(
                 ;
             };
 
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.cloneUTF8(sqlite_module_source_code_string),
-                .specifier = input_specifier,
-                .source_url = input_specifier.createIfDifferent(path.text),
-                .tag = .esm,
+            return jsc.ModuleResult{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = bun.String.cloneUTF8(sqlite_module_source_code_string),
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                } },
             };
         },
 
         .html => {
             if (flags.disableTranspiling()) {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.empty,
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = .esm,
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.empty,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                    } },
                 };
             }
 
             if (globalObject == null) {
-                return error.NotSupported;
+                const exception = JSValue.createTypeError(jsc_vm.global, bun.String.static("HTML bundles require a global object"), .{});
+                return jsc.ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = .{ .exception = exception } },
+                };
             }
 
-            const html_bundle = try jsc.API.HTMLBundle.init(globalObject.?, path.text);
-            return ResolvedSource{
-                .allocator = &jsc_vm.allocator,
-                .jsvalue_for_export = html_bundle.toJS(globalObject.?),
-                .specifier = input_specifier,
-                .source_url = input_specifier.createIfDifferent(path.text),
-                .tag = .export_default_object,
+            const html_bundle = jsc.API.HTMLBundle.init(globalObject.?, path.text) catch |err| {
+                const exception = JSValue.createTypeError(globalObject.?, bun.String.init(std.fmt.allocPrint(jsc_vm.allocator, "Failed to load HTML bundle: {}", .{err}) catch "Failed to load HTML bundle"), .{});
+                return jsc.ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = .{ .exception = exception } },
+                };
+            };
+            return jsc.ModuleResult{
+                .tag = .special,
+                .value = .{ .special = .{
+                    .tag = .export_default_object,
+                    .jsvalue = html_bundle.toJS(globalObject.?),
+                } },
             };
         },
 
         else => {
             if (flags.disableTranspiling()) {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = bun.String.empty,
-                    .specifier = input_specifier,
-                    .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = .esm,
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.empty,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                    } },
                 };
             }
 
@@ -1527,12 +1615,12 @@ pub fn transpileSourceCode(
                 break :brk try bun.String.createUTF8ForJS(globalObject.?, path.text);
             };
 
-            return ResolvedSource{
-                .allocator = null,
-                .jsvalue_for_export = value,
-                .specifier = input_specifier,
-                .source_url = input_specifier.createIfDifferent(path.text),
-                .tag = .export_default_object,
+            return jsc.ModuleResult{
+                .tag = .special,
+                .value = .{ .special = .{
+                    .tag = .export_default_object,
+                    .jsvalue = value,
+                } },
             };
         },
     }
@@ -1796,39 +1884,37 @@ pub export fn Bun__transpileFile(
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
     var promise: ?*jsc.JSInternalPromise = null;
-    ret.* = jsc.ErrorableResolvedSource.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            lr.specifier,
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            lr.path,
-            synchronous_loader,
-            module_type,
-            &log,
-            lr.virtual_source,
-            if (allow_promise) &promise else null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.AsyncModule => {
-                    bun.assert(promise != null);
-                    return promise;
-                },
-                error.PluginError => return null,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
-                    return null;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-                    return null;
-                },
-            }
-        },
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        lr.specifier,
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        lr.path,
+        synchronous_loader,
+        module_type,
+        &log,
+        lr.virtual_source,
+        if (allow_promise) &promise else null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
     );
+
+    // Handle ModuleResult
+    if (module_result.tag == .err) {
+        // Check if it's an AsyncModule error (special case)
+        const err_msg = module_result.value.err.exception.toString(globalObject);
+        defer err_msg.deref();
+        if (err_msg.eqlComptime("AsyncModule")) {
+            bun.assert(promise != null);
+            return promise;
+        }
+        ret.* = jsc.ErrorableResolvedSource.err(error.JSError, module_result.value.err.exception);
+        return null;
+    }
+
+    const resolved_source = moduleResultToResolvedSource(module_result);
+    ret.* = jsc.ErrorableResolvedSource.ok(resolved_source);
     return promise;
 }
 
@@ -1855,16 +1941,15 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
     } orelse return .zero;
 }
 
-fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
+fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?jsc.ModuleResult {
     analytics.Features.builtin_modules.insert(hardcoded);
     return switch (hardcoded) {
-        .@"bun:main" => .{
-            .allocator = null,
-            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
-            .specifier = specifier,
-            .source_url = specifier,
-            .tag = .esm,
-            .source_code_needs_deref = true,
+        .@"bun:main" => jsc.ModuleResult{
+            .tag = .transpiled,
+            .value = .{ .transpiled = .{
+                .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
+                .source_url = specifier,
+            } },
         },
         .@"bun:internal-for-testing" => {
             if (!Environment.isDebug) {
@@ -1873,17 +1958,18 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
             }
             return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
         },
-        .@"bun:wrap" => .{
-            .allocator = null,
-            .source_code = String.init(Runtime.Runtime.sourceCode()),
-            .specifier = specifier,
-            .source_url = specifier,
+        .@"bun:wrap" => jsc.ModuleResult{
+            .tag = .transpiled,
+            .value = .{ .transpiled = .{
+                .source_code = String.init(Runtime.Runtime.sourceCode()),
+                .source_url = specifier,
+            } },
         },
         inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier),
     };
 }
 
-pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
+pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) ?jsc.ModuleResult {
     if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
         return getHardcodedModule(jsc_vm, specifier, hardcoded);
     }
@@ -1892,11 +1978,12 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
         const spec = specifier.toUTF8(bun.default_allocator);
         defer spec.deinit();
         if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
-            return .{
-                .allocator = null,
-                .source_code = bun.String.cloneUTF8(entry.source.contents),
-                .specifier = specifier,
-                .source_url = specifier.dupeRef(),
+            return jsc.ModuleResult{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = bun.String.cloneUTF8(entry.source.contents),
+                    .source_url = specifier.dupeRef(),
+                } },
             };
         }
     } else if (jsc_vm.standalone_module_graph) |graph| {
@@ -1913,24 +2000,27 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                     \\export const __esModule = true;
                     \\export default db;
                 ;
-                return .{
-                    .allocator = null,
-                    .source_code = bun.String.static(code),
-                    .specifier = specifier,
-                    .source_url = specifier.dupeRef(),
-                    .source_code_needs_deref = false,
+                return jsc.ModuleResult{
+                    .tag = .transpiled,
+                    .value = .{ .transpiled = .{
+                        .source_code = bun.String.static(code),
+                        .source_url = specifier.dupeRef(),
+                    } },
                 };
             }
 
-            return .{
-                .allocator = null,
-                .source_code = file.toWTFString(),
-                .specifier = specifier,
-                .source_url = specifier.dupeRef(),
-                .source_code_needs_deref = false,
-                .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
-                .bytecode_cache_size = file.bytecode.len,
-                .is_commonjs_module = file.module_format == .cjs,
+            return jsc.ModuleResult{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = file.toWTFString(),
+                    .source_url = specifier.dupeRef(),
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_len = file.bytecode.len,
+                    .flags = .{
+                        .is_commonjs = file.module_format == .cjs,
+                        .is_already_bundled = file.bytecode.len > 0,
+                    },
+                } },
             };
         }
     }
@@ -1977,47 +2067,39 @@ export fn Bun__transpileVirtualModule(
     defer log.deinit();
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-    ret.* = jsc.ErrorableResolvedSource.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            specifier_slice.slice(),
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            path,
-            loader,
-            .unknown,
-            &log,
-            &virtual_source,
-            null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.PluginError => return true,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
-                    return true;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
-                    return true;
-                },
-            }
-        },
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        specifier_slice.slice(),
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        path,
+        loader,
+        .unknown,
+        &log,
+        &virtual_source,
+        null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
     );
+
+    if (module_result.tag == .err) {
+        ret.* = jsc.ErrorableResolvedSource.err(error.JSError, module_result.value.err.exception);
+    } else {
+        const resolved_source = moduleResultToResolvedSource(module_result);
+        ret.* = jsc.ErrorableResolvedSource.ok(resolved_source);
+    }
     analytics.Features.virtual_modules += 1;
     return true;
 }
 
-inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) ResolvedSource {
-    return ResolvedSource{
-        .allocator = null,
-        .source_code = bun.String.empty,
-        .specifier = specifier,
-        .source_url = bun.String.static(@tagName(name)),
-        .tag = name,
-        .source_code_needs_deref = false,
+inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) jsc.ModuleResult {
+    // Synthetic modules are builtin modules identified by their tag
+    // Convert the tag name to a builtin ID (for now, use a simple hash)
+    const builtin_id = @intFromEnum(name);
+    return jsc.ModuleResult{
+        .tag = .builtin,
+        .value = .{ .builtin_id = builtin_id },
     };
 }
 
@@ -2179,14 +2261,16 @@ pub const RuntimeTranspilerStore = struct {
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
-        var resolved_source = ResolvedSource{};
+        // Determine module type flags from package.json
+        var module_flags: jsc.TranspiledSource.Flags = .{};
         if (package_json) |pkg| {
             switch (pkg.module_type) {
                 .cjs => {
-                    resolved_source.tag = .package_json_type_commonjs;
-                    resolved_source.is_commonjs_module = true;
+                    module_flags.is_commonjs = true;
                 },
-                .esm => resolved_source.tag = .package_json_type_module,
+                .esm => {
+                    module_flags.from_package_json_type_module = true;
+                },
                 .unknown => {},
             }
         }
@@ -2204,7 +2288,18 @@ pub const RuntimeTranspilerStore = struct {
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
             },
-            .resolved_source = resolved_source,
+            .module_result = .{
+                .tag = .transpiled,
+                .value = .{ .transpiled = .{
+                    .source_code = bun.String.empty,
+                    .source_url = bun.String.empty,
+                    .flags = module_flags,
+                } },
+            },
+            .resolved_source = .{
+                .tag = if (module_flags.from_package_json_type_module) .package_json_type_module else if (module_flags.is_commonjs) .package_json_type_commonjs else .javascript,
+                .is_commonjs_module = module_flags.is_commonjs,
+            },
         };
         if (comptime Environment.allow_assert)
             debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });
@@ -2225,6 +2320,9 @@ pub const RuntimeTranspilerStore = struct {
         generation_number: u32 = 0,
         log: logger.Log,
         parse_error: ?anyerror = null,
+        module_result: jsc.ModuleResult = .{ .tag = .transpiled, .value = .{ .transpiled = .{ .source_code = bun.String.empty, .source_url = bun.String.empty } } },
+        // TODO(Phase 3): Fully convert TranspilerJob to use ModuleResult throughout
+        // For now, we keep a compatibility shim for the worker thread code
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: jsc.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
@@ -3098,6 +3196,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
+const ModuleResult = bun.jsc.ModuleResult;
+const TranspiledSource = bun.jsc.TranspiledSource;
+const SpecialModule = bun.jsc.SpecialModule;
 const VirtualMachine = bun.jsc.VirtualMachine;
 const ZigString = bun.jsc.ZigString;
 const Bun = jsc.API.Bun;

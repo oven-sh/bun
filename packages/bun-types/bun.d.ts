@@ -5994,7 +5994,7 @@ declare module "bun" {
      * @param options The options to use when creating the router
      * @param options.dir The root directory containing the files to route
      * @param options.style The file routing convention to use ("nextjs" or
-     * "react-router")
+     * "react-router"). Default: "nextjs".
      */
     constructor(options: {
       /**

@@ -454,9 +454,9 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     const version = version: {
         if (dependency.version.tag == .npm) {
             if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                const group = dependency.version.value.npm.version;
+                const group = dependency.version.getVersion();
                 const buf = this.lockfile.buffers.string_bytes.items;
-                var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
+                var curr_list: ?*const Semver.Query.List = &aliased.getVersion().head;
                 while (curr_list) |queries| {
                     var curr: ?*const Semver.Query = &queries.head;
                     while (curr) |query| {
@@ -722,8 +722,8 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
-                                        if (version.tag == .npm and version.value.npm.version.isExact()) {
-                                            if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                        if (version.tag == .npm and version.getVersion().isExact()) {
+                                            if (loaded_manifest.?.findByVersion(version.getVersion().head.head.range.left.version)) |find_result| {
                                                 if (this.options.minimum_release_age_ms) |min_age_ms| {
                                                     if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
                                                         const package_name = this.lockfile.str(&name);
@@ -1437,7 +1437,7 @@ fn getOrPutResolvedPackageWithFindResult(
                 break :extract .{ .package = package, .is_first_time = true };
             }
 
-            const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
+            const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.getVersion());
             bun.debugAssert(!this.network_dedupe_map.contains(task_id));
 
             break :extract .{
@@ -1590,11 +1590,11 @@ fn getOrPutResolvedPackage(
                     const workspace_version = this.lockfile.workspace_versions.get(name_hash);
                     const buf = this.lockfile.buffers.string_bytes.items;
                     if (this.options.link_workspace_packages and
-                        (((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
+                        (((workspace_version != null and version.getVersion().satisfies(workspace_version.?, buf, buf)) or
                             // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
                             // if the workspace doesn't have a version, it can still be used if
                             // dependency version is wildcard
-                            (workspace_path != null and version.value.npm.version.@"is *"()))))
+                            (workspace_path != null and version.getVersion().@"is *"()))))
                     {
                         const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                         const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
@@ -1627,7 +1627,7 @@ fn getOrPutResolvedPackage(
 
             const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
                 .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
-                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
+                .npm => manifest.findBestVersionWithFilter(version.getVersion(), this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
                 else => unreachable,
             };
 
@@ -1650,7 +1650,7 @@ fn getOrPutResolvedPackage(
                                     });
                                 },
                                 .npm => {
-                                    const version_str = version.value.npm.version.fmt(manifest.string_buf);
+                                    const version_str = version.getVersion().fmt(manifest.string_buf);
                                     Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-second filter", .{
                                         package_name,
                                         version_str,
@@ -1848,7 +1848,7 @@ fn getOrPutResolvedPackage(
 fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
     const buf = this.lockfile.buffers.string_bytes.items;
     if (resolution.tag == .npm and dependency.tag == .npm) {
-        return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
+        return dependency.getVersion().satisfies(resolution.getVersion(), buf, buf);
     }
 
     if (resolution.tag == .git and dependency.tag == .git) {

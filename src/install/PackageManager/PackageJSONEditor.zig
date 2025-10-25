@@ -297,7 +297,7 @@ pub fn editUpdateNoArgs(
                                     }
 
                                     const new_version = new_version: {
-                                        const version_fmt = resolution.value.npm.version.fmt(string_buf);
+                                        const version_fmt = resolution.getVersion().fmt(string_buf);
                                         if (options.exact_versions) {
                                             break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
                                         }
@@ -319,7 +319,7 @@ pub fn editUpdateNoArgs(
                                     };
 
                                     if (is_alias) {
-                                        const dep_literal = workspace_dep.version.literal.slice(string_buf);
+                                        const dep_literal = workspace_dep.version.copyLiteralSlice(string_buf);
 
                                         // negative because the real package might have a scope
                                         // e.g. "dep": "npm:@foo/bar@1.2.3"
@@ -462,7 +462,7 @@ pub fn edit(
                                 if (request.version.tag == .github or request.version.tag == .git) {
                                     for (query.expr.data.e_object.properties.slice()) |item| {
                                         if (item.value) |v| {
-                                            const url = request.version.literal.slice(request.version_buf);
+                                            const url = request.version.copyLiteralSlice(request.version_buf);
                                             if (v.data == .e_string and v.data.e_string.eql(string, url)) {
                                                 request.e_string = v.data.e_string;
                                                 remaining -= 1;
@@ -686,7 +686,7 @@ pub fn edit(
                     if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
                         break :uninitialized switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, "latest"),
-                            else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                            else => try allocator.dupe(u8, request.version.copyLiteralSlice(request.version_buf)),
                         };
                     } else {
                         break :uninitialized e_string.data;
@@ -702,7 +702,7 @@ pub fn edit(
                             var alias_at_index: ?usize = null;
 
                             const new_version = new_version: {
-                                const version_fmt = resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
+                                const version_fmt = resolutions[request.package_id].getVersion().fmt(manager.lockfile.buffers.string_bytes.items);
                                 if (options.exact_versions) {
                                     break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
                                 }
@@ -740,20 +740,20 @@ pub fn edit(
                         }
                     }
                     if (request.version.tag == .dist_tag or
-                        (manager.subcommand == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
+                        (manager.subcommand == .update and request.version.tag == .npm and !request.version.getVersion().isExact()))
                     {
                         const new_version = try switch (options.exact_versions) {
                             inline else => |exact_versions| std.fmt.allocPrint(
                                 allocator,
                                 if (comptime exact_versions) "{}" else "^{}",
                                 .{
-                                    resolutions[request.package_id].value.npm.version.fmt(request.version_buf),
+                                    resolutions[request.package_id].getVersion().fmt(request.version_buf),
                                 },
                             ),
                         };
 
                         if (request.version.tag == .npm and request.version.value.npm.is_alias) {
-                            const dep_literal = request.version.literal.slice(request.version_buf);
+                            const dep_literal = request.version.copyLiteralSlice(request.version_buf);
                             if (strings.indexOfChar(dep_literal, '@')) |at_index| {
                                 break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
                                     dep_literal[0..at_index],
@@ -765,11 +765,11 @@ pub fn edit(
                         break :npm new_version;
                     }
 
-                    break :npm try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                    break :npm try allocator.dupe(u8, request.version.copyLiteralSlice(request.version_buf));
                 },
 
                 .workspace => try allocator.dupe(u8, "workspace:*"),
-                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                else => try allocator.dupe(u8, request.version.copyLiteralSlice(request.version_buf)),
             };
         }
     }

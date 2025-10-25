@@ -12,7 +12,7 @@ pub const Array = std.ArrayListUnmanaged(UpdateRequest);
 
 pub inline fn matches(this: PackageManager.UpdateRequest, dependency: Dependency, string_buf: []const u8) bool {
     return this.name_hash == if (this.name.len == 0)
-        String.Builder.stringHash(dependency.version.literal.slice(string_buf))
+        String.Builder.stringHash(dependency.version.copyLiteralSlice(string_buf))
     else
         dependency.name_hash;
 }
@@ -21,7 +21,7 @@ pub fn getName(this: *const UpdateRequest) string {
     return if (this.is_aliased)
         this.name
     else
-        this.version.literal.slice(this.version_buf);
+        this.version.copyLiteralSlice(this.version_buf);
 }
 
 /// If `this.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
@@ -43,7 +43,7 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
     else if (this.getNameInLockfile(lockfile)) |name|
         name
     else
-        this.version.literal.slice(this.version_buf);
+        this.version.copyLiteralSlice(this.version_buf);
 }
 
 pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!jsc.JSValue {
@@ -221,9 +221,9 @@ fn parseWithError(
             request.name = allocator.dupe(u8, name) catch unreachable;
             request.name_hash = String.Builder.stringHash(name);
         } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
-            request.name_hash = String.Builder.stringHash(version.literal.slice(input));
+            request.name_hash = String.Builder.stringHash(version.copyLiteralSlice(input));
         } else {
-            request.name_hash = String.Builder.stringHash(version.literal.slice(input));
+            request.name_hash = String.Builder.stringHash(version.copyLiteralSlice(input));
         }
 
         for (update_requests.items) |*prev| {

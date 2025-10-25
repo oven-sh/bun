@@ -963,6 +963,15 @@ pub fn Path(comptime opts: Options) type {
     };
 }
 
+/// The given string contains separators that match the platform's path separator style.
+pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
+    if (Environment.isWindows) {
+        return bun.strings.containsChar(input_path, '\\');
+    } else {
+        return bun.strings.containsChar(input_path, '/');
+    }
+}
+
 const std = @import("std");
 
 const bun = @import("bun");

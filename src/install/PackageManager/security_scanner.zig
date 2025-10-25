@@ -556,8 +556,8 @@ const JSONBuilder = struct {
                     \\  }}
                 , .{
                     bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
-                    pkg_res.value.npm.version.fmt(string_buf),
-                    pkg_res.value.npm.version.fmt(string_buf),
+                    pkg_res.getVersion().fmt(string_buf),
+                    pkg_res.getVersion().fmt(string_buf),
                     bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
                 });
             } else {
@@ -571,8 +571,8 @@ const JSONBuilder = struct {
                     \\  }}
                 , .{
                     bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
-                    pkg_res.value.npm.version.fmt(string_buf),
-                    bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}),
+                    pkg_res.getVersion().fmt(string_buf),
+                    bun.fmt.formatJSONStringUTF8(dep_version.copyLiteralSlice(string_buf), .{}),
                     bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
                 });
             }

@@ -54,7 +54,7 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
 
 pub fn countWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
     builder.count(this.name.slice(name_buf));
-    builder.count(this.version.literal.slice(version_buf));
+    builder.count(this.version.copyLiteralSlice(version_buf));
 }
 
 pub fn count(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
@@ -67,7 +67,7 @@ pub fn clone(this: *const Dependency, package_manager: *PackageManager, buf: []c
 
 pub fn cloneWithDifferentBuffers(this: *const Dependency, package_manager: *PackageManager, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
-    const new_literal = builder.append(String, this.version.literal.slice(version_buf));
+    const new_literal = builder.append(String, this.version.copyLiteralSlice(version_buf));
     const sliced = new_literal.sliced(out_slice);
     const new_name = builder.append(String, this.name.slice(name_buf));
 
@@ -171,45 +171,6 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     }
 
     return false;
-}
-
-/// `isGitHubShorthand` from npm
-/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
-pub inline fn isGitHubRepoPath(dependency: string) bool {
-    // Shortest valid expression: u/r
-    if (dependency.len < 3) return false;
-
-    var hash_index: usize = 0;
-
-    // the branch could have slashes
-    // - oven-sh/bun#brach/name
-    var first_slash_index: usize = 0;
-
-    for (dependency, 0..) |c, i| {
-        switch (c) {
-            '/' => {
-                if (i == 0) return false;
-                if (first_slash_index == 0) {
-                    first_slash_index = i;
-                }
-            },
-            '#' => {
-                if (i == 0) return false;
-                if (hash_index > 0) return false;
-                if (first_slash_index == 0) return false;
-                hash_index = i;
-            },
-            // Not allowed in username
-            '.', '_' => {
-                if (first_slash_index == 0) return false;
-            },
-            // Must be alphanumeric
-            '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
-            else => return false,
-        }
-    }
-
-    return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
 /// Github allows for the following format of URL:
@@ -318,7 +279,186 @@ pub fn withoutBuildTag(version: string) string {
     if (strings.indexOfChar(version, '+')) |plus| return version[0..plus] else return version;
 }
 
-pub const Version = struct {
+pub const ModernVersion = struct {
+    const Self = @This();
+
+    _value: union(enum) {
+        /// TODO(markovejnovic): This is nullable because a large part of the codebase uses .{} to
+        ///                      initialize Version. They should not be doing that.
+        npa: npm_package_arg.NpaSpec,
+        workspace: String,
+        catalog: String,
+        uninitialized: void,
+    } = .{ .uninitialized = {} },
+
+    /// This field is necessary for compatibility with the old implementation.
+    /// TODO(markovejnovic): Remove this field and replace it with a public method.
+    tag: LegacyVersion.Tag = .uninitialized,
+
+    /// I think this is supposed to return the semver string representation of the version?
+    pub fn getVersionStr(self: *const Self) []const u8 {
+        // TODO(markovejnovic): Implement
+        _ = self;
+        return "";
+    }
+
+    /// Attempt to get the semver query group.
+    pub fn getVersion(self: *const Self) Semver.Query.Group {
+        _ = self;
+    }
+
+    // I think this is supposed to format the literal version into buf and return it?
+    pub fn fmtLiteral(self: *const Self, buf: []const u8) []const u8 {
+        // TODO(markovejnovic): Implement
+        _ = self;
+        _ = buf;
+        return "";
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self._npa) |npa| {
+            npa.deinit();
+            self._npa = null;
+        }
+
+        self.* = undefined;
+    }
+
+    pub fn clone(
+        self: *const Self,
+        buf: []const u8,
+        comptime StringBuilder: type,
+        builder: StringBuilder,
+    ) !Self {
+        _ = builder;
+
+        return .{
+            .tag = self.tag,
+            ._npa = if (self._npa) |npa| try npa.clone(buf) else null,
+        };
+    }
+
+    /// Format for debugging.
+    pub fn format(
+        self: *const Self,
+        comptime fmt_str: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) @TypeOf(writer).Error!void {
+        // TODO(markovejnovic): Implement.
+        _ = self;
+        _ = fmt_str;
+        _ = options;
+    }
+
+    pub fn gitOwner(self: *const Self) Semver.SemverString.String {
+        // TODO(markovejnovic): Implement
+        _ = self;
+        return "";
+    }
+
+    /// I think this is supposed to copy the string literal slice into buf and return it?
+    pub fn copyLiteralSlice(self: *const Self, buf: []const u8) []const u8 {
+        _ = self;
+        _ = buf;
+        return "";
+    }
+
+    /// I think this is supposed to format the version into buf and return it?
+    pub fn fmtLiteralJson(
+        self: *const Self,
+        buf: []const u8,
+        opts: Semver.String.JsonFormatter.Options,
+    ) Semver.String.JsonFormatter {
+        _ = self;
+        return .{
+            .buf = buf,
+            .str = .init(),
+            .opts = opts,
+        };
+    }
+
+    pub const Tag = enum(u8) {
+        uninitialized = 0,
+
+        /// Semver range
+        npm = 1,
+
+        /// NPM dist tag, e.g. "latest"
+        dist_tag = 2,
+
+        /// URI to a .tgz or .tar.gz
+        tarball = 3,
+
+        /// Local folder
+        folder = 4,
+
+        /// link:path
+        /// https://docs.npmjs.com/cli/v8/commands/npm-link#synopsis
+        /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
+        symlink = 5,
+
+        /// Local path specified under `workspaces`
+        workspace = 6,
+
+        /// Git Repository (via `git` CLI)
+        git = 7,
+
+        /// GitHub Repository (via REST API)
+        github = 8,
+
+        catalog = 9,
+
+        pub const map = bun.ComptimeStringMap(Tag, .{
+            .{ "npm", .npm },
+            .{ "dist_tag", .dist_tag },
+            .{ "tarball", .tarball },
+            .{ "folder", .folder },
+            .{ "symlink", .symlink },
+            .{ "workspace", .workspace },
+            .{ "git", .git },
+            .{ "github", .github },
+            .{ "catalog", .catalog },
+        });
+        pub const fromJS = map.fromJS;
+
+        pub fn cmp(this: Tag, other: Tag) std.math.Order {
+            // TODO: align with yarn
+            return std.math.order(@intFromEnum(this), @intFromEnum(other));
+        }
+
+        pub inline fn isNPM(this: Tag) bool {
+            return @intFromEnum(this) < 3;
+        }
+
+        pub fn infer(dependency: string) Tag {
+            var npa_spec = npm_package_arg.npa(bun.default_allocator, dependency, ".") orelse {
+                return .uninitialized;
+            };
+            defer npa_spec.deinit();
+
+            return fromNpaSpecTag(npa_spec.getType());
+        }
+
+        fn fromNpaSpecTag(tag: npm_package_arg.NpaSpec.Type) Tag {
+            return switch (tag) {
+                .versioned => .npm,
+                .tagged => .dist_tag,
+                .file => .folder,
+                .git => .git,
+                .github => .github,
+                .remote_tarball, .local_tarball => .tarball,
+                .workspace => .workspace,
+                .symlink => .symlink,
+                else => .uninitialized,
+            };
+        }
+    };
+};
+
+pub const Version = ModernVersion;
+
+pub const LegacyVersion = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
@@ -347,7 +487,7 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                var version_str = try bun.String.createFormat("{}", .{dep.getVersion().fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
@@ -382,7 +522,7 @@ pub const Version = struct {
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
             .npm => {
-                this.value.npm.version.deinit();
+                this.getVersion().deinit();
             },
             else => {},
         }
@@ -602,7 +742,7 @@ pub const Version = struct {
                                     if (strings.hasPrefixComptime(url, "://")) {
                                         url = url["://".len..];
                                         if (strings.hasPrefixComptime(url, "github.com/")) {
-                                            if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                            if (hosted_git_info.isGitHubShorthand(url["github.com/".len..])) return .github;
                                         }
                                         return .git;
                                     }
@@ -633,7 +773,7 @@ pub const Version = struct {
                                             else => false,
                                         }) {
                                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                                if (hosted_git_info.isGitHubShorthand(url["github.com/".len..])) return .github;
                                             }
                                             return .git;
                                         }
@@ -641,7 +781,7 @@ pub const Version = struct {
                                 },
                                 'h' => {
                                     if (strings.hasPrefixComptime(url, "hub:")) {
-                                        if (isGitHubRepoPath(url["hub:".len..])) return .github;
+                                        if (hosted_git_info.isGitHubShorthand(url["hub:".len..])) return .github;
                                     }
                                 },
                                 else => {},
@@ -673,7 +813,7 @@ pub const Version = struct {
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 const path = url["github.com/".len..];
                                 if (isGitHubTarballPath(path)) return .tarball;
-                                if (isGitHubRepoPath(path)) return .github;
+                                if (hosted_git_info.isGitHubShorthand(path)) return .github;
                             }
 
                             if (strings.indexOfChar(url, '.')) |dot| {
@@ -732,7 +872,7 @@ pub const Version = struct {
                 // virt@example.com:repo.git
                 'v' => {
                     if (isTarball(dependency)) return .tarball;
-                    if (isGitHubRepoPath(dependency)) return .github;
+                    if (hosted_git_info.isGitHubShorthand(dependency)) return .github;
                     if (isSCPLikePath(dependency)) return .git;
                     if (dependency.len == 1) return .dist_tag;
                     return switch (dependency[1]) {
@@ -767,7 +907,7 @@ pub const Version = struct {
             if (isTarball(dependency)) return .tarball;
             // user/repo
             // user/repo#main
-            if (isGitHubRepoPath(dependency)) return .github;
+            if (hosted_git_info.isGitHubShorthand(dependency)) return .github;
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
@@ -912,347 +1052,20 @@ pub fn parseWithTag(
     log_: ?*logger.Log,
     package_manager: ?*PackageManager,
 ) ?Version {
+    _ = alias;
+    _ = alias_hash;
+    _ = log_;
+    _ = package_manager;
+
     switch (tag) {
-        .npm => {
-            var input = dependency;
-
-            var is_alias = false;
-            const name = brk: {
-                if (strings.hasPrefixComptime(input, "npm:")) {
-                    is_alias = true;
-                    var str = input["npm:".len..];
-                    var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
-
-                    while (i < str.len) : (i += 1) {
-                        if (str[i] == '@') {
-                            input = str[i + 1 ..];
-                            break :brk sliced.sub(str[0..i]).value();
-                        }
-                    }
-
-                    input = str[i..];
-
-                    break :brk sliced.sub(str[0..i]).value();
-                }
-
-                break :brk alias;
-            };
-
-            is_alias = is_alias and alias_hash != null;
-
-            // Strip single leading v
-            // v1.0.0 -> 1.0.0
-            // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
-            if (input.len > 1 and input[0] == 'v') {
-                input = input[1..];
-            }
-
-            const version = Semver.Query.parse(
-                allocator,
-                input,
-                sliced.sub(input),
-            ) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
-                }
-            };
-
-            const result = Version{
-                .literal = sliced.value(),
-                .value = .{
-                    .npm = .{
-                        .is_alias = is_alias,
-                        .name = name,
-                        .version = version,
-                    },
-                },
-                .tag = .npm,
-            };
-
-            if (is_alias) {
-                if (package_manager) |pm| {
-                    pm.known_npm_aliases.put(
-                        allocator,
-                        alias_hash.?,
-                        result,
-                    ) catch unreachable;
-                }
-            }
-
-            return result;
-        },
-        .dist_tag => {
-            var tag_to_use = sliced.value();
-
-            const actual = if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len)
-                // npm:@foo/bar@latest
-                sliced.sub(brk: {
-                    var i = "npm:".len;
-
-                    // npm:@foo/bar@latest
-                    //     ^
-                    i += @intFromBool(dependency[i] == '@');
-
-                    while (i < dependency.len) : (i += 1) {
-                        // npm:@foo/bar@latest
-                        //             ^
-                        if (dependency[i] == '@') {
-                            break;
-                        }
-                    }
-
-                    tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
-                    break :brk dependency["npm:".len..i];
-                }).value()
-            else
-                alias;
-
-            // name should never be empty
-            if (comptime Environment.allow_assert) bun.assert(!actual.isEmpty());
-
-            return .{
-                .literal = sliced.value(),
-                .value = .{
-                    .dist_tag = .{
-                        .name = actual,
-                        .tag = if (tag_to_use.isEmpty()) String.from("latest") else tag_to_use,
-                    },
-                },
-                .tag = .dist_tag,
-            };
-        },
-        .git => {
-            var input = dependency;
-            if (strings.hasPrefixComptime(input, "git+")) {
-                input = input["git+".len..];
-            }
-            const hash_index = strings.lastIndexOfChar(input, '#');
-
-            return .{
-                .literal = sliced.value(),
-                .value = .{
-                    .git = .{
-                        .owner = String.from(""),
-                        .repo = sliced.sub(if (hash_index) |index| input[0..index] else input).value(),
-                        .committish = if (hash_index) |index| sliced.sub(input[index + 1 ..]).value() else String.from(""),
-                    },
-                },
-                .tag = .git,
-            };
-        },
-        .github => {
-            var from_url = false;
-            var input = dependency;
-            if (strings.hasPrefixComptime(input, "github:")) {
-                input = input["github:".len..];
-            } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
-                input = input["git://github.com/".len..];
-                from_url = true;
-            } else {
-                if (strings.hasPrefixComptime(input, "git+")) {
-                    input = input["git+".len..];
-                }
-                if (strings.hasPrefixComptime(input, "http")) {
-                    var url = input["http".len..];
-                    if (url.len > 2) {
-                        switch (url[0]) {
-                            ':' => {
-                                if (strings.hasPrefixComptime(url, "://")) {
-                                    url = url["://".len..];
-                                }
-                            },
-                            's' => {
-                                if (strings.hasPrefixComptime(url, "s://")) {
-                                    url = url["s://".len..];
-                                }
-                            },
-                            else => {},
-                        }
-                        if (strings.hasPrefixComptime(url, "github.com/")) {
-                            input = url["github.com/".len..];
-                            from_url = true;
-                        }
-                    }
-                }
-            }
-
-            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
-
-            var hash_index: usize = 0;
-            var slash_index: usize = 0;
-            for (input, 0..) |c, i| {
-                switch (c) {
-                    '/' => {
-                        slash_index = i;
-                    },
-                    '#' => {
-                        hash_index = i;
-                        break;
-                    },
-                    else => {},
-                }
-            }
-
-            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
-            if (from_url and strings.endsWithComptime(repo, ".git")) {
-                repo = repo[0 .. repo.len - ".git".len];
-            }
-
-            return .{
-                .literal = sliced.value(),
-                .value = .{
-                    .github = .{
-                        .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(repo).value(),
-                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
-                    },
-                },
-                .tag = .github,
-            };
-        },
-        .tarball => {
-            if (isRemoteTarball(dependency)) {
-                return .{
-                    .tag = .tarball,
-                    .literal = sliced.value(),
-                    .value = .{ .tarball = .{ .uri = .{ .remote = sliced.sub(dependency).value() } } },
-                };
-            } else if (strings.hasPrefixComptime(dependency, "file://")) {
-                return .{
-                    .tag = .tarball,
-                    .literal = sliced.value(),
-                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[7..]).value() } } },
-                };
-            } else if (strings.hasPrefixComptime(dependency, "file:")) {
-                return .{
-                    .tag = .tarball,
-                    .literal = sliced.value(),
-                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[5..]).value() } } },
-                };
-            } else if (strings.contains(dependency, "://")) {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
-                return null;
-            }
-
-            return .{
-                .tag = .tarball,
-                .literal = sliced.value(),
-                .value = .{ .tarball = .{ .uri = .{ .local = sliced.value() } } },
-            };
-        },
-        .folder => {
-            if (strings.indexOfChar(dependency, ':')) |protocol| {
-                if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    const folder = folder: {
-
-                        // from npm:
-                        //
-                        // turn file://../foo into file:../foo
-                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L269
-                        //
-                        // something like this won't behave the same
-                        // file://bar/../../foo
-                        const maybe_dot_dot = maybe_dot_dot: {
-                            if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
-                                if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
-                                    if (dependency.len > protocol + 3 and dependency[protocol + 3] == '/') {
-                                        break :maybe_dot_dot dependency[protocol + 4 ..];
-                                    }
-                                    break :maybe_dot_dot dependency[protocol + 3 ..];
-                                }
-                                break :maybe_dot_dot dependency[protocol + 2 ..];
-                            }
-                            break :folder dependency[protocol + 1 ..];
-                        };
-
-                        if (maybe_dot_dot.len > 1 and maybe_dot_dot[0] == '.' and maybe_dot_dot[1] == '.') {
-                            return .{
-                                .literal = sliced.value(),
-                                .value = .{ .folder = sliced.sub(maybe_dot_dot).value() },
-                                .tag = .folder,
-                            };
-                        }
-
-                        break :folder dependency[protocol + 1 ..];
-                    };
-
-                    // from npm:
-                    //
-                    // turn /C:/blah info just C:/blah on windows
-                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
-                    if (comptime Environment.isWindows) {
-                        if (isWindowsAbsPathWithLeadingSlashes(folder)) |dep| {
-                            return .{
-                                .literal = sliced.value(),
-                                .value = .{ .folder = sliced.sub(dep).value() },
-                                .tag = .folder,
-                            };
-                        }
-                    }
-
-                    return .{
-                        .literal = sliced.value(),
-                        .value = .{ .folder = sliced.sub(folder).value() },
-                        .tag = .folder,
-                    };
-                }
-
-                // check for absolute windows paths
-                if (comptime Environment.isWindows) {
-                    if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
-                        return .{
-                            .literal = sliced.value(),
-                            .value = .{ .folder = sliced.sub(dependency).value() },
-                            .tag = .folder,
-                        };
-                    }
-
-                    // from npm:
-                    //
-                    // turn /C:/blah info just C:/blah on windows
-                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
-                    if (isWindowsAbsPathWithLeadingSlashes(dependency)) |dep| {
-                        return .{
-                            .literal = sliced.value(),
-                            .value = .{ .folder = sliced.sub(dep).value() },
-                            .tag = .folder,
-                        };
-                    }
-                }
-
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
-                return null;
-            }
-
-            return .{
-                .value = .{ .folder = sliced.value() },
-                .tag = .folder,
-                .literal = sliced.value(),
-            };
-        },
         .uninitialized => return null,
-        .symlink => {
-            if (strings.indexOfChar(dependency, ':')) |colon| {
-                return .{
-                    .value = .{ .symlink = sliced.sub(dependency[colon + 1 ..]).value() },
-                    .tag = .symlink,
-                    .literal = sliced.value(),
-                };
-            }
-
-            return .{
-                .value = .{ .symlink = sliced.value() },
-                .tag = .symlink,
-                .literal = sliced.value(),
-            };
-        },
         .workspace => {
             var input = dependency;
             if (strings.hasPrefixComptime(input, "workspace:")) {
                 input = input["workspace:".len..];
             }
             return .{
-                .value = .{ .workspace = sliced.sub(input).value() },
+                ._value = .{ .workspace = sliced.sub(input).value() },
                 .tag = .workspace,
                 .literal = sliced.value(),
             };
@@ -1265,8 +1078,18 @@ pub fn parseWithTag(
             const trimmed = strings.trim(group, &strings.whitespace_chars);
 
             return .{
-                .value = .{ .catalog = sliced.sub(trimmed).value() },
+                ._value = .{ .catalog = sliced.sub(trimmed).value() },
                 .tag = .catalog,
+                .literal = sliced.value(),
+            };
+        },
+        else => {
+            var npa_spec = npm_package_arg.npa(allocator, dependency, ".") orelse {
+                return null;
+            };
+            return .{
+                ._value = .{ .npa = npa_spec },
+                .tag = Version.Tag.fromNpaSpecTag(npa_spec.getType()),
                 .literal = sliced.value(),
             };
         },
@@ -1457,6 +1280,8 @@ pub const Behavior = packed struct(u8) {
 const string = []const u8;
 
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
+const npm_package_arg = @import("./npm_package_arg.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 

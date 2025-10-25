@@ -296,7 +296,7 @@ pub const WhyCommand = struct {
                 try std.fmt.format(dep_version_buf.writer(), "{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
                 const dep_pkg_version = try arena_allocator.dupe(u8, dep_version_buf.items);
 
-                const spec = try arena_allocator.dupe(u8, dependency.version.literal.slice(string_bytes));
+                const spec = try arena_allocator.dupe(u8, dependency.version.copyLiteralSlice(string_bytes));
 
                 const dep_type = if (dependency.behavior.dev)
                     DependencyType.dev

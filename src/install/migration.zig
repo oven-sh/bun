@@ -720,10 +720,7 @@ pub fn migrateNPMLockfile(
                         .name_hash = name_hash,
                         .version = .{
                             .tag = .workspace,
-                            .literal = wksp_path,
-                            .value = .{
-                                .workspace = wksp_path,
-                            },
+                            ._value = .{ .workspace = wksp_path },
                         },
                         .behavior = .{ .workspace = true },
                     };
@@ -773,7 +770,7 @@ pub fn migrateNPMLockfile(
                     ) orelse {
                         return error.InvalidNPMLockfile;
                     };
-                    debug("-> {s}, {}\n", .{ @tagName(version.tag), version.value });
+                    debug("-> {s}, {}\n", .{version});
 
                     if (Environment.allow_assert) {
                         bun.assert(version.tag != .uninitialized);
@@ -926,7 +923,7 @@ pub fn migrateNPMLockfile(
                                             const commit = str.sub(str.slice[hash_index + 1 ..]).value();
                                             break :res Resolution.init(.{
                                                 .git = .{
-                                                    .owner = res_version.value.git.owner,
+                                                    .owner = res_version.gitOwner(),
                                                     .repo = str.sub(str.slice[0..hash_index]).value(),
                                                     .committish = commit,
                                                     .resolved = commit,

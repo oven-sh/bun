@@ -2196,7 +2196,7 @@ pub const PackCommand = struct {
                                     allocator,
                                     E.String,
                                     .{
-                                        .data = try allocator.dupe(u8, dep.version.literal.slice(lockfile.buffers.string_bytes.items)),
+                                        .data = try allocator.dupe(u8, dep.version.copyLiteralSlice(lockfile.buffers.string_bytes.items)),
                                     },
                                     .{},
                                 );

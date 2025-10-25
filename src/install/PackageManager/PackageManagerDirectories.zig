@@ -480,7 +480,7 @@ pub fn computeCacheDirAndSubpath(
 
     switch (resolution.tag) {
         .npm => {
-            cache_dir_subpath = manager.cachedNPMPackageFolderName(name, resolution.value.npm.version, patch_hash);
+            cache_dir_subpath = manager.cachedNPMPackageFolderName(name, resolution.getVersion(), patch_hash);
             cache_dir = manager.getCacheDirectory();
         },
         .git => {

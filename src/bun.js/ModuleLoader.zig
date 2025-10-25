@@ -557,9 +557,9 @@ pub const AsyncModule = struct {
                 .{ result.name, result.url },
             ),
             error.DistTagNotFound, error.NoMatchingVersion => brk: {
-                const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.version.isExact())
+                const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.getVersion().isExact())
                     "Version not found"
-                else if (result.version.tag == .npm and !result.version.value.npm.version.isExact())
+                else if (result.version.tag == .npm and !result.version.getVersion().isExact())
                     "No matching version found"
                 else
                     "No match found";

@@ -489,7 +489,7 @@ pub fn migratePnpmLockfile(
                         if (!strings.isNPMPackageName(dep.version.value.symlink.slice(string_buf.bytes.items))) {
                             try log.addWarningFmt(null, .Empty, allocator, "relative link dependency not supported: {s}@{s}\n", .{
                                 dep.name.slice(string_buf.bytes.items),
-                                dep.version.literal.slice(string_buf.bytes.items),
+                                dep.version.copyLiteralSlice(string_buf.bytes.items),
                             });
                             return error.RelativeLinkDependency;
                         }
@@ -591,7 +591,7 @@ pub fn migratePnpmLockfile(
                     const url = try ExtractTarball.buildURL(
                         scope.url.href,
                         strings.StringOrTinyString.init(name.slice(string_buf.bytes.items)),
-                        res.value.npm.version,
+                        res.getVersion(),
                         string_buf.bytes.items,
                     );
                     res.value.npm.url = try string_buf.append(url);
@@ -787,7 +787,7 @@ pub fn migratePnpmLockfile(
         for (deps.begin()..deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
-            var version_maybe_alias = dep.version.literal.slice(string_buf);
+            var version_maybe_alias = dep.version.copyLiteralSlice(string_buf);
             if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
                 version_maybe_alias = version_maybe_alias["npm:".len..];
             }

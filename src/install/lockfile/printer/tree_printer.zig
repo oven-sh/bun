@@ -151,7 +151,7 @@ fn shouldPrintPackageInstall(
         const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
         if (manager.updating_packages.get(name)) |entry| {
             if (entry.original_version) |original_version| {
-                if (!original_version.eql(resolution.value.npm.version)) {
+                if (!original_version.eql(resolution.getVersion())) {
                     return .{
                         .update = .{
                             .version = original_version,
@@ -190,7 +190,7 @@ fn printUpdatedPackage(
         .{
             dependency.name.slice(string_buf),
             update_info.version.fmt(update_info.version_buf),
-            update_info.resolution.value.npm.version.fmt(string_buf),
+            update_info.resolution.getVersion().fmt(string_buf),
         },
     );
 }

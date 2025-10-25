@@ -416,7 +416,7 @@ pub const BunxCommand = struct {
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
-            update_request.version.literal.slice(update_request.version_buf);
+            update_request.version.copyLiteralSlice(update_request.version_buf);
 
         // package_fmt is used for the path to install in.
         const package_fmt = brk: {

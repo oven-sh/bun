@@ -757,13 +757,13 @@ pub const UpdateInteractiveCommand = struct {
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest
+                    manifest.findBestVersionWithFilter(resolved_version.getVersion(), string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest
                 else
                     manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest;
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't
-                const current_ver = resolution.value.npm.version;
+                const current_ver = resolution.getVersion();
                 const update_ver = update_version.version;
                 const latest_ver = latest.version;
 
@@ -782,7 +782,7 @@ pub const UpdateInteractiveCommand = struct {
                 }
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)});
+                try version_writer.print("{}", .{resolution.getVersion().fmt(string_buf)});
                 const current_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 version_buf.clearRetainingCapacity();

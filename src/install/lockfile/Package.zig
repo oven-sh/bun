@@ -1035,7 +1035,7 @@ pub fn Package(comptime SemverIntType: type) type {
             ) orelse Dependency.Version{};
             var workspace_range: ?Semver.Query.Group = null;
             const name_hash = switch (dependency_version.tag) {
-                .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
+                .npm => String.Builder.stringHash(dependency_version._value.npa.name.?),
                 .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                     const input = sliced.slice["workspace:".len..];
                     const trimmed = strings.trim(input, &strings.whitespace_chars);
@@ -1073,19 +1073,10 @@ pub fn Package(comptime SemverIntType: type) type {
 
             switch (dependency_version.tag) {
                 .folder => {
-                    const relative = Path.relative(
-                        FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
-                            FileSystem.instance.top_level_dir,
-                            &[_]string{
-                                source.path.name.dir,
-                                dependency_version.value.folder.slice(buf),
-                            },
-                            .auto,
-                        ),
-                    );
+                    const relative = dependency_version._value.npa.fetchSpec();
                     // if relative is empty, we are linking the package to itself
-                    dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
+                    dependency_version._value.npa.type = .directory;
+                    dependency_version._value.npa = string_builder.append(String, if (relative.len == 0) "." else relative);
                 },
                 .npm => {
                     const npm = dependency_version.value.npm;
@@ -1147,7 +1138,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 "No matching version for workspace dependency \"{s}\". Version: \"{s}\"",
                                 .{
                                     external_alias.slice(buf),
-                                    dependency_version.literal.slice(buf),
+                                    dependency_version.copyLiteralSlice(buf),
                                 },
                             );
                             return error.InstallFailed;
@@ -1192,7 +1183,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 if (switch (package_dep.version.tag) {
                                     // `dependencies` & `workspaces` defined within the same `package.json`
                                     .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                        package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                        package_dep.version.getVersion().satisfies(ver, buf, buf),
                                     // `workspace:*`
                                     .workspace => found_matching_workspace and
                                         String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,

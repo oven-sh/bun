@@ -600,7 +600,7 @@ fn hoistDependency(
         if (dependency.behavior.isPeer()) {
             if (dependency.version.tag == .npm) {
                 const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
-                const version = dependency.version.value.npm.version;
+                const version = dependency.version.getVersion();
                 if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                     return .hoisted; // 1
                 }
@@ -621,7 +621,7 @@ fn hoistDependency(
                 builder.packageName(builder.resolutions[dep_id]),
                 builder.packageVersion(builder.resolutions[dep_id]),
                 dependency.name.fmt(builder.buf()),
-                dependency.version.literal.fmt(builder.buf()),
+                dependency.version.fmtLiteral(builder.buf()),
             });
             return error.DependencyLoop;
         }

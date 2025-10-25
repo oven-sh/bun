@@ -288,7 +288,7 @@ pub const Store = struct {
                     \\  dep_name: {s}
                     \\  pkg_id: {d}
                     \\  parent_id: {}
-                    \\  
+                    \\
                 , .{
                     entry_id,
                     entry_pkg_name,
@@ -454,7 +454,7 @@ pub const Store = struct {
             const deps = lockfile.buffers.dependencies.items;
 
             const dep_name = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].name.slice(string_buf);
-            const dep_version = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].version.literal.slice(string_buf);
+            const dep_version = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].version.copyLiteralSlice(string_buf);
 
             log(
                 \\node({d})
@@ -509,7 +509,7 @@ pub const Store = struct {
                         pkg_name,
                         pkg_res.fmt(string_buf, .posix),
                         dep_name,
-                        dep.version.literal.slice(string_buf),
+                        dep.version.copyLiteralSlice(string_buf),
                     });
                 }
 
@@ -532,7 +532,7 @@ pub const Store = struct {
                         pkg_name,
                         pkg_res.fmt(string_buf, .posix),
                         dep_name,
-                        dep.version.literal.slice(string_buf),
+                        dep.version.copyLiteralSlice(string_buf),
                     });
                 }
             }

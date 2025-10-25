@@ -302,7 +302,7 @@ pub const FolderResolution = union(Tag) {
             },
             .cache_folder => cache_folder: {
                 var resolver: CacheFolderResolver = .{
-                    .version = version.value.npm.version.toVersion(),
+                    .version = version.getVersion().toVersion(),
                 };
                 break :cache_folder readPackageJSONFromDisk(
                     manager,

@@ -470,7 +470,7 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             const len = switch (exact_versions) {
                                 else => |exact| std.fmt.count("{s}{}", .{
                                     if (exact) "" else "^",
-                                    res.value.npm.version.fmt(old.buffers.string_bytes.items),
+                                    res.getVersion().fmt(old.buffers.string_bytes.items),
                                 }),
                             };
 
@@ -508,7 +508,7 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             const buf = switch (exact_versions) {
                                 else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
                                     if (exact) "" else "^",
-                                    res.value.npm.version.fmt(old.buffers.string_bytes.items),
+                                    res.getVersion().fmt(old.buffers.string_bytes.items),
                                 }) catch break,
                             };
 
@@ -556,7 +556,7 @@ pub fn resolveCatalogDependency(this: *Lockfile, dep: *const Dependency) ?Depend
         return dep.version;
     }
 
-    const catalog_dep = this.catalogs.get(this, dep.version.value.catalog, dep.name) orelse {
+    const catalog_dep = this.catalogs.get(this, dep.version._value.catalog, dep.name) orelse {
         return null;
     };
 
@@ -983,7 +983,7 @@ pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, ma
                         continue;
                     };
 
-                    const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                    const pkg = manifest.findByVersion(pkg_res.getVersion()) orelse {
                         continue;
                     };
 
@@ -1028,7 +1028,7 @@ pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, ma
                         continue;
                     };
 
-                    const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                    const pkg = manifest.findByVersion(pkg_res.getVersion()) orelse {
                         continue;
                     };
 
@@ -1357,7 +1357,7 @@ pub fn getPackageID(
     const entry = this.package_index.get(name_hash) orelse return null;
     const resolutions: []const Resolution = this.packages.items(.resolution);
     const npm_version = if (version) |v| switch (v.tag) {
-        .npm => v.value.npm.version,
+        .npm => v.getVersion(),
         else => null,
     } else null;
     const buf = this.buffers.string_bytes.items;
@@ -1371,7 +1371,7 @@ pub fn getPackageID(
             }
 
             if (resolutions[id].tag == .npm and npm_version != null) {
-                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                if (npm_version.?.satisfies(resolutions[id].getVersion(), buf, buf)) return id;
             }
         },
         .ids => |ids| {
@@ -1383,7 +1383,7 @@ pub fn getPackageID(
                 }
 
                 if (resolutions[id].tag == .npm and npm_version != null) {
-                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                    if (npm_version.?.satisfies(resolutions[id].getVersion(), buf, buf)) return id;
                 }
             }
         },
@@ -1721,7 +1721,6 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 pub const Buffers = @import("./lockfile/Buffers.zig");
 pub const Serializer = @import("./lockfile/bun.lockb.zig");
@@ -1729,6 +1728,7 @@ pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
 pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
 pub const Package = @import("./lockfile/Package.zig").Package(u64);
 pub const Tree = @import("./lockfile/Tree.zig");
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -2016,7 +2016,7 @@ pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
+                if (version.getVersion().satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
             },
@@ -2025,7 +2025,7 @@ pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
+                    if (version.getVersion().satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
                 }

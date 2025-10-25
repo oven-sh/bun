@@ -470,7 +470,7 @@ pub const Installer = struct {
                             );
 
                             break :pkg_cache_dir_subpath switch (tag) {
-                                .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                                .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.getVersion(), patch_info.contentsHash()),
                                 .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                                 .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
                                 .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),

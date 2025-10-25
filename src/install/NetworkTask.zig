@@ -266,7 +266,7 @@ pub fn forTarball(
         this.url_buf = try ExtractTarball.buildURL(
             scope.url.href,
             tarball.name,
-            tarball.resolution.value.npm.version,
+            tarball.resolution.getVersion(),
             this.package_manager.lockfile.buffers.string_bytes.items,
         );
     } else {

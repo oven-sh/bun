@@ -1394,17 +1394,12 @@ pub const Route = struct {
 
         public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
 
-        const name_value = if (path_no_slash.len == 0) Route.index_route_name else blk: {
-            const buffer = allocator.alloc(u8, path_no_slash.len + 1) catch unreachable;
-            buffer[0] = '/';
-            std.mem.copy(u8, buffer[1..], path_no_slash);
-            break :blk buffer;
+        const stored_name = if (path_no_slash.len == 0) Route.index_route_name else blk: {
+            route_file_buf[0] = '/';
+            bun.copy(u8, route_file_buf[1..], path_no_slash);
+            const with_slash = route_file_buf[0 .. 1 + path_no_slash.len];
+            break :blk FileSystem.DirnameStore.instance.append(@TypeOf(with_slash), with_slash) catch unreachable;
         };
-
-        const stored_name = if (path_no_slash.len == 0)
-            Route.index_route_name
-        else
-            FileSystem.DirnameStore.instance.append(@TypeOf(name_value), name_value) catch unreachable;
 
         const stored_match_name = if (path_no_slash.len == 0)
             Route.index_route_name

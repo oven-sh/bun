@@ -9,11 +9,19 @@
 #include <windows.h>
 #endif
 
-// SQLite trace event codes
-#define SQLITE_TRACE_STMT    0x01
+// SQLite trace event codes (guard against existing definitions)
+#ifndef SQLITE_TRACE_STMT
+#define SQLITE_TRACE_STMT 0x01
+#endif
+#ifndef SQLITE_TRACE_PROFILE
 #define SQLITE_TRACE_PROFILE 0x02
-#define SQLITE_TRACE_ROW     0x04
-#define SQLITE_TRACE_CLOSE   0x08
+#endif
+#ifndef SQLITE_TRACE_ROW
+#define SQLITE_TRACE_ROW 0x04
+#endif
+#ifndef SQLITE_TRACE_CLOSE
+#define SQLITE_TRACE_CLOSE 0x08
+#endif
 
 typedef int (*lazy_sqlite3_bind_blob_type)(sqlite3_stmt*, int, const void*, int n, void (*)(void*));
 typedef int (*lazy_sqlite3_bind_double_type)(sqlite3_stmt*, int, double);

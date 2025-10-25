@@ -36,7 +36,7 @@
  * @module bun-otel/BunSDK
  */
 
-import { context, type Context, diag, propagation, type TextMapPropagator } from "@opentelemetry/api";
+import { context, type Context, diag, metrics, propagation, type TextMapPropagator } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { type Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
@@ -60,7 +60,6 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { AsyncLocalStorage } from "async_hooks";
-import { _nativeHooksObject } from "../types";
 import { BunAsyncLocalStorageContextManager } from "./context/BunAsyncLocalStorageContextManager";
 import { BunFetchInstrumentation } from "./instruments/BunFetchInstrumentation";
 import { BunHttpInstrumentation } from "./instruments/BunHttpInstrumentation";
@@ -346,7 +345,9 @@ export class BunSDK implements AsyncDisposable {
 
       // Share AsyncLocalStorage with Bun's native telemetry for enterWith() calls
       const ConfigurationProperty = { _context_storage: 7 };
-      _nativeHooksObject.setConfigurationProperty(ConfigurationProperty._context_storage, this._contextStorage);
+      Bun.telemetry
+        .nativeHooks()
+        ?.setConfigurationProperty(ConfigurationProperty._context_storage, this._contextStorage);
       debugLog("Context storage shared with native telemetry via configuration property");
     }
 

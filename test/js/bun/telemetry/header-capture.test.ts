@@ -4,8 +4,7 @@
  * NO @opentelemetry/* imports - testing ONLY Bun.telemetry API
  */
 import { describe, expect, test } from "bun:test";
-import { _nativeHooksObject } from "../../../../packages/bun-otel/types";
-import { ConfigurationProperty, InstrumentKind } from "./types";
+import { InstrumentKind } from "./types";
 
 // Helper to wait for async telemetry events without unconditional sleep
 function waitForCondition(checkFn: () => boolean, timeoutMs = 100): Promise<void> {
@@ -37,17 +36,12 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
+      captureAttributes: {
+        requestHeaders: ["content-type", "x-custom-header", "user-agent"],
+      },
     };
 
     using ref = Bun.telemetry.attach(instrument);
-
-    // Configure header capture via native API
-    const hooks = Bun.telemetry.nativeHooks();
-    hooks?.setConfigurationProperty(ConfigurationProperty.http_capture_headers_server_request, [
-      "content-type",
-      "x-custom-header",
-      "user-agent",
-    ]);
 
     using server = Bun.serve({
       port: 0,
@@ -269,26 +263,6 @@ describe("Fetch Client Header Capture", () => {
 
     using ref = Bun.telemetry.attach(instrument);
 
-    // Debug: Check what the global config is after attach
-    const globalConfig = _nativeHooksObject?.getConfigurationProperty(
-      ConfigurationProperty.http_capture_headers_fetch_response,
-    );
-    console.log("Global fetch response config after attach:", globalConfig);
-
-    // Also check the server request/response configs
-    console.log(
-      "Server request config:",
-      _nativeHooksObject?.getConfigurationProperty(ConfigurationProperty.http_capture_headers_server_request),
-    );
-    console.log(
-      "Server response config:",
-      _nativeHooksObject?.getConfigurationProperty(ConfigurationProperty.http_capture_headers_server_response),
-    );
-    console.log(
-      "Fetch request config:",
-      _nativeHooksObject?.getConfigurationProperty(ConfigurationProperty.http_capture_headers_fetch_request),
-    );
-
     // Create a dummy server to respond with headers (NO telemetry on server side)
     using server = Bun.serve({
       port: 0,
@@ -305,9 +279,6 @@ describe("Fetch Client Header Capture", () => {
 
     // Make fetch() call AS A CLIENT - we're testing client-side response header capture
     await fetch(`http://localhost:${server.port}/test`);
-
-    // Debug: See what we actually captured
-    console.log("Captured attributes:", JSON.stringify(capturedAttrs, null, 2));
 
     // Verify captured response headers
     expect(capturedAttrs["http.response.header.content-type"]).toBe("application/json");
@@ -428,12 +399,6 @@ describe("AttributeKey Pointer Optimization Validation", () => {
 
   test("handles empty configuration gracefully", async () => {
     const capturedAttrs: any = {};
-
-    _nativeHooksObject.setConfigurationProperty(
-      ConfigurationProperty.http_capture_headers_server_request,
-      [], // Empty array - no headers to capture
-    );
-
     const instrument = {
       type: InstrumentKind.HTTP,
       name: "test-empty-config",

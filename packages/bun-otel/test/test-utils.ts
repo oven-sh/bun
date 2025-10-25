@@ -3,22 +3,7 @@
  */
 import type { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { $ } from "bun";
-import type { NativeHooks } from "../types";
-
-export function getNativeHooks(): NativeHooks {
-  if (typeof Bun === "undefined" || !Bun.telemetry) {
-    throw new TypeError(
-      "Bun.telemetry is not available. This utility requires Bun runtime. " + "Install from https://bun.sh",
-    );
-  }
-
-  // @ts-expect-error for some reason the module isn't loading...
-  const nativeHooks = Bun.telemetry._nativeHooksObject as NativeHooks;
-  if (!nativeHooks) {
-    throw new Error("Bun.telemetry.nativeHooks() returned undefined");
-  }
-  return nativeHooks;
-}
+import { NativeHooks } from "../types";
 
 /**
  * Wait for exported spans with polling instead of fixed sleep.
@@ -85,4 +70,24 @@ export function printSpans(exporter: InMemorySpanExporter): void {
 export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
   const headerFlags = Object.entries(headers).flatMap(([key, value]) => ["-H", `${key}: ${value}`]);
   return await $`curl -s ${headerFlags} ${url}`.text();
+}
+
+let installedDummyInstrument = false;
+export function getNativeHooks(): NativeHooks {
+  if (!installedDummyInstrument) {
+    // Install a dummy instrumentation to ensure native hooks are available
+    Bun.telemetry.attach({
+      type: "custom",
+      name: "dummy-instrumentation",
+      version: "1.0.0",
+      onOperationStart() {},
+      onOperationInject() {
+        return [];
+      },
+    });
+    installedDummyInstrument = true;
+  }
+
+  const nativeHooks = (Bun.telemetry as any).nativeHooks() as NativeHooks;
+  return nativeHooks;
 }

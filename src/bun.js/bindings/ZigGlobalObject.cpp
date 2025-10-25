@@ -556,8 +556,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     }
 
-    // Initialize telemetry system
-    Bun__Telemetry__init(globalObject);
+    // Initialize telemetry system (non-fatal - spec: telemetry failures should not impact runtime)
+    // Returns 0 on success, 1 on error. Errors are logged once but runtime continues.
+    if (auto telemetryInitResult = Bun__Telemetry__init(globalObject); telemetryInitResult != 0) {
+        // Telemetry init failed - log once for debugging but continue execution
+        // Per spec: telemetry is optional and should never break the application
+#if !defined(NDEBUG)
+        WTF::dataLogLn("Bun telemetry initialization failed (non-fatal)");
+#endif
+    }
 
     return globalObject;
 }

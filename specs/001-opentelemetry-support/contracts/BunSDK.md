@@ -831,12 +831,9 @@ test("BunSDK auto-registers HTTP and Fetch instrumentations", () => {
   sdk.start();
 
   // Verify Bun instrumentations registered
-  expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.HTTP)).toBe(
-    true,
-  );
-  expect(Bun.telemetry.nativeHooks.isEnabledFor(InstrumentKind.Fetch)).toBe(
-    true,
-  );
+  const hooks = Bun.telemetry.nativeHooks();
+  expect(hooks?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
+  expect(hooks?.isEnabledFor(InstrumentKind.Fetch)).toBe(true);
 
   sdk.shutdown();
 });

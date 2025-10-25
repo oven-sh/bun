@@ -156,13 +156,23 @@ Unregister an instrument by reference.
 
 **Note**: nativeHooks is INTERNAL API for TypeScript bridges. Not intended for direct use by application code.
 
-**Operation IDs**: All notify\* functions require an operation ID from `nativeHooks.generateId()`. IDs use the OpId type:
+**IMPORTANT**: `Bun.telemetry.nativeHooks` is a **function**, not an object. It returns `undefined` when telemetry is disabled, enabling true zero-cost abstraction. Always call it and use optional chaining:
+```typescript
+const hooks = Bun.telemetry.nativeHooks();
+if (hooks) {
+  hooks.notifyStart(...);
+}
+// OR use optional chaining:
+Bun.telemetry.nativeHooks()?.notifyStart(...);
+```
+
+**Operation IDs**: All notify\* functions require an operation ID from `nativeHooks()?.generateId()`. IDs use the OpId type:
 - **Zig side**: `pub const OpId = u64` type alias (defined in src/telemetry/main.zig:15)
 - **TypeScript side**: `export type OpId = number & { readonly __brand: 'OpId' }` branded type (hook-lifecycle.md:13)
 - **Conversion**: Zig OpId (u64) converted to JavaScript number with 53-bit safe precision (up to 2^53-1)
 - **Properties**: Monotonic, globally unique, thread-safe
 
-### `Bun.telemetry.nativeHooks.isEnabledFor(kind: InstrumentKind): boolean`
+### `Bun.telemetry.nativeHooks()?.isEnabledFor(kind: InstrumentKind): boolean`
 
 Fast check if any instruments are registered for an operation kind.
 
@@ -170,10 +180,11 @@ Fast check if any instruments are registered for an operation kind.
 
 - `kind` (InstrumentKind): InstrumentKind enum value (0-5)
 
-**Returns**: `boolean`
+**Returns**: `boolean | undefined`
 
 - `true` if at least one instrument registered for this kind
 - `false` otherwise (safe to skip attribute building)
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Performance**:
 
@@ -189,8 +200,9 @@ export function handleIncomingRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ) {
-  // Early return if no HTTP instruments registered
-  if (!nativeHooks.isEnabledFor(InstrumentKind.HTTP)) {
+  // Early return if no HTTP instruments registered or telemetry disabled
+  const hooks = Bun.telemetry.nativeHooks();
+  if (!hooks?.isEnabledFor(InstrumentKind.HTTP)) {
     return;
   }
 
@@ -200,13 +212,14 @@ export function handleIncomingRequest(
 
 ---
 
-### `Bun.telemetry.nativeHooks.generateId(): OpId`
+### `Bun.telemetry.nativeHooks()?.generateId(): OpId`
 
 Generate a unique operation ID for telemetry events.
 
-**Returns**: `OpId` (branded `number` type)
+**Returns**: `OpId | undefined` (branded `number` type or undefined)
 
 - Monotonically increasing OpId
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 - **Zig implementation**: Returns OpId (u64 type alias, see src/telemetry/main.zig:15)
 - **TypeScript type**: OpId (branded number, see hook-lifecycle.md:13)
 - **Conversion**: Zig OpId (u64) → JavaScript number via IEEE 754 double precision
@@ -224,16 +237,19 @@ Generate a unique operation ID for telemetry events.
 
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
-const operationId = nativeHooks.generateId();
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks) return; // Telemetry disabled
+
+const operationId = hooks.generateId();
 const attributes = buildRequestAttributes(req);
-nativeHooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
+hooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
 ```
 
 **Note**: JavaScript numbers can safely represent integers up to 2^53-1. Beyond this limit, values will lose precision. This is acceptable as reaching 2^53 operations is extremely unlikely in practice (would take ~285 years at 1M ops/sec).
 
 ---
 
-### `Bun.telemetry.nativeHooks.notifyStart(kind: InstrumentKind, id: OpId, attributes: object): void`
+### `Bun.telemetry.nativeHooks()?.notifyStart(kind: InstrumentKind, id: OpId, attributes: object): void`
 
 Notifies all registered instruments of an operation start.
 
@@ -243,7 +259,10 @@ Notifies all registered instruments of an operation start.
 - `id` (OpId): Unique operation ID from `generateId()`
 - `attributes` (object): Semantic convention attributes
 
-**Returns**: `void`
+**Returns**: `void | undefined`
+
+- `void` if successful
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Behavior**:
 
@@ -272,15 +291,18 @@ Notifies all registered instruments of an operation start.
 
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
-const operationId = nativeHooks.generateId();
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks) return;
+
+const operationId = hooks.generateId();
 const attributes = buildRequestAttributes(req);
 
-nativeHooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
+hooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
 ```
 
 ---
 
-### `Bun.telemetry.nativeHooks.notifyEnd(kind: InstrumentKind, id: OpId, attributes: object): void`
+### `Bun.telemetry.nativeHooks()?.notifyEnd(kind: InstrumentKind, id: OpId, attributes: object): void`
 
 Notifies all registered instruments of an operation completion.
 
@@ -290,7 +312,10 @@ Notifies all registered instruments of an operation completion.
 - `id` (OpId): Same operation ID from `notifyStart`
 - `attributes` (object): Final attributes including result data
 
-**Returns**: `void`
+**Returns**: `void | undefined`
+
+- `void` if successful
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Behavior**:
 
@@ -315,14 +340,15 @@ Notifies all registered instruments of an operation completion.
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
 res.once("finish", () => {
+  const hooks = Bun.telemetry.nativeHooks();
   const attributes = buildResponseAttributes(res);
-  nativeHooks.notifyEnd(InstrumentKind.HTTP, operationId, attributes);
+  hooks?.notifyEnd(InstrumentKind.HTTP, operationId, attributes);
 });
 ```
 
 ---
 
-### `Bun.telemetry.nativeHooks.notifyError(kind: InstrumentKind, id: OpId, attributes: object): void`
+### `Bun.telemetry.nativeHooks()?.notifyError(kind: InstrumentKind, id: OpId, attributes: object): void`
 
 Notifies all registered instruments of an operation error.
 
@@ -332,7 +358,10 @@ Notifies all registered instruments of an operation error.
 - `id` (OpId): Same operation ID from `notifyStart`
 - `attributes` (object): Error details following semantic conventions
 
-**Returns**: `void`
+**Returns**: `void | undefined`
+
+- `void` if successful
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Behavior**:
 
@@ -356,14 +385,15 @@ Notifies all registered instruments of an operation error.
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
 res.once("error", (err: unknown) => {
+  const hooks = Bun.telemetry.nativeHooks();
   const attributes = buildErrorAttributes(err);
-  nativeHooks.notifyError(InstrumentKind.HTTP, operationId, attributes);
+  hooks?.notifyError(InstrumentKind.HTTP, operationId, attributes);
 });
 ```
 
 ---
 
-### `Bun.telemetry.nativeHooks.notifyProgress(kind: InstrumentKind, id: OpId, attributes: object): void`
+### `Bun.telemetry.nativeHooks()?.notifyProgress(kind: InstrumentKind, id: OpId, attributes: object): void`
 
 Notifies all registered instruments of intermediate operation progress.
 
@@ -373,7 +403,10 @@ Notifies all registered instruments of intermediate operation progress.
 - `id` (OpId): Same operation ID from `notifyStart`
 - `attributes` (object): Progress-specific attributes
 
-**Returns**: `void`
+**Returns**: `void | undefined`
+
+- `void` if successful
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Use Cases**:
 
@@ -404,7 +437,8 @@ Notifies all registered instruments of intermediate operation progress.
 // Future use in streaming scenarios
 req.on("data", (chunk: Buffer) => {
   bytesReceived += chunk.length;
-  nativeHooks.notifyProgress(InstrumentKind.HTTP, operationId, {
+  const hooks = Bun.telemetry.nativeHooks();
+  hooks?.notifyProgress(InstrumentKind.HTTP, operationId, {
     "http.request.body.bytes_received": bytesReceived,
   });
 });
@@ -412,7 +446,7 @@ req.on("data", (chunk: Buffer) => {
 
 ---
 
-### `Bun.telemetry.nativeHooks.notifyInject(kind: InstrumentKind, id: OpId, data: object): any[]`
+### `Bun.telemetry.nativeHooks()?.notifyInject(kind: InstrumentKind, id: OpId, data: object): any[]`
 
 Collects header injection values from all registered instruments.
 
@@ -422,12 +456,13 @@ Collects header injection values from all registered instruments.
 - `id` (OpId): Operation ID
 - `data` (object): Context for injection (current headers, URL, etc.)
 
-**Returns**: `any[]`
+**Returns**: `any[] | undefined`
 
 - Flat array of header values only: `[value1, value2, value3, ...]`
 - Values correspond by index to header names from configuration
 - Each instrument's `onOperationInject` return value is flattened into the result
 - Empty array if no instruments or no injections
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Behavior**:
 
@@ -467,14 +502,16 @@ Collects header injection values from all registered instruments.
 
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks) return;
 
 // Step 1: Get configured header names from instrument registration
-const injectNames = nativeHooks.getConfigurationProperty(
+const injectNames = hooks.getConfigurationProperty(
   ConfigurationProperty.http_propagate_headers_fetch_request,
 );
 
 // Step 2: Get header values from instruments
-const injectValues = nativeHooks.notifyInject(
+const injectValues = hooks.notifyInject(
   InstrumentKind.Fetch,
   operationId,
   {
@@ -497,7 +534,7 @@ if (Array.isArray(injectNames)) {
 
 ---
 
-### `Bun.telemetry.nativeHooks.getConfigurationProperty(propertyId: number): any`
+### `Bun.telemetry.nativeHooks()?.getConfigurationProperty(propertyId: number): any`
 
 Retrieves a configuration property value by its enum ID.
 
@@ -505,11 +542,11 @@ Retrieves a configuration property value by its enum ID.
 
 - `propertyId` (number): ConfigurationProperty enum value (1-6)
 
-**Returns**: `any` (JSValue)
+**Returns**: `any | undefined` (JSValue or undefined)
 
 - The same JSValue that was passed to `setConfigurationProperty`, or computed value
 - For header properties: typically `string[]` (array of lowercase header names)
-- `undefined` if property not set or invalid ID
+- `undefined` if property not set, invalid ID, or nativeHooks() returns undefined (telemetry disabled)
 
 **Note**: The Zig implementation (`otel.getConfigurationProperty`) returns a comptime `ConfigurationValue` struct (e.g., `AttributeList` for header properties). This TypeScript API returns the underlying JSValue.
 
@@ -538,7 +575,10 @@ enum ConfigurationProperty {
 
 ```typescript
 // src/js/internal/telemetry_http.ts
-const requestHeaders = nativeHooks.getConfigurationProperty(
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks) return;
+
+const requestHeaders = hooks.getConfigurationProperty(
   ConfigurationProperty.http_capture_headers_server_request,
 );
 
@@ -555,7 +595,7 @@ if (Array.isArray(requestHeaders)) {
 
 ---
 
-### `Bun.telemetry.nativeHooks.setConfigurationProperty(propertyId: number, value: any): void`
+### `Bun.telemetry.nativeHooks()?.setConfigurationProperty(propertyId: number, value: any): void`
 
 Sets a configuration property value, syncing both JS and native storage.
 
@@ -564,7 +604,10 @@ Sets a configuration property value, syncing both JS and native storage.
 - `propertyId` (number): ConfigurationProperty enum value (1-6)
 - `value` (any): New value (typically array of strings, or undefined to clear)
 
-**Returns**: `void`
+**Returns**: `void | undefined`
+
+- `void` if successful
+- `undefined` if nativeHooks() returns undefined (telemetry disabled)
 
 **Throws**:
 
@@ -596,7 +639,10 @@ Error: "Failed to set configuration property";
 
 ```typescript
 // packages/bun-otel/src/configuration.ts
-import { nativeHooks, ConfigurationProperty } from "../../types";
+import { ConfigurationProperty } from "../../types";
+
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks) return;
 
 // Parse from environment variable
 const captureHeaders =
@@ -607,7 +653,7 @@ const captureHeaders =
     .filter(Boolean) || [];
 
 // Apply to native layer
-nativeHooks.setConfigurationProperty(
+hooks.setConfigurationProperty(
   ConfigurationProperty.http_capture_headers_server_request,
   captureHeaders,
 );
@@ -717,15 +763,16 @@ export function handleIncomingRequest(
   res: ServerResponse,
 ) {
   // 1. Early return check
-  if (!nativeHooks.isEnabledFor(InstrumentKind.HTTP)) {
+  const hooks = Bun.telemetry.nativeHooks();
+  if (!hooks?.isEnabledFor(InstrumentKind.HTTP)) {
     return;
   }
 
   // 2. Generate operation ID
-  const operationId = nativeHooks.generateId();
+  const operationId = hooks.generateId();
 
   // 3. Build start attributes with semantic conventions
-  const requestHeaders = nativeHooks.getConfigurationProperty(
+  const requestHeaders = hooks.getConfigurationProperty(
     ConfigurationProperty.http_capture_headers_server_request,
   );
 
@@ -750,17 +797,17 @@ export function handleIncomingRequest(
   }
 
   // 4. Notify operation start
-  nativeHooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
+  hooks.notifyStart(InstrumentKind.HTTP, operationId, attributes);
 
   // 5. Register completion handlers
   res.once("finish", () => {
     const responseAttrs = buildResponseAttributes(res);
-    nativeHooks.notifyEnd(InstrumentKind.HTTP, operationId, responseAttrs);
+    hooks.notifyEnd(InstrumentKind.HTTP, operationId, responseAttrs);
   });
 
   res.once("error", (err: unknown) => {
     const errorAttrs = buildErrorAttributes(err);
-    nativeHooks.notifyError(InstrumentKind.HTTP, operationId, errorAttrs);
+    hooks.notifyError(InstrumentKind.HTTP, operationId, errorAttrs);
   });
 }
 ```
@@ -775,19 +822,20 @@ General pattern (two-stage injection):
 // packages/bun-otel/src/instruments/BunFetchInstrumentation.ts
 
 export function handleOutgoingFetch(url: string, init: RequestInit) {
-  if (!nativeHooks.isEnabledFor(InstrumentKind.Fetch)) {
+  const hooks = Bun.telemetry.nativeHooks();
+  if (!hooks?.isEnabledFor(InstrumentKind.Fetch)) {
     return;
   }
 
-  const operationId = nativeHooks.generateId();
+  const operationId = hooks.generateId();
 
   // 1. Get configured header names to inject
-  const injectNames = nativeHooks.getConfigurationProperty(
+  const injectNames = hooks.getConfigurationProperty(
     ConfigurationProperty.http_propagate_headers_fetch_request,
   );
 
   // 2. Get header values from instruments (returns array of values)
-  const injectValues = nativeHooks.notifyInject(
+  const injectValues = hooks.notifyInject(
     InstrumentKind.Fetch,
     operationId,
     {
@@ -811,7 +859,7 @@ export function handleOutgoingFetch(url: string, init: RequestInit) {
 
   // 4. Build attributes and notify start
   const attributes = buildFetchAttributes(url, init);
-  nativeHooks.notifyStart(InstrumentKind.Fetch, operationId, attributes);
+  hooks.notifyStart(InstrumentKind.Fetch, operationId, attributes);
 }
 ```
 
@@ -860,7 +908,8 @@ pub fn invokeStart(self: *InstrumentRecord, global: *JSGlobalObject, id: OpId, i
 **When Disabled** (no instruments):
 
 ```typescript
-if (!nativeHooks.isEnabledFor(kind)) {
+const hooks = Bun.telemetry.nativeHooks();
+if (!hooks?.isEnabledFor(kind)) {
   return; // ~5ns overhead, early return before attribute building
 }
 ```
@@ -936,7 +985,8 @@ test("notifyStart invokes all registered instruments", () => {
   });
 
   // Call via nativeHooks (simulating bridge layer)
-  Bun.telemetry.nativeHooks.notifyStart(InstrumentKind.HTTP, 12345, {
+  const hooks = Bun.telemetry.nativeHooks();
+  hooks?.notifyStart(InstrumentKind.HTTP, 12345, {
     "http.request.method": "GET",
   });
 

@@ -372,10 +372,10 @@ if (telemetry.getInjectConfig(.fetch)) |config| {
 
 ```typescript
 // Internal API (not exposed to users, used by runtime)
-Bun.telemetry.nativeHooks.getInjectHeaders(kind: InstrumentKind): {
+Bun.telemetry.nativeHooks()?.getInjectHeaders(kind: InstrumentKind): {
   request: string[],
   response: string[]
-} | null
+} | null | undefined
 ```
 
 **Zig Implementation**:
@@ -511,8 +511,9 @@ test("inject config rebuilt on attach/detach", () => {
     onOperationInject: () => ({ traceparent: "value" }),
   });
 
-  const config1 = Bun.telemetry.nativeHooks.getInjectHeaders(InstrumentKind.HTTP);
-  expect(config1.response).toEqual(["traceparent"]);
+  const hooks = Bun.telemetry.nativeHooks();
+  const config1 = hooks?.getInjectHeaders(InstrumentKind.HTTP);
+  expect(config1?.response).toEqual(["traceparent"]);
 
   const id2 = Bun.telemetry.attach({
     type: InstrumentKind.HTTP,
@@ -522,13 +523,13 @@ test("inject config rebuilt on attach/detach", () => {
     onOperationInject: () => ({ tracestate: "value" }),
   });
 
-  const config2 = Bun.telemetry.nativeHooks.getInjectHeaders(InstrumentKind.HTTP);
-  expect(config2.response).toContain("traceparent");
-  expect(config2.response).toContain("tracestate");
+  const config2 = hooks?.getInjectHeaders(InstrumentKind.HTTP);
+  expect(config2?.response).toContain("traceparent");
+  expect(config2?.response).toContain("tracestate");
 
   Bun.telemetry.detach(id1);
 
-  const config3 = Bun.telemetry.nativeHooks.getInjectHeaders(InstrumentKind.HTTP);
+  const config3 = hooks?.getInjectHeaders(InstrumentKind.HTTP);
   expect(config3.response).toEqual(["tracestate"]);
   expect(config3.response).not.toContain("traceparent");
 });

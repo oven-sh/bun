@@ -9,6 +9,7 @@
 The Bun runtime provides both native HTTP server capabilities (`Bun.serve()`) and Node.js compatibility layer (`http.createServer()`). Both need telemetry integration for OpenTelemetry support. The question is where to locate the TypeScript code that maps native telemetry hooks to OpenTelemetry spans.
 
 Three architectural approaches were considered:
+
 1. Internal runtime module (`src/js/internal/telemetry_http.ts`)
 2. Inline code within `_http_server.ts`
 3. User-loadable instrumentation package (`packages/bun-otel/`)
@@ -22,6 +23,7 @@ This decision has significant implications for startup performance, code maintai
 **Decision**: TypeScript instrumentation code for OpenTelemetry integration MUST be located in user-loadable packages (`packages/bun-otel/`), NOT in internal runtime modules (`src/js/internal/`).
 
 **Rationale**:
+
 - Internal modules load on every startup when their API is used (e.g., when `http` module is imported)
 - This adds parsing overhead (~0.5-1ms) and memory footprint (~5-15KB) even when telemetry is disabled
 - Violates zero-cost abstraction principle (CON-001, CON-002) - applications not using telemetry pay startup cost
@@ -29,6 +31,7 @@ This decision has significant implications for startup performance, code maintai
 - User-loadable packages only load when explicitly imported by application code
 
 **Flow**:
+
 ```
 Application Code
   → import { BunHttpInstrumentation } from 'bun-otel'  // Only loads if imported
@@ -38,6 +41,7 @@ Application Code
 ```
 
 **Consequences**:
+
 - Zero startup cost for applications not using telemetry (achieves SC-004 <0.1% overhead)
 - Instrumentation can import `@opentelemetry/api` and `@opentelemetry/semantic-conventions` packages
 - Code only parsed when needed (lazy evaluation)
@@ -49,6 +53,7 @@ Application Code
 **Decision**: Internal runtime modules (e.g., `src/js/node/_http_server.ts`) MUST call native `Bun.telemetry` hooks directly without requiring intermediate TypeScript bridge modules.
 
 **Rationale**:
+
 - Minimal insertion surface area keeps `_http_server.ts` changes small and maintainable
 - Native hooks are lightweight checks (inline functions, ~5ns overhead when disabled)
 - No TypeScript bridge module means zero TypeScript loading overhead
@@ -56,73 +61,26 @@ Application Code
 - Separation of concerns: insertion points (internal) vs. instrumentation logic (packages)
 
 **Integration Points** (4 locations in `_http_server.ts`):
+
 ```typescript
 // Request arrival
-Bun.telemetry.notifyHttpRequestStart(req, res);
-
-// Response headers written
-Bun.telemetry.notifyHttpResponseHeaders(res, statusCode);
-
-// Response completion
-Bun.telemetry.notifyHttpRequestEnd(res);
-
-// Error handling
-Bun.telemetry.notifyHttpRequestError(res, errorType);
+Bun.telemetry.internalHooks.notifyHttpRequestStart(req, res);
 ```
 
 **Consequences**:
-- Only 4 insertion points needed in `_http_server.ts`
+
+- Only 2 insertions point needed in `_http_server.ts` and `_http_client.ts`
 - All complexity (span creation, context propagation, attribute mapping) handled in package
 - Native functions can be no-ops when telemetry disabled (compiler optimization)
 - Easy to audit insertion points (simple function calls)
 - No risk of internal module loading overhead
 
-### 3. Single Instrumentation Handles Both HTTP Implementations
-
-**Decision**: A single instrumentation class (`BunHttpInstrumentation`) SHOULD handle both native `Bun.serve()` and Node.js `http.createServer()` telemetry hooks to maximize code reuse.
-
-**Rationale**:
-- Both implementations create HTTP server spans with same semantic conventions
-- Attribute extraction logic can be shared (headers, status codes, timing)
-- Context propagation works identically for both
-- Reduces maintenance burden (single test suite, single bug fix location)
-- Package size remains manageable (no duplication)
-
-**Data Flow**:
-```
-_http_server.ts (Node.js)                    server.zig (Bun.serve)
-        |                                            |
-        v                                            v
-Bun.telemetry.notifyHttpRequestStart(req, res)
-        |
-        v
-   Native Zig Layer
-   - Extracts semantic convention attributes
-   - Builds AttributeMap
-        |
-        v
-   Invokes registered instruments
-        |
-        v
-BunHttpInstrumentation.onOperationStart(id, attributes)
-   - Creates span via tracer.startSpan()
-   - Attaches .once listeners to Node.js request/response for deferred attributes
-   - Stores span in _activeSpans map
-   - Returns traceparent header for injection
-```
-
-**Consequences**:
-- Request/response objects available in attributes for semantic convention extraction
-- Can attach `.once` listeners to capture response attributes (status code, headers) when available
-- Shared utilities for AsyncLocalStorage, header mapping, trace context extraction
-- Both HTTP server types tested together (consistency verification)
-- Single source of truth for HTTP instrumentation behavior
-
-### 4. Package Can Import OpenTelemetry Packages
+### 3. Package Can Import OpenTelemetry Packages
 
 **Decision**: Instrumentation packages MAY import OpenTelemetry npm packages (e.g., `@opentelemetry/api`, `@opentelemetry/semantic-conventions`) to access official constants and types.
 
 **Rationale**:
+
 - Semantic convention constants must match official OpenTelemetry specifications
 - Type definitions ensure API compatibility with OpenTelemetry ecosystem
 - Utilities (AsyncLocalStorage, propagators) should not be reimplemented
@@ -130,6 +88,7 @@ BunHttpInstrumentation.onOperationStart(id, attributes)
 - Official packages are peer dependencies (user controls versions)
 
 **Example**:
+
 ```typescript
 // packages/bun-otel/src/instruments/BunHttpInstrumentation.ts
 import {
@@ -139,7 +98,10 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
-import { SEMATTRS_HTTP_METHOD, SEMATTRS_HTTP_STATUS_CODE } from "@opentelemetry/semantic-conventions";
+import {
+  SEMATTRS_HTTP_METHOD,
+  SEMATTRS_HTTP_STATUS_CODE,
+} from "@opentelemetry/semantic-conventions";
 
 export class BunHttpInstrumentation {
   private onOperationStart(id: number, attributes: Record<string, any>) {
@@ -155,17 +117,19 @@ export class BunHttpInstrumentation {
 ```
 
 **Consequences**:
+
 - Official semantic convention constants used throughout
 - Type safety enforced via OpenTelemetry TypeScript types
 - Future OpenTelemetry updates automatically available (via package upgrades)
 - Internal modules remain lightweight (no npm dependencies)
 - Clear documentation reference (point to OpenTelemetry specs)
 
-### 5. POC Internal Module Approach Rejected
+### 4. POC Internal Module Approach Rejected
 
 **Decision**: The POC implementation's internal module approach (`src/js/internal/telemetry_http.ts`) is explicitly rejected for the final implementation.
 
 **Rationale**:
+
 - POC proved the concept but revealed performance limitations
 - Internal module loads on every `http` import (even without telemetry)
 - Cannot import `@opentelemetry/*` packages (required constant duplication)
@@ -183,6 +147,7 @@ export class BunHttpInstrumentation {
 | Constant duplication | ✅ Required | ❌ Not needed |
 
 **Consequences**:
+
 - POC testing strategy document preserved but updated for new architecture
 - POC test examples remain valuable (same insertion points, different architecture)
 - Migration path from POC to final documented in implementation plan
@@ -195,10 +160,12 @@ export class BunHttpInstrumentation {
 **Approach**: Create internal TypeScript module that bridges native hooks to OpenTelemetry.
 
 **Advantages**:
+
 - All telemetry code in one location
 - Easier to navigate codebase (everything in `src/`)
 
 **Disadvantages**:
+
 - Loads on every startup (violates CON-001, CON-002)
 - Cannot import npm packages (constant duplication required)
 - Performance cost even when telemetry disabled (fails SC-004)
@@ -212,10 +179,12 @@ export class BunHttpInstrumentation {
 **Approach**: Embed span creation logic directly in `_http_server.ts`.
 
 **Advantages**:
+
 - No additional modules needed
 - All code in one file
 
 **Disadvantages**:
+
 - Massive code duplication (would need to duplicate for `server.zig` too)
 - Cannot import `@opentelemetry/*` packages
 - Makes `_http_server.ts` harder to maintain
@@ -229,10 +198,12 @@ export class BunHttpInstrumentation {
 **Approach**: Create `bun-otel-native` and `bun-otel-node` packages.
 
 **Advantages**:
+
 - Clear separation of concerns
 - Users can install only what they need
 
 **Disadvantages**:
+
 - Code duplication for shared logic (context propagation, header mapping)
 - Two test suites to maintain
 - Inconsistent behavior between implementations

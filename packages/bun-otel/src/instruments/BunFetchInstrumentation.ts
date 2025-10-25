@@ -84,13 +84,11 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
   private _tracerProvider?: TracerProvider;
   private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
-  private _contextStorage?: AsyncLocalStorage<OtelContext>;
 
   constructor(config: BunFetchInstrumentationConfig = {}) {
     // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
     // registerInstrumentations() will call enable() after setting TracerProvider
     this._config = { enabled: false, ...config };
-    this._contextStorage = config.contextStorage;
 
     // Validate configuration at construction time
     if (this._config.captureAttributes) {
@@ -130,15 +128,6 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
       },
 
       onOperationStart: (id: number, attributes: Record<string, any>) => {
-        // Skip fetch operations triggered by http.request() to avoid double instrumentation.
-        // When http.request triggers an internal fetch, url.full is just a path (e.g., "/test")
-        // instead of a full URL (e.g., "http://localhost:3000/test").
-        // BunNodeInstrumentation already creates a span for http.request, so we skip here.
-        const urlFull = attributes["url.full"];
-        if (urlFull && !urlFull.startsWith("http://") && !urlFull.startsWith("https://")) {
-          return;
-        }
-
         // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
         // Incorrect: "GET https://api.example.com" (high cardinality, causes metric explosions)
         // Correct: "GET" (low cardinality, URL captured in attributes)
@@ -160,20 +149,21 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
               "server.address": attributes["server.address"],
               "server.port": attributes["server.port"],
               "url.scheme": attributes["url.scheme"],
+              ...attributes,
             },
           },
           activeContext,
         );
 
         // Add captured request headers if configured
-        if (this._config.captureAttributes?.requestHeaders) {
-          for (const headerName of this._config.captureAttributes.requestHeaders) {
-            const attrKey = `http.request.header.${headerName}`;
-            if (attributes[attrKey] !== undefined) {
-              span.setAttribute(attrKey, attributes[attrKey]);
-            }
-          }
-        }
+        // if (this._config.captureAttributes?.requestHeaders) {
+        //   for (const headerName of this._config.captureAttributes.requestHeaders) {
+        //     const attrKey = `http.request.header.${headerName}`;
+        //     if (attributes[attrKey] !== undefined) {
+        //       span.setAttribute(attrKey, attributes[attrKey]);
+        //     }
+        //   }
+        // }
 
         // Store span for later retrieval
         this._activeSpans.set(id, span);
@@ -221,7 +211,7 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
         } else {
           span.setStatus({ code: SpanStatusCode.OK });
         }
-
+        span.setAttributes({ ...attributes });
         span.end();
         this._activeSpans.delete(id);
       },

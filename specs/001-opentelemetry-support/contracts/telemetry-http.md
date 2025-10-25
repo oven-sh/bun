@@ -10,6 +10,7 @@
 # Purpose
 
 Define HTTP-specific instrumentation contracts, including:
+
 - Header injection format for distributed tracing
 - HTTP semantic conventions usage (OpenTelemetry v1.23.0+)
 - Server and client instrumentation patterns
@@ -29,16 +30,18 @@ Controls which headers are **READ** from incoming requests/responses and include
 **Purpose**: Capture specific headers as span attributes for observability
 
 **Direction**:
+
 - `requestHeaders`: Read from incoming HTTP server requests OR outgoing fetch client requests
 - `responseHeaders`: Read from outgoing HTTP server responses OR incoming fetch client responses
 
 **Example**:
+
 ```typescript
 Bun.telemetry.attach({
   type: "http",
   captureAttributes: {
     requestHeaders: ["content-type", "user-agent"], // Capture these incoming headers
-    responseHeaders: ["content-type"],              // Capture these outgoing headers
+    responseHeaders: ["content-type"], // Capture these outgoing headers
   },
   onOperationStart(id, attributes) {
     // attributes["http.request.header.content-type"] available
@@ -56,22 +59,24 @@ Controls which headers are **WRITTEN** to outgoing requests/responses for distri
 **Purpose**: Propagate trace context to downstream services
 
 **Direction**:
+
 - `request`: Write to outgoing fetch client requests
 - `response`: Write to outgoing HTTP server responses
 
 **Example**:
+
 ```typescript
 Bun.telemetry.attach({
   type: "http",
   injectHeaders: {
-    request: ["traceparent", "tracestate"],  // Inject into outgoing fetch requests
-    response: ["traceparent"],                // Inject into HTTP server responses
+    request: ["traceparent", "tracestate"], // Inject into outgoing fetch requests
+    response: ["traceparent"], // Inject into HTTP server responses
   },
   onOperationInject(id, data) {
     // Return array of values matching injectHeaders order: ["traceparent", "tracestate"]
     return [
-      `00-${traceId}-${spanId}-01`,  // traceparent
-      `vendor=${vendorData}`,         // tracestate
+      `00-${traceId}-${spanId}-01`, // traceparent
+      `vendor=${vendorData}`, // tracestate
     ];
   },
 });
@@ -80,6 +85,7 @@ Bun.telemetry.attach({
 ## Independence
 
 These configurations are **completely independent**:
+
 - `captureAttributes` does NOT control injection
 - `injectHeaders` does NOT control capture
 - You can capture headers without injecting
@@ -88,6 +94,7 @@ These configurations are **completely independent**:
 ## Security
 
 Both configurations respect the same security blocklist:
+
 - Sensitive headers (authorization, cookie, api-key, etc.) CANNOT be captured or injected
 - Validation occurs at `attach()` time
 - Zig layer enforces (TypeScript cannot override)
@@ -99,11 +106,13 @@ Both configurations respect the same security blocklist:
 Bun uses a two-stage pattern to minimize memory allocation during hot-path operations:
 
 **Stage 1: Configuration** (at `attach()` time)
+
 - Instrument declares header names via `injectHeaders` configuration
 - Names stored once in configuration cache
 - No per-request allocation
 
 **Stage 2: Value Generation** (per operation)
+
 - Zig calls `onOperationInject` hook
 - Hook returns array of header values (not names!)
 - Values correspond by index to names from configuration
@@ -131,8 +140,8 @@ Bun.telemetry.attach({
     const span = trace.getActiveSpan();
     // Return array matching injectHeaders.request order: ["traceparent", "tracestate"]
     return [
-      `00-${span.traceId}-${span.spanId}-01`,  // traceparent
-      `vendor=${span.vendor}`,                  // tracestate
+      `00-${span.traceId}-${span.spanId}-01`, // traceparent
+      `vendor=${span.vendor}`, // tracestate
     ];
   },
 });
@@ -221,6 +230,7 @@ HTTP server instrumentation involves two operations:
 Extract distributed tracing context from incoming request headers.
 
 **W3C Traceparent Format**:
+
 ```
 traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
              ^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^
@@ -256,11 +266,13 @@ fn extractTraceparent(
 ```
 
 **Attributes Set**:
+
 - `trace.parent.trace_id`: string - 128-bit hex trace ID (32 chars)
 - `trace.parent.span_id`: string - 64-bit hex parent span ID (16 chars)
 - `trace.parent.trace_flags`: number - 0x01 = sampled, 0x00 = not sampled
 
 **Validation** (W3C Trace Context spec compliant):
+
 - Version must be `00` (or future versions >= `00`)
 - Trace ID must be 32 hex characters, NOT all zeros
 - Span ID must be 16 hex characters, NOT all zeros
@@ -273,6 +285,7 @@ fn extractTraceparent(
 Inject trace context headers into HTTP server responses.
 
 **Configuration**:
+
 ```typescript
 Bun.telemetry.attach({
   type: "http",
@@ -283,7 +296,7 @@ Bun.telemetry.attach({
     const span = trace.getSpan(context.active());
     // Return array matching injectHeaders.response order: ["traceparent"]
     return [
-      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`,  // traceparent
+      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`, // traceparent
     ];
   },
 });
@@ -334,6 +347,7 @@ pub inline fn renderInjectedTraceHeadersToUWSResponse(
 ```
 
 **Memory Management**:
+
 - Stack-allocated buffers (256 bytes for name, 1024 bytes for value)
 - No heap allocation in hot path
 - Direct write to uWebSockets Response
@@ -351,6 +365,7 @@ const header_list = otel.getConfigurationProperty(.http_propagate_headers_fetch_
 ```
 
 Properties are computed from:
+
 1. Environment variables (e.g., `BUN_OTEL_HTTP_PROPAGATE_HEADERS_FETCH_REQUEST`)
 2. Instrument configuration (`injectHeaders` or `captureAttributes`)
 3. Intersection: Only headers in BOTH ENV and instrument config are used
@@ -370,6 +385,7 @@ Properties are computed from:
 **Default**: `["content-type", "content-length", "user-agent", "accept"]`
 
 **Example**:
+
 ```bash
 export BUN_OTEL_HTTP_CAPTURE_HEADERS_FETCH_REQUEST="content-type,user-agent,x-request-id"
 ```
@@ -433,6 +449,7 @@ Bun.telemetry.attach({
 **Default**: `["traceparent", "tracestate"]`
 
 **Example**:
+
 ```typescript
 Bun.telemetry.attach({
   type: "fetch",
@@ -442,9 +459,9 @@ Bun.telemetry.attach({
   onOperationInject(id, data) {
     // Return array matching injectHeaders.request order: ["traceparent", "tracestate", "x-trace-id"]
     return [
-      `00-${traceId}-${spanId}-01`,  // traceparent
-      `vendor=${vendor}`,             // tracestate
-      traceId,                        // x-trace-id
+      `00-${traceId}-${spanId}-01`, // traceparent
+      `vendor=${vendor}`, // tracestate
+      traceId, // x-trace-id
     ];
   },
 });
@@ -463,6 +480,7 @@ Bun.telemetry.attach({
 **Default**: `[]` (empty - no response header injection by default)
 
 **Example**:
+
 ```typescript
 Bun.telemetry.attach({
   type: "http",
@@ -473,7 +491,7 @@ Bun.telemetry.attach({
     const span = trace.getActiveSpan();
     // Return array matching injectHeaders.response order: ["traceparent"]
     return [
-      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`,  // traceparent
+      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`, // traceparent
     ];
   },
 });
@@ -482,6 +500,7 @@ Bun.telemetry.attach({
 ## Security Constraints
 
 **Blocked Headers** (always rejected, even if in ENV or config):
+
 - `authorization`
 - `proxy-authorization`
 - `cookie`
@@ -495,6 +514,7 @@ Bun.telemetry.attach({
 - `session-token`
 
 **Validation**:
+
 - Case-insensitive blocking
 - Partial matches blocked (e.g., `x-api-key-v2` blocked)
 - Enforced at `attach()` time
@@ -507,6 +527,7 @@ All attributes follow OpenTelemetry HTTP Semantic Conventions v1.23.0+ (stable).
 ## Stability Status
 
 **Stable Attributes** (use these):
+
 - `http.request.method`
 - `http.response.status_code`
 - `server.address`
@@ -519,6 +540,7 @@ All attributes follow OpenTelemetry HTTP Semantic Conventions v1.23.0+ (stable).
 - `error.type`
 
 **Experimental Attributes** (avoid for now):
+
 - `http.request.body.size`
 - `http.response.body.size`
 - `http.request.size`
@@ -529,103 +551,103 @@ All attributes follow OpenTelemetry HTTP Semantic Conventions v1.23.0+ (stable).
 
 ### Required Attributes (onOperationStart)
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `http.request.method` | string | `"GET"`, `"POST"`, `"HEAD"` | Uppercase |
-| `server.address` | string | `"example.com"`, `"10.1.2.80"` | From URL host |
-| `server.port` | int | `80`, `8080`, `443` | From URL port |
-| `url.full` | string | `"https://www.foo.bar/search?q=OpenTelemetry"` | Complete URL |
+| Attribute             | Type   | Example                                        | Notes         |
+| --------------------- | ------ | ---------------------------------------------- | ------------- |
+| `http.request.method` | string | `"GET"`, `"POST"`, `"HEAD"`                    | Uppercase     |
+| `server.address`      | string | `"example.com"`, `"10.1.2.80"`                 | From URL host |
+| `server.port`         | int    | `80`, `8080`, `443`                            | From URL port |
+| `url.full`            | string | `"https://www.foo.bar/search?q=OpenTelemetry"` | Complete URL  |
 
 ### Conditionally Required Attributes
 
-| Attribute | Type | Condition | Example |
-|-----------|------|-----------|---------|
-| `http.response.status_code` | int | If response received | `200`, `404`, `500` |
-| `error.type` | string | If request failed | `"NetworkError"`, `"TimeoutError"` |
-| `network.protocol.name` | string | If not "http" | `"http"`, `"spdy"` |
+| Attribute                   | Type   | Condition            | Example                            |
+| --------------------------- | ------ | -------------------- | ---------------------------------- |
+| `http.response.status_code` | int    | If response received | `200`, `404`, `500`                |
+| `error.type`                | string | If request failed    | `"NetworkError"`, `"TimeoutError"` |
+| `network.protocol.name`     | string | If not "http"        | `"http"`, `"spdy"`                 |
 
 ### Recommended Attributes
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `network.protocol.version` | string | `"1.0"`, `"1.1"`, `"2"`, `"3"` | HTTP version |
-| `url.path` | string | `"/search"` | Path component |
-| `url.query` | string | `"q=OpenTelemetry"` | Query string (without `?`) |
-| `url.scheme` | string | `"http"`, `"https"` | Scheme |
+| Attribute                  | Type   | Example                        | Notes                      |
+| -------------------------- | ------ | ------------------------------ | -------------------------- |
+| `network.protocol.version` | string | `"1.0"`, `"1.1"`, `"2"`, `"3"` | HTTP version               |
+| `url.path`                 | string | `"/search"`                    | Path component             |
+| `url.query`                | string | `"q=OpenTelemetry"`            | Query string (without `?`) |
+| `url.scheme`               | string | `"http"`, `"https"`            | Scheme                     |
 
 ### Optional Attributes
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `http.request.header.<key>` | string | `"application/json"` | Per `captureAttributes` |
-| `http.response.header.<key>` | string | `"application/json"` | Per `captureAttributes` |
-| `user_agent.original` | string | `"Mozilla/5.0..."` | From `user-agent` header |
+| Attribute                    | Type   | Example              | Notes                    |
+| ---------------------------- | ------ | -------------------- | ------------------------ |
+| `http.request.header.<key>`  | string | `"application/json"` | Per `captureAttributes`  |
+| `http.response.header.<key>` | string | `"application/json"` | Per `captureAttributes`  |
+| `user_agent.original`        | string | `"Mozilla/5.0..."`   | From `user-agent` header |
 
 ## HTTP Server Attributes
 
 ### Required Attributes (onOperationStart)
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `http.request.method` | string | `"GET"`, `"POST"` | Uppercase |
-| `url.path` | string | `"/search"` | Path component |
-| `url.scheme` | string | `"http"`, `"https"` | Scheme |
+| Attribute             | Type   | Example             | Notes          |
+| --------------------- | ------ | ------------------- | -------------- |
+| `http.request.method` | string | `"GET"`, `"POST"`   | Uppercase      |
+| `url.path`            | string | `"/search"`         | Path component |
+| `url.scheme`          | string | `"http"`, `"https"` | Scheme         |
 
 ### Conditionally Required Attributes
 
-| Attribute | Type | Condition | Example |
-|-----------|------|-----------|---------|
-| `http.response.status_code` | int | If response sent | `200`, `404`, `500` |
-| `error.type` | string | If request failed | `"InternalError"`, `500` |
-| `url.query` | string | If present in URL | `"q=OpenTelemetry"` |
-| `server.port` | int | If available | `80`, `8080`, `443` |
-| `http.route` | string | If available | `"/users/:id"` |
-| `network.protocol.name` | string | If not "http" | `"http"`, `"spdy"` |
+| Attribute                   | Type   | Condition         | Example                  |
+| --------------------------- | ------ | ----------------- | ------------------------ |
+| `http.response.status_code` | int    | If response sent  | `200`, `404`, `500`      |
+| `error.type`                | string | If request failed | `"InternalError"`, `500` |
+| `url.query`                 | string | If present in URL | `"q=OpenTelemetry"`      |
+| `server.port`               | int    | If available      | `80`, `8080`, `443`      |
+| `http.route`                | string | If available      | `"/users/:id"`           |
+| `network.protocol.name`     | string | If not "http"     | `"http"`, `"spdy"`       |
 
 ### Recommended Attributes
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `client.address` | string | `"83.164.160.102"` | Remote IP |
-| `server.address` | string | `"example.com"` | Host header |
-| `network.protocol.version` | string | `"1.1"`, `"2"` | HTTP version |
-| `user_agent.original` | string | `"Mozilla/5.0..."` | From `user-agent` header |
+| Attribute                  | Type   | Example            | Notes                    |
+| -------------------------- | ------ | ------------------ | ------------------------ |
+| `client.address`           | string | `"83.164.160.102"` | Remote IP                |
+| `server.address`           | string | `"example.com"`    | Host header              |
+| `network.protocol.version` | string | `"1.1"`, `"2"`     | HTTP version             |
+| `user_agent.original`      | string | `"Mozilla/5.0..."` | From `user-agent` header |
 
 ### Optional Attributes
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `http.request.header.<key>` | string | `"application/json"` | Per `captureAttributes` |
+| Attribute                    | Type   | Example              | Notes                   |
+| ---------------------------- | ------ | -------------------- | ----------------------- |
+| `http.request.header.<key>`  | string | `"application/json"` | Per `captureAttributes` |
 | `http.response.header.<key>` | string | `"application/json"` | Per `captureAttributes` |
-| `client.port` | int | `65123` | Remote port |
+| `client.port`                | int    | `65123`              | Remote port             |
 
 ## Distributed Tracing Attributes
 
 These attributes are extracted from the W3C `traceparent` header on incoming requests:
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `trace.parent.trace_id` | string | `"4bf92f3577b34da6a3ce929d0e0e4736"` | 32 hex chars |
-| `trace.parent.span_id` | string | `"00f067aa0ba902b7"` | 16 hex chars |
-| `trace.parent.trace_flags` | number | `1` (sampled), `0` (not sampled) | 8-bit flags |
+| Attribute                  | Type   | Example                              | Notes        |
+| -------------------------- | ------ | ------------------------------------ | ------------ |
+| `trace.parent.trace_id`    | string | `"4bf92f3577b34da6a3ce929d0e0e4736"` | 32 hex chars |
+| `trace.parent.span_id`     | string | `"00f067aa0ba902b7"`                 | 16 hex chars |
+| `trace.parent.trace_flags` | number | `1` (sampled), `0` (not sampled)     | 8-bit flags  |
 
 ## Error Attributes
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `error.type` | string | `"NetworkError"`, `"TimeoutError"`, `"500"` | Error class or status code |
-| `error.message` | string | `"Connection timeout after 30s"` | Human-readable message |
-| `error.stack_trace` | string | `"Error: ...\n  at ..."` | Stack trace (optional) |
+| Attribute           | Type   | Example                                     | Notes                      |
+| ------------------- | ------ | ------------------------------------------- | -------------------------- |
+| `error.type`        | string | `"NetworkError"`, `"TimeoutError"`, `"500"` | Error class or status code |
+| `error.message`     | string | `"Connection timeout after 30s"`            | Human-readable message     |
+| `error.stack_trace` | string | `"Error: ...\n  at ..."`                    | Stack trace (optional)     |
 
 ## Operation Metadata
 
 Non-standard attributes for operation tracking:
 
-| Attribute | Type | Example | Notes |
-|-----------|------|---------|-------|
-| `operation.id` | number | `12345678` | Unique operation ID |
+| Attribute             | Type   | Example               | Notes                   |
+| --------------------- | ------ | --------------------- | ----------------------- |
+| `operation.id`        | number | `12345678`            | Unique operation ID     |
 | `operation.timestamp` | number | `1640000000000000000` | Nanoseconds since epoch |
-| `operation.duration` | number | `1234567890` | Nanoseconds elapsed |
+| `operation.duration`  | number | `1234567890`          | Nanoseconds elapsed     |
 
 # Implementation Details
 
@@ -636,6 +658,7 @@ Non-standard attributes for operation tracking:
 **Insertion Points**:
 
 1. **Operation Start** - After request headers parsed, before user handler:
+
 ```zig
 // In request handler (after headers available)
 pub fn onRequest(req: *uws.Request, resp: *Response) void {
@@ -655,6 +678,7 @@ pub fn onRequest(req: *uws.Request, resp: *Response) void {
 ```
 
 2. **Operation End** - After response sent, before cleanup:
+
 ```zig
 // In response finalizer
 pub fn finalizeWithoutDeinit(this: *Response) void {
@@ -666,6 +690,7 @@ pub fn finalizeWithoutDeinit(this: *Response) void {
 ```
 
 3. **Operation Error** - When handler rejects:
+
 ```zig
 // In error handler
 pub fn onHandlerError(ctx: *RequestContext, error_value: JSValue) void {
@@ -674,6 +699,7 @@ pub fn onHandlerError(ctx: *RequestContext, error_value: JSValue) void {
 ```
 
 4. **Header Injection** - In renderMetadata (before sending response):
+
 ```zig
 // In Response.renderMetadata()
 pub fn renderMetadata(this: *Response, resp: *uws.Response) void {
@@ -695,6 +721,7 @@ pub fn renderMetadata(this: *Response, resp: *uws.Response) void {
 ### Memory Considerations
 
 **RequestContext Storage** (src/bun.js/api/server/RequestContext.zig):
+
 ```zig
 pub const RequestContext = struct {
     // Existing fields...
@@ -705,6 +732,7 @@ pub const RequestContext = struct {
 ```
 
 **Size Impact**:
+
 - `HttpTelemetryContext`: 16 bytes (OpId op_id + u64 start_time_ns)
 - No additional heap allocations per request
 - Stack-allocated `AttributeMap` in notification functions
@@ -716,6 +744,7 @@ pub const RequestContext = struct {
 **Insertion Points**:
 
 1. **Operation Start** - In `fetch()` before sending request:
+
 ```zig
 // In AsyncHTTP.queue()
 pub fn queue(this: *AsyncHTTP, allocator: std.mem.Allocator, batch: *ThreadPool.Batch) !void {
@@ -733,6 +762,7 @@ pub fn queue(this: *AsyncHTTP, allocator: std.mem.Allocator, batch: *ThreadPool.
 ```
 
 2. **Operation End** - After response received successfully:
+
 ```zig
 // In AsyncHTTP.onResolve()
 pub fn onResolve(this: *AsyncHTTP) void {
@@ -747,6 +777,7 @@ pub fn onResolve(this: *AsyncHTTP) void {
 ```
 
 3. **Operation Error** - When request fails:
+
 ```zig
 // In AsyncHTTP.onReject()
 pub fn onReject(this: *AsyncHTTP, err: anyerror) void {
@@ -764,6 +795,7 @@ pub fn onReject(this: *AsyncHTTP, err: anyerror) void {
 ### Memory Considerations
 
 **AsyncHTTP Storage**:
+
 ```zig
 pub const AsyncHTTP = struct {
     // Existing fields...
@@ -775,6 +807,7 @@ pub const AsyncHTTP = struct {
 ```
 
 **Size Impact**:
+
 - 16 bytes per in-flight fetch request
 - No heap allocations
 - Headers injected directly into existing `request_headers` structure
@@ -807,6 +840,7 @@ if (false) {
 ### 1. Incoming Request with Traceparent
 
 **Request**:
+
 ```http
 GET /api/users?role=admin HTTP/1.1
 Host: example.com
@@ -816,6 +850,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 ```
 
 **onOperationStart Attributes**:
+
 ```javascript
 {
   "operation.id": 12345678,
@@ -835,6 +870,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 ```
 
 **onOperationEnd Attributes**:
+
 ```javascript
 {
   "http.response.status_code": 200,
@@ -845,6 +881,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 ```
 
 **Response Headers** (if `injectHeaders.response: ["traceparent"]`):
+
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
@@ -854,6 +891,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-abc123def4567890-01
 ### 2. Request Error
 
 **onOperationError Attributes**:
+
 ```javascript
 {
   "error.type": "TypeError",
@@ -869,14 +907,16 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-abc123def4567890-01
 ### 1. Outgoing Request with Header Injection
 
 **JavaScript**:
+
 ```javascript
 await fetch("https://api.example.com/data?limit=10", {
   method: "POST",
-  headers: { "Content-Type": "application/json" }
+  headers: { "Content-Type": "application/json" },
 });
 ```
 
 **onOperationStart Attributes**:
+
 ```javascript
 {
   "operation.id": 23456789,
@@ -893,6 +933,7 @@ await fetch("https://api.example.com/data?limit=10", {
 ```
 
 **Injected Request Headers** (if `injectHeaders.request: ["traceparent"]`):
+
 ```http
 POST /data?limit=10 HTTP/1.1
 Host: api.example.com
@@ -901,6 +942,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-def456abc1234567-01
 ```
 
 **onOperationEnd Attributes**:
+
 ```javascript
 {
   "http.response.status_code": 200,
@@ -912,6 +954,7 @@ traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-def456abc1234567-01
 ### 2. Fetch Error
 
 **onOperationError Attributes**:
+
 ```javascript
 {
   "error.type": "NetworkError",
@@ -1041,9 +1084,11 @@ test("Fetch client injects traceparent header", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req) {
-      return new Response(JSON.stringify({
-        traceparent: req.headers.get("traceparent"),
-      }));
+      return new Response(
+        JSON.stringify({
+          traceparent: req.headers.get("traceparent"),
+        }),
+      );
     },
   });
 
@@ -1057,7 +1102,7 @@ test("Fetch client injects traceparent header", async () => {
     onOperationInject(id, data) {
       // Return array matching injectHeaders.request order: ["traceparent"]
       return [
-        "00-abc123def456-fedcba987654-01",  // traceparent
+        "00-abc123def456-fedcba987654-01", // traceparent
       ];
     },
   });
@@ -1132,7 +1177,9 @@ test("captureAttributes filters headers correctly", async () => {
     },
   });
 
-  expect(startAttrs["http.request.header.x-custom-header"]).toBe("custom-value");
+  expect(startAttrs["http.request.header.x-custom-header"]).toBe(
+    "custom-value",
+  );
   expect(startAttrs["http.request.header.x-other-header"]).toBeUndefined();
 
   server.stop();
@@ -1213,7 +1260,7 @@ test("creates HTTP server span with correct attributes", async () => {
   });
 
   expect(span.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
-  expect(span.parentSpanId).toBe("00f067aa0ba902b7");
+  expect(span.parentSpanContext?.spanId).toBe("00f067aa0ba902b7");
 
   server.stop();
 });
@@ -1243,7 +1290,7 @@ test("propagates trace context from client to server", async () => {
 
   // Make fetch request (client span)
   const tracer = trace.getTracer("test");
-  await tracer.startActiveSpan("client-request", async (span) => {
+  await tracer.startActiveSpan("client-request", async span => {
     const response = await fetch(`http://localhost:${server.port}/test`);
     const traceparent = await response.text();
 
@@ -1257,14 +1304,20 @@ test("propagates trace context from client to server", async () => {
 
   // Should have both client and server spans
   const clientSpan = spans.find(s => s.name === "client-request");
-  const serverSpan = spans.find(s => s.attributes["http.request.method"] === "GET");
+  const serverSpan = spans.find(
+    s => s.attributes["http.request.method"] === "GET",
+  );
 
   expect(clientSpan).toBeDefined();
   expect(serverSpan).toBeDefined();
 
   // Server span should be child of client span
-  expect(serverSpan.spanContext().traceId).toBe(clientSpan.spanContext().traceId);
-  expect(serverSpan.parentSpanId).toBe(clientSpan.spanContext().spanId);
+  expect(serverSpan.spanContext().traceId).toBe(
+    clientSpan.spanContext().traceId,
+  );
+  expect(serverSpan.parentSpanContext?.spanId).toBe(
+    clientSpan.spanContext().spanId,
+  );
 
   server.stop();
 });
@@ -1274,18 +1327,19 @@ test("propagates trace context from client to server", async () => {
 
 All configuration properties can be set via environment variables:
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `BUN_OTEL_HTTP_CAPTURE_HEADERS_FETCH_REQUEST` | `content-type,content-length,user-agent,accept` | Fetch request headers to capture |
-| `BUN_OTEL_HTTP_CAPTURE_HEADERS_FETCH_RESPONSE` | `content-type,content-length` | Fetch response headers to capture |
-| `BUN_OTEL_HTTP_CAPTURE_HEADERS_SERVER_REQUEST` | `content-type,content-length,user-agent,accept` | Server request headers to capture |
-| `BUN_OTEL_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE` | `content-type,content-length` | Server response headers to capture |
-| `BUN_OTEL_HTTP_PROPAGATE_HEADERS_FETCH_REQUEST` | `traceparent,tracestate` | Headers to inject in fetch requests |
-| `BUN_OTEL_HTTP_PROPAGATE_HEADERS_SERVER_RESPONSE` | (empty) | Headers to inject in server responses |
+| Environment Variable                              | Default                                         | Description                           |
+| ------------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
+| `BUN_OTEL_HTTP_CAPTURE_HEADERS_FETCH_REQUEST`     | `content-type,content-length,user-agent,accept` | Fetch request headers to capture      |
+| `BUN_OTEL_HTTP_CAPTURE_HEADERS_FETCH_RESPONSE`    | `content-type,content-length`                   | Fetch response headers to capture     |
+| `BUN_OTEL_HTTP_CAPTURE_HEADERS_SERVER_REQUEST`    | `content-type,content-length,user-agent,accept` | Server request headers to capture     |
+| `BUN_OTEL_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE`   | `content-type,content-length`                   | Server response headers to capture    |
+| `BUN_OTEL_HTTP_PROPAGATE_HEADERS_FETCH_REQUEST`   | `traceparent,tracestate`                        | Headers to inject in fetch requests   |
+| `BUN_OTEL_HTTP_PROPAGATE_HEADERS_SERVER_RESPONSE` | (empty)                                         | Headers to inject in server responses |
 
 **Format**: Comma-separated list (case-insensitive, whitespace trimmed)
 
 **Example**:
+
 ```bash
 export BUN_OTEL_HTTP_CAPTURE_HEADERS_SERVER_REQUEST="content-type,x-request-id,x-correlation-id"
 export BUN_OTEL_HTTP_PROPAGATE_HEADERS_SERVER_RESPONSE="traceparent"

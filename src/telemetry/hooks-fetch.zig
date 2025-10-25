@@ -166,137 +166,82 @@ pub fn buildFetchErrorAttributes(
 // ============================================================================
 
 /// Capture configured request headers and add to attributes map
-/// Reads the configuration property to get the list of header names to capture
+/// Uses pre-computed HeaderNameList for efficient header extraction with AttributeKey pointers
 fn captureRequestHeaders(
     attrs: *AttributeMap,
     headers_obj: *const http.Headers,
     globalObject: *JSGlobalObject,
     comptime config_property: telemetry.ConfigurationProperty,
 ) void {
+    _ = globalObject;
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Get configured header names from telemetry config
+    // Get pre-computed HeaderNameList from telemetry config
     const config_property_id = @intFromEnum(config_property);
-    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
-    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
 
-    const header_names_len = header_names_js.getLength(globalObject) catch return;
-    if (header_names_len == 0) return;
-
-    // Iterate through configured header names
-    var i: u32 = 0;
-    while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
-        if (!header_name_js.isString()) continue;
-
-        // Convert header name to string
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
-        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
-        defer header_name_slice.deinit();
-
-        // Get header value from HTTP headers
-        if (headers_obj.get(header_name_slice.slice())) |header_value| {
-            // Build attribute key: "http.request.header.{name}"
-            var attr_key_buf: [256]u8 = undefined;
-            const attr_key_str = std.fmt.bufPrint(&attr_key_buf, "http.request.header.{s}", .{header_name_slice.slice()}) catch continue;
-
-            // Create AttributeKey from string
-            const attr_key_js = ZigString.init(attr_key_str).toJS(globalObject);
-            const attr_key = telemetry_inst.semconv.fromJS(attr_key_js, globalObject) orelse continue;
-
-            // Add to attributes
-            attrs.set(attr_key, header_value);
+    // Iterate through pre-computed AttributeKey pointers
+    for (header_list.items.items) |attr_key| {
+        if (attr_key.http_header) |header_name| {
+            // Get header value using naked header name
+            if (headers_obj.get(header_name)) |header_value| {
+                // Set using AttributeKey pointer directly (no string conversion!)
+                attrs.set(attr_key, header_value);
+            }
         }
     }
 }
 
 /// Capture configured response headers from http.Headers and add to attributes map
+/// Uses pre-computed HeaderNameList for efficient header extraction with AttributeKey pointers
 fn captureResponseHeaders(
     attrs: *AttributeMap,
     headers_obj: *const http.Headers,
     globalObject: *JSGlobalObject,
     comptime config_property: telemetry.ConfigurationProperty,
 ) void {
+    _ = globalObject;
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Get configured header names from telemetry config
+    // Get pre-computed HeaderNameList from telemetry config
     const config_property_id = @intFromEnum(config_property);
-    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
-    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
 
-    const header_names_len = header_names_js.getLength(globalObject) catch return;
-    if (header_names_len == 0) return;
-
-    // Iterate through configured header names
-    var i: u32 = 0;
-    while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
-        if (!header_name_js.isString()) continue;
-
-        // Convert header name to string
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
-        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
-        defer header_name_slice.deinit();
-
-        // Get header value from HTTP headers
-        if (headers_obj.get(header_name_slice.slice())) |header_value| {
-            // Build attribute key: "http.response.header.{name}"
-            var attr_key_buf: [256]u8 = undefined;
-            const attr_key_str = std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
-
-            // Create AttributeKey from string
-            const attr_key_js = ZigString.init(attr_key_str).toJS(globalObject);
-            const attr_key = telemetry_inst.semconv.fromJS(attr_key_js, globalObject) orelse continue;
-
-            // Add to attributes
-            attrs.set(attr_key, header_value);
+    // Iterate through pre-computed AttributeKey pointers
+    for (header_list.items.items) |attr_key| {
+        if (attr_key.http_header) |header_name| {
+            // Get header value using naked header name
+            if (headers_obj.get(header_name)) |header_value| {
+                // Set using AttributeKey pointer directly (no string conversion!)
+                attrs.set(attr_key, header_value);
+            }
         }
     }
 }
 
 /// Capture configured response headers from picohttp response and add to attributes map
+/// Uses pre-computed HeaderNameList for efficient header extraction with AttributeKey pointers
 fn capturePicohttpResponseHeaders(
     attrs: *AttributeMap,
     pico_headers: *const bun.picohttp.Header.List,
     globalObject: *JSGlobalObject,
     comptime config_property: telemetry.ConfigurationProperty,
 ) void {
+    _ = globalObject;
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Get configured header names from telemetry config
+    // Get pre-computed HeaderNameList from telemetry config
     const config_property_id = @intFromEnum(config_property);
-    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
-    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
 
-    const header_names_len = header_names_js.getLength(globalObject) catch return;
-    if (header_names_len == 0) return;
-
-    // Iterate through configured header names
-    var i: u32 = 0;
-    while (i < header_names_len) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
-        if (!header_name_js.isString()) continue;
-
-        // Convert header name to string
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
-        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
-        defer header_name_slice.deinit();
-
-        // Get header value from picohttp headers (case-insensitive lookup)
-        if (pico_headers.get(header_name_slice.slice())) |header_value| {
-            // Build attribute key: "http.response.header.{name}"
-            var attr_key_buf: [256]u8 = undefined;
-            const attr_key_str = std.fmt.bufPrint(&attr_key_buf, "http.response.header.{s}", .{header_name_slice.slice()}) catch continue;
-
-            // Create AttributeKey from string
-            const attr_key_js = ZigString.init(attr_key_str).toJS(globalObject);
-            const attr_key = telemetry_inst.semconv.fromJS(attr_key_js, globalObject) orelse continue;
-
-            // Add to attributes
-            attrs.set(attr_key, header_value);
+    // Iterate through pre-computed AttributeKey pointers
+    for (header_list.items.items) |attr_key| {
+        if (attr_key.http_header) |header_name| {
+            // Get header value using naked header name (case-insensitive lookup)
+            if (pico_headers.get(header_name)) |header_value| {
+                // Set using AttributeKey pointer directly (no string conversion!)
+                attrs.set(attr_key, header_value);
+            }
         }
     }
 }

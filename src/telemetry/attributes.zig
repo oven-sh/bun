@@ -109,6 +109,16 @@ pub const AttributeKeys = struct {
     // Error attributes
     error_stack_trace: *AttributeKey,
 
+    // Database/SQL attributes
+    db_system_name: *AttributeKey,
+    db_namespace: *AttributeKey,
+    db_collection_name: *AttributeKey,
+    db_operation_name: *AttributeKey,
+    db_query_summary: *AttributeKey,
+    db_query_text: *AttributeKey,
+    db_response_status_code: *AttributeKey,
+    db_response_returned_rows: *AttributeKey,
+
     // Global list of all AttributeKeys (well-known + dynamically allocated)
     all: [1024]*AttributeKey,
     len: u16,
@@ -148,6 +158,16 @@ pub const AttributeKeys = struct {
         keys.operation_id = try keys.allocateAttribute("operation.id");
         keys.operation_timestamp = try keys.allocateAttribute("operation.timestamp");
         keys.operation_duration = try keys.allocateAttribute("operation.duration");
+
+        // Database/SQL attributes
+        keys.db_system_name = try keys.allocateAttribute(semconv.ATTR_DB_SYSTEM_NAME);
+        keys.db_namespace = try keys.allocateAttribute(semconv.ATTR_DB_NAMESPACE);
+        keys.db_collection_name = try keys.allocateAttribute(semconv.ATTR_DB_COLLECTION_NAME);
+        keys.db_operation_name = try keys.allocateAttribute(semconv.ATTR_DB_OPERATION_NAME);
+        keys.db_query_summary = try keys.allocateAttribute(semconv.ATTR_DB_QUERY_SUMMARY);
+        keys.db_query_text = try keys.allocateAttribute(semconv.ATTR_DB_QUERY_TEXT);
+        keys.db_response_status_code = try keys.allocateAttribute(semconv.ATTR_DB_RESPONSE_STATUS_CODE);
+        keys.db_response_returned_rows = try keys.allocateAttribute("db.response.returned_rows");
 
         // Distributed tracing attributes (W3C Trace Context)
         keys.trace_parent_trace_id = try keys.allocateAttribute("trace.parent.trace_id");

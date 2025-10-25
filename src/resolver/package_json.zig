@@ -909,11 +909,11 @@ pub const PackageJSON = struct {
                 // // if there is a name & version, check if the lockfile has the package
                 if (package_json.name.len > 0 and package_json.version.len > 0) {
                     if (r.package_manager) |pm| {
-                        const tag = Dependency.Version.Tag.infer(package_json.version);
+                        const tag = Dependency.NpaBridge.inferTag(package_json.version);
 
                         if (tag == .npm) {
                             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                            if (Dependency.parseWithTag(
+                            if (Dependency.NpaBridge.parseWithKnownTag(
                                 allocator,
                                 String.init(package_json.name, package_json.name),
                                 String.Builder.stringHash(package_json.name),
@@ -2166,4 +2166,3 @@ const api = bun.schema.api;
 
 const Semver = bun.Semver;
 const String = Semver.String;
-const Version = Semver.Version;

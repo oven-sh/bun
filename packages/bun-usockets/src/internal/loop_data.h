@@ -49,6 +49,7 @@ struct us_internal_loop_data_t {
     struct us_udp_socket_t *closed_udp_head;
     struct us_socket_t *closed_head;
     struct us_socket_t *low_prio_head;
+    struct us_socket_t *pending_read_head;
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;

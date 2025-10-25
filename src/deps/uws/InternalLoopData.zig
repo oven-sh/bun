@@ -16,6 +16,7 @@ pub const InternalLoopData = extern struct {
     closed_udp_head: ?*udp.Socket,
     closed_head: ?*us_socket_t,
     low_prio_head: ?*us_socket_t,
+    pending_read_head: ?*us_socket_t,
     low_prio_budget: i32,
     dns_ready_head: *ConnectingSocket,
     closed_connecting_head: *ConnectingSocket,

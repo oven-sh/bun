@@ -1446,31 +1446,11 @@ pub fn clearRefString(_: *anyopaque, ref_string: *jsc.RefString) void {
     _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
 }
 
-pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
-    // refCountedString will panic if the code is empty
-    if (code.len == 0) {
-        return ResolvedSource{
-            .source_code = bun.String.init(""),
-            .specifier = specifier,
-            .source_url = specifier.createIfDifferent(source_url),
-            .allocator = null,
-            .source_code_needs_deref = false,
-        };
-    }
-    var source = this.refCountedString(code, hash_, !add_double_ref);
-    if (add_double_ref) {
-        source.ref();
-        source.ref();
-    }
-
-    return ResolvedSource{
-        .source_code = bun.String.init(source.impl),
-        .specifier = specifier,
-        .source_url = specifier.createIfDifferent(source_url),
-        .allocator = source,
-        .source_code_needs_deref = false,
-    };
-}
+// TODO: This function is deprecated - update watcher code to work with ModuleResult
+// pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+//     _ = this; _ = code; _ = specifier; _ = source_url; _ = hash_; _ = add_double_ref;
+//     @compileError("refCountedResolvedSource is deprecated - use ModuleResult instead");
+// }
 
 fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *jsc.RefString {
     jsc.markBinding(@src());
@@ -1519,7 +1499,7 @@ pub fn fetchWithoutOnLoadPlugins(
     referrer: String,
     log: *logger.Log,
     comptime flags: FetchFlags,
-) anyerror!ResolvedSource {
+) anyerror!ModuleResult {
     bun.assert(VirtualMachine.isLoaded());
 
     if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
@@ -1863,7 +1843,7 @@ pub fn drainMicrotasks(this: *VirtualMachine) void {
     this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
-pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ModuleResult, err: anyerror) void {
     switch (log.msgs.items.len) {
         0 => {
             const msg: logger.Msg = brk: {
@@ -1882,22 +1862,32 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
+                ret.* = ModuleResult{
+                    .tag = .err,
+                    .value = .{ .err = ErrorResult{
+                        .exception = (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
+                    } },
+                };
             }
             return;
         },
 
         1 => {
             const msg = log.msgs.items[0];
-            ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
-                .resolve => (bun.api.ResolveMessage.create(
-                    globalThis,
-                    globalThis.allocator(),
-                    msg,
-                    referrer.toUTF8(bun.default_allocator).slice(),
-                ) catch |e| globalThis.takeException(e)),
-            });
+            ret.* = ModuleResult{
+                .tag = .err,
+                .value = .{ .err = ErrorResult{
+                    .exception = switch (msg.metadata) {
+                        .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
+                        .resolve => (bun.api.ResolveMessage.create(
+                            globalThis,
+                            globalThis.allocator(),
+                            msg,
+                            referrer.toUTF8(bun.default_allocator).slice(),
+                        ) catch |e| globalThis.takeException(e)),
+                    },
+                } },
+            };
             return;
         },
         else => {
@@ -1919,18 +1909,20 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             }
 
-            ret.* = ErrorableResolvedSource.err(
-                err,
-                globalThis.createAggregateError(
-                    errors,
-                    &ZigString.init(
-                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
-                            errors.len,
-                            specifier,
-                        }) catch unreachable,
-                    ),
-                ) catch |e| globalThis.takeException(e),
-            );
+            ret.* = ModuleResult{
+                .tag = .err,
+                .value = .{ .err = ErrorResult{
+                    .exception = globalThis.createAggregateError(
+                        errors,
+                        &ZigString.init(
+                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
+                                errors.len,
+                                specifier,
+                            }) catch unreachable,
+                        ),
+                    ) catch |e| globalThis.takeException(e),
+                } },
+            };
         },
     }
 }
@@ -2797,9 +2789,15 @@ pub fn remapZigException(
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            const module_result = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             must_reset_parser_arena_later.* = true;
-            break :code original_source.source_code.toUTF8(bun.default_allocator);
+
+            // For error printing, we only care about transpiled sources
+            if (module_result.tag != .transpiled) {
+                break :code ZigString.Slice.empty;
+            }
+
+            break :code module_result.value.transpiled.source_code.toUTF8(bun.default_allocator);
         };
 
         if (enable_source_code_preview and code.len == 0) {
@@ -3698,6 +3696,8 @@ const IPC = @import("./ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
+const ErrorResult = @import("./bindings/ModuleResult.zig").ErrorResult;
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;
@@ -3729,7 +3729,6 @@ const DNSResolver = bun.api.dns.Resolver;
 
 const jsc = bun.jsc;
 const ConsoleObject = jsc.ConsoleObject;
-const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
 const ErrorableString = jsc.ErrorableString;
 const EventLoop = jsc.EventLoop;
 const Exception = jsc.Exception;
@@ -3738,7 +3737,6 @@ const JSInternalPromise = jsc.JSInternalPromise;
 const JSModuleLoader = jsc.JSModuleLoader;
 const JSValue = jsc.JSValue;
 const Node = jsc.Node;
-const ResolvedSource = jsc.ResolvedSource;
 const SavedSourceMap = jsc.SavedSourceMap;
 const VM = jsc.VM;
 const ZigException = jsc.ZigException;

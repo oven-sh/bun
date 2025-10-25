@@ -87,9 +87,9 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
-    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
+    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, TranspiledSource& resolvedSource, bool isBuiltIn);
+    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, TranspiledSource& resolvedSource);
+    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, TranspiledSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
@@ -112,7 +112,7 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        ResolvedSource resolvedSource);
+        TranspiledSource& resolvedSource);
 
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
@@ -166,13 +166,13 @@ JSC::Structure* createCommonJSModuleStructure(
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    ResolvedSource& source,
+    TranspiledSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    ResolvedSource& source)
+    TranspiledSource& source)
 {
     return createCommonJSModule(globalObject, specifierValue, source, false);
 }

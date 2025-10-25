@@ -105,29 +105,53 @@ typedef struct ErrorableString {
     ErrorableStringResult result;
     bool success;
 } ErrorableString;
-typedef struct ResolvedSource {
-    BunString specifier;
+
+// Forward declarations for new module loading types
+typedef struct TranspiledSource TranspiledSource;
+typedef struct SpecialModule SpecialModule;
+typedef struct ModuleResult ModuleResult;
+
+// Full definitions for C++ interop
+// Corresponds to src/bun.js/bindings/TranspiledSource.zig
+struct TranspiledSource {
     BunString source_code;
     BunString source_url;
-    bool isCommonJSModule;
-    JSC::EncodedJSValue cjsCustomExtension;
-    void* allocator;
-    JSC::EncodedJSValue jsvalue_for_export;
-    uint32_t tag;
-    bool needsDeref;
-    bool already_bundled;
     uint8_t* bytecode_cache;
-    size_t bytecode_cache_size;
-} ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
-typedef union ErrorableResolvedSourceResult {
-    ResolvedSource value;
-    ZigErrorType err;
-} ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
-    ErrorableResolvedSourceResult result;
-    bool success;
-} ErrorableResolvedSource;
+    size_t bytecode_cache_len;
+    struct {
+        bool is_commonjs;
+        bool is_already_bundled;
+        uint32_t _padding; // 30 bits padding in Zig packed struct
+    } flags;
+};
+
+// Corresponds to src/bun.js/bindings/SpecialModule.zig
+struct SpecialModule {
+    enum Tag : uint8_t {
+        exports_object,
+        export_default_object,
+        custom_extension,
+    } tag;
+    JSC::EncodedJSValue jsvalue;
+};
+
+// Corresponds to src/bun.js/bindings/ModuleResult.zig
+struct ModuleResult {
+    enum Tag : uint8_t {
+        transpiled,
+        special,
+        builtin,
+        err,
+    } tag;
+    union {
+        TranspiledSource transpiled;
+        SpecialModule special;
+        uint32_t builtin_id;
+        struct {
+            JSC::EncodedJSValue exception;
+        } err;
+    } value;
+};
 
 typedef struct SystemError {
     int errno_;
@@ -354,7 +378,7 @@ extern "C" bool Bun__transpileVirtualModule(
     const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
@@ -366,7 +390,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result,
+    ModuleResult* result,
     bool allowPromise,
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType);
@@ -376,11 +400,11 @@ extern "C" bool Bun__fetchBuiltinModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,
     const BunString* specifier,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 // Used in process.version
 extern "C" const char* Bun__version;

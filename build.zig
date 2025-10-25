@@ -725,7 +725,6 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     inline for (.{
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "bindgen_generated.zig", .import = "bindgen_generated" },
-        .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "runtime.out.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },

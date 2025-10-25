@@ -44,7 +44,7 @@
 #endif
 
 #include "JSDOMConvertBase.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "mimalloc.h"
 
 #include <JavaScriptCore/ControlFlowProfiler.h>

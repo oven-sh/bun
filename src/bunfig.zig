@@ -239,6 +239,11 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("onlyFailures")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.reporters.only_failures = expr.data.e_boolean.value;
+                    }
+
                     if (test_.get("reporter")) |expr| {
                         try this.expect(expr, .e_object);
                         if (expr.get("junit")) |junit_expr| {
@@ -725,6 +730,30 @@ pub const Bunfig = struct {
                                 try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
                             },
                         }
+                    }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
                     }
                 }
 

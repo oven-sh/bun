@@ -40,6 +40,7 @@ pub fn main() void {
             &bun.default_calloc,
             &bun.default_free,
         );
+        bun.handleOom(bun.windows.env.convertEnvToWTF8());
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
     }

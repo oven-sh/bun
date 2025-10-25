@@ -996,14 +996,14 @@ const Template = enum {
         }
 
         // Give some way to opt out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CLAUDE_CODE_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CLAUDE_CODE_AGENT_RULE_DISABLED.get()) {
             return false;
         }
 
         const pathbuffer = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(pathbuffer);
 
-        return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
+        return bun.which(pathbuffer, bun.env_var.PATH.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
 
     pub fn createAgentRule() void {
@@ -1055,15 +1055,13 @@ const Template = enum {
 
     fn isCursorInstalled() bool {
         // Give some way to opt-out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CURSOR_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CURSOR_AGENT_RULE_DISABLED.get()) {
             return false;
         }
 
         // Detect if they're currently using cursor.
-        if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
-            if (env.len > 0) {
-                return true;
-            }
+        if (bun.env_var.CURSOR_TRACE_ID.get()) {
+            return true;
         }
 
         if (Environment.isMac) {

@@ -414,6 +414,9 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
+    /// The module type of the importing file (after linking), used to determine interop helper behavior.
+    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    input_module_type: options.ModuleType = .unknown,
     module_type: options.Format = .esm,
 
     // /// Used for cross-module inlining of import items when bundling
@@ -1711,7 +1714,7 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (module_type.isESM()) {
+                    if (p.options.input_module_type == .esm) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");
@@ -3682,6 +3685,8 @@ fn NewPrinter(
 
             switch (stmt.data) {
                 .s_comment => |s| {
+                    p.printIndent();
+                    p.addSourceMapping(stmt.loc);
                     p.printIndentedComment(s.text);
                 },
                 .s_function => |s| {
@@ -5143,16 +5148,26 @@ fn NewPrinter(
             if (strings.startsWith(text, "/*")) {
                 // Re-indent multi-line comments
                 while (strings.indexOfChar(text, '\n')) |newline_index| {
+
+                    // Skip over \r if it precedes \n
+                    if (newline_index > 0 and text[newline_index - 1] == '\r') {
+                        p.print(text[0 .. newline_index - 1]);
+                        p.print("\n");
+                    } else {
+                        p.print(text[0 .. newline_index + 1]);
+                    }
                     p.printIndent();
-                    p.print(text[0 .. newline_index + 1]);
+
                     text = text[newline_index + 1 ..];
                 }
-                p.printIndent();
                 p.print(text);
                 p.printNewline();
             } else {
                 // Print a mandatory newline after single-line comments
-                p.printIndent();
+                if (text.len > 0 and text[text.len - 1] == '\r') {
+                    text = text[0 .. text.len - 1];
+                }
+
                 p.print(text);
                 p.print("\n");
             }

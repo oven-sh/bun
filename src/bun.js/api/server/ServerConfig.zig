@@ -802,13 +802,9 @@ pub fn fromJS(
             if (id.isUndefinedOrNull()) {
                 args.allow_hot = false;
             } else {
-                const id_str = try id.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
-
+                const id_str = try id.toUTF8Bytes(global, bun.default_allocator);
                 if (id_str.len > 0) {
-                    args.id = (id_str.cloneIfNeeded(bun.default_allocator) catch unreachable).slice();
+                    args.id = id_str;
                 } else {
                     args.allow_hot = false;
                 }

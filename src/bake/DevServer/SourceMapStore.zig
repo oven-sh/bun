@@ -469,7 +469,7 @@ pub fn locateWeakRef(store: *Self, key: Key) ?struct { index: usize, ref: WeakRe
     return null;
 }
 
-pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventLoopTimer.Arm {
+pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) void {
     mapLog("sweepWeakRefs", .{});
     const store: *Self = @fieldParentPtr("weak_ref_sweep_timer", timer);
     assert(store.owner().magic == .valid);
@@ -489,13 +489,11 @@ pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventL
                 &store.weak_ref_sweep_timer,
                 &.{ .sec = item.expire + 1, .nsec = 0 },
             );
-            return .disarm;
+            return;
         }
     }
 
     store.weak_ref_sweep_timer.state = .CANCELLED;
-
-    return .disarm;
 }
 
 pub const GetResult = struct {

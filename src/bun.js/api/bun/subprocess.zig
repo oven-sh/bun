@@ -350,16 +350,15 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) void {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return;
     if (this.hasExited()) {
         this.event_loop_timer.state = .CANCELLED;
-        return .disarm;
+        return;
     }
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
-    return .disarm;
 }
 
 pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
@@ -1352,7 +1351,7 @@ pub fn spawnMaybeSync(
         !jsc_vm.auto_killer.enabled and
         !jsc_vm.jsc_vm.hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
-        !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
+        !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,

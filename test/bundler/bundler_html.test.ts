@@ -843,4 +843,41 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test script tags in body are preserved (not moved to head)
+  itBundled("html/script-in-body", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <h1>Hello World</h1>
+  <script src="./script.js"></script>
+</body>
+</html>`,
+      "/styles.css": "body { background-color: red; }",
+      "/script.js": "console.log('Hello World')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // Check that bundled script tag is in the body (before </body>), not in head
+      const bodyCloseIndex = htmlContent.indexOf("</body>");
+      const headCloseIndex = htmlContent.indexOf("</head>");
+      const scriptIndex = htmlContent.indexOf("<script");
+
+      expect(scriptIndex).toBeGreaterThan(-1);
+      expect(bodyCloseIndex).toBeGreaterThan(-1);
+      expect(headCloseIndex).toBeGreaterThan(-1);
+
+      // Script should come after head close and before body close
+      expect(scriptIndex).toBeGreaterThan(headCloseIndex);
+      expect(scriptIndex).toBeLessThan(bodyCloseIndex);
+    },
+  });
 });

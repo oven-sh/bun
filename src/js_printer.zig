@@ -390,7 +390,7 @@ pub const Options = struct {
     allocator: std.mem.Allocator = default_allocator,
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
-    source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
+    source_map_builder: ?*bun.SourceMap.Chunk.Builder = null,
     css_import_behavior: api.CssInJsBehavior = api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 

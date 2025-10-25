@@ -458,7 +458,7 @@ pub const File = struct {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
-    line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
+    line_offset_table: bun.SourceMap.LineOffsetTable.List = .empty,
     quoted_source_contents: Owned(?[]u8) = .initNull(),
 
     pub fn isEntryPoint(this: *const File) bool {

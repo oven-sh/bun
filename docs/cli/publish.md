@@ -36,6 +36,8 @@ $ bun publish ./package.tgz
 
 {% callout %}
 **Note** - `bun publish` will not run lifecycle scripts (`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if a tarball path is provided. Scripts will only be run if the package is packed by `bun publish`.
+
+- For `bun publish` to resolve the correct version in workspaces. The affected package's package.json needs to have a `version` field.
 {% /callout %}
 
 ### `--access`

@@ -18,6 +18,15 @@ const ZigString = jsc.ZigString;
 const semconv = @import("semconv.zig");
 
 // ============================================================================
+// Header Direction - Shared enum for request/response classification
+// ============================================================================
+
+/// Header direction for HTTP header attributes
+/// Used to distinguish between request and response headers in both
+/// AttributeKey.httpDirection() and HeaderNameList.fromJS()
+pub const HeaderDirection = enum { request, response };
+
+// ============================================================================
 // External C Function - HTTP Header Name Lookup
 // ============================================================================
 
@@ -52,7 +61,7 @@ pub const AttributeKey = struct {
     }
 
     /// Get HTTP direction by checking semconv_name prefix
-    pub fn httpDirection(self: *const AttributeKey) ?enum { request, response } {
+    pub fn httpDirection(self: *const AttributeKey) ?HeaderDirection {
         if (self.semconv_name.len < 8) return null;
         if (!std.mem.startsWith(u8, self.semconv_name, "http.")) return null;
         if (self.semconv_name[7] == 'q') return .request; // "http.request."
@@ -171,7 +180,7 @@ pub const AttributeKeys = struct {
     /// Look up an HTTP header AttributeKey by direction and header name
     pub fn lookupHeader(
         self: *AttributeKeys,
-        direction: enum { request, response },
+        direction: HeaderDirection,
         header: []const u8,
     ) ?*AttributeKey {
         // Search for header attribute matching direction and name
@@ -275,6 +284,39 @@ pub const AttributeKeys = struct {
         const new_key = self.allocateAttribute(name_copy) catch return null;
 
         return new_key;
+    }
+
+    /// Get or create an HTTP header AttributeKey
+    /// This is the primary API for HeaderNameList to convert header names to AttributeKeys
+    ///
+    /// Builds the semconv name as "http.{direction}.header.{header_name}"
+    /// Auto-detects fast_header (HTTPHeaderName ID) if the header is in the standard list
+    ///
+    /// Examples:
+    ///   getOrCreateHeaderKey(.request, "content-type") → "http.request.header.content-type"
+    ///   getOrCreateHeaderKey(.response, "content-length") → "http.response.header.content-length"
+    pub fn getOrCreateHeaderKey(
+        self: *AttributeKeys,
+        direction: HeaderDirection,
+        header_name: []const u8,
+    ) !*AttributeKey {
+        // Build semconv name
+        const prefix = if (direction == .request)
+            "http.request.header."
+        else
+            "http.response.header.";
+
+        var buf: [256]u8 = undefined;
+        const semconv_name = try std.fmt.bufPrint(&buf, "{s}{s}", .{ prefix, header_name });
+
+        // Look up existing
+        if (self.lookupSemconv(semconv_name)) |existing| {
+            return existing;
+        }
+
+        // Allocate new - need to copy string to allocator memory
+        const name_copy = try self.allocator.dupe(u8, semconv_name);
+        return try self.allocateAttribute(name_copy);
     }
 };
 
@@ -389,5 +431,36 @@ pub const AttributeMap = struct {
         _ = header_list;
         _ = globalObject;
         // Header extraction temporarily disabled during refactoring
+    }
+
+    /// Extract headers from native FetchHeaders object using configured header list
+    /// This is the most efficient header extraction path - uses AttributeKey pointers with fast_header optimization
+    /// Expects header_list to be *const HeaderNameList with .items: ArrayList(*const AttributeKey)
+    pub fn extractHeadersFromNativeFetchHeaders(
+        self: *AttributeMap,
+        fetch_headers: *bun.webcore.FetchHeaders,
+        header_list: anytype,
+        globalObject: *JSGlobalObject,
+    ) void {
+        // header_list.items is ArrayList, need to access .items to get the slice
+        for (header_list.items.items) |attr_key| {
+            // Fast path: use pre-computed fast_header ID for O(1) lookup
+            if (attr_key.fast_header) |fast_id| {
+                const header_enum = @as(bun.webcore.FetchHeaders.HTTPHeaderName, @enumFromInt(fast_id));
+                if (fetch_headers.fastGet(header_enum)) |zig_str| {
+                    if (zig_str.len > 0) {
+                        // Set using AttributeKey pointer (no string conversion needed!)
+                        self.set(attr_key, zig_str.slice());
+                    }
+                }
+            } else if (attr_key.http_header) |header_name| {
+                // Slow path: string lookup for non-fast headers
+                if (fetch_headers.get(header_name, globalObject)) |header_value| {
+                    if (header_value.len > 0) {
+                        self.set(attr_key, header_value);
+                    }
+                }
+            }
+        }
     }
 };

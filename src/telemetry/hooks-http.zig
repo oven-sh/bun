@@ -51,7 +51,7 @@ pub fn buildHttpStartAttributes(
     request_id: u64,
     method: []const u8,
     url: []const u8,
-    headers: ?JSValue,
+    fetch_headers: *bun.webcore.FetchHeaders,
     host_header: ?[]const u8,
     fallback_server_address: ?[]const u8,
     fallback_server_port: ?u16,
@@ -106,14 +106,9 @@ pub fn buildHttpStartAttributes(
         attrs.set(otel.semconv.server_port, port);
     }
 
-    // Request headers capture and traceparent extraction
-    if (headers) |headers_jsvalue| {
-        // Capture configured request headers
-        captureJSValueHeaders(&attrs, headers_jsvalue, globalObject, .http_capture_headers_server_request);
-
-        // Extract traceparent header for distributed tracing
-        extractTraceparent(&attrs, headers_jsvalue, globalObject);
-    }
+    // Request headers capture and traceparent extraction (using native FetchHeaders)
+    captureNativeFetchHeaders(&attrs, fetch_headers, globalObject, .http_capture_headers_server_request);
+    extractTraceparentFromFetchHeaders(&attrs, fetch_headers, globalObject);
 
     return attrs;
 }
@@ -206,6 +201,24 @@ pub fn buildHttpErrorAttributes(
 // Header Capture and Traceparent Extraction Helpers
 // ============================================================================
 
+/// Capture configured headers from native FetchHeaders and add to attributes map
+/// Uses pre-computed HeaderNameList for efficient header extraction
+fn captureNativeFetchHeaders(
+    attrs: *AttributeMap,
+    fetch_headers: *bun.webcore.FetchHeaders,
+    globalObject: *JSGlobalObject,
+    comptime config_property: telemetry.ConfigurationProperty,
+) void {
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+
+    // Get pre-computed HeaderNameList from telemetry config
+    const config_property_id = @intFromEnum(config_property);
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
+
+    // Use native FetchHeaders methods (no JS overhead)
+    attrs.extractHeadersFromNativeFetchHeaders(fetch_headers, header_list, globalObject);
+}
+
 /// Capture configured headers from JSValue (FetchHeaders object or plain object) and add to attributes map
 /// Uses pre-computed HeaderNameList for efficient header extraction
 fn captureJSValueHeaders(
@@ -243,6 +256,30 @@ fn captureJSValueHeaders(
         // Slow path: Plain object property access
         attrs.extractHeadersFromPlainObject(headers_jsvalue, header_list, globalObject);
     }
+}
+
+/// Extract traceparent header from native FetchHeaders and parse W3C Trace Context
+/// Sets attributes: trace.parent.trace_id, trace.parent.span_id, trace.parent.trace_flags
+///
+/// Uses the W3C spec-compliant parser from ../telemetry/traceparent.zig
+fn extractTraceparentFromFetchHeaders(
+    attrs: *AttributeMap,
+    fetch_headers: *bun.webcore.FetchHeaders,
+    globalObject: *JSGlobalObject,
+) void {
+    const otel = telemetry.getGlobalTelemetry() orelse return;
+
+    // Get "traceparent" header value directly from FetchHeaders (no JS needed)
+    const traceparent_value = fetch_headers.get("traceparent", globalObject) orelse return;
+    if (traceparent_value.len == 0) return;
+
+    // Parse using W3C spec-compliant parser
+    const ctx = traceparent.TraceContext.parse(traceparent_value) orelse return;
+
+    // Set attributes for distributed tracing
+    attrs.set(otel.semconv.trace_parent_trace_id, &ctx.trace_id);
+    attrs.set(otel.semconv.trace_parent_span_id, &ctx.span_id);
+    attrs.set(otel.semconv.trace_parent_trace_flags, ctx.trace_flags);
 }
 
 /// Extract traceparent header and parse W3C Trace Context into attributes
@@ -298,6 +335,32 @@ fn extractTraceparent(
 }
 
 // ============================================================================
+// FetchHeaders Access Helpers
+// ============================================================================
+
+/// Get FetchHeaders from Request object for telemetry purposes
+///
+/// This extracts the native FetchHeaders pointer from the Request object
+/// avoiding expensive JS property access. Uses ensureFetchHeaders() which
+/// creates from uws.Request if headers haven't been accessed yet.
+///
+/// Args:
+///   request: The native WebCore.Request object containing headers
+///   globalObject: JSGlobalObject for header creation if needed
+///
+/// Returns:
+///   Pointer to FetchHeaders (either cached or newly created from uws.Request)
+///   Never null - always returns a valid FetchHeaders pointer.
+inline fn getFetchHeadersForTelemetry(
+    request: *bun.webcore.Request,
+    globalObject: *JSGlobalObject,
+) *bun.webcore.FetchHeaders {
+    // ensureFetchHeaders() creates from uws.Request if not cached
+    // For server requests with uws.Request, this won't throw errors
+    return request.ensureFetchHeaders(globalObject) catch unreachable;
+}
+
+// ============================================================================
 // High-Level Notification Helpers (minimize changes to core Bun code)
 // ============================================================================
 
@@ -306,12 +369,10 @@ fn extractTraceparent(
 pub inline fn notifyHttpRequestStart(
     ctx: *HttpTelemetryContext,
     globalObject: *JSGlobalObject,
+    request: *bun.webcore.Request,
+    uws_req: anytype, // *uws.Request
     method: []const u8,
-    url: []const u8,
-    headers: JSValue,
-    host_header: ?[]const u8,
-    fallback_server_address: ?[]const u8,
-    fallback_server_port: ?u16,
+    server: anytype, // *Server (generic to handle HTTP/HTTPS/Debug variants)
 ) void {
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(.http)) return;
@@ -320,16 +381,34 @@ pub inline fn notifyHttpRequestStart(
     ctx.request_id = telemetry_inst.generateId();
     ctx.start_time_ns = telemetry.getOperationStartTime();
 
+    // Get FetchHeaders directly from Request (no JS property access)
+    const fetch_headers = getFetchHeadersForTelemetry(request, globalObject);
+
+    // Extract Host header for server.address/port (OpenTelemetry semantic conventions)
+    const host_header = uws_req.header("host");
+
+    // Get fallback server address and port from server configuration
+    const fallback_address: ?[]const u8 = switch (server.config.address) {
+        .tcp => |tcp| if (tcp.hostname) |h| bun.sliceTo(@constCast(h), 0) else null,
+        else => null,
+    };
+    const fallback_port: ?u16 = if (server.listener) |l|
+        @intCast(l.getLocalPort())
+    else switch (server.config.address) {
+        .tcp => |tcp| tcp.port,
+        else => @as(u16, if (@hasField(@TypeOf(server.*), "ssl_enabled") and server.ssl_enabled) 443 else 80),
+    };
+
     // Build and send start attributes
     var start_attrs = buildHttpStartAttributes(
         globalObject,
         ctx.request_id,
         method,
-        url,
-        headers,
+        uws_req.url(),
+        fetch_headers,
         host_header,
-        fallback_server_address,
-        fallback_server_port,
+        fallback_address,
+        fallback_port,
     );
     telemetry_inst.notifyOperationStart(.http, ctx.request_id, &start_attrs);
 }

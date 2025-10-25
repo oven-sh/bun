@@ -6,7 +6,110 @@ const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 const ZigString = jsc.ZigString;
 const semconv = @import("semconv.zig");
-const HeaderNameList = semconv.HeaderNameList;
+const attributes = @import("attributes.zig");
+const AttributeKeys = attributes.AttributeKeys;
+const AttributeKey = attributes.AttributeKey;
+
+// ============================================================================
+// Context Kind (replaces legacy bitpacked u16 namespace constants)
+// ============================================================================
+// These were formerly numeric bit ranges (0x0200, 0x0300, etc.) when context
+// information was embedded into a megamorphic enum via bitpacking. The design
+// has since moved to explicit lists + pointers, so we keep only a simple enum
+// describing the semantic role of a header collection. If additional context
+// variants are added later (e.g. client spans, websocket, db), extend here.
+pub const ContextKind = enum(u8) {
+    base,
+    server_request,
+    server_response,
+    fetch_request,
+    fetch_response,
+};
+
+// ============================================================================
+// HeaderNameList - Pre-processed configuration for efficient header capture
+// ============================================================================
+
+/// Pre-processed header name list for efficient header capture/propagation
+/// Stores AttributeKey pointers for O(1) header lookups with fast_header optimization
+pub const HeaderNameList = struct {
+    /// Header AttributeKey pointers (references AttributeKeys singleton)
+    /// Each AttributeKey has pre-computed fast_header ID and http_header name
+    items: std.ArrayList(*const AttributeKey),
+
+    /// Context kind for determining header direction (.request or .response)
+    context: ContextKind,
+
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, context: ContextKind) HeaderNameList {
+        return .{
+            .items = std.ArrayList(*const AttributeKey).init(allocator),
+            .context = context,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *HeaderNameList) void {
+        // Don't deref AttributeKeys - we don't own them (they're owned by AttributeKeys singleton)
+        self.items.deinit();
+    }
+
+    /// Parse a JS array of header name strings into AttributeKey pointers
+    /// Requires access to AttributeKeys singleton for allocation/lookup
+    pub fn fromJS(
+        allocator: std.mem.Allocator,
+        global: *JSGlobalObject,
+        js_array: JSValue,
+        context: ContextKind,
+        attribute_keys: *AttributeKeys,
+    ) !HeaderNameList {
+        var list = HeaderNameList.init(allocator, context);
+        errdefer list.deinit();
+
+        // Determine header direction from context
+        const direction: attributes.HeaderDirection = switch (context) {
+            .server_request, .fetch_request => .request,
+            .server_response, .fetch_response => .response,
+            else => .request,
+        };
+
+        const len = try js_array.getLength(global);
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const name_js = try js_array.getIndex(global, i);
+            if (!name_js.isString()) continue;
+
+            var name_zig: ZigString = ZigString.Empty;
+            try name_js.toZigString(&name_zig, global);
+            const name_slice = name_zig.toSlice(allocator);
+            defer name_slice.deinit();
+            const header_name = name_slice.slice();
+
+            // Get or create AttributeKey for this header
+            // This auto-detects fast_header ID and populates http_header name
+            const attr_key = try attribute_keys.getOrCreateHeaderKey(direction, header_name);
+            try list.items.append(attr_key);
+        }
+
+        return list;
+    }
+
+    /// Convert back to JS array for debugging/serialization
+    /// Extracts naked header names from AttributeKey.http_header
+    pub fn toJS(self: *const HeaderNameList, global: *JSGlobalObject) JSValue {
+        const array = JSValue.createEmptyArray(global, @intCast(self.items.len));
+
+        for (self.items, 0..) |attr_key, i| {
+            // Extract naked header name from semconv_name or use http_header directly
+            const header_name = if (attr_key.http_header) |h| h else attr_key.semconv_name;
+            const name_js = ZigString.init(header_name).toJS(global);
+            array.putIndex(global, @intCast(i), name_js);
+        }
+
+        return array;
+    }
+};
 
 /// Configuration property identifiers for accessing telemetry configuration values.
 /// Used by getConfigurationProperty() to retrieve specific configuration data.
@@ -43,7 +146,7 @@ pub const TelemetryConfig = struct {
 
     /// Initialize configuration with safe default values
     /// TODO: Parse from OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_* environment variables
-    pub fn init(allocator: std.mem.Allocator, global: *JSGlobalObject) !TelemetryConfig {
+    pub fn init(allocator: std.mem.Allocator, global: *JSGlobalObject, attribute_keys: *AttributeKeys) !TelemetryConfig {
         // Safe default headers (deny-by-default security model - only non-sensitive headers)
         const sample_request_headers = &[_][]const u8{ "content-type", "user-agent", "accept", "content-length" };
         const sample_response_headers = &[_][]const u8{ "content-type", "content-length" };
@@ -112,7 +215,8 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             server_req_headers_js,
-            semconv.CONTEXT_SERVER_REQUEST,
+            .server_request,
+            attribute_keys,
         );
 
         // Pre-compute HeaderNameList for server response headers
@@ -120,7 +224,8 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             server_res_headers_js,
-            semconv.CONTEXT_SERVER_RESPONSE,
+            .server_response,
+            attribute_keys,
         );
 
         // Pre-compute HeaderNameList for fetch request headers
@@ -128,7 +233,8 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             fetch_req_headers_js,
-            semconv.CONTEXT_FETCH_REQUEST,
+            .fetch_request,
+            attribute_keys,
         );
 
         // Pre-compute HeaderNameList for fetch response headers
@@ -136,7 +242,8 @@ pub const TelemetryConfig = struct {
             allocator,
             global,
             fetch_res_headers_js,
-            semconv.CONTEXT_FETCH_RESPONSE,
+            .fetch_response,
+            attribute_keys,
         );
 
         return TelemetryConfig{
@@ -314,25 +421,20 @@ pub const TelemetryConfig = struct {
         }
 
         // Determine context based on property type and create HeaderNameList
-        const maybe_context: ?u16 = switch (@as(ConfigurationProperty, @enumFromInt(property_id))) {
-            .http_capture_headers_server_request => semconv.CONTEXT_SERVER_REQUEST,
-            .http_capture_headers_server_response => semconv.CONTEXT_SERVER_RESPONSE,
-            .http_propagate_headers_server_response => semconv.CONTEXT_SERVER_RESPONSE,
-            .http_capture_headers_fetch_request => semconv.CONTEXT_FETCH_REQUEST,
-            .http_capture_headers_fetch_response => semconv.CONTEXT_FETCH_RESPONSE,
-            .http_propagate_headers_fetch_request => semconv.CONTEXT_FETCH_REQUEST,
+        const maybe_context: ?ContextKind = switch (@as(ConfigurationProperty, @enumFromInt(property_id))) {
+            .http_capture_headers_server_request => .server_request,
+            .http_capture_headers_server_response => .server_response,
+            .http_propagate_headers_server_response => .server_response,
+            .http_capture_headers_fetch_request => .fetch_request,
+            .http_capture_headers_fetch_response => .fetch_response,
+            .http_propagate_headers_fetch_request => .fetch_request,
             else => null,
         };
 
         if (maybe_context) |context| {
             // Only create HeaderNameList if js_value is a valid array
             if (!js_value.isUndefined() and !js_value.isNull() and js_value.isArray()) {
-                self.header_properties[property_id] = try HeaderNameList.fromJS(
-                    self.allocator,
-                    self.global,
-                    js_value,
-                    context,
-                );
+                self.header_properties[property_id] = try HeaderNameList.fromJS(self.allocator, self.global, js_value, context, bun.telemetry.semconv);
             }
         }
     }

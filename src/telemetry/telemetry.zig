@@ -110,6 +110,8 @@ pub const InstrumentRecord = struct {
     /// Contains parsed header injection configuration from instrument.injectHeaders
     instrument_config: ?TelemetryConfig,
 
+    telemetry_context: *TelemetryContext,
+
     /// Initialize a new instrument record from a JavaScript instrument object
     pub fn init(
         id: u32,
@@ -117,6 +119,7 @@ pub const InstrumentRecord = struct {
         instrument_obj: JSValue,
         globalObject: *JSGlobalObject,
         allocator: std.mem.Allocator,
+        telemetry_context: *TelemetryContext,
     ) !InstrumentRecord {
         // Validate that at least one hook function is provided
         const on_op_start = try instrument_obj.get(globalObject, "onOperationStart") orelse .js_undefined;
@@ -142,7 +145,7 @@ pub const InstrumentRecord = struct {
         const inject_headers = try instrument_obj.get(globalObject, "injectHeaders") orelse .js_undefined;
         if (inject_headers.isObject()) {
             // Create a minimal TelemetryConfig just for this instrument's header injection
-            var config = try TelemetryConfig.init(allocator, globalObject);
+            var config = try TelemetryConfig.init(allocator, globalObject, telemetry_context.semconv);
             errdefer config.deinit();
 
             // Parse request headers (for fetch client)
@@ -183,6 +186,7 @@ pub const InstrumentRecord = struct {
             .native_instrument_object = instrument_obj,
             .on_op_fns = op_fns,
             .instrument_config = instrument_config,
+            .telemetry_context = telemetry_context,
         };
     }
 
@@ -262,12 +266,12 @@ pub const TelemetryContext = struct {
             }
         }
 
-        // Initialize configuration manager
-        const config = try TelemetryConfig.init(allocator, globalObject);
-
-        // Initialize semantic conventions attribute keys
+        // Initialize semantic conventions attribute keys (needed by config)
         const semconv_keys = try allocator.create(AttributeKeys);
         semconv_keys.* = try AttributeKeys.init(allocator);
+
+        // Initialize configuration manager (requires attribute_keys for HeaderNameList)
+        const config = try TelemetryConfig.init(allocator, globalObject, semconv_keys);
 
         self.* = TelemetryContext{
             .instrument_table = instrument_table,
@@ -392,7 +396,7 @@ pub const TelemetryContext = struct {
 
         // Generate ID and create record
         const id = self.generateInstrumentId();
-        const record = try InstrumentRecord.init(id, kind, instrument_obj, globalObject, self.allocator);
+        const record = try InstrumentRecord.init(id, kind, instrument_obj, globalObject, self.allocator, self);
 
         // Add to appropriate instrument list
         const kind_index = @intFromEnum(kind);
@@ -671,11 +675,17 @@ pub fn requestIdFromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSErro
 
 // Global telemetry instance (initialized in JSGlobalObject)
 var global_telemetry: ?*TelemetryContext = null;
+/// Exposed pointer to semantic convention attribute keys for use by configuration code
+/// This mirrors bun.telemetry.semconv expected by config.zig when creating HeaderNameList
+/// It is assigned during initGlobalTelemetry after the TelemetryContext is created.
+pub var semconv: *AttributeKeys = undefined;
 
 /// Initialize the global telemetry instance
 pub fn initGlobalTelemetry(allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !void {
     if (global_telemetry != null) return;
     global_telemetry = try TelemetryContext.init(allocator, globalObject);
+    // Publish semantic convention keys for config.zig (bun.telemetry.semconv)
+    semconv = global_telemetry.?.semconv;
 }
 
 /// Get the current telemetry context, or null if disabled

@@ -4303,7 +4303,7 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
     }
 }
 
-JSC::EncodedJSValue JSC__JSGlobalObject__getDisposeSymbol(JSC::JSGlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getDisposeSymbol(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 

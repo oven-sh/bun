@@ -2397,6 +2397,11 @@ pub const EntryPoint = struct {
     }
 };
 
+pub const RouteStyle = enum(u8) {
+    nextjs,
+    react_router,
+};
+
 pub const RouteConfig = struct {
     dir: string = "",
     possible_dirs: []const string = &[_]string{},
@@ -2412,6 +2417,7 @@ pub const RouteConfig = struct {
     // maybe like CBOR
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
+    style: RouteStyle = .nextjs,
 
     pub fn toAPI(this: *const RouteConfig) api.LoadedRouteConfig {
         return .{
@@ -2431,6 +2437,7 @@ pub const RouteConfig = struct {
             .extensions = DefaultExtensions[0..],
             .static_dir = DefaultStaticDir,
             .routes_enabled = false,
+            .style = .nextjs,
         };
     }
 

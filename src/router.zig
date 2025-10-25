@@ -15,6 +15,296 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
+const ReactRouterParser = struct {
+    const Segment = struct {
+        segment: []const u8,
+        raw: []const u8,
+    };
+
+    const State = enum {
+        normal,
+        escape,
+        optional,
+        optional_escape,
+    };
+
+    fn isSeparator(char: u8) bool {
+        return char == '/' or char == '.' or char == '\\';
+    }
+
+    fn pushSegment(
+        allocator: std.mem.Allocator,
+        segments: *std.ArrayList(Segment),
+        segment_builder: *std.ArrayList(u8),
+        raw_builder: *std.ArrayList(u8),
+    ) !void {
+        if (segment_builder.items.len == 0) {
+            raw_builder.clearRetainingCapacity();
+            return;
+        }
+
+        const seg_slice = try allocator.dupe(u8, segment_builder.items);
+        const raw_slice = try allocator.dupe(u8, raw_builder.items);
+        try segments.append(.{ .segment = seg_slice, .raw = raw_slice });
+        segment_builder.clearRetainingCapacity();
+        raw_builder.clearRetainingCapacity();
+    }
+
+    pub fn parse(allocator: std.mem.Allocator, route_id: string) ![]const Segment {
+        var segments = std.ArrayList(Segment).init(allocator);
+        var segment_builder = std.ArrayList(u8).init(allocator);
+        var raw_builder = std.ArrayList(u8).init(allocator);
+
+        var state: State = .normal;
+        var index: usize = 0;
+
+        while (index < route_id.len) {
+            const char = route_id[index];
+            index += 1;
+
+            switch (state) {
+                .normal => {
+                    if (isSeparator(char)) {
+                        try pushSegment(allocator, &segments, &segment_builder, &raw_builder);
+                        continue;
+                    }
+
+                    if (char == '[') {
+                        try raw_builder.append(char);
+                        state = .escape;
+                        continue;
+                    }
+
+                    if (char == '(') {
+                        try raw_builder.append(char);
+                        state = .optional;
+                        continue;
+                    }
+
+                    if (segment_builder.items.len == 0 and char == '$') {
+                        if (index == route_id.len) {
+                            try segment_builder.append('*');
+                            try raw_builder.append(char);
+                        } else {
+                            try segment_builder.append(':');
+                            try raw_builder.append(char);
+                        }
+                        continue;
+                    }
+
+                    try segment_builder.append(char);
+                    try raw_builder.append(char);
+                },
+
+                .escape => {
+                    try raw_builder.append(char);
+                    if (char == ']') {
+                        state = .normal;
+                    } else {
+                        try segment_builder.append(char);
+                    }
+                },
+
+                .optional => {
+                    if (char == ')') {
+                        try segment_builder.append('?');
+                        try raw_builder.append(char);
+                        state = .normal;
+                        continue;
+                    }
+
+                    if (char == '[') {
+                        try raw_builder.append(char);
+                        state = .optional_escape;
+                        continue;
+                    }
+
+                    if (segment_builder.items.len == 0 and char == '$') {
+                        if (index == route_id.len) {
+                            try segment_builder.append('*');
+                            try raw_builder.append(char);
+                        } else {
+                            try segment_builder.append(':');
+                            try raw_builder.append(char);
+                        }
+                        continue;
+                    }
+
+                    try segment_builder.append(char);
+                    try raw_builder.append(char);
+                },
+
+                .optional_escape => {
+                    try raw_builder.append(char);
+                    if (char == ']') {
+                        state = .optional;
+                    } else {
+                        try segment_builder.append(char);
+                    }
+                },
+            }
+        }
+
+        try pushSegment(allocator, &segments, &segment_builder, &raw_builder);
+
+        return segments.toOwnedSlice();
+    }
+
+    pub fn trimSegment(segment: []const u8, raw: []const u8) []const u8 {
+        if (segment.len == 0) return segment;
+        if (raw.len > 0 and segment.len > 0 and segment[0] == '_' and raw[0] == '_') return "";
+        if (raw.len > 0 and segment.len > 0 and segment[segment.len - 1] == '_' and raw[raw.len - 1] == '_') {
+            return segment[0 .. segment.len - 1];
+        }
+        return segment;
+    }
+};
+
+const SegmentSlice = struct {
+    start: usize,
+    len: usize,
+
+    pub fn asSlice(this: SegmentSlice, path: string) string {
+        return path[this.start .. this.start + this.len];
+    }
+};
+
+const PathIterator = struct {
+    path: string,
+    index: usize,
+
+    pub fn peek(self: *PathIterator) ?SegmentSlice {
+        if (self.index >= self.path.len) return null;
+        var end = self.index;
+        while (end < self.path.len and self.path[end] != '/') {
+            end += 1;
+        }
+        return SegmentSlice{ .start = self.index, .len = end - self.index };
+    }
+
+    pub fn next(self: *PathIterator) ?SegmentSlice {
+        const slice = self.peek() orelse return null;
+        self.index = slice.start + slice.len;
+        if (self.index < self.path.len and self.path[self.index] == '/') {
+            self.index += 1;
+        }
+        return slice;
+    }
+
+    pub fn remaining(self: *PathIterator) SegmentSlice {
+        return SegmentSlice{ .start = self.index, .len = self.path.len - self.index };
+    }
+};
+
+fn matchReactRoute(
+    route: *Route,
+    pathname: string,
+    allocator: std.mem.Allocator,
+    params: *Param.List,
+) bool {
+    const data = switch (route.style_data) {
+        .react_router => |value| value,
+        else => return false,
+    };
+
+    var iterator = PathIterator{ .path = pathname, .index = 0 };
+    const start_len = params.len;
+    var matched = false;
+    defer if (!matched) params.shrinkRetainingCapacity(start_len);
+
+    const Self = struct {
+        fn matchSegments(
+            segments: []const Route.ReactSegment,
+            seg_index: usize,
+            iterator: PathIterator,
+            pathname: string,
+            allocator: std.mem.Allocator,
+            params: *Param.List,
+        ) bool {
+            if (seg_index >= segments.len) {
+                return iterator.peek() == null;
+            }
+
+            const segment = segments[seg_index];
+
+            switch (segment.kind) {
+                .static => {
+                    if (iterator.peek()) |slice| {
+                        const value = slice.asSlice(pathname);
+
+                        if (strings.eql(value, segment.name)) {
+                            var next_iter = iterator;
+                            _ = next_iter.next();
+                            if (matchSegments(segments, seg_index + 1, next_iter, pathname, allocator, params)) {
+                                return true;
+                            }
+                        }
+
+                        if (segment.optional) {
+                            return matchSegments(segments, seg_index + 1, iterator, pathname, allocator, params);
+                        }
+
+                        return false;
+                    }
+
+                    if (segment.optional) {
+                        return matchSegments(segments, seg_index + 1, iterator, pathname, allocator, params);
+                    }
+
+                    return false;
+                },
+
+                .dynamic => {
+                    if (iterator.peek()) |slice| {
+                        const value = slice.asSlice(pathname);
+                        var next_iter = iterator;
+                        _ = next_iter.next();
+
+                        const restore_len = params.len;
+                        params.append(allocator, .{ .name = segment.name, .value = value }) catch unreachable;
+                        if (matchSegments(segments, seg_index + 1, next_iter, pathname, allocator, params)) {
+                            return true;
+                        }
+                        params.shrinkRetainingCapacity(restore_len);
+                    }
+
+                    if (segment.optional) {
+                        return matchSegments(segments, seg_index + 1, iterator, pathname, allocator, params);
+                    }
+
+                    return false;
+                },
+
+                .splat => {
+                    var next_iter = iterator;
+                    next_iter.index = pathname.len;
+
+                    const restore_len = params.len;
+                    const rest = iterator.remaining().asSlice(pathname);
+                    params.append(allocator, .{ .name = segment.name, .value = rest }) catch unreachable;
+                    if (matchSegments(segments, seg_index + 1, next_iter, pathname, allocator, params)) {
+                        return true;
+                    }
+                    params.shrinkRetainingCapacity(restore_len);
+
+                    if (segment.optional) {
+                        return matchSegments(segments, seg_index + 1, iterator, pathname, allocator, params);
+                    }
+
+                    return false;
+                },
+            }
+        }
+    };
+
+    if (!Self.matchSegments(data.segments, 0, iterator, pathname, allocator, params)) {
+        return false;
+    }
+
+    matched = true;
+    return true;
+}
+
 dir: StoredFileDescriptorType = .invalid,
 routes: Routes,
 loaded_routes: bool = false,
@@ -107,6 +397,62 @@ pub const Routes = struct {
     client_framework_enabled: bool = false,
 
     pub fn matchPageWithAllocator(this: *Routes, _: string, url_path: URLPath, params: *Param.List, allocator: std.mem.Allocator) ?Match {
+        if (this.config.style == .react_router) {
+            var path = url_path.path;
+
+            if (path.len > 0 and path[path.len - 1] == '/') {
+                path = path[0 .. path.len - 1];
+            }
+
+            while (path.len > 1 and path[path.len - 1] == '/') {
+                path = path[0 .. path.len - 1];
+            }
+
+            if (strings.eqlComptime(path, ".")) {
+                path = "";
+            }
+
+            if (path.len == 0) {
+                if (this.index) |index| {
+                    return Match{
+                        .params = params,
+                        .name = index.name,
+                        .path = index.abs_path.slice(),
+                        .pathname = url_path.pathname,
+                        .basename = index.basename,
+                        .hash = index.full_hash,
+                        .file_path = index.abs_path.slice(),
+                        .query_string = url_path.query_string,
+                        .client_framework_enabled = this.client_framework_enabled,
+                    };
+                }
+
+                return null;
+            }
+
+            const MatchContextType = struct {
+                params: Param.List,
+            };
+            var matcher = MatchContextType{ .params = params.* };
+            defer params.* = matcher.params;
+
+            if (this.matchReact(allocator, path, MatchContextType, &matcher)) |route| {
+                return Match{
+                    .params = params,
+                    .name = route.name,
+                    .path = route.abs_path.slice(),
+                    .pathname = url_path.pathname,
+                    .basename = route.basename,
+                    .hash = route.full_hash,
+                    .file_path = route.abs_path.slice(),
+                    .query_string = url_path.query_string,
+                    .client_framework_enabled = this.client_framework_enabled,
+                };
+            }
+
+            return null;
+        }
+
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -199,6 +545,10 @@ pub const Routes = struct {
     }
 
     fn match(this: *Routes, allocator: std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+        if (this.config.style == .react_router) {
+            return this.matchReact(allocator, pathname_, MatchContext, ctx);
+        }
+
         const pathname = std.mem.trimLeft(u8, pathname_, "/");
 
         if (pathname.len == 0) {
@@ -207,6 +557,26 @@ pub const Routes = struct {
 
         return this.static.get(pathname) orelse
             this.matchDynamic(allocator, pathname, MatchContext, ctx);
+    }
+
+    fn matchReact(this: *Routes, allocator: std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+        const pathname = std.mem.trimLeft(u8, pathname_, "/");
+
+        if (pathname.len == 0) {
+            return this.index;
+        }
+
+        if (this.static.get(pathname)) |route| {
+            return route;
+        }
+
+        for (this.dynamic) |route| {
+            if (matchReactRoute(route, pathname, allocator, &ctx.params)) {
+                return route;
+            }
+        }
+
+        return null;
     }
 };
 
@@ -457,6 +827,7 @@ const RouteLoader = struct {
                                     this.allocator,
                                     public_dir,
                                     this.route_dirname_len,
+                                    this.config,
                                 )) |route| {
                                     this.appendRoute(route);
                                 }
@@ -555,6 +926,8 @@ pub const Route = struct {
 
     has_uppercase: bool = false,
 
+    style_data: StyleData = .{ .none = {} },
+
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
@@ -630,6 +1003,27 @@ pub const Route = struct {
         }
     };
 
+    const StyleData = union(enum) {
+        none: void,
+        react_router: ReactRouterData,
+    };
+
+    const ReactRouterData = struct {
+        segments: []const ReactSegment,
+    };
+
+    const ReactSegmentKind = enum(u2) {
+        static,
+        dynamic,
+        splat,
+    };
+
+    const ReactSegment = struct {
+        kind: ReactSegmentKind,
+        name: string,
+        optional: bool,
+    };
+
     pub fn parse(
         base_: string,
         extname: string,
@@ -638,7 +1032,25 @@ pub const Route = struct {
         allocator: std.mem.Allocator,
         public_dir_: string,
         routes_dirname_len: u16,
+        config: Options.RouteConfig,
     ) ?Route {
+        return switch (config.style) {
+            .nextjs => parseNext(base_, extname, entry, log, allocator, public_dir_, routes_dirname_len, config),
+            .react_router => parseReactRouter(base_, extname, entry, log, allocator, public_dir_, routes_dirname_len, config),
+        };
+    }
+
+    fn parseNext(
+        base_: string,
+        extname: string,
+        entry: *Fs.FileSystem.Entry,
+        log: *Logger.Log,
+        allocator: std.mem.Allocator,
+        public_dir_: string,
+        routes_dirname_len: u16,
+        config: Options.RouteConfig,
+    ) ?Route {
+        _ = config;
         var abs_path_str: string = if (entry.abs_path.isEmpty())
             ""
         else
@@ -787,6 +1199,236 @@ pub const Route = struct {
                 .path = abs_path,
             } else abs_path,
             .has_uppercase = has_uppercase,
+        };
+    }
+
+    fn parseReactRouter(
+        base_: string,
+        extname: string,
+        entry: *Fs.FileSystem.Entry,
+        log: *Logger.Log,
+        allocator: std.mem.Allocator,
+        public_dir_: string,
+        routes_dirname_len: u16,
+        config: Options.RouteConfig,
+    ) ?Route {
+        _ = config;
+        var abs_path_str: string = if (entry.abs_path.isEmpty())
+            ""
+        else
+            entry.abs_path.slice();
+
+        const base = base_[0 .. base_.len - extname.len];
+        const public_dir = std.mem.trim(u8, public_dir_, std.fs.path.sep_str);
+
+        var public_path: string = brk: {
+            if (base.len == 0) break :brk public_dir;
+            var buf: []u8 = &route_file_buf;
+
+            if (public_dir.len > 0) {
+                route_file_buf[0] = '/';
+                buf = buf[1..];
+                bun.copy(u8, buf, public_dir);
+            }
+            buf[public_dir.len] = '/';
+            buf = buf[public_dir.len + 1 ..];
+            bun.copy(u8, buf, base);
+            buf = buf[base.len..];
+            bun.copy(u8, buf, extname);
+            buf = buf[extname.len..];
+
+            if (comptime Environment.isWindows) {
+                bun.path.platformToPosixInPlace(u8, route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)]);
+            }
+
+            break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
+        };
+
+        var name_prefix = public_path[0 .. public_path.len - extname.len];
+
+        while (name_prefix.len > 1 and name_prefix[name_prefix.len - 1] == '/') {
+            name_prefix = name_prefix[0 .. name_prefix.len - 1];
+        }
+
+        name_prefix = name_prefix[routes_dirname_len..];
+        name_prefix = std.mem.trimRight(u8, name_prefix, "/");
+
+        const route_id_full = if (name_prefix.len > 0 and name_prefix[0] == '/') name_prefix[1..] else name_prefix;
+        var normalized_route_id = route_id_full;
+
+        if (normalized_route_id.len > 0 and strings.endsWith(normalized_route_id, "/route")) {
+            normalized_route_id = normalized_route_id[0 .. normalized_route_id.len - "/route".len];
+        }
+
+        const segments = ReactRouterParser.parse(allocator, normalized_route_id) catch {
+            log.addErrorFmt(null, Logger.Loc.Empty, allocator, "Invalid React Router route: {s}", .{normalized_route_id}) catch unreachable;
+            return null;
+        };
+
+        const is_index_route = normalized_route_id.len == 0 or strings.endsWith(normalized_route_id, "_index");
+
+        var effective_segments = segments;
+        if (is_index_route and segments.len > 0) {
+            effective_segments = segments[0 .. segments.len - 1];
+        }
+
+        var path_builder = std.ArrayList(u8).init(allocator);
+        var match_builder = std.ArrayList(ReactSegment).init(allocator);
+
+        var has_route_segment = false;
+        var has_optional_static = false;
+        var param_count: u16 = 0;
+        var route_kind: Pattern.Tag = .static;
+
+        for (effective_segments) |segment| {
+            const trimmed = ReactRouterParser.trimSegment(segment.segment, segment.raw);
+            if (trimmed.len == 0) continue;
+
+            has_route_segment = true;
+
+            var optional = false;
+            var base_slice = trimmed;
+            if (base_slice.len > 0 and base_slice[base_slice.len - 1] == '?') {
+                optional = true;
+                base_slice = base_slice[0 .. base_slice.len - 1];
+            }
+
+            if (path_builder.items.len > 0) path_builder.append('/') catch unreachable;
+            path_builder.appendSlice(trimmed) catch unreachable;
+
+            if (base_slice.len == 0) continue;
+
+            switch (base_slice[0]) {
+                ':' => {
+                    if (route_kind == .static) route_kind = .dynamic;
+                    param_count += 1;
+                    const param_name = base_slice[1..];
+                    if (param_name.len == 0) {
+                        log.addErrorFmt(null, Logger.Loc.Empty, allocator, "Missing parameter name in route: {s}", .{normalized_route_id}) catch unreachable;
+                        return null;
+                    }
+                    match_builder.append(.{
+                        .kind = .dynamic,
+                        .name = param_name,
+                        .optional = optional,
+                    }) catch unreachable;
+                },
+                '*' => {
+                    route_kind = if (optional) .optional_catch_all else .catch_all;
+                    param_count += 1;
+                    match_builder.append(.{
+                        .kind = .splat,
+                        .name = "*",
+                        .optional = optional,
+                    }) catch unreachable;
+                },
+                else => {
+                    if (optional) {
+                        has_optional_static = true;
+                    }
+                    match_builder.append(.{
+                        .kind = .static,
+                        .name = base_slice,
+                        .optional = optional,
+                    }) catch unreachable;
+                },
+            }
+        }
+
+        if (!has_route_segment and !is_index_route) {
+            return null;
+        }
+
+        if (has_optional_static) {
+            if (route_kind == .static) {
+                route_kind = .dynamic;
+            }
+            if (param_count == 0) {
+                param_count = 1;
+            }
+        }
+
+        const path_no_slash = path_builder.toOwnedSlice() catch unreachable;
+        const match_segments_slice = match_builder.toOwnedSlice() catch unreachable;
+
+        if (abs_path_str.len == 0) {
+            var file: std.fs.File = undefined;
+            var needs_close = false;
+            defer if (needs_close) file.close();
+            if (entry.cache.fd.unwrapValid()) |valid| {
+                file = valid.stdFile();
+            } else {
+                var parts = [_]string{ entry.dir, entry.base() };
+                abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
+                route_file_buf[abs_path_str.len] = 0;
+                const buf = route_file_buf[0..abs_path_str.len :0];
+                file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
+                    log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                    return null;
+                };
+                FileSystem.setMaxFd(file.handle);
+
+                needs_close = FileSystem.instance.fs.needToCloseFiles();
+                if (!needs_close) entry.cache.fd = .fromStdFile(file);
+            }
+
+            const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {
+                log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                return null;
+            };
+
+            abs_path_str = FileSystem.DirnameStore.instance.append(@TypeOf(_abs), _abs) catch unreachable;
+            entry.abs_path = PathString.init(abs_path_str);
+        }
+
+        const abs_path = if (comptime Environment.isWindows)
+            bun.handleOom(allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &normalized_abs_path_buf)))
+        else
+            PathString.init(abs_path_str);
+
+        var has_uppercase = false;
+        var name_i: usize = 0;
+        while (!has_uppercase and name_i < public_path.len) : (name_i += 1) {
+            has_uppercase = public_path[name_i] >= 'A' and public_path[name_i] <= 'Z';
+        }
+
+        public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+
+        const name_value = if (path_no_slash.len == 0) Route.index_route_name else blk: {
+            const buffer = allocator.alloc(u8, path_no_slash.len + 1) catch unreachable;
+            buffer[0] = '/';
+            std.mem.copy(u8, buffer[1..], path_no_slash);
+            break :blk buffer;
+        };
+
+        const stored_name = if (path_no_slash.len == 0)
+            Route.index_route_name
+        else
+            FileSystem.DirnameStore.instance.append(@TypeOf(name_value), name_value) catch unreachable;
+
+        const stored_match_name = if (path_no_slash.len == 0)
+            Route.index_route_name
+        else if (has_uppercase and route_kind == .static)
+            FileSystem.DirnameStore.instance.appendLowerCase(@TypeOf(path_no_slash), path_no_slash) catch unreachable
+        else
+            FileSystem.DirnameStore.instance.append(@TypeOf(path_no_slash), path_no_slash) catch unreachable;
+
+        return Route{
+            .name = stored_name,
+            .basename = entry.base(),
+            .public_path = PathString.init(public_path),
+            .match_name = PathString.init(stored_match_name),
+            .full_hash = if (path_no_slash.len == 0)
+                index_route_hash
+            else
+                @as(u32, @truncate(bun.hash(stored_name))),
+            .param_count = param_count,
+            .kind = route_kind,
+            .abs_path = if (comptime Environment.isWindows) .{
+                .path = abs_path,
+            } else abs_path,
+            .has_uppercase = has_uppercase,
+            .style_data = .{ .react_router = .{ .segments = match_segments_slice } },
         };
     }
 };

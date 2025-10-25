@@ -617,7 +617,7 @@ pub fn fromJS(
 
                 const route = try AnyRoute.fromJS(global, path, value, init_ctx) orelse {
                     return global.throwInvalidArguments(
-                        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
+                        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response | Promise<Response>}>
                         \\
                         \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
                         \\
@@ -637,10 +637,10 @@ pub fn fromJS(
                         \\    },
                         \\    "/path": {
                         \\      GET(req) {
-                        \\        return Response.json({ message: "Hello World" });
+                        \\        return Response.json({ message: "Hello Get" });
                         \\      },
                         \\      POST(req) {
-                        \\        return Response.json({ message: "Hello World" });
+                        \\        return Response.json({ message: "Hello Post" });
                         \\      },
                         \\    },
                         \\  },
@@ -827,7 +827,7 @@ pub fn fromJS(
                     return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
                 }
 
-                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global, &global.bunVM().transpiler.resolver);
             }
         }
 

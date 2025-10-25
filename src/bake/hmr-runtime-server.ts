@@ -1,29 +1,28 @@
+/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
+
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type { Bake } from "bun";
+import type { ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
-const { AsyncLocalStorage } = require("node:async_hooks");
+const { AsyncLocalStorage } = require("node:async_hooks") as {
+  AsyncLocalStorage: typeof import("node:async_hooks").AsyncLocalStorage;
+};
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-export type RequestContext = {
-  responseOptions: ResponseInit;
-  streaming: boolean;
-  streamingStarted?: boolean;
-  renderAbort?: (path: string, params: Record<string, any> | null) => never;
-};
+export type RequestContext = import("bun:app").__internal.RequestContext;
 
 // Create the AsyncLocalStorage instance for propagating response options
-const responseOptionsALS = new AsyncLocalStorage();
+const responseOptionsALS = new AsyncLocalStorage<RequestContext>();
 let asyncLocalStorageWasSet = false;
 
 interface Exports {
   handleRequest: (
-    req: Request,
+    req: Bun.BunRequest,
     routerTypeMain: Id,
     routeModules: Id[],
     clientEntryUrl: string,
@@ -48,6 +47,20 @@ interface Exports {
     componentManifestAdd: null | string[],
     componentManifestDelete: null | string[],
   ) => void;
+}
+
+function validateStreaming(streaming: unknown) {
+  if (streaming !== true && streaming !== false) {
+    throw new Error("Value of `export const streaming` must be a boolean");
+  }
+  return streaming;
+}
+
+function validateMode(mode: unknown) {
+  if (mode !== "ssr" && mode !== "static") {
+    throw new Error("Value of `export const mode` must be 'ssr' or 'st'");
+  }
+  return mode;
 }
 
 declare let server_exports: Exports;
@@ -78,7 +91,7 @@ server_exports = {
         });
       }
 
-      const exports = await loadExports<Bake.ServerEntryPoint>(routerTypeMain);
+      const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
 
       const serverRenderer = exports.render;
 
@@ -91,11 +104,18 @@ server_exports = {
 
       const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
-      let requestWithCookies = req;
+      if (pageModule === null || typeof pageModule !== "object") {
+        throw new Error(`Did not find any exports in the page module. Got: ${Bun.inspect(pageModule)}`);
+      }
 
-      let storeValue: RequestContext = {
+      const streaming = "streaming" in pageModule ? validateStreaming(pageModule.streaming) : false;
+      const mode = "mode" in pageModule ? validateMode(pageModule.mode) : "static";
+
+      const requestWithCookies = req;
+
+      const storeValue: RequestContext = {
         responseOptions: {},
-        streaming: pageModule.streaming ?? false,
+        streaming,
       };
 
       try {
@@ -112,7 +132,7 @@ server_exports = {
               modulepreload: [],
               params,
               // Pass request in metadata when mode is 'ssr'
-              request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+              request: mode === "ssr" ? requestWithCookies : undefined,
             },
             responseOptionsALS,
           );
@@ -163,25 +183,25 @@ server_exports = {
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
-        try {
-          const exports = await loadExports<{}>(uid);
+        const exports = await loadExports<{}>(uid);
 
-          const client = {};
-          for (const exportName of Object.keys(exports)) {
-            serverManifest[uid + "#" + exportName] = {
-              id: uid,
-              name: exportName,
-              chunks: [],
-            };
-            client[exportName] = {
-              specifier: "ssr:" + uid,
-              name: exportName,
-            };
-          }
-          ssrManifest[uid] = client;
-        } catch (err) {
-          console.log(err);
+        if (exports === null) {
+          throw new Error(`Failed to load exports for ${uid}`);
         }
+
+        const client = {};
+        for (const exportName of Object.keys(exports)) {
+          serverManifest[uid + "#" + exportName] = {
+            id: uid,
+            name: exportName,
+            chunks: [],
+          };
+          client[exportName] = {
+            specifier: "ssr:" + uid,
+            name: exportName,
+          };
+        }
+        ssrManifest[uid] = client;
       }
     }
 

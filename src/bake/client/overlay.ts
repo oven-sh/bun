@@ -1,3 +1,15 @@
+import { BundlerMessageLevel } from "../enums";
+import { DataViewReader, DataViewWriter } from "./data-view";
+import {
+  BundlerMessage,
+  BundlerMessageLocation,
+  BundlerNote,
+  decodeSerializedError,
+  type DeserializedFailure,
+} from "./error-serialization";
+import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";
+import { parseStackTrace, type Frame } from "./stack-trace";
+
 // This file implements the UI for error modals. Since using a framework like
 // React could collide with the user's code (consider React DevTools), this
 // entire modal is written from scratch using the standard DOM APIs. All CSS is
@@ -10,7 +22,6 @@
 // Both use a WebSocket to coordinate followup updates, when new errors are
 // added or previous ones are solved.
 if (side !== "client") throw new Error("Not client side!");
-// NOTE: imports are at the bottom for readability
 
 /** When set, the next successful build will reload the page. */
 export let hasFatalError = false;
@@ -55,40 +66,47 @@ let domNavBar: {
   dismissAllBtn: HTMLButtonElement;
 } = {} as any;
 
+type TsLiteralStringables = string | number | bigint | boolean | null | undefined;
+type PropsFor<T extends keyof HTMLElementTagNameMap> = null | Partial<{
+  [Key in keyof HTMLElementTagNameMap[T] as HTMLElementTagNameMap[T][Key] extends TsLiteralStringables
+    ? Key
+    : never]: `${Extract<HTMLElementTagNameMap[T][Key], TsLiteralStringables>}`;
+}>;
+
 // I would have used JSX, but TypeScript types interfere in odd ways. However,
 // this pattern allows concise construction of DOM nodes, but also extremely
 // simple capturing of referenced nodes. Consider:
 //      let title;
 //      const btn = elem("button", { class: "file-name" }, [(title = textNode())]);
 // Now you can edit `title.textContent` freely.
-function elem<T extends keyof HTMLElementTagNameMap>(
-  tagName: T,
-  props?: null | Record<string, string>,
-  children?: Node[],
-) {
+function elem<T extends keyof HTMLElementTagNameMap>(tagName: T, props?: null | PropsFor<T>, children?: Node[]) {
   const node = document.createElement(tagName);
-  if (props)
-    for (let key in props) {
-      node.setAttribute(key, props[key]);
+
+  if (props) {
+    for (const key in props) {
+      const value = props[key];
+      if (value === undefined) continue;
+      node.setAttribute(key, value);
     }
-  if (children)
-    for (const child of children) {
-      node.appendChild(child);
-    }
+  }
+
+  if (children) {
+    for (const child of children) node.appendChild(child);
+  }
+
   return node;
 }
 
-function elemText<T extends keyof HTMLElementTagNameMap>(
-  tagName: T,
-  props: null | Record<string, string>,
-  innerHTML: string,
-) {
+function elemText<T extends keyof HTMLElementTagNameMap>(tagName: T, props: null | PropsFor<T>, textContent: string) {
   const node = document.createElement(tagName);
-  if (props)
-    for (let key in props) {
-      node.setAttribute(key, props[key]);
+  if (props) {
+    for (const key in props) {
+      const value = props[key];
+      if (value === undefined) continue;
+      node.setAttribute(key, value);
     }
-  node.textContent = innerHTML;
+  }
+  node.textContent = textContent;
   return node;
 }
 
@@ -143,6 +161,7 @@ function mountModal() {
       "background:#8883!important;" +
       "z-index:2147483647!important",
   });
+
   const shadow = domShadowRoot.attachShadow({ mode: "open" });
   const sheet = new CSSStyleSheet();
   sheet.replace(OVERLAY_CSS);
@@ -469,7 +488,7 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
     elem("div", { class: "message-desc error" }, [
       elemText("code", { class: "name" }, name),
       elemText("code", { class: "muted" }, ": "),
-      elemText("code", {}, err.message),
+      elemText("pre", {}, err.message.trim()),
     ]),
   );
   const { code } = err;
@@ -543,10 +562,11 @@ function updateBuildErrorOverlay({ remountAll = false }) {
 
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {
-      let fileName;
+      const fileName = textNode();
       const root = elem("div", { class: "b-group" }, [
-        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [(fileName = textNode())])]),
+        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [fileName])]),
       ]);
+
       dom = { root, fileName, messages: [] };
       domErrorContent.appendChild(root);
       errorDoms.set(owner, dom);
@@ -564,6 +584,7 @@ function updateBuildErrorOverlay({ remountAll = false }) {
       dom.messages.push(domMessage);
     }
   }
+
   updatedErrorOwners.clear();
 }
 
@@ -669,15 +690,3 @@ declare global {
     "bun-hmr": HTMLElement;
   }
 }
-
-import { BundlerMessageLevel } from "../enums";
-import { DataViewReader, DataViewWriter } from "./data-view";
-import {
-  BundlerMessage,
-  BundlerMessageLocation,
-  BundlerNote,
-  decodeSerializedError,
-  type DeserializedFailure,
-} from "./error-serialization";
-import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";
-import { parseStackTrace, type Frame } from "./stack-trace";

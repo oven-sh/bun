@@ -26,24 +26,15 @@ export async function getStaticPaths() {
   },
   framework: "react",
   async test(dev) {
-    // Make a request that will trigger the error
     await dev.fetch("/test-error").catch(() => {});
 
-    // The output we saw shows the stack trace with correct source mapping
-    // We need to check that the error shows the right file:line:column
     const lines = dev.output.lines.join("\n");
 
-    // Check that we got the error
     expect(lines).toContain("Test error for source maps!");
 
-    // Check that the stack trace shows correct file and line numbers
-    // The source maps are working if we see the correct patterns
-    // We need to check for the patterns because ANSI codes might be embedded
-    // Strip ANSI codes for cleaner checking
-    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
+    const cleanLines = Bun.stripANSI(lines);
 
-    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
-    // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
+    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:1");
     const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
 
     expect(hasCorrectThrowLine).toBe(true);

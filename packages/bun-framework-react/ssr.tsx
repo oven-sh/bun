@@ -1,18 +1,14 @@
 // This file is loaded in the SSR graph, meaning the `react-server` condition is
 // no longer set. This means we can import client components, using `react-dom`
 // to perform Server-side rendering (creating HTML) out of the RSC payload.
-import { ssrManifest } from "bun:bake/server";
+import { ssrManifest } from "bun:app/server";
 import { EventEmitter } from "node:events";
 import type { Readable } from "node:stream";
 import * as React from "react";
+import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
-import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
-import type { MiniAbortSignal } from "./server";
-
-// Verify that React 19 is being used.
-if (!React.use) {
-  throw new Error("Bun's React integration requires React 19");
-}
+import type { MiniAbortSignal } from "./server.tsx";
+import { createFromNodeStream, type Manifest } from "./vendor/react-server-dom-bun/client.node.unbundled.js";
 
 const createFromNodeStreamOptions: Manifest = {
   moduleMap: ssrManifest,
@@ -34,27 +30,29 @@ const createFromNodeStreamOptions: Manifest = {
 // - https://github.com/devongovett/rsc-html-stream
 export function renderToHtml(
   rscPayload: Readable,
-  bootstrapModules: readonly string[],
+  bootstrapModules: string[],
   signal: MiniAbortSignal,
 ): ReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
   let stream: RscInjectionStream | null = null;
-  let abort: () => void;
+  let abort: (reason?: any) => void;
   return new ReadableStream({
     type: "direct",
     pull(controller) {
       // `createFromNodeStream` turns the RSC payload into a React component.
-      const promise = createFromNodeStream(rscPayload, {
-        // React takes in a manifest mapping client-side assets
-        // to the imports needed for server-side rendering.
-        moduleMap: ssrManifest,
-        moduleLoading: { prefix: "/" },
-      });
+      const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
+
       // The root is this "Root" component that unwraps the streamed promise
       // with `use`, and then returning the parsed React component for the UI.
-      const Root: any = () => React.use(promise);
+      const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
+
+      // If the signal is already aborted, we should not proceed
+      if (signal.aborted) {
+        controller.close(signal.aborted);
+        return Promise.reject(signal.aborted);
+      }
 
       // If the signal is already aborted, we should not proceed
       if (signal.aborted) {
@@ -64,13 +62,20 @@ export function renderToHtml(
 
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
-      let pipe: (stream: any) => void;
+      let pipe: (stream: NodeJS.WritableStream) => void;
+
+      stream = new RscInjectionStream(rscPayload, controller);
+
       ({ pipe, abort } = renderToPipeableStream(<Root />, {
         bootstrapModules,
+        onShellReady() {
+          // The shell (including <head>) has been fully rendered
+          stream?.onShellReady();
+        },
         onError(error) {
           if (!signal.aborted) {
             // Abort the rendering and close the stream
-            signal.aborted = error;
+            signal.aborted = error as Error;
             abort();
             if (signal.abort) signal.abort();
             if (stream) {
@@ -80,7 +85,6 @@ export function renderToHtml(
         },
       }));
 
-      stream = new RscInjectionStream(rscPayload, controller);
       pipe(stream);
 
       return stream.finished;
@@ -97,16 +101,22 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
+export function renderToStaticHtml(
+  rscPayload: Readable,
+  bootstrapModules: NonNullable<RenderToPipeableStreamOptions["bootstrapModules"]>,
+): Promise<Blob> {
   const stream = new StaticRscInjectionStream(rscPayload);
-  const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
-  const Root = () => React.use(promise);
+  const promise = createFromNodeStream<React.ReactNode>(rscPayload, createFromNodeStreamOptions);
+
+  const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
+
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
     onAllReady: () => pipe(stream),
   });
+
   return stream.result;
 }
 
@@ -116,14 +126,14 @@ const continueScriptTag = "<script>__bun_f.push(";
 
 const enum HtmlState {
   /** HTML is flowing, it is not an okay time to inject RSC data. */
-  Flowing,
+  Flowing = 1,
   /** It is safe to inject RSC data. */
   Boundary,
 }
 
 const enum RscState {
   /** No RSC data has been written yet */
-  Waiting,
+  Waiting = 1,
   /** Some but not all RSC data has been written */
   Paused,
   /** All RSC data has been written */
@@ -142,11 +152,13 @@ class RscInjectionStream extends EventEmitter {
   rscHasEnded = false;
   /** Shared state for decoding RSC data into UTF-8 strings */
   decoder = new TextDecoder("utf-8", { fatal: true });
+  /** Track if the shell (including head) has been fully rendered */
+  shellReady = false;
 
   /** Resolved when all data is written */
   finished: Promise<void>;
   finalize: () => void;
-  reject: (err: any) => void;
+  reject: (err: unknown) => void;
 
   constructor(rscPayload: Readable, controller: ReadableStreamDirectController) {
     super();
@@ -154,7 +166,7 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => (controller.close(), resolve());
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
@@ -170,8 +182,12 @@ class RscInjectionStream extends EventEmitter {
     });
   }
 
-  write(data: Uint8Array) {
-    if (import.meta.env.DEV && process.env.VERBOSE_SSR)
+  onShellReady() {
+    this.shellReady = true;
+  }
+
+  write(data: Uint8Array<ArrayBuffer>) {
+    if (import.meta.env.DEV && process.env.VERBOSE_SSR) {
       console.write(
         "write" +
           Bun.inspect(
@@ -182,6 +198,8 @@ class RscInjectionStream extends EventEmitter {
           ) +
           "\n",
       );
+    }
+
     if (endsWithClosingScript(data)) {
       // The HTML is not done yet, but it's a suitible time to inject RSC data.
       const { controller } = this;
@@ -256,12 +274,14 @@ class RscInjectionStream extends EventEmitter {
 
   destroy(e) {}
 
-  end(e) {}
+  end() {
+    return this;
+  }
 }
 
 class StaticRscInjectionStream extends EventEmitter {
-  rscPayloadChunks: Uint8Array[] = [];
-  chunks: (Uint8Array | string)[] = [];
+  rscPayloadChunks: Uint8Array<ArrayBuffer>[] = [];
+  chunks: (Uint8Array<ArrayBuffer> | string)[] = [];
   result: Promise<Blob>;
   finalize: (blob: Blob) => void;
   reject: (error: Error) => void;
@@ -276,7 +296,7 @@ class StaticRscInjectionStream extends EventEmitter {
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
   }
 
-  write(chunk) {
+  write(chunk: Uint8Array<ArrayBuffer>) {
     this.chunks.push(chunk);
   }
 
@@ -285,7 +305,7 @@ class StaticRscInjectionStream extends EventEmitter {
     const lastChunk = this.chunks[this.chunks.length - 1];
 
     // Release assertions for React's behavior. If these break there will be malformed HTML.
-    if (typeof lastChunk === "string") {
+    if (typeof lastChunk === "string" || !lastChunk) {
       this.destroy(new Error("The last chunk was expected to be a Uint8Array"));
       return;
     }
@@ -305,7 +325,7 @@ class StaticRscInjectionStream extends EventEmitter {
     // Ignore flush requests from React.
   }
 
-  destroy(error) {
+  destroy(error: Error) {
     this.reject(error);
   }
 }
@@ -336,7 +356,7 @@ function writeManyFlightScriptData(
   decoder: TextDecoder,
   controller: { write: (str: string) => void },
 ) {
-  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
+  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0]!, decoder, controller);
 
   let i = 0;
   try {
@@ -355,6 +375,7 @@ function writeManyFlightScriptData(
     controller.write('Uint8Array.from(atob("');
     for (; i < chunks.length; i++) {
       const chunk = chunks[i];
+      if (!chunk) continue;
       const base64 = btoa(String.fromCodePoint(...chunk));
       controller.write(base64.slice(1, -1));
     }

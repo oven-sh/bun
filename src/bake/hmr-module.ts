@@ -6,6 +6,9 @@
 // Some build failures from the bundler surface as runtime errors here, such as
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
+// This import is different based on client vs server side.
+
+import type { ServerManifest, SSRManifest } from "bun:app/server";
 import {
   __callDispose,
   __legacyDecorateClassTS,
@@ -22,12 +25,12 @@ import { type SourceMapURL, derefMapping } from "#stack-trace";
 const registry = new Map<Id, HMRModule>();
 const registrySourceMapIds = new Map<string, SourceMapURL>();
 /** Server */
-export const serverManifest = {};
+export const serverManifest: ServerManifest = {};
 /** Server */
-export const ssrManifest = {};
+export const ssrManifest: SSRManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
-const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
+export let onServerSideReload: (() => Promise<void> | void) | null = null;
+const eventHandlers: Record<Bun.HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
@@ -170,19 +173,19 @@ export class HMRModule {
   // not destructed.
 
   accept(
-    arg1?: string | readonly string[] | HotAcceptFunction,
-    arg2?: HotAcceptFunction | HotArrayAcceptFunction | undefined,
+    specifiedOrAcceptFunctionOrFunctions?: string | readonly string[] | HotAcceptFunction,
+    acceptFunctionOrFunctions?: HotAcceptFunction | HotArrayAcceptFunction | undefined,
   ) {
-    if (arg2 == undefined) {
-      if (arg1 == undefined) {
+    if (acceptFunctionOrFunctions == undefined) {
+      if (specifiedOrAcceptFunctionOrFunctions == undefined) {
         this.selfAccept = implicitAcceptFunction;
         return;
       }
-      if (typeof arg1 !== "function") {
+      if (typeof specifiedOrAcceptFunctionOrFunctions !== "function") {
         throw new Error("import.meta.hot.accept requires a callback function");
       }
       // Self-accept function
-      this.selfAccept = arg1;
+      this.selfAccept = specifiedOrAcceptFunctionOrFunctions;
     } else {
       throw new Error(
         '"import.meta.hot.accept" must be directly called with string literals for ' +
@@ -328,6 +331,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         throw e;
       }
     }
+    if (loadOrEsmModule === true) {
+      throw new Error(
+        `Module "${id}" was resolved to a synthetic module, but did not have any exports. This is a bug in Bun.`,
+      );
+    }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
@@ -429,6 +437,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
+
+    if (typeof loadOrEsmModule === "boolean") {
+      throw new Error(
+        `Module "${id}" was resolved to a synthetic module, but did not have any exports. This is a bug in Bun.`,
+      );
+    }
+
     const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
 
     if (!mod) {
@@ -587,19 +602,6 @@ type HotAcceptFunction = (esmExports?: any | void) => void;
 type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
 type HotEventHandler = (data: any) => void;
-
-// If updating this, make sure the `devserver.d.ts` types are
-// kept in sync.
-type HMREvent =
-  | "bun:ready"
-  | "bun:beforeUpdate"
-  | "bun:afterUpdate"
-  | "bun:beforeFullReload"
-  | "bun:beforePrune"
-  | "bun:invalidate"
-  | "bun:error"
-  | "bun:ws:disconnect"
-  | "bun:ws:connect";
 
 /** Called when modules are replaced. */
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
@@ -815,15 +817,16 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
-export function emitEvent(event: HMREvent, data: any) {
+export function emitEvent(event: Bun.HMREvent, data: unknown) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
+
   for (const handler of handlers) {
     handler(data);
   }
 }
 
-export function onEvent(event: HMREvent, cb) {
+export function onEvent(event: Bun.HMREvent, cb) {
   (eventHandlers[event] ??= [])!.push(cb);
 }
 
@@ -884,11 +887,22 @@ function toESM(mod: any) {
   return to;
 }
 
-function registerSynthetic(id: Id, esmExports) {
-  const module = new HMRModule(id, false);
-  module.exports = esmExports;
-  registry.set(id, module);
-  unloadedModuleRegistry[id] = true as any;
+/** Used to make sure our implementation is type-safe to what the type declarations say */
+interface BakeBuiltinSyntheticModules {
+  "bun:app": typeof import("bun:app");
+  "bun:app/server": typeof import("bun:app/server");
+  "bun:app/client": typeof import("bun:app/client");
+  "bun:wrap": typeof import("bun:wrap");
+}
+
+function registerSynthetic<ModuleName extends keyof BakeBuiltinSyntheticModules>(
+  id: ModuleName,
+  esmExports: BakeBuiltinSyntheticModules[ModuleName],
+) {
+  const mod = new HMRModule(id, false);
+  mod.exports = esmExports;
+  registry.set(id, mod);
+  unloadedModuleRegistry[id] = true;
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {
@@ -906,26 +920,26 @@ export function setRefreshRuntime(runtime: HMRModule) {
 
 // react-refresh/runtime does not provide this function for us
 // https://github.com/facebook/metro/blob/febdba2383113c88296c61e28e4ef6a7f4939fda/packages/metro/src/lib/polyfills/require.js#L748-L774
-function isReactRefreshBoundary(esmExports): boolean {
+function isReactRefreshBoundary(moduleExports: unknown): boolean {
   const { isLikelyComponentType } = refreshRuntime;
   if (!isLikelyComponentType) return true;
-  if (isLikelyComponentType(esmExports)) {
+  if (isLikelyComponentType(moduleExports)) {
     return true;
   }
-  if (esmExports == null || typeof esmExports !== "object") {
+  if (moduleExports == null || typeof moduleExports !== "object") {
     // Exit if we can't iterate over exports.
     return false;
   }
   let hasExports = false;
   let areAllExportsComponents = true;
-  for (const key in esmExports) {
+  for (const key in moduleExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
+    const desc = Object.getOwnPropertyDescriptor(moduleExports, key);
     if (desc && desc.get) {
       // Don't invoke getters as they may have side effects.
       return false;
     }
-    const exportValue = esmExports[key];
+    const exportValue = moduleExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }
@@ -941,8 +955,6 @@ declare global {
   }
 }
 
-// bun:bake/server, bun:bake/client, and bun:wrap are
-// provided by this file instead of the bundler
 registerSynthetic("bun:wrap", {
   __name,
   __legacyDecorateClassTS,
@@ -953,7 +965,7 @@ registerSynthetic("bun:wrap", {
 });
 
 if (side === "server") {
-  registerSynthetic("bun:bake/server", {
+  registerSynthetic("bun:app/server", {
     serverManifest,
     ssrManifest,
     actionManifest: null,
@@ -961,7 +973,9 @@ if (side === "server") {
 }
 
 if (side === "client") {
-  registerSynthetic("bun:bake/client", {
-    onServerSideReload: cb => (onServerSideReload = cb),
+  registerSynthetic("bun:app/client", {
+    onServerSideReload: cb => {
+      onServerSideReload = cb;
+    },
   });
 }

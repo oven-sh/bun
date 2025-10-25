@@ -1617,7 +1617,6 @@ pub const TestingAPIs = struct {
 };
 
 const PathResolver = @import("../bun.js/node/path.zig");
-const pathlib = @import("../paths/Path.zig");
 const std = @import("std");
 const validate_npm_package_name = @import("./validate_npm_package_name.zig");
 

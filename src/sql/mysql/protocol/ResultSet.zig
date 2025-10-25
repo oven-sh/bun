@@ -106,11 +106,11 @@ pub const Row = struct {
                 }
 
                 const slice = value.slice();
-                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
             },
             .MYSQL_TYPE_JSON => {
                 const slice = value.slice();
-                cell.* = SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                cell.* = SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
             },
 
             .MYSQL_TYPE_TIME => {
@@ -141,7 +141,7 @@ pub const Row = struct {
             },
             else => {
                 const slice = value.slice();
-                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
             },
         };
     }

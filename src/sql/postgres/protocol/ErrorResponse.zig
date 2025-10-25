@@ -9,9 +9,7 @@ pub fn format(formatter: ErrorResponse, comptime _: []const u8, _: std.fmt.Forma
 }
 
 pub fn deinit(this: *ErrorResponse) void {
-    for (this.messages.items) |*message| {
-        message.deinit();
-    }
+    for (this.messages.items) |*message| message.deinit();
     this.messages.deinit(bun.default_allocator);
 }
 

@@ -477,12 +477,17 @@ const Stringifier = struct {
                     first = false;
 
                     this.appendString(prop_name);
-                    this.builder.append(.latin1, ": ");
+
+                    const unwrapped_value = try iter.value.unwrapBoxedPrimitive(global);
+                    const needs_newline = propValueNeedsNewline(global, unwrapped_value);
 
                     this.indent += 1;
 
-                    if (propValueNeedsNewline(iter.value)) {
+                    if (needs_newline) {
+                        this.builder.append(.lchar, ':');
                         this.newline();
+                    } else {
+                        this.builder.append(.latin1, ": ");
                     }
 
                     try this.stringify(global, iter.value);
@@ -492,9 +497,31 @@ const Stringifier = struct {
         }
     }
 
-    /// Does this object property value need a newline? True for arrays and objects.
-    fn propValueNeedsNewline(value: JSValue) bool {
-        return !value.isNumber() and !value.isBoolean() and !value.isNull() and !value.isString();
+    /// Does this object property value need a newline? True for non-empty arrays and objects.
+    fn propValueNeedsNewline(global: *JSGlobalObject, unwrapped_value: JSValue) bool {
+        // Primitives don't need newlines
+        if (unwrapped_value.isNumber() or unwrapped_value.isBoolean() or unwrapped_value.isNull() or unwrapped_value.isString()) {
+            return false;
+        }
+
+        // Check if it's an empty array - these should stay inline
+        if (unwrapped_value.isArray()) {
+            const len = unwrapped_value.getLength(global) catch 0;
+            return len > 0;
+        }
+
+        // Check if it's an empty object - these should stay inline
+        if (unwrapped_value.isObject()) {
+            // Try to iterate and see if there are any properties
+            var iter: jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }) = (jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(
+                global,
+                unwrapped_value.toObject(global) catch return true,
+            )) catch return true;
+            defer iter.deinit();
+            return iter.len > 0;
+        }
+
+        return true;
     }
 
     fn newline(this: *Stringifier) void {

@@ -204,14 +204,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return .@"continue";
         }
 
-        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+        fn endHtmlTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-            if (this.linker.dev_server == null) {
-                // Fallback: inject at end of html if no head or body tags injected yet
-                this.addHeadTags(end) catch return .stop;
-            } else {
+            if (this.linker.dev_server != null) {
                 this.end_tag_indices.html = @intCast(this.output.items.len);
             }
+            // For production bundling, don't inject here - let post-processing handle it
+            // so we can search for </head> and inject there for HTML with no scripts
             return .@"continue";
         }
     };
@@ -250,11 +249,11 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     // element. In this case, we do a simple search through the page.
     // See https://github.com/oven-sh/bun/issues/17554
     const script_injection_offset: u32 = if (c.dev_server != null) brk: {
-        // Original dev server logic - try head first, then body
-        if (html_loader.end_tag_indices.head) |head|
-            break :brk head;
-        if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
-            break :brk @intCast(head);
+        // Dev server logic - try head first, then body, then html, then end of file
+        if (html_loader.end_tag_indices.head) |idx|
+            break :brk idx;
+        if (bun.strings.indexOf(html_loader.output.items, "</head>")) |idx|
+            break :brk @intCast(idx);
         if (html_loader.end_tag_indices.body) |body|
             break :brk body;
         if (html_loader.end_tag_indices.html) |html|
@@ -262,13 +261,45 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.
     } else brk: {
         if (!html_loader.added_head_tags) {
-            @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
-            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
-            const allocator = html_appender.get();
-            const slices = html_loader.getHeadTags(allocator);
-            for (slices.slice()) |slice| {
-                bun.handleOom(html_loader.output.appendSlice(slice));
-                allocator.free(slice);
+            // If we never injected during parsing, try to inject at </head> position
+            // This happens when the HTML has no scripts in the source
+            if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head_idx| {
+                // Found </head>, insert before it
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = html_loader.getHeadTags(allocator);
+                defer for (slices.slice()) |slice|
+                    allocator.free(slice);
+
+                // Calculate total size needed for inserted tags
+                var total_insert_size: usize = 0;
+                for (slices.slice()) |slice|
+                    total_insert_size += slice.len;
+
+                // Make room for the tags before </head>
+                const old_len = html_loader.output.items.len;
+                bun.handleOom(html_loader.output.resize(old_len + total_insert_size));
+
+                // Move everything after </head> to make room
+                const items = html_loader.output.items;
+                std.mem.copyBackwards(u8, items[head_idx + total_insert_size .. items.len], items[head_idx..old_len]);
+
+                // Insert the tags
+                var offset: usize = head_idx;
+                for (slices.slice()) |slice| {
+                    @memcpy(items[offset .. offset + slice.len], slice);
+                    offset += slice.len;
+                }
+            } else {
+                @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
+                // No </head> tag found - fallback to appending at end
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = html_loader.getHeadTags(allocator);
+                for (slices.slice()) |slice| {
+                    bun.handleOom(html_loader.output.appendSlice(slice));
+                    allocator.free(slice);
+                }
             }
         }
         break :brk if (Environment.isDebug) undefined else 0; // value is ignored. fail loud if hit in debug

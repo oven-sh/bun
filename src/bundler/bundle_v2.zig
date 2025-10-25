@@ -161,6 +161,16 @@ pub const BundleV2 = struct {
         return &this.linker.loop;
     }
 
+    /// Determines the JSX development mode based on force_node_env and current task settings.
+    /// Priority: NODE_ENV > tsconfig.json
+    inline fn computeJSXDevelopment(force_node_env: options.BundleOptions.ForceNodeEnv, current: bool) bool {
+        return switch (force_node_env) {
+            .development => true,
+            .production => false,
+            .unspecified => current,
+        };
+    }
+
     /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
     pub fn jsLoopForPlugins(this: *BundleV2) *jsc.EventLoop {
         bun.assert(this.plugins != null);
@@ -755,11 +765,7 @@ pub const BundleV2 = struct {
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = target;
-        task.jsx.development = switch (t.options.force_node_env) {
-            .development => true,
-            .production => false,
-            .unspecified => t.options.jsx.development,
-        };
+        task.jsx.development = computeJSXDevelopment(t.options.force_node_env, task.jsx.development);
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -820,11 +826,7 @@ pub const BundleV2 = struct {
         task.known_target = target;
         {
             const bundler = this.transpilerForTarget(target);
-            task.jsx.development = switch (bundler.options.force_node_env) {
-                .development => true,
-                .production => false,
-                .unspecified => bundler.options.jsx.development,
-            };
+            task.jsx.development = computeJSXDevelopment(bundler.options.force_node_env, task.jsx.development);
         }
 
         // Handle onLoad plugins as entry points
@@ -3462,11 +3464,7 @@ pub const BundleV2 = struct {
                 target;
 
             resolve_task.jsx = resolve_result.jsx;
-            resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
-                .development => true,
-                .production => false,
-                .unspecified => transpiler.options.jsx.development,
-            };
+            resolve_task.jsx.development = computeJSXDevelopment(transpiler.options.force_node_env, resolve_task.jsx.development);
 
             resolve_task.loader = import_record_loader;
             resolve_task.tree_shaking = transpiler.options.tree_shaking;

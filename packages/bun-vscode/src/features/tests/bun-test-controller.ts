@@ -1421,7 +1421,7 @@ export class BunTestController implements vscode.Disposable {
       cwd: "${workspaceFolder}",
       internalConsoleOptions: "neverOpen",
       name: "Bun Test Debug",
-      program: args.at(1),
+      program: args.at(testArgs.length),
       request: "launch",
       runtime: bunCommand,
       type: "bun",

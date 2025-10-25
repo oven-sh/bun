@@ -50,8 +50,18 @@
 #include "wtf/text/StringToIntegerConversion.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include "BunString.h"
+#include <chrono>
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
+
+// SQL Telemetry C++ Bridge (Zig export)
+// Registers sqlite3_trace_v2() callback for automatic query telemetry
+// Returns operation ID (>0) on success, 0 on failure
+extern "C" uint64_t Bun__telemetry__sql__register_trace(
+    JSC::JSGlobalObject* globalObject,
+    sqlite3* db,
+    const uint8_t* db_path_ptr,
+    size_t db_path_len);
 
 #ifndef BREAKING_CHANGES_BUN_1_2
 #define BREAKING_CHANGES_BUN_1_2 0
@@ -78,6 +88,22 @@ static inline int lazyLoadSQLite()
 
 #endif
 /* ******************************************************************************** */
+
+// Wrappers for lazy-loaded SQLite functions (callable from Zig)
+// These must be defined AFTER lazy_sqlite3.h is included so the macros work
+extern "C" const char* Bun__sqlite3_sql_wrapper(sqlite3_stmt* stmt)
+{
+    return sqlite3_sql(stmt);
+}
+
+extern "C" int Bun__sqlite3_trace_v2_wrapper(
+    sqlite3* db,
+    unsigned mask,
+    int (*callback)(unsigned, void*, void*, void*),
+    void* ctx)
+{
+    return sqlite3_trace_v2(db, mask, callback, ctx);
+}
 
 #if !USE(SYSTEM_MALLOC)
 #include <bmalloc/BPlatform.h>
@@ -1690,6 +1716,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
+
+    // Register SQL telemetry trace callback
+    auto db_path = path.utf8();
+    Bun__telemetry__sql__register_trace(
+        lexicalGlobalObject,
+        db,
+        reinterpret_cast<const uint8_t*>(db_path.data()),
+        db_path.length()
+    );
+
     auto index = databases().size();
 
     databases().append(new VersionSqlite3(db));

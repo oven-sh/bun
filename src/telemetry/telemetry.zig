@@ -55,6 +55,9 @@ pub const http = @import("hooks-http.zig");
 /// Fetch client telemetry support
 pub const fetch = @import("hooks-fetch.zig");
 
+/// SQL database telemetry support
+pub const sql = @import("hooks-sql.zig");
+
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
 /// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
 pub const InstrumentKind = enum(u8) {
@@ -1140,5 +1143,8 @@ comptime {
         @export(&jsSetConfigurationProperty, .{ .name = "Bun__Telemetry__nativeHooks__setConfigurationProperty" });
         @export(&initGlobalTelemetryC, .{ .name = "Bun__Telemetry__init" });
         @export(&deinitGlobalTelemetryC, .{ .name = "Bun__Telemetry__deinit" });
+
+        // SQL telemetry export (defined in hooks-sql.zig)
+        @export(&sql.Bun__telemetry__sql__register_trace, .{ .name = "Bun__telemetry__sql__register_trace" });
     }
 }

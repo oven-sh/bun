@@ -1,3 +1,5 @@
+# FileSystemRouter
+
 Bun provides a fast API for resolving routes against file-system paths. This API is primarily intended for library authors. It supports both Next.js-style routing and [React Router file route conventions](https://reactrouter.com/how-to/file-route-conventions).
 
 ## Next.js-style

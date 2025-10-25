@@ -838,12 +838,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     RETURN_IF_EXCEPTION(throwScope, {});
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
-    auto sourceID = Zig::sourceIDForSourceURL(fileName);
-    if (!sourceID) {
+    auto sourceIDOpt = Zig::sourceIDForSourceURL(fileName);
+    if (!sourceIDOpt) {
         throwException(globalObject, throwScope,
             createError(globalObject, "No source for file"_s));
         return {};
     }
+
+    auto sourceID = *sourceIDOpt;
 
     auto basicBlocks = vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
         sourceID, vm);

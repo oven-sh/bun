@@ -1539,7 +1539,7 @@ pub fn fetchWithoutOnLoadPlugins(
     defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
     errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
-    return try ModuleLoader.transpileSourceCode(
+    return ModuleLoader.transpileSourceCode(
         jsc_vm,
         lr.specifier,
         referrer_clone.slice(),
@@ -2791,9 +2791,14 @@ pub fn remapZigException(
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            const module_result = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             must_reset_parser_arena_later.* = true;
-            break :code original_source.source_code.toUTF8(bun.default_allocator);
+            // Extract source code from the module result
+            const source_code = switch (module_result.tag) {
+                .transpiled => module_result.result.transpiled.source_code,
+                else => bun.String.empty,
+            };
+            break :code source_code.toUTF8(bun.default_allocator);
         };
 
         if (enable_source_code_preview and code.len == 0) {

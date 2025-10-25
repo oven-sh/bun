@@ -880,7 +880,7 @@ pub fn transpileSourceCode(
                 }
 
                 // we must allocate the arena so that the pointer it points to is always valid.
-                const arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
+                const arena = jsc_vm.allocator.create(bun.ArenaAllocator) catch bun.outOfMemory();
                 arena.* = bun.ArenaAllocator.init(bun.default_allocator);
                 break :brk arena;
             };
@@ -1034,23 +1034,24 @@ pub fn transpileSourceCode(
                         give_back_arena = false;
                         // Convert parse errors to ModuleResult.err
                         // We'll create a JSValue from the log errors
-                        const exception = brk: {
+                        const exception = create_exception: {
                             const vm = jsc_vm;
                             const globalThis = globalObject orelse vm.global;
                             if (log.msgs.items.len == 0) {
-                                break :brk globalThis.createError(ZigString.init("Parse error"), .{});
+                                break :create_exception globalThis.createError("Parse error", .{});
                             } else if (log.msgs.items.len == 1) {
                                 const msg = log.msgs.items[0];
-                                break :brk bun.api.BuildMessage.create(globalThis, vm.allocator, msg) catch globalThis.createError(ZigString.init("Parse error"), .{});
+                                break :create_exception bun.api.BuildMessage.create(globalThis, vm.allocator, msg) catch globalThis.createError("Parse error", .{});
                             } else {
                                 var errors_stack: [256]JSValue = undefined;
                                 const len = @min(log.msgs.items.len, errors_stack.len);
                                 const errors = errors_stack[0..len];
                                 const logs = log.msgs.items[0..len];
                                 for (logs, errors) |msg, *current| {
-                                    current.* = bun.api.BuildMessage.create(globalThis, vm.allocator, msg) catch globalThis.createError(ZigString.init("Build error"), .{});
+                                    current.* = bun.api.BuildMessage.create(globalThis, vm.allocator, msg) catch globalThis.createError("Build error", .{});
                                 }
-                                break :brk globalThis.createAggregateError(errors, &ZigString.init("Parse errors")) catch globalThis.createError(ZigString.init("Parse errors"), .{});
+                                var parse_errors_string = ZigString.init("Parse errors");
+                                break :create_exception globalThis.createAggregateError(errors, &parse_errors_string) catch globalThis.createError("Parse errors", .{});
                             }
                         };
                         return jsc.ModuleResult.err(exception);
@@ -1103,19 +1104,20 @@ pub fn transpileSourceCode(
                 const exception = brk: {
                     const globalThis = globalObject orelse jsc_vm.global;
                     if (log.msgs.items.len == 0) {
-                        break :brk globalThis.createError(ZigString.init("Parse error"), .{});
+                        break :brk globalThis.createError("Parse error", .{});
                     } else if (log.msgs.items.len == 1) {
                         const msg = log.msgs.items[0];
-                        break :brk bun.api.BuildMessage.create(globalThis, jsc_vm.allocator, msg) catch globalThis.createError(ZigString.init("Parse error"), .{});
+                        break :brk bun.api.BuildMessage.create(globalThis, jsc_vm.allocator, msg) catch globalThis.createError("Parse error", .{});
                     } else {
                         var errors_stack: [256]JSValue = undefined;
                         const len = @min(log.msgs.items.len, errors_stack.len);
                         const errors = errors_stack[0..len];
                         const logs = log.msgs.items[0..len];
                         for (logs, errors) |msg, *current| {
-                            current.* = bun.api.BuildMessage.create(globalThis, jsc_vm.allocator, msg) catch globalThis.createError(ZigString.init("Build error"), .{});
+                            current.* = bun.api.BuildMessage.create(globalThis, jsc_vm.allocator, msg) catch globalThis.createError("Build error", .{});
                         }
-                        break :brk globalThis.createAggregateError(errors, &ZigString.init("Parse errors")) catch globalThis.createError(ZigString.init("Parse errors"), .{});
+                        var parse_errors_string = ZigString.init("Parse errors");
+                        break :brk globalThis.createAggregateError(errors, &parse_errors_string) catch globalThis.createError("Parse errors", .{});
                     }
                 };
                 return jsc.ModuleResult.err(exception);
@@ -1176,14 +1178,17 @@ pub fn transpileSourceCode(
                     break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
                 };
                 if (was_cjs) {
-                    return .{
-                        .allocator = null,
+                    return jsc.ModuleResult.transpiled(.{
                         .source_code = bun.String.static("(function(){})"),
-                        .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-                        .is_commonjs_module = true,
-                        .tag = .javascript,
-                    };
+                        .bytecode_cache = null,
+                        .bytecode_cache_len = 0,
+                        .flags = .{
+                            .is_commonjs = true,
+                            .is_already_bundled = false,
+                            .from_package_json_type_module = false,
+                        },
+                    });
                 }
             }
 
@@ -1238,18 +1243,22 @@ pub fn transpileSourceCode(
 
             // We _must_ link because:
             // - node_modules bundle won't be properly
-            try jsc_vm.transpiler.linker.link(
+            jsc_vm.transpiler.linker.link(
                 path,
                 &parse_result,
                 jsc_vm.origin,
                 .absolute_path,
                 false,
                 true,
-            );
+            ) catch |err| {
+                const err_msg = jsc_vm.global.createErrorInstance("Link error: {s}", .{@errorName(err)});
+                return jsc.ModuleResult.err(err_msg);
+            };
 
             if (parse_result.pending_imports.len > 0) {
                 if (promise_ptr == null) {
-                    return error.UnexpectedPendingResolution;
+                    const err_msg = jsc_vm.global.createErrorInstance("Unexpected pending resolution", .{});
+                    return jsc.ModuleResult.err(err_msg);
                 }
 
                 if (source.contents_is_recycled) {
@@ -1275,7 +1284,9 @@ pub fn transpileSourceCode(
                     },
                 );
                 give_back_arena = false;
-                return error.AsyncModule;
+                // Async module: result will come via promise callback
+                // Return a placeholder error result; caller checks promise_ptr
+                return jsc.ModuleResult.err(jsc.JSValue.js_undefined);
             }
 
             if (!jsc_vm.macro_mode)
@@ -1288,13 +1299,16 @@ pub fn transpileSourceCode(
             _ = brk: {
                 var mapper = jsc_vm.sourceMapHandler(&printer);
 
-                break :brk try jsc_vm.transpiler.printWithSourceMap(
+                break :brk jsc_vm.transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
                     mapper.get(),
-                );
+                ) catch |err| {
+                    const err_msg = jsc_vm.global.createErrorInstance("Print error: {s}", .{@errorName(err)});
+                    return jsc.ModuleResult.err(err_msg);
+                };
             };
 
             if (comptime Environment.dump_source) {
@@ -1407,10 +1421,13 @@ pub fn transpileSourceCode(
                             .u = .{ .ptr = @ptrCast(globalThis) },
                         };
                         const globalValue = decoded.encode();
+                        const arrayBuffer = jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array) catch {
+                            return jsc.ModuleResult.err(globalThis.createErrorInstance("Failed to create array buffer", .{}));
+                        };
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            arrayBuffer,
                         );
                     }
                 }
@@ -1506,10 +1523,13 @@ pub fn transpileSourceCode(
             }
 
             if (globalObject == null) {
-                return error.NotSupported;
+                return jsc.ModuleResult.err(jsc_vm.global.createErrorInstance("Not supported", .{}));
             }
 
-            const html_bundle = try jsc.API.HTMLBundle.init(globalObject.?, path.text);
+            const html_bundle = jsc.API.HTMLBundle.init(globalObject.?, path.text) catch |err| {
+                const err_instance = jsc_vm.global.createErrorInstance("Failed to load HTML bundle: {s}", .{@errorName(err)});
+                return jsc.ModuleResult.err(err_instance);
+            };
             return jsc.ModuleResult.special(.{
                 .tag = .export_default_object,
                 .jsvalue = html_bundle.toJS(globalObject.?),
@@ -1587,10 +1607,10 @@ pub fn transpileSourceCode(
                     defer buf.deinit();
                     var writer = buf.writer();
                     jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    break :brk try bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    break :brk bun.String.createUTF8ForJS(globalObject.?, buf.slice()) catch bun.outOfMemory();
                 }
 
-                break :brk try bun.String.createUTF8ForJS(globalObject.?, path.text);
+                break :brk bun.String.createUTF8ForJS(globalObject.?, path.text) catch bun.outOfMemory();
             };
 
             return jsc.ModuleResult.special(.{
@@ -1702,7 +1722,7 @@ pub export fn Bun__transpileFile(
                 .custom => |strong| {
                     ret.* = jsc.ErrorableModuleResult.ok(jsc.ModuleResult.special(.{
                         .tag = .custom_extension,
-                        .jsvalue = JSValue.jsNumberFromUint64(strong.get()),
+                        .jsvalue = strong.get(),
                     }));
                     return null;
                 },
@@ -1823,7 +1843,7 @@ pub export fn Bun__transpileFile(
                             .custom => |strong| {
                                 ret.* = jsc.ErrorableModuleResult.ok(jsc.ModuleResult.special(.{
                                     .tag = .custom_extension,
-                                    .jsvalue = JSValue.jsNumberFromUint64(strong.get()),
+                                    .jsvalue = strong.get(),
                                 }));
                                 return null;
                             },
@@ -1851,40 +1871,30 @@ pub export fn Bun__transpileFile(
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
     var promise: ?*jsc.JSInternalPromise = null;
-    ret.* = jsc.ErrorableModuleResult.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            lr.specifier,
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            lr.path,
-            synchronous_loader,
-            module_type,
-            &log,
-            lr.virtual_source,
-            if (allow_promise) &promise else null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.AsyncModule => {
-                    bun.assert(promise != null);
-                    return promise;
-                },
-                error.PluginError => return null,
-                error.JSError => {
-                    ret.* = jsc.ErrorableModuleResult.err(error.JSError, globalObject.takeError(error.JSError));
-                    return null;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-                    return null;
-                },
-            }
-        },
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        lr.specifier,
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        lr.path,
+        synchronous_loader,
+        module_type,
+        &log,
+        lr.virtual_source,
+        if (allow_promise) &promise else null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
     );
-    return promise;
+
+    // If a promise was set, this is an async module - return it
+    if (promise) |p| {
+        return p;
+    }
+
+    // Otherwise, store the result and return null
+    ret.* = jsc.ErrorableModuleResult.ok(module_result);
+    return null;
 }
 
 export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
@@ -2050,35 +2060,29 @@ export fn Bun__transpileVirtualModule(
     defer log.deinit();
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-    ret.* = jsc.ErrorableModuleResult.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            specifier_slice.slice(),
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            path,
-            loader,
-            .unknown,
-            &log,
-            &virtual_source,
-            null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.PluginError => return true,
-                error.JSError => {
-                    ret.* = jsc.ErrorableModuleResult.err(error.JSError, globalObject.takeError(error.JSError));
-                    return true;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
-                    return true;
-                },
-            }
-        },
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        specifier_slice.slice(),
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        path,
+        loader,
+        .unknown,
+        &log,
+        &virtual_source,
+        null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
     );
+
+    // Check if the result is an error
+    if (module_result.tag == .err) {
+        ret.* = jsc.ErrorableModuleResult.ok(module_result);
+        return true;
+    }
+
+    ret.* = jsc.ErrorableModuleResult.ok(module_result);
     analytics.Features.virtual_modules += 1;
     return true;
 }

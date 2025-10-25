@@ -54,7 +54,7 @@ static inline JSC::SourceOrigin toSourceOrigin(const WTF::String& sourceURL, boo
 
 // Helper function to get source ID from URL
 // Returns nullopt if not found
-static inline std::optional<JSC::SourceID> sourceIDForSourceURL(const WTF::String& sourceURL)
+std::optional<JSC::SourceID> sourceIDForSourceURL(const WTF::String& sourceURL)
 {
     // TODO: Implement proper source ID lookup if needed
     // For now, return nullopt to indicate source not found

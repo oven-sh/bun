@@ -102,3 +102,39 @@ extern "C" Bun::SourceProvider* Bun__createSourceProvider(
     // Leak the ref for C ownership (caller must manage)
     return &provider.leakRef();
 }
+
+// TODO: Bytecode caching stubs - need to reimplement with new SourceProvider
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(
+    BunString* sourceProviderURL,
+    const uint8_t* input_code,
+    size_t inputSourceCodeSize,
+    uint8_t** outputByteCode,
+    size_t* outputByteCodeSize,
+    void** cached_bytecode)
+{
+    // Temporarily disabled - TODO: implement bytecode caching
+    return false;
+}
+
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(
+    BunString* sourceProviderURL,
+    const uint8_t* input_code,
+    size_t inputSourceCodeSize,
+    uint8_t** outputByteCode,
+    size_t* outputByteCodeSize,
+    void** cached_bytecode)
+{
+    // Temporarily disabled - TODO: implement bytecode caching
+    return false;
+}
+
+extern "C" void CachedBytecode__deref(void* cached_bytecode)
+{
+    // Temporarily disabled - TODO: implement bytecode caching
+}
+
+extern "C" void ZigSourceProvider__getSourceSlice(void* sourceProvider, BunString* out)
+{
+    // Temporarily disabled - TODO: implement if needed
+    *out = Bun::toString(WTF::String());
+}

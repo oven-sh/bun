@@ -465,6 +465,8 @@ Server.prototype.listen = function () {
   return this;
 };
 
+let _alsCleanup: Disposable | undefined = undefined;
+
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
@@ -553,6 +555,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
+        // Notify telemetry of request start - this sets ALS context via enterWith()
+        // which is captured by AsyncContextFrame for async operations
         try {
           Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentKind.Node = 6
         } catch {}

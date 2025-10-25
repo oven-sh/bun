@@ -119,7 +119,7 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
 
     // Attach to Bun's native fetch hooks
     this._instrumentId = Bun.telemetry.attach({
-      type: InstrumentKind.Fetch,
+      type: "fetch",
       name: this.instrumentationName,
       version: this.instrumentationVersion,
       captureAttributes: this._config.captureAttributes,

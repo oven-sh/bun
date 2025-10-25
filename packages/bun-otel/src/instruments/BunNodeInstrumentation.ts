@@ -28,13 +28,21 @@ import {
   type Span,
   type TracerProvider,
 } from "@opentelemetry/api";
+import {
+  ATTR_HTTP_REQUEST_HEADER,
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_HEADER,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_URL_SCHEME,
+} from "@opentelemetry/semantic-conventions";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
 import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentRef, OpId } from "bun";
-import { InstrumentKind } from "../../types";
 
 import { IncomingMessage, ServerResponse } from "http";
 import { validateCaptureAttributes } from "../validation";
+import { parseUrlAndHost } from "../url-utils";
+import { ATTR_HTTP_RESPONSE_BODY_SIZE } from "@opentelemetry/semantic-conventions/incubating";
 
 // Symbols for Node.js http span tracking
 const kSpan = Symbol("kOtelSpan");
@@ -186,11 +194,11 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       // Update span with final attributes if not already set
       const statusCode = res.statusCode;
       if (statusCode) {
-        span.setAttribute("http.response.status_code", statusCode);
+        span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, statusCode);
 
         const contentLength = this.extractContentLength(res);
         if (contentLength > 0) {
-          span.setAttribute("http.response.body.size", contentLength);
+          span.setAttribute(ATTR_HTTP_RESPONSE_BODY_SIZE, contentLength);
         }
 
         // Add captured response headers if configured
@@ -198,7 +206,7 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
           for (const headerName of this._config.captureAttributes.responseHeaders) {
             const value = res.getHeader(headerName);
             if (value !== undefined) {
-              const attrKey = `http.response.header.${headerName}`;
+              const attrKey = ATTR_HTTP_RESPONSE_HEADER(headerName);
               span.setAttribute(attrKey, Array.isArray(value) ? value[0] : String(value));
             }
           }
@@ -223,8 +231,8 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
 
         // Build metric attributes (subset of span attributes for cardinality control)
         const metricAttributes: Record<string, any> = {
-          "http.request.method": req.method,
-          "http.response.status_code": statusCode,
+          [ATTR_HTTP_REQUEST_METHOD]: req.method,
+          [ATTR_HTTP_RESPONSE_STATUS_CODE]: statusCode,
         };
 
         // Record to old histogram (milliseconds)
@@ -258,14 +266,11 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
 
   /**
    * Common cleanup logic after a span has been ended.
-   * Removes bookkeeping and clears ALS context (for GC) when no active spans remain.
+   * Removes bookkeeping (ALS context is cleared by Disposable when onNodeHTTPRequest exits).
    */
   private _cleanupAfterSpanEnd(id: number): void {
     this._startTimes.delete(id);
     this._activeSpans.delete(id);
-    if (this._activeSpans.size === 0 && this._contextStorage) {
-      this._contextStorage.enterWith(undefined as any);
-    }
   }
 
   /**
@@ -303,7 +308,7 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
 
     // Attach to Bun's native hooks for Node.js HTTP operations
     this._instrumentId = Bun.telemetry.attach({
-      type: InstrumentKind.Node,
+      type: "node",
       name: this.instrumentationName,
       version: this.instrumentationVersion,
       captureAttributes: this._config.captureAttributes,
@@ -315,6 +320,14 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       onOperationStart: (id: OpId, attributes: Record<string, any>) => {
         if (this.isNodeServerAttributes(attributes)) {
           this.handleServerOperationStart(id, attributes, tracer);
+          // Return a Disposable to clear ALS context when onNodeHTTPRequest exits
+          return {
+            [Symbol.dispose]: () => {
+              if (this._contextStorage) {
+                this._contextStorage.enterWith(undefined as any);
+              }
+            },
+          };
         }
       },
 
@@ -379,11 +392,10 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
         kind: SpanKind.SERVER,
         attributes: {
           // Map to OTel semantic conventions
-          "http.request.method": method,
-          "url.path": url,
+          [ATTR_HTTP_REQUEST_METHOD]: method,
           // Node's TLSSocket extends net.Socket and adds `encrypted`; cast to any to avoid type narrowing issues
-          "url.scheme": (nodeRequest.socket as any)?.encrypted ? "https" : "http",
-          "server.address": nodeRequest.headers.host || "localhost",
+          [ATTR_URL_SCHEME]: (nodeRequest.socket as any)?.encrypted ? "https" : "http",
+          ...parseUrlAndHost(url || "/", (nodeRequest.headers.host as string | undefined) || "localhost"),
         },
       },
       parentContext,
@@ -394,7 +406,7 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       for (const headerName of this._config.captureAttributes.requestHeaders) {
         const value = nodeRequest.headers[headerName];
         if (value !== undefined) {
-          const attrKey = `http.request.header.${headerName}`;
+          const attrKey = ATTR_HTTP_REQUEST_HEADER(headerName);
           span.setAttribute(attrKey, Array.isArray(value) ? value[0] : String(value));
         }
       }

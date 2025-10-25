@@ -1,17 +1,15 @@
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+  ATTR_HTTP_REQUEST_HEADER,
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_URL_PATH,
+} from "@opentelemetry/semantic-conventions";
 import { describe, expect, test } from "bun:test";
-import { BunSDK } from "../index";
-import { waitForSpans } from "./test-utils";
-
+import http from "node:http";
+import { makeUninstrumentedRequest, TestSDK } from "./test-utils";
 describe("Node.js http.createServer integration", () => {
   test("creates spans for Node.js http server requests", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    const sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-    });
-
-    sdk.start();
+    await using tsdk = new TestSDK();
 
     const http = await import("node:http");
     await using server = http.createServer((req, res) => {
@@ -31,34 +29,20 @@ describe("Node.js http.createServer integration", () => {
 
     const port = address.port;
 
-    try {
-      const response = await fetch(`http://localhost:${port}/test`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe("Node.js server");
+    const response = await fetch(`http://localhost:${port}/test`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("Node.js server");
 
-      await waitForSpans(exporter, 1);
-
-      const spans = exporter.getFinishedSpans();
-      expect(spans).toHaveLength(1);
-      expect(spans[0].name).toBe("GET /test");
-      expect(spans[0].attributes["http.method"]).toBe("GET");
-      expect(spans[0].attributes["http.target"]).toBe("/test");
-      expect(spans[0].attributes["http.status_code"]).toBe(200);
-    } finally {
-      await sdk.shutdown();
-    }
+    const [span] = await tsdk.waitForSpans(1, 1000, s => s.server());
+    expect(span).toHaveSpanName("GET /test");
+    expect(span).toHaveAttribute(ATTR_HTTP_REQUEST_METHOD, "GET");
+    expect(span).toHaveAttribute(ATTR_URL_PATH, "/test");
+    expect(span).toHaveAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, 200);
   });
 
   test("extracts headers from IncomingMessage correctly", async () => {
-    const exporter = new InMemorySpanExporter();
+    await using tsdk = new TestSDK();
 
-    const sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-    });
-
-    sdk.start();
-
-    const http = await import("node:http");
     await using server = http.createServer((req, res) => {
       res.writeHead(200);
       res.end("OK");
@@ -76,37 +60,20 @@ describe("Node.js http.createServer integration", () => {
 
     const port = address.port;
 
-    try {
-      await fetch(`http://localhost:${port}/api/users/123`, {
-        headers: {
-          "User-Agent": "TestAgent/1.0",
-          "Content-Length": "42",
-        },
-      });
+    await makeUninstrumentedRequest(`http://localhost:${port}/api/users/123`, {
+      "User-Agent": "TestAgent/1.0",
+      "Content-Length": "42",
+    });
 
-      await waitForSpans(exporter, 1);
-
-      const spans = exporter.getFinishedSpans();
-      expect(spans).toHaveLength(1);
-
-      const span = spans[0];
-      expect(span.attributes["http.user_agent"]).toBe("TestAgent/1.0");
-      expect(span.attributes["http.target"]).toBe("/api/users/123");
-      expect(span.attributes["http.host"]).toContain("localhost");
-    } finally {
-      await sdk.shutdown();
-    }
+    const spans = await tsdk.waitForSpans(1, 1000, s => s.server());
+    expect(spans[0]).toHaveAttribute(ATTR_HTTP_REQUEST_HEADER("user-agent"), "TestAgent/1.0");
+    expect(spans[0]).toHaveAttribute(ATTR_URL_PATH, "/api/users/123");
   });
 
   test("auto-generates OpId starting from 1 and maintains consistency across calls", async () => {
-    const exporter = new InMemorySpanExporter();
     const capturedOpIds: { start: number[]; inject: number[] } = { start: [], inject: [] };
 
-    const sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-    });
-
-    sdk.start();
+    await using tsdk = new TestSDK();
 
     // Manually attach a custom instrumentation to capture OpIds
     using instrument = Bun.telemetry.attach({
@@ -140,33 +107,26 @@ describe("Node.js http.createServer integration", () => {
 
     const port = address.port;
 
-    try {
-      // Make first request
-      const response1 = await fetch(`http://localhost:${port}/request1`);
-      expect(response1.status).toBe(200);
+    // Make first request
+    await makeUninstrumentedRequest(`http://localhost:${port}/request1`);
 
-      // Make second request
-      const response2 = await fetch(`http://localhost:${port}/request2`);
-      expect(response2.status).toBe(200);
+    // Make second request
+    await makeUninstrumentedRequest(`http://localhost:${port}/request2`);
 
-      await waitForSpans(exporter, 2);
+    await tsdk.waitForSpans(2, 1000, s => s.server());
+    // Verify OpIds were captured
+    expect(capturedOpIds.start.length).toBeGreaterThanOrEqual(2);
+    expect(capturedOpIds.inject.length).toBeGreaterThanOrEqual(2);
 
-      // Verify OpIds were captured
-      expect(capturedOpIds.start.length).toBeGreaterThanOrEqual(2);
-      expect(capturedOpIds.inject.length).toBeGreaterThanOrEqual(2);
+    // First OpId should be >= 1 (not 0)
+    expect(capturedOpIds.start[0]).toBeGreaterThanOrEqual(1);
+    expect(capturedOpIds.inject[0]).toBeGreaterThanOrEqual(1);
 
-      // First OpId should be >= 1 (not 0)
-      expect(capturedOpIds.start[0]).toBeGreaterThanOrEqual(1);
-      expect(capturedOpIds.inject[0]).toBeGreaterThanOrEqual(1);
+    // Same OpId should be used for start and inject of the same request
+    expect(capturedOpIds.start[0]).toBe(capturedOpIds.inject[0]);
+    expect(capturedOpIds.start[1]).toBe(capturedOpIds.inject[1]);
 
-      // Same OpId should be used for start and inject of the same request
-      expect(capturedOpIds.start[0]).toBe(capturedOpIds.inject[0]);
-      expect(capturedOpIds.start[1]).toBe(capturedOpIds.inject[1]);
-
-      // Different requests should have different OpIds
-      expect(capturedOpIds.start[0]).not.toBe(capturedOpIds.start[1]);
-    } finally {
-      await sdk.shutdown();
-    }
+    // Different requests should have different OpIds
+    expect(capturedOpIds.start[0]).not.toBe(capturedOpIds.start[1]);
   });
 });

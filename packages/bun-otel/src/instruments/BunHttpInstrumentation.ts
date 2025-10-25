@@ -13,11 +13,14 @@
  */
 
 import {
+  Attributes,
+  Context,
   context,
   propagation,
   SpanKind,
   SpanStatusCode,
   trace,
+  Tracer,
   ValueType,
   type Counter,
   type Histogram,
@@ -25,12 +28,22 @@ import {
   type Span,
   type TracerProvider,
 } from "@opentelemetry/api";
+import {
+  ATTR_HTTP_REQUEST_HEADER,
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_HEADER,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_HTTP_ROUTE,
+  ATTR_SERVER_ADDRESS,
+  ATTR_SERVER_PORT,
+  ATTR_URL_PATH,
+  ATTR_URL_QUERY,
+  ATTR_URL_SCHEME,
+} from "@opentelemetry/semantic-conventions";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
 import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentRef, OpId } from "bun";
 import type { IncomingMessage, ServerResponse } from "http";
-import { InstrumentKind } from "../../types";
-
 import { validateCaptureAttributes } from "../validation";
 
 /**
@@ -169,7 +182,7 @@ export interface BunHttpInstrumentationConfig extends InstrumentationConfig {
    * Provided by BunSDK to enable trace context sharing between instrumentations.
    * @internal
    */
-  contextStorage?: AsyncLocalStorage<OtelContext>;
+  contextStorage?: AsyncLocalStorage<Context>;
 }
 
 /**
@@ -229,7 +242,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
   private _instrumentId?: InstrumentRef;
   private _activeSpans: Map<number, Span> = new Map();
   private _activeMetricAttributes: Map<number, Record<string, any>> = new Map();
-  private _contextStorage?: AsyncLocalStorage<OtelContext>;
+  private _contextStorage?: AsyncLocalStorage<Context>;
 
   // Metric instruments for tracking HTTP server duration and request count
   private _oldHttpServerDurationHistogram?: Histogram;
@@ -299,7 +312,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
 
     // Attach to Bun's native HTTP server hooks
     this._instrumentId = Bun.telemetry.attach({
-      type: InstrumentKind.HTTP,
+      type: "http",
       name: this.instrumentationName,
       version: this.instrumentationVersion,
       captureAttributes:
@@ -324,7 +337,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
         }
 
         // Extract span name from HTTP method and path
-        const method = attributes["http.request.method"] || "HTTP";
+        const method = attributes[ATTR_HTTP_REQUEST_METHOD] || "HTTP";
         const route = attributes["http.route"] || attributes["url.path"] || "/";
         const spanName = `${method} ${route}`;
 
@@ -359,12 +372,12 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
 
         // Build initial span attributes
         const spanAttributes: Attributes = {
-          "http.request.method": attributes["http.request.method"],
-          "url.path": attributes["url.path"],
-          "url.query": attributes["url.query"],
-          "url.scheme": attributes["url.scheme"],
-          "server.address": this._config.serverName || attributes["server.address"],
-          "server.port": attributes["server.port"],
+          [ATTR_HTTP_REQUEST_METHOD]: attributes[ATTR_HTTP_REQUEST_METHOD],
+          [ATTR_URL_PATH]: attributes[ATTR_URL_PATH],
+          [ATTR_URL_QUERY]: attributes[ATTR_URL_QUERY],
+          [ATTR_URL_SCHEME]: attributes[ATTR_URL_SCHEME],
+          [ATTR_SERVER_ADDRESS]: this._config.serverName || attributes[ATTR_SERVER_ADDRESS],
+          [ATTR_SERVER_PORT]: attributes[ATTR_SERVER_PORT],
         };
 
         // Add http.route if available
@@ -392,7 +405,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
         // Add captured request headers if configured
         if (requestHeaders) {
           for (const headerName of requestHeaders) {
-            const attrKey = `http.request.header.${headerName}`;
+            const attrKey = ATTR_HTTP_REQUEST_HEADER(headerName);
             if (attributes[attrKey] !== undefined) {
               span.setAttribute(attrKey, attributes[attrKey]);
             }
@@ -411,13 +424,13 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
         // Store metric attributes for later use (subset of span attributes for cardinality control)
         // These will be augmented with response attributes when the request completes
         const metricAttributes: Record<string, any> = {
-          "http.request.method": spanAttributes["http.request.method"],
-          "url.path": spanAttributes["url.path"],
+          [ATTR_HTTP_REQUEST_METHOD]: spanAttributes[ATTR_HTTP_REQUEST_METHOD],
+          [ATTR_URL_PATH]: spanAttributes[ATTR_URL_PATH],
         };
 
         // Add http.route if available (important for cardinality)
-        if (spanAttributes["http.route"]) {
-          metricAttributes["http.route"] = spanAttributes["http.route"];
+        if (spanAttributes[ATTR_HTTP_ROUTE]) {
+          metricAttributes[ATTR_HTTP_ROUTE] = spanAttributes[ATTR_HTTP_ROUTE];
         }
 
         // Add server.address and server.port if available

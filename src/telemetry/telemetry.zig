@@ -254,7 +254,9 @@ pub const InstrumentRecord = struct {
             info,
         };
 
-        return op_fn.callWithGlobalThis(globalObject, &args) catch |err| {
+        // Call with the instrument object as 'this' instead of globalThis
+        // This allows callbacks to access instance properties via 'this'
+        return op_fn.call(globalObject, self.native_instrument_object, &args) catch |err| {
             // Defensive isolation: telemetry failures must not crash the application
             std.debug.print("Telemetry: operation hook failed: {}\n", .{err});
             // Clear the pending JavaScript exception to avoid assertion failures

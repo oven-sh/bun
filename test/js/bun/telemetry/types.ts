@@ -34,6 +34,7 @@ export enum InstrumentKind {
   SQL = 3,
   Redis = 4,
   S3 = 5,
+  NODE_HTTP = 6,
 }
 
 /**

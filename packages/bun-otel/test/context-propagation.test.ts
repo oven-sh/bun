@@ -1,14 +1,15 @@
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { waitForSpans } from "./test-utils";
+import { makeUninstrumentedRequest, waitForSpans } from "./test-utils";
+import { trace } from "node:console";
 
 describe("W3C trace context propagation", () => {
   // Uses default W3C propagator installed by BunSDK.start()
   test("propagates trace context in Bun.serve", async () => {
     const exporter = new InMemorySpanExporter();
 
-    const sdk = new BunSDK({
+    await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
     });
 
@@ -21,27 +22,28 @@ describe("W3C trace context propagation", () => {
       },
     });
 
-    try {
-      await fetch(`http://localhost:${server.port}/`, {
-        headers: {
-          traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        },
-      });
+    await makeUninstrumentedRequest(`http://localhost:${server.port}/`, {
+      traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    });
+    await waitForSpans(exporter, 1, 1000, { traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
+    await fetch(`http://localhost:${server.port}/`, {
+      headers: {
+        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      },
+    });
 
-      await waitForSpans(exporter, 1);
-
-      const spans = exporter.getFinishedSpans();
-      const spanContext = spans[0].spanContext();
-      expect(spanContext.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
-    } finally {
-      await sdk.shutdown();
-    }
+    const spans = await waitForSpans(exporter, 1, 1000, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
+    expect(spans).toHaveLength(1);
+    const span = spans[0];
+    expect(span.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+    expect(span.parentSpanContext?.spanId).toBe("00f067aa0ba902b7");
+    expect(span.spanContext().spanId).not.toBe("00f067aa0ba902b7"); // should be a new span ID
   });
 
   test("propagates trace context in Node.js http.createServer", async () => {
     const exporter = new InMemorySpanExporter();
 
-    const sdk = new BunSDK({
+    await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
     });
 
@@ -64,23 +66,16 @@ describe("W3C trace context propagation", () => {
     }
 
     const port = address.port;
+    await makeUninstrumentedRequest(`http://localhost:${port}/`, {
+      traceparent: "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
+    });
+    const spans = await waitForSpans(exporter, 1, 1000, { traceId: "abcdef1234567890abcdef1234567890" });
 
-    try {
-      await fetch(`http://localhost:${port}/`, {
-        headers: {
-          traceparent: "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
-        },
-      });
+    expect(spans).toHaveLength(1);
 
-      await waitForSpans(exporter, 1);
-
-      const spans = exporter.getFinishedSpans();
-      expect(spans).toHaveLength(1);
-
-      const spanContext = spans[0].spanContext();
-      expect(spanContext.traceId).toBe("abcdef1234567890abcdef1234567890");
-    } finally {
-      await sdk.shutdown();
-    }
+    const span = spans[0];
+    expect(span.spanContext().traceId).toBe("abcdef1234567890abcdef1234567890");
+    expect(span.parentSpanContext?.spanId).toBe("1234567890abcdef");
+    expect(span.spanContext().spanId).not.toBe("1234567890abcdef"); // should be a new span ID
   });
 });

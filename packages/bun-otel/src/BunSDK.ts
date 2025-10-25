@@ -249,6 +249,9 @@ export class BunSDK implements AsyncDisposable {
   private _contextManager?: BunAsyncLocalStorageContextManager;
 
   constructor(config: BunSDKConfiguration = {}) {
+    if (!Bun?.telemetry) {
+      throw new Error("Bun.telemetry not detected. Try running 'bun update' to get the latest version of Bun.");
+    }
     this._config = config;
     this._serviceName = config.serviceName;
 

@@ -15,6 +15,7 @@ describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
       InstrumentKind.SQL,
       InstrumentKind.Redis,
       InstrumentKind.S3,
+      InstrumentKind.NODE_HTTP,
     ]; // All InstrumentKind values
 
     kinds.forEach(kind => {

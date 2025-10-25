@@ -14,6 +14,7 @@ test("attach rebuilds inject config for fetch kind", () => {
 
   // Verify global config was updated
   const config = Bun.telemetry
+    //@ts-ignore-error
     .nativeHooks()
     ?.getConfigurationProperty(ConfigurationProperty.http_propagate_headers_fetch_request);
   expect(config).toBeArray();

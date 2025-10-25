@@ -50,7 +50,6 @@ pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

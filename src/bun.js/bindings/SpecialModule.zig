@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const JSValue = bun.jsc.JSValue;
-
 /// For special cases that need JSValue handling
 /// src/bun.js/bindings/SpecialModule.zig
 pub const SpecialModule = extern struct {
@@ -16,3 +13,6 @@ pub const SpecialModule = extern struct {
         custom_extension,
     };
 };
+
+const bun = @import("bun");
+const JSValue = bun.jsc.JSValue;

@@ -3696,12 +3696,13 @@ const IPC = @import("./ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
-const ErrorResult = @import("./bindings/ModuleResult.zig").ErrorResult;
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;
 const Allocator = std.mem.Allocator;
+
+const ErrorResult = @import("./bindings/ModuleResult.zig").ErrorResult;
+const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
 
 const bun = @import("bun");
 const Async = bun.Async;

@@ -3084,11 +3084,15 @@ const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 
+// New refactored types
+
 const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");
+const SpecialModule = @import("./bindings/SpecialModule.zig").SpecialModule;
+const TranspiledSource = @import("./bindings/TranspiledSource.zig").TranspiledSource;
 const panic = std.debug.panic;
 
 const ast = @import("../import_record.zig");
@@ -3102,6 +3106,9 @@ const ModuleType = options.ModuleType;
 
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+
+const ErrorResult = @import("./bindings/ModuleResult.zig").ErrorResult;
+const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
 
 const bun = @import("bun");
 const Async = bun.Async;
@@ -3125,12 +3132,6 @@ const JSValue = bun.jsc.JSValue;
 const VirtualMachine = bun.jsc.VirtualMachine;
 const ZigString = bun.jsc.ZigString;
 const Bun = jsc.API.Bun;
-
-// New refactored types
-const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
-const TranspiledSource = @import("./bindings/TranspiledSource.zig").TranspiledSource;
-const SpecialModule = @import("./bindings/SpecialModule.zig").SpecialModule;
-const ErrorResult = @import("./bindings/ModuleResult.zig").ErrorResult;
 
 const ParseResult = bun.transpiler.ParseResult;
 const PluginRunner = bun.transpiler.PluginRunner;

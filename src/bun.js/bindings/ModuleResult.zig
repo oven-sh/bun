@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const JSValue = bun.jsc.JSValue;
-
-const TranspiledSource = @import("./TranspiledSource.zig").TranspiledSource;
-const SpecialModule = @import("./SpecialModule.zig").SpecialModule;
-
 /// Error information from transpilation/module loading
 pub const ErrorResult = extern struct {
     /// Error value (JSValue) - already an exception
@@ -31,3 +25,8 @@ pub const ModuleResult = extern struct {
     // Re-export ErrorResult for convenience
     pub const Error = ErrorResult;
 };
+
+const bun = @import("bun");
+const SpecialModule = @import("./SpecialModule.zig").SpecialModule;
+const TranspiledSource = @import("./TranspiledSource.zig").TranspiledSource;
+const JSValue = bun.jsc.JSValue;

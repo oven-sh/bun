@@ -22,8 +22,7 @@ BunSourceProvider::BunSourceProvider(
     const JSC::SourceOrigin& origin,
     String&& sourceURL,
     RefPtr<JSC::CachedBytecode>&& bytecode,
-    JSC::SourceProviderSourceType sourceType
-)
+    JSC::SourceProviderSourceType sourceType)
     : JSC::SourceProvider(origin, String(sourceURL), String(), JSC::SourceTaintedOrigin::Untainted, TextPosition(), sourceType)
     , m_source(WTFMove(source))
     , m_cachedBytecode(WTFMove(bytecode))
@@ -36,8 +35,7 @@ Ref<BunSourceProvider> BunSourceProvider::create(
     const JSC::SourceOrigin& origin,
     String&& sourceURL,
     RefPtr<JSC::CachedBytecode>&& bytecode,
-    JSC::SourceProviderSourceType sourceType
-)
+    JSC::SourceProviderSourceType sourceType)
 {
     return adoptRef(*new BunSourceProvider(
         globalObject,
@@ -45,8 +43,7 @@ Ref<BunSourceProvider> BunSourceProvider::create(
         origin,
         WTFMove(sourceURL),
         WTFMove(bytecode),
-        sourceType
-    ));
+        sourceType));
 }
 
 BunSourceProvider::~BunSourceProvider()
@@ -89,17 +86,14 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 // C bridge function
 extern "C" JSC::SourceProvider* Bun__createSourceProvider(
     Zig::GlobalObject* globalObject,
-    const TranspiledSource* source
-)
+    const TranspiledSource* source)
 {
     auto sourceString = source->source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURL = source->source_url.toWTFString(BunString::ZeroCopy);
 
     // Extract is_commonjs flag (bit 0 of flags uint32_t)
     bool isCommonJS = (source->flags & 0x1) != 0;
-    auto sourceType = isCommonJS ?
-        JSC::SourceProviderSourceType::Program :
-        JSC::SourceProviderSourceType::Module;
+    auto sourceType = isCommonJS ? JSC::SourceProviderSourceType::Program : JSC::SourceProviderSourceType::Module;
 
     // Handle bytecode if present
     RefPtr<JSC::CachedBytecode> bytecode;
@@ -107,8 +101,7 @@ extern "C" JSC::SourceProvider* Bun__createSourceProvider(
         bytecode = JSC::CachedBytecode::create(
             std::span<uint8_t>(source->bytecode_cache, source->bytecode_cache_len),
             [](const void* ptr) { mi_free(const_cast<void*>(ptr)); },
-            {}
-        );
+            {});
     }
 
     // Create SourceOrigin
@@ -120,16 +113,14 @@ extern "C" JSC::SourceProvider* Bun__createSourceProvider(
         origin,
         WTFMove(sourceURL),
         WTFMove(bytecode),
-        sourceType
-    );
+        sourceType);
 
     // Register sourcemap with VM only if already_bundled (bit 1 of flags)
     if (source->flags & 0x2) {
         Bun__addSourceProviderSourceMap(
             reinterpret_cast<void*>(globalObject->bunVM()),
             &provider.get(),
-            const_cast<BunString*>(&source->source_url)
-        );
+            const_cast<BunString*>(&source->source_url));
     }
 
     return &provider.leakRef();
@@ -160,15 +151,13 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(
     size_t* outputByteCodeSize,
     JSC::CachedBytecode** cachedBytecodePtr,
     int32_t* errorLoc,
-    BunString* errorMessage
-)
+    BunString* errorMessage)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(
         WTF::String(sourceCodeSpan),
         JSC::SourceOrigin(WTF::URL(sourceProviderURL->toWTFString())),
-        JSC::SourceTaintedOrigin::Untainted
-    );
+        JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -179,8 +168,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(
 
     JSC::ParserError parserError;
     JSC::UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(
-        vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType
-    );
+        vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
 
     if (parserError.isValid()) {
         if (errorLoc) {
@@ -201,7 +189,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(
         JSC::DerivedContextType::None,
         evalContextType,
         false, // isArrowFunctionContext
-        { }, // empty CodeGenerationMode
+        {}, // empty CodeGenerationMode
         std::nullopt // functionConstructorParametersEndPosition
     );
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, sourceCodeKey, unlinkedCodeBlock);
@@ -231,15 +219,13 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(
     size_t* outputByteCodeSize,
     JSC::CachedBytecode** cachedBytecodePtr,
     int32_t* errorLoc,
-    BunString* errorMessage
-)
+    BunString* errorMessage)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(
         WTF::String(sourceCodeSpan),
         JSC::SourceOrigin(WTF::URL(sourceProviderURL->toWTFString())),
-        JSC::SourceTaintedOrigin::Untainted
-    );
+        JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -250,8 +236,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(
 
     JSC::ParserError parserError;
     JSC::UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(
-        vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType
-    );
+        vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
 
     if (parserError.isValid()) {
         if (errorLoc) {
@@ -272,7 +257,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(
         JSC::DerivedContextType::None,
         evalContextType,
         false, // isArrowFunctionContext
-        { }, // empty CodeGenerationMode
+        {}, // empty CodeGenerationMode
         std::nullopt // functionConstructorParametersEndPosition
     );
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, sourceCodeKey, unlinkedCodeBlock);

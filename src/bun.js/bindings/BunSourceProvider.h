@@ -21,8 +21,7 @@ public:
         const JSC::SourceOrigin& origin,
         String&& sourceURL,
         RefPtr<JSC::CachedBytecode>&& bytecode,
-        JSC::SourceProviderSourceType sourceType
-    );
+        JSC::SourceProviderSourceType sourceType);
 
     ~BunSourceProvider() final;
 
@@ -38,8 +37,7 @@ private:
         const JSC::SourceOrigin& origin,
         String&& sourceURL,
         RefPtr<JSC::CachedBytecode>&& bytecode,
-        JSC::SourceProviderSourceType sourceType
-    );
+        JSC::SourceProviderSourceType sourceType);
 
     // Simplified members (vs ZigSourceProvider)
     Ref<WTF::StringImpl> m_source;
@@ -54,5 +52,4 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 
 extern "C" JSC::SourceProvider* Bun__createSourceProvider(
     Zig::GlobalObject* globalObject,
-    const TranspiledSource* source
-);
+    const TranspiledSource* source);

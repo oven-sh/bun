@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 /// Minimal POD struct for transpiled source code
 /// Can be safely created on worker threads
 /// src/bun.js/bindings/TranspiledSource.zig
@@ -24,3 +22,5 @@ pub const TranspiledSource = extern struct {
         _padding: u30 = 0,
     };
 };
+
+const bun = @import("bun");

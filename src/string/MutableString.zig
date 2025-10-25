@@ -23,10 +23,7 @@ pub fn isEmpty(this: *const MutableString) bool {
 }
 
 pub fn deinit(str: *MutableString) void {
-    if (str.list.capacity > 0) {
-        str.list.expandToCapacity();
-        str.list.clearAndFree(str.allocator);
-    }
+    str.list.clearAndFree(str.allocator);
 }
 
 pub fn owns(this: *const MutableString, items: []const u8) bool {

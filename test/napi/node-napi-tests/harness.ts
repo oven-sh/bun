@@ -10,7 +10,7 @@ export async function build(dir: string) {
     cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose"],
     cwd: dir,
     stderr: "pipe",
-    stdout: "ignore",
+    stdout: "inherit",
     stdin: "inherit",
     env: {
       ...bunEnv,
@@ -28,8 +28,6 @@ export async function build(dir: string) {
   });
   await child.exited;
   if (child.exitCode !== 0) {
-    const stderr = await new Response(child.stderr).text();
-    console.error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
     console.error("bailing out!");
     process.exit(1);
   }
@@ -43,10 +41,11 @@ export function run(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    stdout: "ignore",
+    stdout: "inherit",
     stdin: "inherit",
     env,
   });
   expect(result.success).toBeTrue();
+  expect(result.signalCode).toBeNull();
   expect(result.exitCode).toBe(0);
 }

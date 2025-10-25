@@ -638,6 +638,7 @@ pub const QueryStringMap = struct {
         if (count == 0) return null;
 
         try list.ensureTotalCapacity(allocator, count);
+        errdefer list.deinit(allocator);
         scanner.reset();
 
         // this over-allocates
@@ -800,13 +801,8 @@ pub const QueryStringMap = struct {
     }
 
     pub fn deinit(this: *QueryStringMap) void {
-        if (this.buffer.len > 0) {
-            this.allocator.free(this.buffer);
-        }
-
-        if (this.list.len > 0) {
-            this.list.deinit(this.allocator);
-        }
+        this.allocator.free(this.buffer);
+        this.list.deinit(this.allocator);
     }
 };
 

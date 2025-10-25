@@ -487,6 +487,7 @@ pub const Bytes = struct {
             .allocator = allocator,
         };
     }
+
     pub fn initEmptyWithName(name: bun.PathString, allocator: std.mem.Allocator) Bytes {
         return .{
             .ptr = null,
@@ -545,17 +546,6 @@ pub const Bytes = struct {
         this.ptr = null;
         this.len = 0;
         this.cap = 0;
-    }
-
-    pub fn asArrayList(this: Bytes) std.ArrayListUnmanaged(u8) {
-        return this.asArrayListLeak();
-    }
-
-    pub fn asArrayListLeak(this: Bytes) std.ArrayListUnmanaged(u8) {
-        return .{
-            .items = this.ptr[0..this.len],
-            .capacity = this.cap,
-        };
     }
 };
 

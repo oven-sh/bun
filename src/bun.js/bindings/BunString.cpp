@@ -191,7 +191,6 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
     }
 
     auto impl = str.releaseImpl();
-
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
@@ -408,7 +407,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length);
-
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
@@ -813,7 +811,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        bun_free(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -824,7 +822,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        bun_free(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

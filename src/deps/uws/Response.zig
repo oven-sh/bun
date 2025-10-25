@@ -264,7 +264,7 @@ pub fn NewResponse(ssl_flag: i32) type {
                 const Args = *@TypeOf(args_tuple);
                 pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
                     const args: Args = @alignCast(@ptrCast(user_data.?));
-                    @call(.always_inline, handler_fn, args.*);
+                    @call(bun.callmod_inline, handler_fn, args.*);
                 }
             };
 
@@ -436,7 +436,7 @@ pub const AnyResponse = union(enum) {
         switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
-                    @call(.always_inline, handler, .{ user_data, data, last });
+                    @call(bun.callmod_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
         }

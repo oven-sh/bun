@@ -1345,7 +1345,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         fn endRequestStreaming(this: *RequestContext) bun.JSTerminated!bool {
             assert(this.server != null);
 
-            this.request_body_buf.clearAndFree(bun.default_allocator);
+            this.request_body_buf.clearAndFree(this.allocator);
 
             // if we cannot, we have to reject pending promises
             // first, we reject the request body promise
@@ -1360,7 +1360,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
         fn detachResponse(this: *RequestContext) void {
-            this.request_body_buf.clearAndFree(bun.default_allocator);
+            this.request_body_buf.clearAndFree(this.allocator);
 
             if (this.resp) |resp| {
                 this.resp = null;
@@ -2375,7 +2375,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .{
                             .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
-                        bun.default_allocator,
+                        this.allocator,
                     ) catch {}; // TODO: properly propagate exception upwards
                 } else {
                     var strong = this.request_body_readable_stream_ref;
@@ -2391,7 +2391,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .{
                             .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
-                        bun.default_allocator,
+                        this.allocator,
                     ) catch {}; // TODO: properly propagate exception upwards
                 }
 

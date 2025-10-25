@@ -59,8 +59,8 @@ test("CSS parser should handle extremely large floating-point values without cra
     cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
     env: bunEnv,
     cwd: dir,
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

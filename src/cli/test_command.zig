@@ -1825,6 +1825,7 @@ pub const TestCommand = struct {
         };
 
         var arena = bun.MimallocArena.init();
+        defer arena.deinit();
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();

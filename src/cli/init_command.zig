@@ -749,6 +749,7 @@ pub const InitCommand = struct {
             var fd = bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ("package.json", .{}));
             defer fd.close();
             var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
+            defer buffer_writer.buffer.deinit();
             buffer_writer.append_newline = true;
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 

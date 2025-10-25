@@ -2,6 +2,7 @@ pub const Options = struct {
     /// Defaults to the type basename.
     debug_name: ?[]const u8 = null,
     destructor_ctx: ?type = null,
+    debug_stack_trace: bool = false,
 };
 
 /// Add managed reference counting to a struct type. This implements a `ref()`
@@ -72,7 +73,6 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
         pub const scope = bun.Output.Scoped(debug_name, .hidden);
-        const debug_stack_trace = false;
 
         const Destructor = if (options.destructor_ctx) |ctx| fn (*T, ctx) void else fn (*T) void;
         const typed_destructor: Destructor = destructor;
@@ -103,7 +103,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
                     count.raw_count,
                     count.raw_count + 1,
                 });
-                if (debug_stack_trace) {
+                if (options.debug_stack_trace) {
                     bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
                         .frame_count = 2,
                         .skip_file_patterns = &.{"ptr/ref_count.zig"},
@@ -129,7 +129,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
                     count.raw_count,
                     count.raw_count - 1,
                 });
-                if (debug_stack_trace) {
+                if (options.debug_stack_trace) {
                     bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
                         .frame_count = 2,
                         .skip_file_patterns = &.{"ptr/ref_count.zig"},

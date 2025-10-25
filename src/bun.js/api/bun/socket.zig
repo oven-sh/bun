@@ -1483,8 +1483,9 @@ pub fn NewSocket(comptime ssl: bool) type {
 
                 tls.deref();
 
+                const vm = handlers_ptr.vm;
                 handlers_ptr.deinit();
-                bun.default_allocator.destroy(handlers_ptr);
+                vm.allocator.destroy(handlers_ptr);
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {

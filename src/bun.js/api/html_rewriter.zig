@@ -884,6 +884,7 @@ const DocumentHandler = struct {
         }
 
         this.thisObject.unprotect();
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -1047,6 +1048,7 @@ const ElementHandler = struct {
         }
 
         this.thisObject.unprotect();
+        bun.default_allocator.destroy(this);
     }
 
     pub fn onElement(this: *ElementHandler, value: *LOLHTML.Element) bool {

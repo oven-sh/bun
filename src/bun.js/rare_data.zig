@@ -82,6 +82,7 @@ pub const AWSSignatureCache = struct {
         this.date = numeric_day;
         bun.handleOom(this.cache.put(bun.handleOom(bun.default_allocator.dupe(u8, key)), value));
     }
+
     pub fn deinit(this: *@This()) void {
         this.date = 0;
         this.clean();
@@ -545,6 +546,9 @@ pub fn deinit(this: *RareData) void {
     }
     if (this.default_csrf_secret.len > 0) {
         bun.default_allocator.free(this.default_csrf_secret);
+    }
+    if (this.entropy_cache) |entropy_cache| {
+        default_allocator.destroy(entropy_cache);
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);

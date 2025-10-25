@@ -237,6 +237,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     }
 
     var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+    defer buffer_writer.buffer.deinit();
     try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
     buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
     var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
@@ -314,6 +315,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 stuff.patchfile_path,
             );
             var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
+            defer buffer_writer2.buffer.deinit();
             try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
             buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
@@ -377,6 +379,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             );
         }
         var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
+        defer buffer_writer_two.buffer.deinit();
         try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
         buffer_writer_two.append_newline =
             preserve_trailing_newline_at_eof_for_package_json;

@@ -183,7 +183,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
-        bun.default_allocator,
+        ctx.allocator,
         this.store.?,
         ctx,
         NewInternalReadFileHandler(Handler, Function).run,
@@ -398,6 +398,7 @@ fn readSlice(
     allocator: std.mem.Allocator,
 ) ![]u8 {
     var slice = try allocator.alloc(u8, len);
+    errdefer allocator.free(slice);
     slice = slice[0..try reader.read(slice)];
     if (slice.len != len) return error.TooSmall;
     return slice;
@@ -1736,9 +1737,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
         if (blob.store) |store_| {
             switch (store_.data) {
                 .bytes => |*bytes| {
-                    bytes.stored_name = bun.PathString.init(
-                        name_value_str.toUTF8Bytes(bun.default_allocator),
-                    );
+                    bytes.stored_name = bun.PathString.init(name_value_str.toUTF8Bytes(bun.default_allocator));
                 },
                 .s3, .file => {
                     blob.name = name_value_str.dupeRef();
@@ -3264,10 +3263,7 @@ pub fn createWithBytesAndAllocator(
 ) Blob {
     return Blob{
         .size = @as(SizeType, @truncate(bytes.len)),
-        .store = if (bytes.len > 0)
-            Blob.Store.init(bytes, allocator)
-        else
-            null,
+        .store = if (bytes.len > 0) Blob.Store.init(bytes, allocator) else null,
         .content_type = if (was_string) MimeType.text.value else "",
         .globalThis = globalThis,
     };
@@ -3400,6 +3396,8 @@ pub fn deinit(this: *Blob) void {
     this.detach();
     this.name.deref();
     this.name = .dead;
+    if (this.content_type_allocated) bun.default_allocator.free(this.content_type);
+    if (this.store) |store| store.deref();
 
     if (this.isHeapAllocated()) {
         bun.destroy(this);
@@ -3445,8 +3443,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (bom == .utf16_le) {
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
-        defer out.deref();
-        return out.toJS(global);
+        return out.transferToJS(global);
     }
 
     // null == unknown
@@ -3501,12 +3498,8 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
             // external doesn't support this case here yet.
             if (buf.len != raw_bytes.len) {
                 var out = bun.String.cloneLatin1(buf);
-                defer {
-                    bun.default_allocator.free(raw_bytes);
-                    out.deref();
-                }
-
-                return out.toJS(global);
+                defer bun.default_allocator.free(raw_bytes);
+                return out.transferToJS(global);
             }
 
             return ZigString.init(buf).toExternalValue(global);
@@ -4269,7 +4262,7 @@ pub const Any = union(enum) {
             //     return value;
             // },
             .InternalBlob => {
-                const bytes = this.InternalBlob.toOwnedSlice();
+                const bytes = this.InternalBlob.toGlobalSlice();
                 this.* = .{ .Blob = .{} };
 
                 return jsc.ArrayBuffer.fromDefaultAllocator(
@@ -4398,10 +4391,9 @@ pub const Internal = struct {
         (bytes_without_bom.len != this.bytes.items.len) {
             defer this.deinit();
             var out = bun.String.cloneLatin1(this.bytes.items[3..]);
-            defer out.deref();
-            return out.toJS(globalThis);
+            return out.transferToJS(globalThis);
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
+            var str = ZigString.init(this.toGlobalSlice());
             str.markGlobal();
             return str.toExternalValue(globalThis);
         }
@@ -4437,6 +4429,15 @@ pub const Internal = struct {
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
 
+        return bytes;
+    }
+
+    pub fn toGlobalSlice(this: *@This()) []u8 {
+        const prev = this.toOwnedSlice();
+        if (bun.Environment.enable_mimalloc) return prev;
+        if (!bun.mimalloc.mi_is_in_heap_region(prev.ptr)) return prev;
+        const bytes = bun.handleOom(bun.default_allocator.dupe(u8, prev));
+        this.bytes.allocator.free(prev);
         return bytes;
     }
 
@@ -4767,6 +4768,7 @@ export fn Blob__ref(self: *Blob) void {
 export fn Blob__deref(self: *Blob) void {
     bun.assertf(self.isHeapAllocated(), "cannot deref: this Blob is not heap-allocated", .{});
     if (self.#ref_count.decrement() == .should_destroy) {
+        self.#ref_count.increment(); // deinit has its own isHeapAllocated() guard around bun.destroy(this), so this is needed to ensure that returns true.
         self.deinit();
     }
 }

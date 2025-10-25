@@ -743,7 +743,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
-pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
+pub fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     return this.node_fs orelse brk: {
         this.node_fs = bun.default_allocator.create(Node.fs.NodeFS) catch unreachable;
         this.node_fs.?.* = Node.fs.NodeFS{
@@ -754,7 +754,7 @@ pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
     };
 }
 
-pub inline fn rareData(this: *VirtualMachine) *jsc.RareData {
+pub fn rareData(this: *VirtualMachine) *jsc.RareData {
     return this.rare_data orelse brk: {
         this.rare_data = this.allocator.create(jsc.RareData) catch unreachable;
         this.rare_data.?.* = .{};
@@ -1140,10 +1140,8 @@ pub fn init(opts: Options) !*VirtualMachine {
         .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
-    vm.regular_event_loop.tasks = EventLoop.Queue.init(
-        default_allocator,
-    );
 
+    vm.regular_event_loop.tasks = EventLoop.Queue.init(default_allocator);
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
@@ -1919,24 +1917,17 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             }
 
-            ret.* = ErrorableResolvedSource.err(
-                err,
-                globalThis.createAggregateError(
-                    errors,
-                    &ZigString.init(
-                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
-                            errors.len,
-                            specifier,
-                        }) catch unreachable,
-                    ),
-                ) catch |e| globalThis.takeException(e),
-            );
+            const message = std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{ errors.len, specifier }) catch unreachable;
+            defer globalThis.allocator().free(message);
+            const error_value = globalThis.createAggregateError(errors, &ZigString.init(message)) catch |e| globalThis.takeException(e);
+            ret.* = ErrorableResolvedSource.err(err, error_value);
         },
     }
 }
 
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
+    this.regular_event_loop.tasks.deinit();
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();

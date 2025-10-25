@@ -80,10 +80,11 @@ pub const Options = struct {
         };
     }
 
-    inline fn throwBadPort(global: *jsc.JSGlobalObject, port_: jsc.JSValue) bun.JSError {
+    fn throwBadPort(global: *jsc.JSGlobalObject, port_: jsc.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
             return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
+        defer ty.deref();
         return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };

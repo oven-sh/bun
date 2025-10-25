@@ -46,24 +46,6 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-class ResolvedSourceCodeHolder {
-public:
-    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
-        : res(res_)
-    {
-    }
-
-    ~ResolvedSourceCodeHolder()
-    {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
-        }
-    }
-
-    ErrorableResolvedSource* res;
-};
-
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -341,7 +323,6 @@ static JSValue handleVirtualModuleResult(
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
     RETURN_IF_EXCEPTION(scope, {});
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
@@ -461,7 +442,6 @@ extern "C" void Bun__onFulfillAsyncModule(
     BunString* specifier,
     BunString* referrer)
 {
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
@@ -656,7 +636,6 @@ JSValue fetchCommonJSModule(
     memset(&resValue.result, 0, sizeof resValue.result);
 
     ErrorableResolvedSource* res = &resValue;
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -900,7 +879,6 @@ static JSValue fetchESMSourceCode(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {

@@ -1446,15 +1446,12 @@ pub fn clearRefString(_: *anyopaque, ref_string: *jsc.RefString) void {
     _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
 }
 
-pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+pub fn refCountedTranspiledSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) jsc.TranspiledSource {
     // refCountedString will panic if the code is empty
     if (code.len == 0) {
-        return ResolvedSource{
+        return jsc.TranspiledSource{
             .source_code = bun.String.init(""),
-            .specifier = specifier,
             .source_url = specifier.createIfDifferent(source_url),
-            .allocator = null,
-            .source_code_needs_deref = false,
         };
     }
     var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -1463,12 +1460,9 @@ pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifi
         source.ref();
     }
 
-    return ResolvedSource{
+    return jsc.TranspiledSource{
         .source_code = bun.String.init(source.impl),
-        .specifier = specifier,
         .source_url = specifier.createIfDifferent(source_url),
-        .allocator = source,
-        .source_code_needs_deref = false,
     };
 }
 
@@ -1519,7 +1513,7 @@ pub fn fetchWithoutOnLoadPlugins(
     referrer: String,
     log: *logger.Log,
     comptime flags: FetchFlags,
-) anyerror!ResolvedSource {
+) anyerror!jsc.ModuleResult {
     bun.assert(VirtualMachine.isLoaded());
 
     if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
@@ -1863,7 +1857,7 @@ pub fn drainMicrotasks(this: *VirtualMachine) void {
     this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
-pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *jsc.ErrorableModuleResult, err: anyerror) void {
     switch (log.msgs.items.len) {
         0 => {
             const msg: logger.Msg = brk: {
@@ -1882,14 +1876,14 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
+                ret.* = jsc.ErrorableModuleResult.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
 
         1 => {
             const msg = log.msgs.items[0];
-            ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
+            ret.* = jsc.ErrorableModuleResult.err(err, switch (msg.metadata) {
                 .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
@@ -1919,7 +1913,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             }
 
-            ret.* = ErrorableResolvedSource.err(
+            ret.* = jsc.ErrorableModuleResult.err(
                 err,
                 globalThis.createAggregateError(
                     errors,
@@ -3729,7 +3723,6 @@ const DNSResolver = bun.api.dns.Resolver;
 
 const jsc = bun.jsc;
 const ConsoleObject = jsc.ConsoleObject;
-const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
 const ErrorableString = jsc.ErrorableString;
 const EventLoop = jsc.EventLoop;
 const Exception = jsc.Exception;
@@ -3738,7 +3731,6 @@ const JSInternalPromise = jsc.JSInternalPromise;
 const JSModuleLoader = jsc.JSModuleLoader;
 const JSValue = jsc.JSValue;
 const Node = jsc.Node;
-const ResolvedSource = jsc.ResolvedSource;
 const SavedSourceMap = jsc.SavedSourceMap;
 const VM = jsc.VM;
 const ZigException = jsc.ZigException;

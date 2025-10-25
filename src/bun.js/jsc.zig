@@ -89,7 +89,9 @@ pub const RegularExpression = @import("./bindings/RegularExpression.zig").Regula
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
-pub const ResolvedSource = @import("./bindings/ResolvedSource.zig").ResolvedSource;
+pub const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
+pub const TranspiledSource = @import("./bindings/TranspiledSource.zig").TranspiledSource;
+pub const SpecialModule = @import("./bindings/SpecialModule.zig").SpecialModule;
 pub const ErrorCode = @import("./bindings/ErrorCode.zig").ErrorCode;
 pub const JSErrorCode = @import("./bindings/JSErrorCode.zig").JSErrorCode;
 pub const ZigErrorType = @import("./bindings/ZigErrorType.zig").ZigErrorType;
@@ -102,10 +104,10 @@ pub const EventType = @import("./bindings/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
 pub const ZigStackFrameCode = @import("./bindings/ZigStackFrameCode.zig").ZigStackFrameCode;
 
-pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
 pub const ErrorableString = Errorable(bun.String);
+pub const ErrorableModuleResult = Errorable(ModuleResult);
 
 pub const ZigStackTrace = @import("./bindings/ZigStackTrace.zig").ZigStackTrace;
 pub const ZigStackFrame = @import("./bindings/ZigStackFrame.zig").ZigStackFrame;

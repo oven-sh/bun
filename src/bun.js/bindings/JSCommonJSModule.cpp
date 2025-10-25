@@ -66,7 +66,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>

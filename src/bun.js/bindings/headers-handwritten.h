@@ -105,29 +105,6 @@ typedef struct ErrorableString {
     ErrorableStringResult result;
     bool success;
 } ErrorableString;
-typedef struct ResolvedSource {
-    BunString specifier;
-    BunString source_code;
-    BunString source_url;
-    bool isCommonJSModule;
-    JSC::EncodedJSValue cjsCustomExtension;
-    void* allocator;
-    JSC::EncodedJSValue jsvalue_for_export;
-    uint32_t tag;
-    bool needsDeref;
-    bool already_bundled;
-    uint8_t* bytecode_cache;
-    size_t bytecode_cache_size;
-} ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
-typedef union ErrorableResolvedSourceResult {
-    ResolvedSource value;
-    ZigErrorType err;
-} ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
-    ErrorableResolvedSourceResult result;
-    bool success;
-} ErrorableResolvedSource;
 
 typedef struct SystemError {
     int errno_;
@@ -252,6 +229,65 @@ const BunLoaderType BunLoaderTypeWASM = 10;
 const BunLoaderType BunLoaderTypeNAPI = 11;
 const BunLoaderType BunLoaderTypeYAML = 19;
 
+#pragma mark - Module Loading
+
+// Forward declarations for new module loading types
+typedef struct TranspiledSource TranspiledSource;
+typedef struct SpecialModule SpecialModule;
+typedef struct ModuleResult ModuleResult;
+
+// Flags for TranspiledSource
+typedef struct TranspiledSourceFlags {
+    uint8_t is_commonjs : 1;
+    uint8_t is_already_bundled : 1;
+    uint8_t from_package_json_type_module : 1;
+    uint8_t _padding : 5;
+} TranspiledSourceFlags;
+
+// TranspiledSource - POD struct for transpiled source code
+typedef struct TranspiledSource {
+    BunString source_code;
+    BunString source_url;
+    const uint8_t* bytecode_cache;
+    size_t bytecode_cache_len;
+    TranspiledSourceFlags flags;
+} TranspiledSource;
+
+// SpecialModule tags
+typedef uint8_t SpecialModuleTag;
+const SpecialModuleTag SpecialModuleTag_exports_object = 0;
+const SpecialModuleTag SpecialModuleTag_export_default_object = 1;
+const SpecialModuleTag SpecialModuleTag_custom_extension = 2;
+
+// SpecialModule - for special cases that need JSValue handling
+typedef struct SpecialModule {
+    SpecialModuleTag tag;
+    JSC::EncodedJSValue jsvalue;
+} SpecialModule;
+
+// ModuleResult tags
+typedef uint8_t ModuleResultTag;
+const ModuleResultTag ModuleResultTag_transpiled = 0;
+const ModuleResultTag ModuleResultTag_special = 1;
+const ModuleResultTag ModuleResultTag_builtin = 2;
+const ModuleResultTag ModuleResultTag_err = 3;
+
+// ModuleResult error result
+typedef struct ModuleResultError {
+    JSC::EncodedJSValue exception;
+} ModuleResultError;
+
+// ModuleResult - tagged union return type
+typedef struct ModuleResult {
+    ModuleResultTag tag;
+    union {
+        TranspiledSource transpiled;
+        SpecialModule special;
+        BunString builtin;
+        ModuleResultError err;
+    } result;
+} ModuleResult;
+
 #pragma mark - Stream
 
 typedef uint8_t Encoding;
@@ -354,7 +390,7 @@ extern "C" bool Bun__transpileVirtualModule(
     const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
@@ -366,7 +402,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result,
+    ModuleResult* result,
     bool allowPromise,
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType);
@@ -376,11 +412,11 @@ extern "C" bool Bun__fetchBuiltinModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,
     const BunString* specifier,
-    ErrorableResolvedSource* result);
+    ModuleResult* result);
 
 // Used in process.version
 extern "C" const char* Bun__version;

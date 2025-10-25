@@ -72,8 +72,8 @@ const exclusion_list = [_][]const u8{
 
 pub fn validate(name: []const u8) ValidationResult {
     var result: ValidationResult = .{
-        .errors = std.EnumSet(Error).initEmpty(),
-        .warnings = std.EnumSet(Warning).initEmpty(),
+        .errors = .initEmpty(),
+        .warnings = .initEmpty(),
     };
 
     if (name.len == 0) {

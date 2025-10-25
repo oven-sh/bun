@@ -1151,6 +1151,13 @@ pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+/// Panic the application with a debug message, only in debug mode
+pub inline fn debugPanic(comptime fmt: []const u8, args: anytype) void {
+    if (bun.Environment.isDebug) {
+        panic("<red>debug panic<r><d>:<r> " ++ fmt, args);
+    }
+}
+
 /// Print a red error message. The first argument takes an `error_name` value, which can be either
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"

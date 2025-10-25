@@ -17,6 +17,131 @@
 // TODO(markovejnovic): This shouldn't need to accept RequestContext as a separate param but should
 // really take it in as a typedef on ValkeyListener.
 pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type) type {
+    const _SubscriptionListener = *const fn (
+        /// The unique identifier of the listener.
+        listener_id: u64,
+        /// The listener instance.
+        listener: *ValkeyListener,
+        /// The channel on which the message was received.
+        channel: []const u8,
+        /// The payload of the message.
+        payload: []const u8,
+    ) void;
+
+    const SubscriptionTracker = struct {
+        const Self = @This();
+        /// Object stored to track an active Pub/Sub subscription.
+        const SubscriptionVectorEntry = struct {
+            /// The listener ID associated with this subscription.
+            listener_id: u64,
+            /// The listener function associated with this subscription.
+            listener: _SubscriptionListener,
+        };
+
+        pub fn init(self: std.mem.Allocator) Self {
+            return Self{
+                .map = std.StringHashMap(SubscriptionMapEntry).init(self),
+            };
+        }
+
+        ///
+        pub fn addPendingListener(
+            self: *Self,
+            channel: []const u8,
+            entry: SubscriptionVectorEntry,
+        ) !void {
+            if (self.map.getKey(channel) == null) {
+                try self.map.put(channel, .{ .active = .init(), .pending = .init() });
+            }
+
+            try self.map.getPtr(channel).?.pending.append(entry);
+        }
+
+        // TODO(markovejnovic): It's kind of weird that channel is passed in again here. The
+        // listener_id is unique after all.
+        pub fn promotePendingListenerToActive(
+            self: *Self,
+            channel: []const u8,
+            listener_id: u64,
+        ) !void {
+            const map_entry = self.map.getPtr(channel) orelse {
+                bun.Output.debugPanic(
+                    "SubscriptionTracker.promotePendingListenerToActive did not find a " ++
+                        "channel: {s}",
+                    .{channel},
+                );
+                return;
+            };
+
+            const pending_idx: ?usize = for (map_entry.pending.items, 0..) |entry, idx| {
+                if (entry.listener_id == listener_id) {
+                    break idx;
+                }
+            } else null;
+
+            if (pending_idx == null) {
+                bun.Output.debugPanic(
+                    "SubscriptionTracker.promotePendingListenerToActive did not find pending " ++
+                        "listener_id {d} on channel {s}",
+                    .{ listener_id, channel },
+                );
+                return;
+            }
+
+            const listener = map_entry.pending.swapRemove(pending_idx.?);
+            map_entry.active.append(listener);
+        }
+
+        pub fn removeActiveListener(
+            self: *Self,
+            channel: []const u8,
+            listener_id: u64,
+        ) !void {
+            const map_entry = self.map.getPtr(channel) orelse {
+                bun.Output.debugPanic(
+                    "SubscriptionTracker.removeActiveListener did not find a channel {s}",
+                    .{channel},
+                );
+                return;
+            };
+
+            const active_idx: ?usize = for (map_entry.pending.items, 0..) |entry, idx| {
+                if (entry.listener_id == listener_id) {
+                    break idx;
+                }
+            } else null;
+
+            if (active_idx == null) {
+                bun.Output.debugPanic(
+                    "SubscriptionTracker.removeActiveListener did not find pending listener_id " ++
+                        "on channel {s}",
+                    .{ listener_id, channel },
+                );
+                return;
+            }
+
+            _ = map_entry.active.swapRemove(active_idx.?);
+        }
+
+        /// Object stored to track all subscriptions for a given channel.
+        const SubscriptionMapEntry = struct {
+            /// Subscriptions which have been requested to the server but have not been confirmed.
+            pending: std.ArrayList(SubscriptionVectorEntry),
+            /// Subscriptions which have been confirmed by the server and are actively listening.
+            active: std.ArrayList(SubscriptionVectorEntry),
+        };
+
+        map: std.StringHashMap(SubscriptionMapEntry),
+
+        /// Estimate the total number of bytes used by this client. This includes @sizeof(Self).
+        fn memoryUsage(self: *const Self) usize {
+            const map_key_size = 32;
+
+            return @sizeOf(Self) +
+                (self.map.capacity() * (@sizeOf(SubscriptionMapEntry) + map_key_size));
+        }
+    };
+
     return struct {
         // The client is implemented as a state machine, with each state representing a different
         // phase of the client's lifecycle.
@@ -31,12 +156,15 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
             FailedToOpenSocket,
         };
 
-        /// All requests must be given a context which is passed back when the
-        /// response is received.
+        /// All requests must be given a context which is passed back when the response is
+        /// received.
         pub const RequestType = Request(RequestContext);
 
         /// All responses are paired with the original request context.
         pub const ResponseType = Response(RequestContext);
+
+        /// Type of function invoked whenever a subscription message is received.
+        pub const SubscriptionListener = _SubscriptionListener;
 
         /// Type used internal to the client, representing a queued request.
         const QueuedRequestType = QueuedRequest(RequestContext);
@@ -75,6 +203,10 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
 
         /// Set of user-provided callbacks into the client.
         _callbacks: *ValkeyListener,
+
+        /// All currently active Pub/Sub subscriptions.
+        /// Maps between channel name and subscription entry.
+        _subscriptions: SubscriptionTracker,
 
         _vm: *bun.jsc.VirtualMachine,
         auto_flusher: AutoFlusher = .{},
@@ -131,6 +263,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                 ._inflight_queue = std.fifo.LinearFifo(QueuedRequestType, .Dynamic).init(allocator),
                 ._connection_params = cparams,
                 ._vm = virtual_machine,
+                ._subscriptions = .init(allocator),
             };
         }
 
@@ -138,6 +271,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
         pub fn memoryUsage(self: *const Self) usize {
             return ((self._outbound_queue.buf.len * @sizeOf(QueuedRequestType)) +
                 (self._inflight_queue.buf.len * @sizeOf(QueuedRequestType)) +
+                self._subscriptions.memoryUsage() +
                 self._state.memoryUsage());
         }
 
@@ -366,8 +500,8 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                     try self.onAuthenticatingPacket(value);
                 },
                 .subscriber => {
-                    // TODO(markovejnovic)
-                    @panic("Not Implemented");
+                    // TODO(markovejnovic): Enable this
+                    //try self.onSubscriberPacket(value);
                 },
             }
         }
@@ -398,7 +532,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                 },
                 .SimpleString => |str| {
                     if (std.mem.eql(u8, str, "OK")) {
-                        try self._state.transition(.{ .linked = .{ .state = .normal } });
+                        try self._state.transition(.{ .linked = .{
+                            .state = .normal,
+                        } });
                         return;
                     }
 
@@ -434,6 +570,88 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                     self.failIrrecoverably(.{ .auth_err = .{ .msg = "Unexpected response" } });
                 },
             }
+        }
+
+        /// Subscribe to a channel.
+        ///
+        /// Args:
+        ///
+        ///   - `channel`: The channel to subscribe to.
+        ///   - `listener_id`: Unique identifier for this listener. This identifier can be used to
+        ///                    remove the listener later. See `unsubscribeListener`.
+        ///   - `listener`: The function to invoke whenever a message is received on this channel.
+        pub fn subscribe(
+            self: *Self,
+            channel: []const u8,
+            listener_id: u64,
+            listener: SubscriptionListener,
+        ) !void {
+            Self.debug("{*}.subscribe({s}, listener_id={}, ...)", .{ self, channel, listener_id });
+            _ = listener;
+
+            // Before we do anything, we populate the active subscriptions vector. The
+            // subscriptions vector is what tracks all active subscriptions. Note that this vector
+            // may contain subscription
+
+            //switch (self._state) {
+            //    .linked => |*l_state| {
+            //        switch (l_state.state) {
+            //            .subscriber, .authenticating, .normal => {
+            //                // Great, this state can send requests.
+            //                //
+            //                // Note that subscribers CAN, in-fact, send requests, since RESP3
+            //                // permits that.
+            //                try self.enqueueRequest(req);
+            //            },
+            //        }
+            //    },
+            //    .closed => {
+            //        // We're closed, we can't send requests until the user asks for us to
+            //        // reconnect, explicitly.
+            //        return error.ConnectionClosed;
+            //    },
+            //    else => {
+            //        Self.debug(
+            //            "{*} Received an unexpected request in {s} state.",
+            //            .{ self, @tagName(self._state) },
+            //        );
+
+            //        // Okay, we're not currently in the linked state. What we can do is enqueue the
+            //        // request and attempt to start the connection.
+            //        try self.enqueueRequest(req);
+            //        self.startConnecting() catch |err| {
+            //            switch (err) {
+            //                Error.InvalidState => {
+            //                    self._state.warnIllegalState("request-start-connecting");
+            //                    // No-op, we're already connecting or connected.
+            //                },
+            //                Error.FailedToOpenSocket => {
+            //                    return error.ConnectionClosed;
+            //                },
+            //            }
+            //        };
+            //    },
+            //}
+        }
+
+        /// Unsubscribe a previously registered listener.
+        /// If the subscription is in-flight, it will be cancelled.
+        pub fn unsubscribeListener(self: *Self, listener_id: u64) !void {
+            _ = self;
+            _ = listener_id;
+        }
+
+        /// Unsubscribe from a channel.
+        /// If any subscriptions are in-flight, they will be cancelled.
+        pub fn unsubscribeChannel(self: *Self, channel: []const u8) void {
+            _ = self;
+            _ = channel;
+        }
+
+        /// Unsubscribe from all current subscriptions.
+        /// If any subscriptions are in-flight, they will be cancelled.
+        pub fn unsubscribeAll(self: *Self) void {
+            _ = self;
         }
 
         /// Invoked whenever a write action went through. The nominal use-case is to push more
@@ -496,7 +714,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                         if (self._socket_io.usingTls())
                             .{ .handshake = .{} }
                         else
-                            .{ .linked = .{ .state = .authenticating } },
+                            .{
+                                .linked = .{ .state = .authenticating },
+                            },
                     ) catch {
                         self._state.warnIllegalState("onOpen");
                         self._state.recoverFromIllegalState();
@@ -863,16 +1083,15 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type
                 req.command.args.len(),
             });
 
-            // TODO(markovejnovic): Handle automatically opening the connection.
             switch (self._state) {
                 .linked => |*l_state| {
                     switch (l_state.state) {
-                        .normal => {
+                        .subscriber, .authenticating, .normal => {
                             // Great, this state can send requests.
+                            //
+                            // Note that subscribers CAN, in-fact, send requests, since RESP3
+                            // permits that.
                             try self.enqueueRequest(req);
-                        },
-                        else => {
-                            @panic("Not implemneted");
                         },
                     }
                 },
@@ -1640,6 +1859,8 @@ pub fn ClientState(ValkeyClientType: type) type {
                 normal,
 
                 /// The linked client is in pub/sub mode, receiving messages.
+                ///
+                /// Note that since we only target RESP3, we can still send most messages.
                 subscriber,
             },
 
@@ -1779,8 +2000,17 @@ fn QueuedRequest(Context: type) type {
         context: Context,
 
         // TODO(markovejnovic): These flags are hacks and shouldn't need to exist.
+        // TODO(markovejnovic): Pack this tighter with the "type" field.
         pipelinable: bool,
         returns_bool: bool,
+
+        type: union(enum) {
+            /// This is a regular command with no special handling.
+            plain: void,
+            /// This is a Pub/Sub subscription command. The payload contains the integer which
+            /// represents a subscription ID.
+            subscription: u64,
+        } = .{ .plain = {} },
 
         pub fn init(req: *const Request(Context), allocator: std.mem.Allocator) !Self {
             return Self{

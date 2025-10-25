@@ -35,11 +35,9 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
-    for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
-        args.append(callFrame->argument(i));
-    }
-    const auto result = Function(globalObject, isWindows, args.data(), args.size());
+    auto args = ArgList(callFrame);
+
+    const auto result = Function(globalObject, isWindows, args.data(), static_cast<uint16_t>(args.size()));
     RETURN_IF_EXCEPTION(scope, {});
     return result;
 }

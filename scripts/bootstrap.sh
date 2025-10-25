@@ -907,7 +907,7 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.2.17"
+	print "1.3.1"
 }
 
 install_bun() {

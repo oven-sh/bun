@@ -73,14 +73,9 @@ pub const Loc = struct {
 pub const Location = struct {
     file: string,
     namespace: string = "file",
-    /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
-    // TODO: move to `bun.Ordinal`
-    line: i32,
-    // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
-    // original docs: 0-based, in bytes.
-    // but there is a place where this is emitted in output, implying one based character offset
-    column: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
     length: usize = 0,
@@ -137,8 +132,8 @@ pub const Location = struct {
         return api.Location{
             .file = this.file,
             .namespace = this.namespace,
-            .line = this.line,
-            .column = this.column,
+            .line = this.line.oneBased(),
+            .column = this.column.zeroBased(),
             .line_text = this.line_text orelse "",
             .suggestion = this.suggestion orelse "",
             .offset = @as(u32, @truncate(this.offset)),
@@ -152,8 +147,8 @@ pub const Location = struct {
         return Location{
             .file = file,
             .namespace = namespace,
-            .line = line,
-            .column = column,
+            .line = .fromOneBased(line),
+            .column = .fromZeroBased(column),
             .length = length,
             .line_text = line_text,
             .suggestion = suggestion,
@@ -167,8 +162,8 @@ pub const Location = struct {
                 return Location{
                     .file = source.path.text,
                     .namespace = source.path.namespace,
-                    .line = -1,
-                    .column = -1,
+                    .line = .fromOneBased(-1),
+                    .column = .fromZeroBased(-1),
                     .length = 0,
                     .line_text = "",
                     .offset = 0,
@@ -183,8 +178,8 @@ pub const Location = struct {
             return Location{
                 .file = source.path.text,
                 .namespace = source.path.namespace,
-                .line = usize2Loc(data.line_count).start,
-                .column = usize2Loc(data.column_count).start,
+                .line = .fromOneBased(usize2Loc(data.line_count).start),
+                .column = .fromZeroBased(usize2Loc(data.column_count).start),
                 .length = if (r.len > -1) @as(u32, @intCast(r.len)) else 1,
                 .line_text = std.mem.trimLeft(u8, full_line, "\n\r"),
                 .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
@@ -279,10 +274,10 @@ pub const Data = struct {
             if (location.line_text) |line_text_| {
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
                 const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
-                if (location.column > 0 and line_text.len > 0) {
-                    var line_offset_for_second_line: usize = @intCast(location.column - 1);
+                if (location.column.zeroBased() > 0 and line_text.len > 0) {
+                    var line_offset_for_second_line: usize = @intCast(location.column.zeroBased() - 1);
 
-                    if (location.line > -1) {
+                    if (location.line.oneBased() > -1) {
                         switch (kind == .err or kind == .warn) {
                             inline else => |bold| try to.print(
                                 // bold the line number for error but dim for the attached note
@@ -291,12 +286,12 @@ pub const Data = struct {
                                 else
                                     comptime Output.prettyFmt("<d>{d} | <r>", enable_ansi_colors),
                                 .{
-                                    location.line,
+                                    location.line.oneBased(),
                                 },
                             ),
                         }
 
-                        line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
+                        line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line.oneBased()});
                     }
 
                     try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
@@ -344,14 +339,14 @@ pub const Data = struct {
                     location.file,
                 });
 
-                if (location.line > 0 and location.column > -1) {
+                if (location.line.oneBased() > 0 and location.column.zeroBased() > -1) {
                     try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
-                        location.line,
-                        location.column,
+                        location.line.oneBased(),
+                        location.column.zeroBased(),
                     });
-                } else if (location.line > -1) {
+                } else if (location.line.oneBased() > -1) {
                     try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
-                        location.line,
+                        location.line.oneBased(),
                     });
                 }
 
@@ -414,8 +409,8 @@ pub const Msg = struct {
                 .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
-                    .line = 0,
-                    .column = 0,
+                    .line = .fromOneBased(0),
+                    .column = .fromZeroBased(0),
                 },
             },
         };
@@ -1064,8 +1059,8 @@ pub const Log = struct {
                     .text = try allocPrint(allocator, text, args),
                     .location = Location{
                         .file = filepath,
-                        .line = @intCast(line),
-                        .column = @intCast(col),
+                        .line = .fromOneBased(@intCast(line)),
+                        .column = .fromZeroBased(@intCast(col)),
                     },
                 },
                 log.clone_line_text,

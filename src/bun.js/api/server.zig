@@ -2077,6 +2077,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var should_deinit_context = false;
             const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
 
+            // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
+            bun.telemetry.http.notifyHttpRequestStart(
+                &prepared.ctx.telemetry_ctx,
+                this.globalThis,
+                prepared.request_object,
+                req,
+                @tagName(prepared.ctx.method),
+                this,
+            );
+
             bun.assert(this.config.onRequest != .zero);
 
             const js_value = this.jsValueAssertAlive();

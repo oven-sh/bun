@@ -1,0 +1,304 @@
+import { context, SpanKind, trace } from "@opentelemetry/api";
+import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import * as http from "node:http";
+import { BunSDK } from "../index";
+import { EchoServer } from "./echo-server";
+import { waitForSpans } from "./test-utils";
+
+/**
+ * Tests trace propagation: uninstrumented client → UUT (Bun.serve) → http.request → echo server
+ *
+ * This verifies that:
+ * 1. Bun.serve receives traceparent and creates a SERVER span
+ * 2. http.request within the handler creates a CLIENT span as child of SERVER span
+ * 3. Trace context propagates correctly through the async boundary
+ */
+describe("Distributed tracing: Bun.serve → http.request", () => {
+  let echoServer: EchoServer;
+
+  beforeAll(async () => {
+    echoServer = new EchoServer();
+    await echoServer.start();
+  });
+
+  afterAll(async () => {
+    await echoServer.stop();
+  });
+
+  // Make HTTP request without instrumentation (uses curl)
+  async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+    const { $ } = await import("bun");
+    const headerFlags = Object.entries(headers).flatMap(([key, value]) => ["-H", `${key}: ${value}`]);
+    return await $`curl -s ${headerFlags} ${url}`.text();
+  }
+
+  test("context.active() returns the correct span in Bun.serve handler", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "bun-serve-context-active-test",
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
+    });
+
+    sdk.start();
+
+    let capturedTraceId: string | undefined;
+    let capturedSpanId: string | undefined;
+
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        // Synchronously check context.active() to verify span is available
+        const activeSpan = trace.getSpan(context.active());
+        capturedTraceId = activeSpan?.spanContext().traceId;
+        capturedSpanId = activeSpan?.spanContext().spanId;
+        return new Response("OK");
+      },
+    });
+
+    const upstreamTraceId = "1234567890abcdef1234567890abcdef";
+    const upstreamSpanId = "fedcba0987654321";
+    const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
+
+    await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    await waitForSpans(exporter, 1, 1000, { traceId: upstreamTraceId });
+
+    const spans = exporter
+      .getFinishedSpans()
+      .filter(s => s.kind === SpanKind.SERVER && s.spanContext().traceId === upstreamTraceId);
+    expect(spans).toHaveLength(1);
+
+    const serverSpan = spans[0];
+
+    // Verify context.active() returned the correct span
+    expect(capturedTraceId).toBe(upstreamTraceId);
+    expect(capturedSpanId).toBe(serverSpan.spanContext().spanId);
+    expect(serverSpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
+  });
+
+  test("propagates trace context: Bun.serve → http.request → echo server", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "bun-serve-http-request-test",
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
+    });
+
+    sdk.start();
+
+    // UUT: Bun.serve that makes http.request to echo server
+    using serverA = Bun.serve({
+      port: 0,
+      async fetch() {
+        const echoUrl = new URL(echoServer.getUrl("/downstream"));
+
+        // Make outgoing request using http.request
+        const response = await new Promise<string>((resolve, reject) => {
+          const req = http.request(
+            {
+              hostname: echoUrl.hostname,
+              port: echoUrl.port,
+              path: echoUrl.pathname,
+              method: "GET",
+            },
+            res => {
+              let data = "";
+              res.on("data", chunk => (data += chunk));
+              res.on("end", () => resolve(data));
+            },
+          );
+          req.on("error", reject);
+          req.end();
+        });
+
+        const data = JSON.parse(response);
+        return Response.json({ downstream: data });
+      },
+    });
+
+    const upstreamTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const upstreamSpanId = "00f067aa0ba902b7";
+    const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
+
+    const output = await makeUninstrumentedRequest(`http://localhost:${serverA.port}/upstream`, { traceparent });
+    const result = JSON.parse(output);
+
+    // Wait for 2 spans: Bun.serve (SERVER) + http.request (CLIENT)
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
+
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    expect(spans).toHaveLength(2);
+
+    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const clientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+
+    // CRITICAL ASSERTIONS for distributed tracing:
+    // 1. Both spans share the same trace ID (distributed trace)
+    expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
+    expect(clientSpan.spanContext().traceId).toBe(upstreamTraceId);
+
+    // 2. Server span is a child of the incoming request
+    expect(serverSpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
+
+    // 3. CLIENT span (http.request) is a child of server span
+    expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
+
+    // 4. Verify traceparent was injected into http.request (echo returns headers)
+    expect(result.downstream.headers.traceparent).toBeDefined();
+    expect(result.downstream.headers.traceparent).toContain(upstreamTraceId);
+    expect(result.downstream.headers.traceparent).toContain(clientSpan.spanContext().spanId);
+
+    // 5. Verify span names and kinds
+    expect(serverSpan.name).toBe("GET /upstream");
+    expect(serverSpan.kind).toBe(SpanKind.SERVER);
+    expect(clientSpan.name).toBe("GET");
+    expect(clientSpan.kind).toBe(SpanKind.CLIENT);
+  });
+
+  test("propagates trace context across setTimeout: Bun.serve → http.request", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "bun-serve-http-request-settimeout-test",
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
+    });
+
+    sdk.start();
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        // Delay http.request with setTimeout
+        const echoData = await new Promise<any>(resolve => {
+          setTimeout(async () => {
+            const echoUrl = new URL(echoServer.getUrl("/delayed"));
+            const response = await new Promise<string>((res, rej) => {
+              const req = http.request(
+                {
+                  hostname: echoUrl.hostname,
+                  port: echoUrl.port,
+                  path: echoUrl.pathname,
+                  method: "GET",
+                },
+                httpRes => {
+                  let data = "";
+                  httpRes.on("data", chunk => (data += chunk));
+                  httpRes.on("end", () => res(data));
+                },
+              );
+              req.on("error", rej);
+              req.end();
+            });
+            resolve(JSON.parse(response));
+          }, 10);
+        });
+        return Response.json(echoData);
+      },
+    });
+
+    const upstreamTraceId = "ccddee112233445566778899aabbccdd";
+    const upstreamSpanId = "aabbccdd11223344";
+    const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
+
+    const output = await makeUninstrumentedRequest(`http://localhost:${server.port}/test`, { traceparent });
+    const echoData = JSON.parse(output);
+
+    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
+
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    expect(spans).toHaveLength(2);
+
+    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
+    const clientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+
+    // CRITICAL: CLIENT span created inside setTimeout should still be child of server span
+    // This proves AsyncLocalStorage context propagates across async boundaries
+    expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
+    expect(clientSpan.spanContext().traceId).toBe(upstreamTraceId);
+    expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
+
+    // Verify traceparent was injected
+    expect(echoData.headers.traceparent).toBeDefined();
+    expect(echoData.headers.traceparent).toContain(upstreamTraceId);
+    expect(echoData.headers.traceparent).toContain(clientSpan.spanContext().spanId);
+  });
+
+  test("propagates trace context through parallel http.request calls in Bun.serve", async () => {
+    const exporter = new InMemorySpanExporter();
+
+    await using sdk = new BunSDK({
+      spanProcessor: new SimpleSpanProcessor(exporter),
+      serviceName: "bun-serve-parallel-http-request-test",
+      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
+    });
+
+    sdk.start();
+
+    using gateway = Bun.serve({
+      port: 0,
+      async fetch() {
+        // Make 3 parallel http.request calls
+        const makeRequest = (path: string) =>
+          new Promise<any>((resolve, reject) => {
+            const echoUrl = new URL(echoServer.getUrl(path));
+            const req = http.request(
+              {
+                hostname: echoUrl.hostname,
+                port: echoUrl.port,
+                path: echoUrl.pathname,
+                method: "GET",
+              },
+              res => {
+                let data = "";
+                res.on("data", chunk => (data += chunk));
+                res.on("end", () => resolve(JSON.parse(data)));
+              },
+            );
+            req.on("error", reject);
+            req.end();
+          });
+
+        const [r1, r2, r3] = await Promise.all([
+          makeRequest("/service1"),
+          makeRequest("/service2"),
+          makeRequest("/service3"),
+        ]);
+
+        return Response.json({ results: [r1, r2, r3] });
+      },
+    });
+
+    const traceId = "99aabbccddee0011223344556677ff88";
+    const traceparent = `00-${traceId}-9988776655443322-01`;
+
+    const output = await makeUninstrumentedRequest(`http://localhost:${gateway.port}/gateway`, { traceparent });
+    const result = JSON.parse(output);
+
+    // Wait for 1 gateway (SERVER) + 3 http.request (CLIENT) = 4 spans
+    await waitForSpans(exporter, 4, 1000, { traceId });
+
+    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === traceId);
+    expect(spans).toHaveLength(4);
+
+    const gatewaySpan = spans.find(s => s.name === "GET /gateway");
+    expect(gatewaySpan).toBeDefined();
+
+    const clientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    expect(clientSpans).toHaveLength(3);
+
+    // All 3 http.request CLIENT spans should be children of the gateway span
+    for (const clientSpan of clientSpans) {
+      expect(clientSpan.parentSpanContext?.spanId).toBe(gatewaySpan!.spanContext().spanId);
+    }
+
+    // Verify traceparent was injected in all 3 parallel requests
+    for (const serviceResult of result.results) {
+      expect(serviceResult.headers.traceparent).toBeDefined();
+      expect(serviceResult.headers.traceparent).toContain(traceId);
+    }
+  });
+});

@@ -118,6 +118,11 @@ pub const FetchTasklet = struct {
 
     tracker: jsc.Debugger.AsyncTaskTracker,
 
+    /// OpenTelemetry request ID (0 if telemetry disabled)
+    telemetry_request_id: u64 = 0,
+    /// Request start timestamp for duration calculation
+    telemetry_start_time_ns: u64 = 0,
+
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
     pub fn ref(this: *FetchTasklet) void {
@@ -852,6 +857,10 @@ pub const FetchTasklet = struct {
             .path = path,
         };
 
+        // OpenTelemetry: Notify operation error
+        bun.telemetry.fetch.notifyFetchError(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.fail, fetch_error.message, this.result.metadata);
+        this.telemetry_request_id = 0;
+
         return .{ .SystemError = fetch_error };
     }
 
@@ -1033,6 +1042,16 @@ pub const FetchTasklet = struct {
         response_js.ensureStillAlive();
         this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
         this.native_response = response.ref();
+
+        // OpenTelemetry: Notify operation end
+        const content_length: u64 = switch (this.body_size) {
+            .total_received => |size| size,
+            .content_length => |size| size,
+            .unknown => 0,
+        };
+        bun.telemetry.fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.metadata, content_length);
+        this.telemetry_request_id = 0;
+
         return response_js;
     }
 
@@ -1309,12 +1328,26 @@ pub const FetchTasklet = struct {
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         http.HTTPThread.init(&.{});
+
+        // OpenTelemetry: Notify operation start and inject propagation headers
+        // MUST happen before get() so headers are included in AsyncHTTP.init()
+        var telemetry_request_id: u64 = 0;
+        var telemetry_start_time_ns: u64 = 0;
+        if (bun.telemetry.fetch.notifyFetchStart(global, fetch_options.method, fetch_options.url.href, @constCast(&fetch_options.headers))) |request_id| {
+            telemetry_request_id = request_id;
+            telemetry_start_time_ns = @intCast(std.time.nanoTimestamp());
+        }
+
         var node = try get(
             allocator,
             global,
             fetch_options,
             promise,
         );
+
+        // Store telemetry context on node
+        node.telemetry_request_id = telemetry_request_id;
+        node.telemetry_start_time_ns = telemetry_start_time_ns;
 
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);

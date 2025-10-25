@@ -1,4 +1,7 @@
 .claude/settings.local.json
+.claude/commands/speckit*.md
+.specify
+.temp
 .DS_Store
 .env
 .envrc

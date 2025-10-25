@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Test artifacts
+coverage/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+.temp/
+
+# TypeScript
+*.tsbuildinfo

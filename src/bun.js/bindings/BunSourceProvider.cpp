@@ -25,10 +25,10 @@ SourceProvider::SourceProvider(
     , m_hash(0)
 {
     // Compute hash for the source
-    m_hash = StringHasher::computeHash(source.impl());
+    m_hash = source.impl()->hash();
 
     // Register the source map with the Bun VM
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(m_globalObject);
     auto specifier = Bun::toString(this->sourceURL());
     Bun__addSourceProviderSourceMap(zigGlobalObject->bunVM(), this, &specifier);
 }
@@ -76,17 +76,13 @@ extern "C" Bun::SourceProvider* Bun__createSourceProvider(
     // Handle bytecode cache if present
     RefPtr<JSC::CachedBytecode> cachedBytecode = nullptr;
     if (transpiled->bytecode_cache != nullptr && transpiled->bytecode_cache_len > 0) {
-        // Create a CachedBytecode from the raw data
-        // Note: This copies the data, so Zig can free the original
-        auto data = JSC::CachedBytecode::create(
-            transpiled->bytecode_cache,
-            transpiled->bytecode_cache_len);
-        cachedBytecode = WTFMove(data);
+        // For now, skip bytecode cache - it requires FileSystem::MappedFileData
+        // TODO: Implement bytecode caching properly
+        cachedBytecode = nullptr;
     }
 
-    // Create the source origin
-    // Use the source URL as the origin
-    JSC::SourceOrigin sourceOrigin(sourceURL);
+    // Create the source origin from the source URL
+    JSC::SourceOrigin sourceOrigin(WTF::URL(WTF::URL(), sourceURL));
 
     // Determine source type based on flags
     JSC::SourceProviderSourceType sourceType = transpiled->flags.is_commonjs

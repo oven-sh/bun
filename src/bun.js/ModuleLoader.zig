@@ -2271,6 +2271,25 @@ pub const RuntimeTranspilerStore = struct {
     }
 
     pub const TranspilerJob = struct {
+        // All type declarations must come first in Zig
+        pub const ModuleFlags = struct {
+            is_commonjs: bool = false,
+            from_package_json_type_module: bool = false,
+        };
+
+        pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
+
+        pub const Fetcher = union(enum) {
+            virtual_module: bun.String,
+            file: void,
+
+            pub fn deinit(this: *@This()) void {
+                if (this.* == .virtual_module) {
+                    this.virtual_module.deref();
+                }
+            }
+        };
+
         path: Fs.Path,
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
@@ -2293,24 +2312,6 @@ pub const RuntimeTranspilerStore = struct {
         module_flags: ModuleFlags = .{},
         work_task: jsc.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
-
-        pub const ModuleFlags = struct {
-            is_commonjs: bool = false,
-            from_package_json_type_module: bool = false,
-        },
-
-        pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
-
-        pub const Fetcher = union(enum) {
-            virtual_module: bun.String,
-            file: void,
-
-            pub fn deinit(this: *@This()) void {
-                if (this.* == .virtual_module) {
-                    this.virtual_module.deref();
-                }
-            }
-        };
 
         pub fn deinit(this: *TranspilerJob) void {
             bun.default_allocator.free(this.path.text);

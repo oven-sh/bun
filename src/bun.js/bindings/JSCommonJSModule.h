@@ -87,11 +87,11 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
-    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
+    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSC::SourceProvider* provider, bool isBuiltIn, bool fromPackageJSONTypeModule);
+    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, JSC::SourceProvider* provider, bool fromPackageJSONTypeModule);
+    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSC::SourceProvider* provider, bool fromPackageJSONTypeModule)
     {
-        return evaluate(globalObject, sourceURL, resolvedSource, false);
+        return evaluate(globalObject, sourceURL, provider, false, fromPackageJSONTypeModule);
     }
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
@@ -112,7 +112,8 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        ResolvedSource resolvedSource);
+        JSC::SourceProvider* provider,
+        bool fromPackageJSONTypeModule);
 
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
@@ -166,15 +167,17 @@ JSC::Structure* createCommonJSModuleStructure(
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    ResolvedSource& source,
-    bool isBuiltIn);
+    JSC::SourceProvider* provider,
+    bool isBuiltIn,
+    bool fromPackageJSONTypeModule);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    ResolvedSource& source)
+    JSC::SourceProvider* provider,
+    bool fromPackageJSONTypeModule)
 {
-    return createCommonJSModule(globalObject, specifierValue, source, false);
+    return createCommonJSModule(globalObject, specifierValue, provider, false, fromPackageJSONTypeModule);
 }
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {

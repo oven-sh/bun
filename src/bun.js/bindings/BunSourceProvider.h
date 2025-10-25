@@ -85,6 +85,11 @@ private:
 
 } // namespace Bun
 
+namespace Zig {
+// Helper function to get source ID from URL (for debugging/coverage)
+std::optional<JSC::SourceID> sourceIDForSourceURL(const WTF::String& sourceURL);
+}
+
 /**
  * C bridge function to create a SourceProvider from Zig
  *

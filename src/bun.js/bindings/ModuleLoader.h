@@ -11,6 +11,9 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
 
 namespace Zig {
 class GlobalObject;
+
+// Helper function to get source ID from URL (for debugging/coverage)
+std::optional<JSC::SourceID> sourceIDForSourceURL(const WTF::String& sourceURL);
 }
 
 namespace JSC {
@@ -93,7 +96,7 @@ public:
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,
-    ErrorableResolvedSource* res,
+    ModuleResult* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
@@ -101,7 +104,7 @@ JSValue fetchESMSourceCodeSync(
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,
-    ErrorableResolvedSource* res,
+    ModuleResult* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
@@ -123,7 +126,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::JSValue specifierValue,
     BunString* referrer,
     BunString* typeAttribute,
-    ErrorableResolvedSource* res,
+    ModuleResult* res,
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
@@ -136,6 +139,6 @@ JSValue resolveAndFetchBuiltinModule(
 JSValue fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     BunString* specifier,
-    ErrorableResolvedSource* res);
+    ModuleResult* res);
 
 } // namespace Bun

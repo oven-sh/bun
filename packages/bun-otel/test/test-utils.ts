@@ -4,6 +4,7 @@
 import type { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { $ } from "bun";
 import { NativeHooks } from "../types";
+import { bunEnv, bunExe } from "../../../test/harness";
 
 /**
  * Wait for exported spans with polling instead of fixed sleep.
@@ -67,10 +68,36 @@ export function printSpans(exporter: InMemorySpanExporter): void {
 }
 
 // Test helper: make HTTP request without instrumentation (uses curl)
-export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+export async function makeUninstrumentedRequestWithCurl(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<string> {
   const headerFlags = Object.entries(headers).flatMap(([key, value]) => ["-H", `${key}: ${value}`]);
   return await $`curl -s ${headerFlags} ${url}`.text();
 }
+
+export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+  const js = `
+    async function makeRequest() {
+      const response = await fetch("${url}", {
+        headers: ${JSON.stringify(headers)}
+      });
+      return await response.text();
+    }
+    console.log(await makeRequest());
+  `;
+  // todo - use Bun.spawn to avoid overhead of starting new bun process
+  await using proc = Bun.spawn([bunExe(), "-e", js], {
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const output = await proc.stdout!.text();
+  await proc.exited;
+  return output;
+}
+
+// Ensure native hooks are installed by attaching a dummy instrumentation if needed
 
 let installedDummyInstrument = false;
 export function getNativeHooks(): NativeHooks {

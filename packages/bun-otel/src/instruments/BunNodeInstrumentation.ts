@@ -156,7 +156,10 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
    * Handles both number and string values from getHeader().
    */
   private extractContentLength(response: ServerResponse | IncomingMessage): number {
-    const contentLength = response.getHeader?.("content-length") || response.headers?.["content-length"];
+    const contentLength =
+      response instanceof ServerResponse
+        ? response.getHeader?.("content-length")
+        : response.headers?.["content-length"];
 
     if (typeof contentLength === "number") {
       return contentLength;
@@ -232,53 +235,49 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
           this._stableHttpServerDurationHistogram.record(durationS, metricAttributes);
         }
       }
-      this._startTimes.delete(id);
-
       span.end();
-      this._activeSpans.delete(id);
+      this._cleanupAfterSpanEnd(id);
     });
 
     // Handle request errors
     res.once("error", (err: unknown) => {
-      const error = err instanceof Error ? err : new Error(String(err ?? "Unknown error"));
-      span.recordException(error);
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: error.message,
-      });
-      span.end();
-      this._startTimes.delete(id);
-      this._activeSpans.delete(id);
+      const message = err instanceof Error ? err.message : String(err ?? "Unknown error");
+      this._endSpanWithError(id, span, message, err);
     });
 
     // Handle connection close (client aborted)
     res.once("close", () => {
-      // Only record abort if span hasn't ended already
-      if (this._activeSpans.has(id)) {
-        span.recordException(new Error("Request aborted"));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: "Request aborted",
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      }
+      this._endSpanWithError(id, span, "Request aborted");
     });
 
     // Handle request timeout
     res.once("timeout", () => {
-      if (this._activeSpans.has(id)) {
-        span.recordException(new Error("Request timeout"));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: "Request timeout",
-        });
-        span.end();
-        this._startTimes.delete(id);
-        this._activeSpans.delete(id);
-      }
+      this._endSpanWithError(id, span, "Request timeout");
     });
+  }
+
+  /**
+   * Common cleanup logic after a span has been ended.
+   * Removes bookkeeping and clears ALS context (for GC) when no active spans remain.
+   */
+  private _cleanupAfterSpanEnd(id: number): void {
+    this._startTimes.delete(id);
+    this._activeSpans.delete(id);
+    if (this._activeSpans.size === 0 && this._contextStorage) {
+      this._contextStorage.enterWith(undefined as any);
+    }
+  }
+
+  /**
+   * Unified handler for error/abort/timeout style terminations.
+   */
+  private _endSpanWithError(id: number, span: Span, message: string, err?: unknown): void {
+    if (!this._activeSpans.has(id)) return;
+    const error = err instanceof Error ? err : new Error(message);
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR, message });
+    span.end();
+    this._cleanupAfterSpanEnd(id);
   }
 
   /**
@@ -314,47 +313,29 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
       },
 
       onOperationStart: (id: OpId, attributes: Record<string, any>) => {
-        // Only handle SERVER operations (http.createServer)
-        // CLIENT operations (http.request) are handled by BunFetchInstrumentation
         if (this.isNodeServerAttributes(attributes)) {
           this.handleServerOperationStart(id, attributes, tracer);
         }
       },
 
-      onOperationEnd: (id: number, attributes: Record<string, any>) => {
+      onOperationEnd: (id: number, _attributes: Record<string, any>) => {
         const span = this._activeSpans.get(id);
-        if (!span) {
-          return;
-        }
-
-        // For Node.js SERVER operations, the .once() listeners handle span lifecycle
-        // Skip processing here to avoid duplicate span.end() calls
+        if (!span) return;
+        // Lifecycle handled by response listeners
       },
 
-      onOperationError: (id: number, attributes: Record<string, any>) => {
+      onOperationError: (id: number, _attributes: Record<string, any>) => {
         const span = this._activeSpans.get(id);
-        if (!span) {
-          return;
-        }
-
-        // For Node.js operations, the .once() listeners handle errors
-        // Skip processing here to avoid duplicate error recording
+        if (!span) return;
+        // Errors handled by response listeners
       },
 
-      onOperationInject: (id: OpId, _data?: unknown) => {
+      onOperationInject: (id: OpId) => {
         const span = this._activeSpans.get(id);
-        if (!span) {
-          return undefined;
-        }
-
-        // Construct W3C traceparent header from span context
+        if (!span) return undefined;
         const spanContext = span.spanContext();
         const traceparent = `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`;
-
-        // Extract tracestate if present
         const tracestate = spanContext.traceState?.serialize() || "";
-
-        // Return array matching injectHeaders order: ["traceparent", "tracestate"]
         return [traceparent, tracestate];
       },
     });
@@ -400,7 +381,8 @@ export class BunNodeInstrumentation implements Instrumentation<BunNodeInstrument
           // Map to OTel semantic conventions
           "http.request.method": method,
           "url.path": url,
-          "url.scheme": nodeRequest.socket?.encrypted ? "https" : "http",
+          // Node's TLSSocket extends net.Socket and adds `encrypted`; cast to any to avoid type narrowing issues
+          "url.scheme": (nodeRequest.socket as any)?.encrypted ? "https" : "http",
           "server.address": nodeRequest.headers.host || "localhost",
         },
       },

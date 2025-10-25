@@ -18,12 +18,9 @@
     "./logging": "./src/instruments/logging/index.ts"
   },
   "files": [
-    "*.ts",
+    "index.ts",
     "src/**/*.ts",
-    "instruments/**/*.ts",
-    "context/**/*.ts",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "sideEffects": false,
   "scripts": {

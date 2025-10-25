@@ -25,6 +25,7 @@ Developers building HTTP services with Bun can automatically capture distributed
 **Why P1**: This is the most critical use case preventing Bun adoption in production environments where observability is mandatory. Issue #3775 has 28 comments showing significant demand.
 
 **Key Capabilities**:
+
 - Automatic HTTP server span creation for `Bun.serve()` and Node.js `http.createServer()`
 - W3C TraceContext propagation (traceparent/tracestate headers)
 - Automatic HTTP client span creation for `fetch()` requests
@@ -37,6 +38,7 @@ Developers can collect standard OpenTelemetry metrics about their Bun applicatio
 **Why P2**: Metrics provide aggregated performance data complementing traces. Critical for production monitoring but less urgent than basic tracing capability.
 
 **Key Capabilities**:
+
 - HTTP request metrics (count, duration histogram, active requests)
 - Runtime metrics (process memory, event loop lag, GC statistics)
 - Custom metrics via OpenTelemetry API
@@ -65,7 +67,7 @@ Developers can correlate application logs with traces by injecting trace context
 ### Metrics Collection
 
 - **FR-006**: System MUST provide raw metric samples from native instrumentation for HTTP operations (request count, request duration, active requests) and fetch operations (client request count, duration), feeding data to standard @opentelemetry/sdk-metrics MeterProvider for aggregation and export
-- **FR-007**: System MUST provide runtime metrics (process memory heap used, process memory RSS, event loop lag, GC statistics) with configurable collection intervals, using runtime-detected namespace (process.runtime.bun.* if process.release.name === 'bun', otherwise process.runtime.nodejs.* for Node.js compatibility mode), with collection/aggregation handled by @opentelemetry/sdk-metrics in TypeScript
+- **FR-007**: System MUST provide runtime metrics (process memory heap used, process memory RSS, event loop lag, GC statistics) with configurable collection intervals, using runtime-detected namespace (process.runtime.bun._ if process.release.name === 'bun', otherwise process.runtime.nodejs._ for Node.js compatibility mode), with collection/aggregation handled by @opentelemetry/sdk-metrics in TypeScript
 - **FR-008**: System MUST allow developers to create custom metrics using standard OpenTelemetry Metrics API (@opentelemetry/api)
 - **FR-009**: System MUST support metric exporters compatible with OpenTelemetry protocol via standard @opentelemetry/sdk-metrics, following NodeSDK configuration pattern (metricReaders array with periodic export interval, timeout, and exporter settings)
 

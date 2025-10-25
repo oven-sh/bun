@@ -11,12 +11,12 @@ bun add bun-otel
 ## Quick Start
 
 ```typescript
-import { BunSDK } from 'bun-otel';
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base';
+import { BunSDK } from "bun-otel";
+import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
 
 const sdk = new BunSDK({
   traceExporter: new ConsoleSpanExporter(),
-  serviceName: 'my-service',
+  serviceName: "my-service",
 });
 
 sdk.start();
@@ -50,14 +50,14 @@ Follows standard OpenTelemetry environment variables:
 Or configure programmatically:
 
 ```typescript
-import { BunSDK } from 'bun-otel';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { BunSDK } from "bun-otel";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 
 const sdk = new BunSDK({
   traceExporter: new OTLPTraceExporter({
-    url: 'http://localhost:4318/v1/traces',
+    url: "http://localhost:4318/v1/traces",
   }),
-  serviceName: 'my-service',
+  serviceName: "my-service",
   instrumentations: [
     // Add custom instrumentations here
   ],
@@ -75,10 +75,10 @@ If you have existing code using `@opentelemetry/sdk-node`:
 
 ```typescript
 // Before
-import { NodeSDK } from '@opentelemetry/sdk-node';
+import { NodeSDK } from "@opentelemetry/sdk-node";
 
 // After
-import { BunSDK } from 'bun-otel';
+import { BunSDK } from "bun-otel";
 ```
 
 The API is compatible - just swap the import and you're done.
@@ -86,6 +86,7 @@ The API is compatible - just swap the import and you're done.
 ## Header Capture
 
 By default, only safe headers are captured:
+
 - `content-type`
 - `content-length`
 - `user-agent`
@@ -94,12 +95,12 @@ By default, only safe headers are captured:
 To capture additional headers:
 
 ```typescript
-import { BunHttpInstrumentation } from 'bun-otel';
+import { BunHttpInstrumentation } from "bun-otel";
 
 const httpInstrumentation = new BunHttpInstrumentation({
   captureAttributes: {
-    requestHeaders: ['content-type', 'x-request-id'],
-    responseHeaders: ['content-type'],
+    requestHeaders: ["content-type", "x-request-id"],
+    responseHeaders: ["content-type"],
   },
 });
 ```
@@ -149,7 +150,7 @@ import {
   BunHttpInstrumentation,
   BunFetchInstrumentation,
   BunNodeInstrumentation,
-} from 'bun-otel/instrumentations';
+} from "bun-otel/instrumentations";
 
 // All instrumentations are enabled by default when using BunSDK
 // Use these directly only if you need custom configuration
@@ -160,12 +161,12 @@ import {
 ### Jaeger
 
 ```typescript
-import { BunSDK } from 'bun-otel';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { BunSDK } from "bun-otel";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 
 const sdk = new BunSDK({
   traceExporter: new OTLPTraceExporter({
-    url: 'http://localhost:4318/v1/traces',
+    url: "http://localhost:4318/v1/traces",
   }),
 });
 
@@ -175,20 +176,22 @@ await sdk.start();
 ### Distributed Tracing
 
 Client:
-```typescript
-import { trace } from '@opentelemetry/api';
 
-const response = await fetch('http://api.example.com/data');
+```typescript
+import { trace } from "@opentelemetry/api";
+
+const response = await fetch("http://api.example.com/data");
 // Trace context automatically propagated via traceparent header
 ```
 
 Server:
+
 ```typescript
 Bun.serve({
   fetch(req) {
     // Incoming traceparent header automatically extracted
     const span = trace.getActiveSpan();
-    console.log('Trace ID:', span?.spanContext().traceId);
+    console.log("Trace ID:", span?.spanContext().traceId);
     return new Response("OK");
   },
 });
@@ -197,14 +200,14 @@ Bun.serve({
 ### Manual Spans
 
 ```typescript
-import { trace } from '@opentelemetry/api';
+import { trace } from "@opentelemetry/api";
 
-const tracer = trace.getTracer('my-app');
+const tracer = trace.getTracer("my-app");
 
 Bun.serve({
   async fetch(req) {
-    return await tracer.startActiveSpan('process-request', async (span) => {
-      span.setAttribute('custom.attribute', 'value');
+    return await tracer.startActiveSpan("process-request", async span => {
+      span.setAttribute("custom.attribute", "value");
 
       // Your logic here
       const result = await doWork();

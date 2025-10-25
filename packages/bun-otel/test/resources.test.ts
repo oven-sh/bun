@@ -2,11 +2,12 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-tr
 import { describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
 import { waitForSpans } from "./test-utils";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 
 describe("BunSDK resource configuration", () => {
   test("sets service name in resource", async () => {
     const exporter = new InMemorySpanExporter();
-    const sdk = new BunSDK({
+    await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
       serviceName: "test-service",
     });
@@ -21,26 +22,22 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    await waitForSpans(exporter, 1);
+    await waitForSpans(exporter, 2);
 
     const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
+    expect(spans).toHaveLength(2);
 
     const resource = spans[0].resource;
     expect(resource.attributes["service.name"]).toBe("test-service");
-
-    await sdk.shutdown();
   });
 
   test("merges custom resources with auto-detected resources", async () => {
     const exporter = new InMemorySpanExporter();
 
     // Import Resource here to avoid linter issues
-    const { Resource } = await import("@opentelemetry/resources");
-
-    const sdk = new BunSDK({
+    await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
-      resource: new Resource({
+      resource: resourceFromAttributes({
         "deployment.environment": "production",
         "service.version": "1.0.0",
       }),
@@ -71,18 +68,14 @@ describe("BunSDK resource configuration", () => {
 
     // Check auto-detected attributes exist (at least some of them)
     expect(resource.attributes["process.pid"]).toBeDefined();
-
-    await sdk.shutdown();
   });
 
   test("can disable auto-detect resources", async () => {
     const exporter = new InMemorySpanExporter();
 
-    const { Resource } = await import("@opentelemetry/resources");
-
-    const sdk = new BunSDK({
+    await using sdk = new BunSDK({
       spanProcessor: new SimpleSpanProcessor(exporter),
-      resource: new Resource({
+      resource: resourceFromAttributes({
         "custom.attribute": "value",
       }),
       autoDetectResources: false,
@@ -107,7 +100,5 @@ describe("BunSDK resource configuration", () => {
     expect(resource.attributes["custom.attribute"]).toBe("value");
     // Should not have auto-detected process attributes
     expect(resource.attributes["process.pid"]).toBeUndefined();
-
-    await sdk.shutdown();
   });
 });

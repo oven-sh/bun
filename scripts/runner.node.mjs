@@ -2059,6 +2059,7 @@ function formatTestToMarkdown(result, concise, retries) {
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
+    const stripped = stripAnsi(stdout);
 
     if (concise) {
       markdown += "<li>";
@@ -2083,6 +2084,9 @@ function formatTestToMarkdown(result, concise, retries) {
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
     }
+    if (stripped.length > 1024 * 32) {
+      markdown += ` (truncated)`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -2092,7 +2096,7 @@ function formatTestToMarkdown(result, concise, retries) {
         const preview = escapeCodeBlock(stdout);
         markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
       } else {
-        let inner = stripAnsi(stdout);
+        let inner = stripped;
         // https://buildkite.com/docs/agent/v3/cli-annotate
         // > The annotation body can be supplied as a command line argument, or by piping content into the command. The maximum size of each annotation body is 1MiB.
         if (inner.length > 1024 * 32) {

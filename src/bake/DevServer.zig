@@ -1859,6 +1859,7 @@ pub fn startAsyncBundle(
     errdefer heap.deinit();
     const alloc = heap.allocator();
     const ast_memory_allocator = try alloc.create(bun.ast.ASTMemoryAllocator);
+    defer alloc.destroy(ast_memory_allocator);
     var ast_scope = ast_memory_allocator.enter(alloc);
     defer ast_scope.exit();
 

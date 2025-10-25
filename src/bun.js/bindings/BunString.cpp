@@ -407,7 +407,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length);
-
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 

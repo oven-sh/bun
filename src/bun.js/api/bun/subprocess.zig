@@ -1739,11 +1739,9 @@ pub fn spawnMaybeSync(
         return .zero;
     }
 
-    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 7);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
-    if (!signalCode.isEmptyOrUndefinedOrNull()) {
-        sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
-    }
+    sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
     sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
     sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));

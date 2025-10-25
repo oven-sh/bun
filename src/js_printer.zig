@@ -5449,9 +5449,9 @@ pub fn NewWriter(
                 try writer.ctx.flush();
             }
         }
-        pub fn done(writer: *Self) !void {
+        pub fn done(writer: *Self) void {
             if (std.meta.hasFn(ContextType, "done")) {
-                try writer.ctx.done();
+                writer.ctx.done();
             }
         }
     };
@@ -5570,12 +5570,10 @@ pub const BufferWriter = struct {
         return written;
     }
 
-    pub fn done(
-        ctx: *BufferWriter,
-    ) anyerror!void {
+    pub fn done(ctx: *BufferWriter) void {
         if (ctx.append_newline) {
             ctx.append_newline = false;
-            try ctx.buffer.appendChar('\n');
+            bun.handleOom(ctx.buffer.appendChar('\n'));
         }
 
         if (ctx.append_null_byte) {
@@ -5814,7 +5812,7 @@ pub fn printAst(
         }
     }
 
-    try printer.writer.done();
+    printer.writer.done();
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
@@ -5854,7 +5852,7 @@ pub fn printJSON(
     if (printer.writer.getError()) {} else |err| {
         return err;
     }
-    try printer.writer.done();
+    printer.writer.done();
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
@@ -5981,13 +5979,7 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
-    printer.writer.done() catch |err| {
-        // In bundle_v2, this is backed by an arena, but incremental uses
-        // `dev.allocator` for this buffer, so it must be freed.
-        printer.source_map_builder.source_map.ctx.data.deinit();
-
-        return .{ .err = err };
-    };
+    printer.writer.done();
 
     const written = printer.writer.ctx.getWritten();
     const source_map: ?SourceMap.Chunk = if (generate_source_maps) brk: {

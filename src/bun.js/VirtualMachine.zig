@@ -1917,18 +1917,10 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             }
 
-            ret.* = ErrorableResolvedSource.err(
-                err,
-                globalThis.createAggregateError(
-                    errors,
-                    &ZigString.init(
-                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
-                            errors.len,
-                            specifier,
-                        }) catch unreachable,
-                    ),
-                ) catch |e| globalThis.takeException(e),
-            );
+            const message = std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{ errors.len, specifier }) catch unreachable;
+            defer globalThis.allocator().free(message);
+            const error_value = globalThis.createAggregateError(errors, &ZigString.init(message)) catch |e| globalThis.takeException(e);
+            ret.* = ErrorableResolvedSource.err(err, error_value);
         },
     }
 }

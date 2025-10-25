@@ -358,6 +358,19 @@ vendor/elysia/test/validator/response.test.ts
 vendor/elysia/test/validator/validator.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
+test/js/bun/jsc/string-noAtomize.test.ts
+test/bundler/bundler_jsx.test.ts
+test/bundler/html-import-manifest.test.ts
+test/bundler/esbuild/splitting.test.ts
+test/bundler/esbuild/loader.test.ts
+test/bundler/esbuild/extra.test.ts
+test/bundler/esbuild/default.test.ts
+test/bundler/esbuild/dce.test.ts
+test/bundler/bundler_loader.test.ts
+test/bundler/bundler_edgecase.test.ts
+test/bundler/bundler_minify.test.ts
+test/bundler/bundler_cjs2esm.test.ts
+test/bundler/bundler_bun.test.ts
 
 # JSC::HandleSet::~HandleSet
 # bun.js.rare_data.deinit
@@ -370,6 +383,8 @@ test/js/bun/util/inspect.test.js
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/vm/vm.test.ts
 test/js/node/test/parallel/test-assert-checktag.js
+test/js/bun/util/bun-main.test.ts
+test/js/bun/s3/s3.leak.test.ts
 
 # VM has terminated
 test/js/node/test/parallel/test-net-during-close.js
@@ -440,3 +455,5 @@ test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 test/js/node/test/parallel/test-child-process-emfile.js
 test/js/node/test/parallel/test-cluster-worker-wait-server-close.js
 test/js/node/test/parallel/test-stdin-from-file-spawn.js
+test/integration/next-pages/test/next-build.test.ts
+test/bundler/bundler_plugin.test.ts

@@ -221,6 +221,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
 
             const JSPrinter = bun.js_printer;
             var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
+            defer buffer_writer.buffer.deinit();
             buffer_writer.append_newline = true;
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
             _ = try bun.js_printer.printJSON(
@@ -257,6 +258,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         // Output formatted JSON using JSPrinter
         const JSPrinter = bun.js_printer;
         var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
+        defer buffer_writer.buffer.deinit();
         buffer_writer.append_newline = true;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
         _ = try bun.js_printer.printJSON(

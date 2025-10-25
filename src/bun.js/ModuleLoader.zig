@@ -860,7 +860,7 @@ pub fn transpileSourceCode(
                 jsc_vm.main_hash == hash and
                 strings.eqlLong(jsc_vm.main, path.text, false);
 
-            var arena_: ?*bun.ArenaAllocator = brk: {
+            var arena_: *bun.ArenaAllocator = brk: {
                 // Attempt to reuse the Arena from the parser when we can
                 // This code is potentially re-entrant, so only one Arena can be reused at a time
                 // That's why we have to check if the Arena is null
@@ -885,21 +885,21 @@ pub fn transpileSourceCode(
                         // caller is responsible for freeing the arena
                         if (flags != .print_source) {
                             if (jsc_vm.smol) {
-                                _ = arena_.?.reset(.free_all);
+                                _ = arena_.reset(.free_all);
                             } else {
-                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                _ = arena_.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
                             }
                         }
 
                         jsc_vm.module_loader.transpile_source_code_arena = arena_;
                     } else {
-                        arena_.?.deinit();
-                        jsc_vm.allocator.destroy(arena_.?);
+                        arena_.deinit();
+                        jsc_vm.allocator.destroy(arena_);
                     }
                 }
             }
 
-            var arena = arena_.?;
+            var arena = arena_;
             const allocator = arena.allocator();
 
             var fd: ?StoredFileDescriptorType = null;

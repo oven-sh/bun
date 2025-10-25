@@ -68,6 +68,7 @@ pub const FFI = struct {
     shared_state: ?*TCC.State = null,
 
     pub fn finalize(this: *FFI) callconv(.C) void {
+        this.functions.clearAndFree(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -1023,6 +1024,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
+            symbols.clearAndFree(bun.default_allocator);
             return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
@@ -1135,7 +1137,6 @@ pub const FFI = struct {
             .dylib = dylib,
             .functions = symbols,
         });
-
         const js_object = lib.toJS(global);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
         return js_object;

@@ -522,6 +522,7 @@ pub const TransformTask = struct {
         }
 
         var buffer_writer = JSPrinter.BufferWriter.init(allocator);
+        defer buffer_writer.buffer.deinit();
         buffer_writer.buffer.list.ensureTotalCapacity(allocator, 512) catch unreachable;
         buffer_writer.reset();
 

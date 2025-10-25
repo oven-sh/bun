@@ -25,6 +25,7 @@ pub const PmVersionCommand = struct {
 
     pub fn exec(ctx: Command.Context, pm: *PackageManager, positionals: []const string, original_cwd: []const u8) !void {
         const package_json_dir = try findPackageDir(ctx.allocator, original_cwd);
+        defer ctx.allocator.free(package_json_dir);
 
         if (positionals.len <= 1) {
             try showHelp(ctx, pm, package_json_dir);
@@ -114,6 +115,7 @@ pub const PmVersionCommand = struct {
             try json.data.e_object.putString(ctx.allocator, "version", new_version_str);
 
             var buffer_writer = JSPrinter.BufferWriter.init(ctx.allocator);
+            defer buffer_writer.buffer.deinit();
             buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
@@ -284,7 +286,7 @@ pub const PmVersionCommand = struct {
             \\  <cyan>patch<r>      <d>{s} → {s}<r>
             \\  <cyan>minor<r>      <d>{s} → {s}<r>
             \\  <cyan>major<r>      <d>{s} → {s}<r>
-            \\  <cyan>prerelease<r> <d>{s} → {s}<r> 
+            \\  <cyan>prerelease<r> <d>{s} → {s}<r>
             \\
         ;
         Output.pretty(increment_help_text, .{

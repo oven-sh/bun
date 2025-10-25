@@ -3115,14 +3115,12 @@ CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObje
     array->push(arg1, value2);
 }
 
-JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* globalObject,
-    const JSValue* errors, size_t errors_count,
-    const ZigString* arg3)
+JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* globalObject, const JSValue* errors, size_t errors_count, const ZigString* arg3)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue message = JSC::jsOwnedString(vm, Zig::toString(*arg3));
+    JSC::JSValue message = Zig::toJSStringGC(*arg3, globalObject);
     JSC::JSValue options = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
     {

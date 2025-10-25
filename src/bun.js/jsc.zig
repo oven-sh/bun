@@ -90,6 +90,9 @@ pub const RegularExpression = @import("./bindings/RegularExpression.zig").Regula
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
 pub const ResolvedSource = @import("./bindings/ResolvedSource.zig").ResolvedSource;
+pub const ModuleResult = @import("./bindings/ModuleResult.zig").ModuleResult;
+pub const TranspiledSource = @import("./bindings/TranspiledSource.zig").TranspiledSource;
+pub const SpecialModule = @import("./bindings/SpecialModule.zig").SpecialModule;
 pub const ErrorCode = @import("./bindings/ErrorCode.zig").ErrorCode;
 pub const JSErrorCode = @import("./bindings/JSErrorCode.zig").JSErrorCode;
 pub const ZigErrorType = @import("./bindings/ZigErrorType.zig").ZigErrorType;

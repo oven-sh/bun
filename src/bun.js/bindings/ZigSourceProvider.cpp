@@ -3,6 +3,7 @@
 #include "helpers.h"
 
 #include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
@@ -29,41 +30,9 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
-{
-
-    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "specifier should not already be a file URL");
-
-    if (isBuiltin) {
-        if (sourceURL.startsWith("node:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://node/"_s, sourceURL.substring(5))));
-        } else if (sourceURL.startsWith("bun:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://bun/"_s, sourceURL.substring(4))));
-        } else {
-            return SourceOrigin(WTF::URL(makeString("builtin://"_s, sourceURL)));
-        }
-    }
-    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
-}
-
-extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
-extern "C" void* ByteRangeMapping__find(BunString sourceURL);
-void* sourceMappingForSourceURL(const WTF::String& sourceURL)
-{
-    return ByteRangeMapping__find(Bun::toString(sourceURL));
-}
-
+// Helper functions are now defined in BunSourceProvider.cpp
+// They are declared in both headers for compatibility
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
-
-JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
-{
-    void* mappings = ByteRangeMapping__find(Bun::toString(sourceURL));
-    if (!mappings) {
-        return 0;
-    }
-
-    return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
-}
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);

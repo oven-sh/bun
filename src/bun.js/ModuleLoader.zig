@@ -817,7 +817,110 @@ pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.Str
     return loader;
 }
 
-pub fn transpileSourceCode(
+/// Helper: Convert ResolvedSource to ModuleResult
+fn resolvedSourceToModuleResult(resolved: ResolvedSource, input_specifier: bun.String, source_url: []const u8) ModuleResult {
+    // Handle special module types (JSON/TOML/YAML that export JSValue)
+    if (resolved.tag == .exports_object or resolved.tag == .export_default_object) {
+        return .{
+            .tag = .special,
+            .value = .{
+                .special = .{
+                    .tag = if (resolved.tag == .exports_object) .exports_object else .export_default_object,
+                    .jsvalue = resolved.jsvalue_for_export,
+                },
+            },
+        };
+    }
+
+    // Handle custom extensions
+    if (resolved.tag == .common_js_custom_extension) {
+        return .{
+            .tag = .special,
+            .value = .{
+                .special = .{
+                    .tag = .custom_extension,
+                    .jsvalue = resolved.cjs_custom_extension_index,
+                },
+            },
+        };
+    }
+
+    // Handle builtin modules (ResolvedSourceTag values >= 512 are builtin IDs)
+    if (@intFromEnum(resolved.tag) >= 512) {
+        return .{
+            .tag = .builtin,
+            .value = .{ .builtin_id = @intFromEnum(resolved.tag) },
+        };
+    }
+
+    // Handle transpiled source (normal case)
+    return .{
+        .tag = .transpiled,
+        .value = .{
+            .transpiled = .{
+                .source_code = resolved.source_code,
+                .source_url = input_specifier.createIfDifferent(source_url),
+                .bytecode_cache = resolved.bytecode_cache,
+                .bytecode_cache_len = resolved.bytecode_cache_size,
+                .flags = .{
+                    .is_commonjs = resolved.is_commonjs_module,
+                    .is_already_bundled = resolved.already_bundled,
+                },
+            },
+        },
+    };
+}
+
+/// Helper: Convert ModuleResult to ResolvedSource for backward compatibility
+pub fn moduleResultToResolvedSource(result: ModuleResult, specifier: bun.String) ResolvedSource {
+    switch (result.tag) {
+        .transpiled => {
+            const trans = result.value.transpiled;
+            return .{
+                .allocator = null,
+                .source_code = trans.source_code,
+                .specifier = specifier,
+                .source_url = trans.source_url,
+                .is_commonjs_module = trans.flags.is_commonjs,
+                .already_bundled = trans.flags.is_already_bundled,
+                .bytecode_cache = trans.bytecode_cache,
+                .bytecode_cache_size = trans.bytecode_cache_len,
+                .source_code_needs_deref = true,
+            };
+        },
+        .special => {
+            const spec = result.value.special;
+            return .{
+                .allocator = null,
+                .source_code = bun.String.empty,
+                .specifier = specifier,
+                .source_url = specifier,
+                .jsvalue_for_export = spec.jsvalue,
+                .tag = switch (spec.tag) {
+                    .exports_object => .exports_object,
+                    .export_default_object => .export_default_object,
+                    .custom_extension => .common_js_custom_extension,
+                },
+                .source_code_needs_deref = false,
+            };
+        },
+        .builtin => {
+            // Builtin modules use the ID as the tag (values >= 512)
+            const tag: ResolvedSource.Tag = @enumFromInt(result.value.builtin_id);
+            return .{
+                .allocator = null,
+                .source_code = bun.String.empty,
+                .specifier = specifier,
+                .source_url = bun.String.static(@tagName(tag)),
+                .tag = tag,
+                .source_code_needs_deref = false,
+            };
+        },
+    }
+}
+
+/// Internal implementation that still returns ResolvedSource for backward compat
+fn transpileSourceCodeInternal(
     jsc_vm: *VirtualMachine,
     specifier: string,
     referrer: string,
@@ -1032,7 +1135,7 @@ pub fn transpileSourceCode(
             const source = &parse_result.source;
 
             if (parse_result.loader == .wasm) {
-                return transpileSourceCode(
+                return transpileSourceCodeInternal(
                     jsc_vm,
                     specifier,
                     referrer,
@@ -1370,7 +1473,7 @@ pub fn transpileSourceCode(
                 };
             }
 
-            return transpileSourceCode(
+            return transpileSourceCodeInternal(
                 jsc_vm,
                 specifier,
                 referrer,
@@ -1581,8 +1684,9 @@ pub export fn Bun__fetchBuiltinModule(
 
         VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
         return true;
-    }) |builtin| {
-        ret.* = jsc.ErrorableResolvedSource.ok(builtin);
+    }) |module_result| {
+        // Convert ModuleResult to ResolvedSource for C++ compatibility
+        ret.* = jsc.ErrorableResolvedSource.ok(moduleResultToResolvedSource(module_result, specifier.*));
         return true;
     } else {
         return false;
@@ -1796,39 +1900,40 @@ pub export fn Bun__transpileFile(
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
     var promise: ?*jsc.JSInternalPromise = null;
-    ret.* = jsc.ErrorableResolvedSource.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            lr.specifier,
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            lr.path,
-            synchronous_loader,
-            module_type,
-            &log,
-            lr.virtual_source,
-            if (allow_promise) &promise else null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.AsyncModule => {
-                    bun.assert(promise != null);
-                    return promise;
-                },
-                error.PluginError => return null,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
-                    return null;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-                    return null;
-                },
-            }
-        },
-    );
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        lr.specifier,
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        lr.path,
+        synchronous_loader,
+        module_type,
+        &log,
+        lr.virtual_source,
+        if (allow_promise) &promise else null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
+    ) catch |err| {
+        switch (err) {
+            error.AsyncModule => {
+                bun.assert(promise != null);
+                return promise;
+            },
+            error.PluginError => return null,
+            error.JSError => {
+                ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                return null;
+            },
+            else => {
+                VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
+                return null;
+            },
+        }
+    };
+
+    // Convert ModuleResult to ResolvedSource for C++ compatibility
+    ret.* = jsc.ErrorableResolvedSource.ok(moduleResultToResolvedSource(module_result, specifier_ptr.*));
     return promise;
 }
 
@@ -1883,7 +1988,43 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
     };
 }
 
-pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
+/// New public API that returns ModuleResult
+pub fn transpileSourceCode(
+    jsc_vm: *VirtualMachine,
+    specifier: string,
+    referrer: string,
+    input_specifier: String,
+    path: Fs.Path,
+    loader: options.Loader,
+    module_type: options.ModuleType,
+    log: *logger.Log,
+    virtual_source: ?*const logger.Source,
+    promise_ptr: ?*?*jsc.JSInternalPromise,
+    source_code_printer: *js_printer.BufferPrinter,
+    globalObject: ?*JSGlobalObject,
+    comptime flags: FetchFlags,
+) !ModuleResult {
+    const resolved = try transpileSourceCodeInternal(
+        jsc_vm,
+        specifier,
+        referrer,
+        input_specifier,
+        path,
+        loader,
+        module_type,
+        log,
+        virtual_source,
+        promise_ptr,
+        source_code_printer,
+        globalObject,
+        flags,
+    );
+
+    return resolvedSourceToModuleResult(resolved, input_specifier, path.text);
+}
+
+/// Internal implementation that returns ResolvedSource for backward compat
+fn fetchBuiltinModuleInternal(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
     if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
         return getHardcodedModule(jsc_vm, specifier, hardcoded);
     }
@@ -1938,6 +2079,14 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
     return null;
 }
 
+/// New public API that returns ModuleResult for builtin modules
+pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ModuleResult {
+    const resolved = try fetchBuiltinModuleInternal(jsc_vm, specifier) orelse return null;
+    // Builtin modules might be special imports (macros, standalone) or actual builtins
+    // For now, convert using the same logic as transpileSourceCode
+    return resolvedSourceToModuleResult(resolved, specifier, specifier.byteSlice());
+}
+
 export fn Bun__transpileVirtualModule(
     globalObject: *JSGlobalObject,
     specifier_ptr: *const bun.String,
@@ -1977,35 +2126,36 @@ export fn Bun__transpileVirtualModule(
     defer log.deinit();
     defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-    ret.* = jsc.ErrorableResolvedSource.ok(
-        ModuleLoader.transpileSourceCode(
-            jsc_vm,
-            specifier_slice.slice(),
-            referrer_slice.slice(),
-            specifier_ptr.*,
-            path,
-            loader,
-            .unknown,
-            &log,
-            &virtual_source,
-            null,
-            VirtualMachine.source_code_printer.?,
-            globalObject,
-            FetchFlags.transpile,
-        ) catch |err| {
-            switch (err) {
-                error.PluginError => return true,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
-                    return true;
-                },
-                else => {
-                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
-                    return true;
-                },
-            }
-        },
-    );
+    const module_result = ModuleLoader.transpileSourceCode(
+        jsc_vm,
+        specifier_slice.slice(),
+        referrer_slice.slice(),
+        specifier_ptr.*,
+        path,
+        loader,
+        .unknown,
+        &log,
+        &virtual_source,
+        null,
+        VirtualMachine.source_code_printer.?,
+        globalObject,
+        FetchFlags.transpile,
+    ) catch |err| {
+        switch (err) {
+            error.PluginError => return true,
+            error.JSError => {
+                ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                return true;
+            },
+            else => {
+                VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
+                return true;
+            },
+        }
+    };
+
+    // Convert ModuleResult to ResolvedSource for C++ compatibility
+    ret.* = jsc.ErrorableResolvedSource.ok(moduleResultToResolvedSource(module_result, specifier_ptr.*));
     analytics.Features.virtual_modules += 1;
     return true;
 }
@@ -3098,6 +3248,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
+const ModuleResult = bun.jsc.ModuleResult;
+const TranspiledSource = bun.jsc.TranspiledSource;
+const SpecialModule = bun.jsc.SpecialModule;
 const VirtualMachine = bun.jsc.VirtualMachine;
 const ZigString = bun.jsc.ZigString;
 const Bun = jsc.API.Bun;

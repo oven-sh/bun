@@ -1522,8 +1522,9 @@ pub fn fetchWithoutOnLoadPlugins(
 ) anyerror!ResolvedSource {
     bun.assert(VirtualMachine.isLoaded());
 
-    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
-        return builtin;
+    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |module_result| {
+        // Convert ModuleResult to ResolvedSource
+        return ModuleLoader.moduleResultToResolvedSource(module_result, _specifier);
     }
 
     const specifier_clone = _specifier.toUTF8(bun.default_allocator);
@@ -1545,7 +1546,7 @@ pub fn fetchWithoutOnLoadPlugins(
     defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
     errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
-    return try ModuleLoader.transpileSourceCode(
+    const module_result = try ModuleLoader.transpileSourceCode(
         jsc_vm,
         lr.specifier,
         referrer_clone.slice(),
@@ -1560,6 +1561,9 @@ pub fn fetchWithoutOnLoadPlugins(
         globalObject,
         flags,
     );
+
+    // Convert ModuleResult to ResolvedSource
+    return ModuleLoader.moduleResultToResolvedSource(module_result, _specifier);
 }
 
 pub const ResolveFunctionResult = struct {

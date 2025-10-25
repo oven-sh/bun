@@ -153,7 +153,7 @@
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "ZigGeneratedClasses.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"

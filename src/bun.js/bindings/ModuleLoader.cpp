@@ -11,7 +11,7 @@
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -41,6 +41,39 @@
 
 #include "BunProcess.h"
 
+// Forward declare the new Zig C structs
+extern "C" {
+    // Must match TranspiledSource.zig
+    struct TranspiledSource {
+        BunString source_code;
+        BunString source_url;
+        uint8_t* bytecode_cache;
+        size_t bytecode_cache_len;
+        uint32_t flags; // packed struct: is_commonjs:1, is_already_bundled:1, padding:30
+    };
+
+    // Must match SpecialModule.zig
+    struct SpecialModule {
+        uint32_t tag; // exports_object=0, export_default_object=1, custom_extension=2
+        JSC::EncodedJSValue jsvalue;
+    };
+
+    // Must match ModuleResult.zig
+    struct ModuleResult {
+        uint32_t tag; // transpiled=0, special=1, builtin=2
+        union {
+            TranspiledSource transpiled;
+            SpecialModule special;
+            uint32_t builtin_id;
+        } value;
+    };
+
+    // Bridge function to create BunSourceProvider from TranspiledSource
+    JSC::SourceProvider* Bun__createSourceProvider(
+        Zig::GlobalObject* globalObject,
+        const TranspiledSource* transpiled);
+}
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -63,6 +96,24 @@ public:
 
     ErrorableResolvedSource* res;
 };
+
+// Helper: Convert ResolvedSource to TranspiledSource
+static TranspiledSource resolvedSourceToTranspiledSource(const ResolvedSource& resolved)
+{
+    TranspiledSource transpiled;
+    transpiled.source_code = resolved.source_code;
+    transpiled.source_url = resolved.source_url;
+    transpiled.bytecode_cache = resolved.bytecode_cache;
+    transpiled.bytecode_cache_len = resolved.bytecode_cache_size;
+
+    // Pack flags
+    uint32_t flags = 0;
+    if (resolved.isCommonJSModule) flags |= 0x1;
+    if (resolved.already_bundled) flags |= 0x2;
+    transpiled.flags = flags;
+
+    return transpiled;
+}
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
@@ -389,8 +440,11 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
-        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
-        return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+        // Use new BunSourceProvider for virtual module transpiled code
+        auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+        auto* providerPtr = Bun__createSourceProvider(globalObject, &transpiled);
+        Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+        return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
     }
     case OnLoadResultTypeError: {
         RELEASE_AND_RETURN(scope, reject(onLoadResult.value.error));
@@ -508,8 +562,11 @@ extern "C" void Bun__onFulfillAsyncModule(
                 }
             }
         } else {
-            auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            // Use new BunSourceProvider for transpiled ESM code
+            auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+            auto* providerPtr = Bun__createSourceProvider(jsDynamicCast<Zig::GlobalObject*>(globalObject), &transpiled);
+            Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
             scope.assertNoExceptionExceptTermination();
         }
     } else {
@@ -852,8 +909,11 @@ JSValue fetchCommonJSModuleNonBuiltin(
         RELEASE_AND_RETURN(scope, target);
     }
 
-    auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
+    // Use new BunSourceProvider for transpiled code
+    auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+    auto* providerPtr = Bun__createSourceProvider(globalObject, &transpiled);
+    Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(WTFMove(provider)));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
@@ -974,8 +1034,11 @@ static JSValue fetchESMSourceCode(
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
+            // Use new BunSourceProvider for builtin ESM modules
+            auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+            auto* providerPtr = Bun__createSourceProvider(globalObject, &transpiled);
+            Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider)))));
         }
 
 #define CASE(str, name)                                                                                                                            \
@@ -993,8 +1056,11 @@ static JSValue fetchESMSourceCode(
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTFMove(source))));
             } else {
-                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
-                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
+                // Use new BunSourceProvider for builtin transpiled modules
+                auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+                auto* providerPtr = Bun__createSourceProvider(globalObject, &transpiled);
+                Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider)))));
             }
         }
         }
@@ -1105,7 +1171,11 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source))));
     }
 
-    RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value)))));
+    // Use new BunSourceProvider for transpiled code
+    auto transpiled = resolvedSourceToTranspiledSource(res->result.value);
+    auto* providerPtr = Bun__createSourceProvider(globalObject, &transpiled);
+    Ref<JSC::SourceProvider> provider = adoptRef(*providerPtr);
+    RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider)))));
 }
 
 JSValue fetchESMSourceCodeSync(

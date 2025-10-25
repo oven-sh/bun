@@ -11,6 +11,9 @@
 #include <wtf/text/WTFString.h>
 #include <mimalloc.h>
 
+extern "C" void Bun__addSourceProviderSourceMap(void* vm, JSC::SourceProvider* provider, BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* vm, JSC::SourceProvider* provider, BunString* specifier);
+
 namespace Zig {
 
 BunSourceProvider::BunSourceProvider(
@@ -48,7 +51,9 @@ Ref<BunSourceProvider> BunSourceProvider::create(
 
 BunSourceProvider::~BunSourceProvider()
 {
-    // Sourcemap cleanup handled by global object lifecycle
+    // Note: We cannot unregister the sourcemap here because we don't have access
+    // to the globalObject or VM at destruction time. The VM's source_mappings
+    // will clean up when the VM is destroyed.
 }
 
 StringView BunSourceProvider::source() const
@@ -118,8 +123,14 @@ extern "C" JSC::SourceProvider* Bun__createSourceProvider(
         sourceType
     );
 
-    // Register sourcemap if needed
-    // Note: Sourcemap registration is handled elsewhere now
+    // Register sourcemap with VM only if already_bundled (bit 1 of flags)
+    if (source->flags & 0x2) {
+        Bun__addSourceProviderSourceMap(
+            reinterpret_cast<void*>(globalObject->bunVM()),
+            &provider.get(),
+            const_cast<BunString*>(&source->source_url)
+        );
+    }
 
     return &provider.leakRef();
 }

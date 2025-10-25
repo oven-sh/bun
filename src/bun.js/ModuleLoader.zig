@@ -2016,12 +2016,13 @@ export fn Bun__transpileVirtualModule(
 inline fn builtinModuleIdFromTagName(comptime name: []const u8) u32 {
     @setEvalBranchQuota(10000);
     return comptime blk: {
-        // Simple hash of the tag name to get a stable ID
-        var hash: u32 = 0;
-        for (name) |c| {
-            hash = hash *% 31 +% c;
-        }
-        break :blk hash;
+        // Use the generated ResolvedSourceTag enum which has all builtin modules
+        // Builtin modules are encoded as (1 << 9) | actual_id
+        // We need to extract the actual_id (lower 9 bits)
+        const ResolvedSourceTag = @import("ResolvedSourceTag").ResolvedSourceTag;
+        const tag_value = @intFromEnum(@field(ResolvedSourceTag, name));
+        const builtin_id = tag_value & 0x1FF; // Extract lower 9 bits
+        break :blk builtin_id;
     };
 }
 

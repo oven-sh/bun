@@ -138,7 +138,6 @@ fn NewLexer_(
         prev_token_was_await_keyword: bool = false,
         await_keyword_loc: logger.Loc = logger.Loc.Empty,
         fn_or_arrow_start_loc: logger.Loc = logger.Loc.Empty,
-        is_at_module_scope: bool = true,
         regex_flags_start: ?u16 = null,
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
@@ -1821,7 +1820,13 @@ fn NewLexer_(
 
         pub fn expectedString(self: *LexerType, text: string) !void {
             if (self.prev_token_was_await_keyword) {
-                if (self.is_at_module_scope) {
+                // Use fn_or_arrow_start_loc as a signal:
+                // - If it equals await_keyword_loc, we're at module scope (sentinel value)
+                // - If it's not empty and different, we're in a function with a location for "async"
+                // - If it's empty, we're in a function without a clear location (e.g., arrow function)
+                const is_at_module_scope = self.fn_or_arrow_start_loc.start == self.await_keyword_loc.start;
+
+                if (is_at_module_scope) {
                     // Top-level await - provide better error message
                     try self.addRangeErrorWithNotes(
                         self.range(),

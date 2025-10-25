@@ -54,16 +54,14 @@ describe("bundler", () => {
   itBundled("top_level_await_error/AwaitInAsyncFunctionShouldStillWork", {
     files: {
       "/entry.ts": /* ts */ `
-        async function main() {
+        (async function main() {
           async function sum(a: number, b: number) {
             return a + b;
           }
 
           const result = await sum(5, 5);
           console.log(result);
-        }
-
-        main().catch(console.error);
+        })().catch(console.error);
       `,
     },
     format: "cjs",

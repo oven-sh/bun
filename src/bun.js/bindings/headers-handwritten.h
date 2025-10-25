@@ -118,11 +118,7 @@ struct TranspiledSource {
     BunString source_url;
     uint8_t* bytecode_cache;
     size_t bytecode_cache_len;
-    struct {
-        bool is_commonjs;
-        bool is_already_bundled;
-        uint32_t _padding; // 30 bits padding in Zig packed struct
-    } flags;
+    uint32_t flags; // Packed struct(u32) in Zig = uint32_t in C++
 };
 
 // Corresponds to src/bun.js/bindings/SpecialModule.zig

@@ -469,7 +469,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
 
-        if (res->tag == ModuleResult::Tag::transpiled && res->value.transpiled.flags.is_commonjs) {
+        if (res->tag == ModuleResult::Tag::transpiled && (res->value.transpiled.flags & 0x1)) {
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->value.transpiled);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
@@ -751,7 +751,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     case ModuleResult::Tag::transpiled: {
-        if (res->value.transpiled.flags.is_commonjs) {
+        if (res->value.transpiled.flags & 0x1) {
             if constexpr (isExtension) {
                 target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->value.transpiled);
             } else {
@@ -901,7 +901,7 @@ static JSValue fetchESMSourceCode(
         case ModuleResult::Tag::transpiled: {
             auto& transpiled = res->value.transpiled;
             // This can happen if it's a `bun build --compile`'d CommonJS file
-            if (transpiled.flags.is_commonjs) {
+            if (transpiled.flags & 0x1) {
                 auto created = Bun::createCommonJSModule(globalObject, specifierJS, transpiled);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
@@ -969,7 +969,7 @@ static JSValue fetchESMSourceCode(
 
     case ModuleResult::Tag::transpiled: {
         auto& transpiled = res->value.transpiled;
-        if (transpiled.flags.is_commonjs) {
+        if (transpiled.flags & 0x1) {
             auto created = Bun::createCommonJSModule(globalObject, specifierJS, transpiled);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {

@@ -90,7 +90,8 @@ extern "C" JSC::SourceProvider* Bun__createSourceProvider(
     auto sourceString = source->source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURL = source->source_url.toWTFString(BunString::ZeroCopy);
 
-    bool isCommonJS = source->flags.is_commonjs;
+    // Extract is_commonjs flag (bit 0 of flags uint32_t)
+    bool isCommonJS = (source->flags & 0x1) != 0;
     auto sourceType = isCommonJS ?
         JSC::SourceProviderSourceType::Program :
         JSC::SourceProviderSourceType::Module;

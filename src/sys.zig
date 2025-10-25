@@ -805,11 +805,11 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
                 rc,
                 .mkdir,
             )) |err| {
-                log("CreateDirectoryW({}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
+                log("CreateDirectoryW({f}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
                 return err;
             }
 
-            log("CreateDirectoryW({}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
+            log("CreateDirectoryW({f}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
             return .success;
         },
     };
@@ -1004,11 +1004,11 @@ fn openDirAtWindowsNtPath(
             // - access_mask probably needs w.SYNCHRONIZE,
             // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
             // - disposition probably needs w.FILE_OPEN
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            log("NtCreateFile({}, {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            log("NtCreateFile({f}, {f}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         }
     }
 
@@ -1092,9 +1092,9 @@ fn openDirAtWindowsT(
     };
 
     if (comptime T == u8) {
-        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+        log("openDirAtWindows({s}) = {f}", .{ path, bun.fmt.utf16(norm) });
     } else {
-        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+        log("openDirAtWindowsT({f}) = {f}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
     }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
@@ -1206,15 +1206,15 @@ pub fn openFileAtWindowsNtPath(
                 // - access_mask probably needs w.SYNCHRONIZE,
                 // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
                 // - disposition probably needs w.FILE_OPEN
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
                 // See above comment. For absolute paths you must have \??\ at the start.
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
                 if (rc == .SUCCESS) {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
+                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
                 }
             }
         }
@@ -2496,7 +2496,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
 
         if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
-            log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
+            log("CreateSymbolicLinkW({f}, {f}, {any}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
@@ -2622,11 +2622,11 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: p
 pub fn unlinkW(from: [:0]const u16) Maybe(void) {
     const ret = windows.DeleteFileW(from);
     if (Maybe(void).errnoSys(ret, .unlink)) |err| {
-        log("DeleteFileW({s}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
+        log("DeleteFileW({f}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
         return err;
     }
 
-    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
+    log("DeleteFileW({f}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
     return .success;
 }
 
@@ -3117,7 +3117,7 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
         // Win32 API does file path normalization, so we do not need the valid path assertion here.
         const dword = kernel32.GetFileAttributesW(path.ptr);
         if (comptime Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });
+            log("GetFileAttributesW({f}) = {d}", .{ bun.fmt.utf16(path), dword });
         }
         if (dword == windows.INVALID_FILE_ATTRIBUTES) {
             return null;
@@ -3200,7 +3200,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
+        syslog("faccessat({f}, {f}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
             return bun.sys.Maybe(bool){ .result = true };
         }
@@ -3210,7 +3210,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
-    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
+    syslog("faccessat({f}, {f}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
         return bun.sys.Maybe(bool){ .result = true };
     }
@@ -3362,7 +3362,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
         if (bun.sys.Maybe(bool).errnoSys(rc, .access)) |err| {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
 
@@ -3377,13 +3377,13 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             basic_info.FileAttributes & c.FILE_ATTRIBUTE_READONLY == 0;
 
         return if (is_dir) {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
             return .{ .result = .directory };
         } else if (is_regular_file) {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
             return .{ .result = .file };
         } else {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
             return .{ .err = Error.fromCode(.UNKNOWN, .access) };
         };
     }
@@ -3450,7 +3450,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
         //     else => false,
         // };
 
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
+        // log("GetBinaryTypeW({f}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
 
         // return result;
     }
@@ -3615,7 +3615,7 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
         if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
             return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
-        log("CreateHardLinkW({s}, {s}) = 0", .{
+        log("CreateHardLinkW({f}, {f}) = 0", .{
             bun.fmt.fmtPath(T, dest, .{}),
             bun.fmt.fmtPath(T, src, .{}),
         });

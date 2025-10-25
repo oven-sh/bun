@@ -1847,7 +1847,7 @@ pub const ExpectMatcherUtils = struct {
 
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        try writer.print("{}", .{value.toFmt(&formatter)});
+        try writer.print("{f}", .{value.toFmt(&formatter)});
 
         if (comptime color_or_null) |_| {
             if (Output.enable_ansi_colors) {

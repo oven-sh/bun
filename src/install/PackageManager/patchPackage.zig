@@ -92,7 +92,7 @@ pub fn doPatchCommit(
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :brk s,
                     .err => |e| {
-                        Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
+                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
                         Global.crash();
                     },
                 }
@@ -436,7 +436,7 @@ pub fn doPatchCommit(
         .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
-        Output.err(e, "failed to make patches dir {}", .{bun.fmt.quote(args.path.slice())});
+        Output.err(e, "failed to make patches dir {f}", .{bun.fmt.quote(args.path.slice())});
         Global.crash();
     }
 
@@ -577,7 +577,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :src s,
                     .err => |e| {
-                        Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
+                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
                         Global.crash();
                     },
                 }

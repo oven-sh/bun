@@ -55,7 +55,7 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
         first_file = false;
 
         // Write path as key
-        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
+        writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
         writer.writeAll(":{\"events\":[") catch return;
 
         // Write array of event types using comptime reflection
@@ -87,7 +87,7 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
                 if (name_opt) |name| {
                     if (!first) writer.writeAll(",") catch return;
                     first = false;
-                    writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
+                    writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
                 }
             }
             writer.writeAll("]") catch return;

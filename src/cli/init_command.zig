@@ -837,7 +837,7 @@ pub const InitCommand = struct {
                     Output.pretty("\nTo get started, run:\n\n    ", .{});
 
                     if (strings.containsAny(" \"'", fields.entry_point)) {
-                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                        Output.pretty("<cyan>bun run {f}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
                         Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }

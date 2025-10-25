@@ -249,7 +249,7 @@ pub const Props = struct {};
 
 pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
-    try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.#body.len(), .{})});
+    try writer.print("Response ({f}) {{\n", .{bun.fmt.size(this.#body.len(), .{})});
 
     {
         formatter.indent += 1;

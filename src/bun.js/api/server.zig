@@ -171,11 +171,11 @@ pub const AnyRoute = union(enum) {
                     switch (bun.sys.existsAtType(bun.FD.cwd(), store_path)) {
                         .result => |file_type| {
                             if (file_type == .directory) {
-                                return global.throwInvalidArguments("Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                                return global.throwInvalidArguments("Bundled file {f} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
                             }
                         },
                         .err => {
-                            return global.throwInvalidArguments("Bundled file {} not found. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                            return global.throwInvalidArguments("Bundled file {f} not found. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
                         },
                     }
                 }
@@ -1761,7 +1761,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         switch (bun.sys.getErrno(@as(i32, -1))) {
                             .SUCCESS => {
                                 error_instance = (jsc.SystemError{
-                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
                                     .code = bun.String.static("EADDRINUSE"),
                                     .syscall = bun.String.static("listen"),
                                 }).toErrorInstance(globalThis);

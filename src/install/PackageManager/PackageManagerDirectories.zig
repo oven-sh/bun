@@ -249,7 +249,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
     var end: []u8 = undefined;
     if (scope.url.hostname.len > 32 or available.len < 64) {
         const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-        end = std.fmt.bufPrint(available, "@@{s}__{any}{}{}", .{
+        end = std.fmt.bufPrint(available, "@@{s}__{f}{f}{f}", .{
             visible_hostname,
             bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)),
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
@@ -297,7 +297,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
         if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{any}+{any}{}{}",
+                "{s}@{d}.{d}.{d}-{f}+{f}{f}{f}",
                 .{
                     name,
                     version.major,
@@ -312,7 +312,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
         }
         return std.fmt.bufPrintZ(
             buf,
-            "{s}@{d}.{d}.{d}-{any}{}{}",
+            "{s}@{d}.{d}.{d}-{f}{f}{f}",
             .{
                 name,
                 version.major,
@@ -327,7 +327,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
     if (version.tag.hasBuild()) {
         return std.fmt.bufPrintZ(
             buf,
-            "{s}@{d}.{d}.{d}+{any}{}{}",
+            "{s}@{d}.{d}.{d}+{f}{f}{f}",
             .{
                 name,
                 version.major,
@@ -350,7 +350,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
 }
 
 pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@T@{any}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "@T@{f}{f}{f}", .{
         bun.fmt.hexIntLower(String.Builder.stringHash(url)),
         CacheVersion.Formatter{ .version_number = CacheVersion.current },
         PatchHashFmt{ .hash = patch_hash },

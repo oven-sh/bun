@@ -2361,7 +2361,7 @@ pub const JSValue = enum(i64) {
     pub fn dump(value: jsc.WebCore.JSValue, globalObject: *jsc.JSGlobalObject) !void {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject };
         defer formatter.deinit();
-        try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
+        try Output.errorWriter().print("{f}\n", .{value.toFmt(globalObject, &formatter)});
         Output.flush();
     }
 

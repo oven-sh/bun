@@ -193,7 +193,7 @@ const State = struct {
 
         const count = history.allocations.count();
         if (count == 0) return;
-        Output.errGeneric("Allocation scope leaked {d} allocations ({})", .{
+        Output.errGeneric("Allocation scope leaked {d} allocations ({f})", .{
             count,
             bun.fmt.size(history.total_memory_allocated, .{}),
         });
@@ -223,7 +223,7 @@ const State = struct {
         }
 
         Output.panic(
-            "Allocation scope leaked {}",
+            "Allocation scope leaked {f}",
             .{bun.fmt.size(history.total_memory_allocated, .{})},
         );
     }

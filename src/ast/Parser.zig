@@ -1037,7 +1037,7 @@ pub const Parser = struct {
                     var notes = ListManaged(logger.Data).init(p.allocator);
 
                     try notes.append(logger.Data{
-                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({f}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
                     });
 
                     if (uses_module_ref) {

@@ -384,7 +384,7 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.isVerbose()) {
             const full_tree_end = timer.read();
             timer.reset();
-            Output.prettyErrorln("Resolved peers [{}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
+            Output.prettyErrorln("Resolved peers [{f}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
         }
 
         const DedupeInfo = struct {
@@ -607,7 +607,7 @@ pub fn installIsolatedPackages(
 
         if (manager.options.log_level.isVerbose()) {
             const dedupe_end = timer.read();
-            Output.prettyErrorln("Created store [{}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
+            Output.prettyErrorln("Created store [{f}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
         }
 
         break :store .{

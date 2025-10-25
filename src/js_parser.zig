@@ -314,7 +314,7 @@ pub const JSXTag = struct {
 pub inline fn generatedSymbolName(name: []const u8) []const u8 {
     comptime {
         const hash = std.hash.Wyhash.hash(0, name);
-        const hash_str = std.fmt.comptimePrint("_{}", .{bun.fmt.truncatedHash32(@intCast(hash))});
+        const hash_str = std.fmt.comptimePrint("_{f}", .{bun.fmt.truncatedHash32(@intCast(hash))});
         return name ++ hash_str;
     }
 }

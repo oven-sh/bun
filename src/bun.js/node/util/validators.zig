@@ -118,14 +118,14 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     if (!value.isAnyInt()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {f}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num = value.asNumber();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if (num < @as(f64, @floatFromInt(min)) or num > @as(f64, @floatFromInt(max))) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {f}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @intFromFloat(num);
 }
@@ -137,7 +137,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     if (!value.isAnyInt()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {f}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num: i64 = value.asInt52();
     const min: i64 = if (greater_than_zero) 1 else 0;
@@ -145,7 +145,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     if (num < min or num > max) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
+        return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {f}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @truncate(@as(u63, @intCast(num)));
 }

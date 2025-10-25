@@ -2039,7 +2039,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                     null,
                     logger.Loc.Empty,
                     this.allocator,
-                    "{s} resolving preload {}",
+                    "{s} resolving preload {f}",
                     .{
                         @errorName(e),
                         bun.fmt.formatJSONStringLatin1(preload),
@@ -2052,7 +2052,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                     null,
                     logger.Loc.Empty,
                     this.allocator,
-                    "preload not found {}",
+                    "preload not found {f}",
                     .{
                         bun.fmt.formatJSONStringLatin1(preload),
                     },
@@ -2964,7 +2964,7 @@ fn printErrorInstance(
             const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
             try writer.print(
                 comptime Output.prettyFmt(
-                    "<r><b>{d} |<r> {}" ++ fmt,
+                    "<r><b>{d} |<r> {f}" ++ fmt,
                     allow_ansi_color,
                 ),
                 .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
@@ -2972,7 +2972,7 @@ fn printErrorInstance(
         } else {
             try writer.print(
                 comptime Output.prettyFmt(
-                    "<r><b>{d} |<r> {}\n",
+                    "<r><b>{d} |<r> {f}\n",
                     allow_ansi_color,
                 ),
                 .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
@@ -3029,7 +3029,7 @@ fn printErrorInstance(
                 const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n" else "\n";
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><b>- |<r> {}" ++ fmt,
+                        "<r><b>- |<r> {f}" ++ fmt,
                         allow_ansi_color,
                     ),
                     .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
@@ -3037,7 +3037,7 @@ fn printErrorInstance(
             } else {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {}\n",
+                        "<r><d>- |<r> {f}\n",
                         allow_ansi_color,
                     ),
                     .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
@@ -3062,7 +3062,7 @@ fn printErrorInstance(
                 const fmt = if (comptime allow_ansi_color) "<r><d> | ... truncated <r>\n\n" else "\n\n";
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}" ++ fmt,
+                        "<r><b>{d} |<r> {f}" ++ fmt,
                         allow_ansi_color,
                     ),
                     .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
@@ -3070,7 +3070,7 @@ fn printErrorInstance(
             } else {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {}\n",
+                        "<r><b>{d} |<r> {f}\n",
                         allow_ansi_color,
                     ),
                     .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
@@ -3206,7 +3206,7 @@ fn printErrorInstance(
             is_first_property = false;
             try writer.splatByteAll(' ', pad_left);
 
-            try writer.print(comptime Output.prettyFmt(" code<r><d>:<r> <green>{}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt(" code<r><d>:<r> <green>{f}<r>\n", allow_ansi_color), .{
                 bun.fmt.quote(code_str),
             });
         }

@@ -316,7 +316,7 @@ pub noinline fn computeChunks(
         return chunks;
     }
 
-    const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
+    const unique_key_item_len = std.fmt.count("{f}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
     var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator(), unique_key_item_len * chunks.len);
     this.unique_key_buf = unique_key_builder.allocatedSlice();
 
@@ -332,9 +332,9 @@ pub noinline fn computeChunks(
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
         // last 8 numbers of the key are the chunk index.
-        chunk.unique_key = unique_key_builder.fmt("{}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+        chunk.unique_key = unique_key_builder.fmt("{f}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
         if (this.unique_key_prefix.len == 0)
-            this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{}", .{bun.fmt.hexIntLower(unique_key)})];
+            this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{f}", .{bun.fmt.hexIntLower(unique_key)})];
 
         if (chunk.entry_point.is_entry_point and
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))

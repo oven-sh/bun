@@ -613,7 +613,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 var remaining = instructions.folder;
                                 while (bun.strings.indexOfChar(remaining, ' ')) |space| {
                                     try writer.print(
-                                        "{}",
+                                        "{f}",
                                         .{bun.fmt.fmtPath(u8, remaining[0..space], .{
                                             .escape_backslashes = true,
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -624,7 +624,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 }
 
                                 try writer.print(
-                                    "{}",
+                                    "{f}",
                                     .{bun.fmt.fmtPath(u8, remaining, .{
                                         .escape_backslashes = true,
                                         .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -648,7 +648,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 },
                                 .fish => {
                                     // Regular quotes will do here.
-                                    try writer.print("fish_add_path {}", .{bun.fmt.quote(instructions.folder)});
+                                    try writer.print("fish_add_path {f}", .{bun.fmt.quote(instructions.folder)});
                                 },
                                 .pwsh => {
                                     try writer.print("$env:PATH += \";{}\"", .{path});
@@ -660,9 +660,9 @@ fn updatePackageJSONAndInstallAndCLI(
                     Output.prettyError("\n", .{});
 
                     Output.warn(
-                        \\To run {}, add the global bin folder to $PATH:
+                        \\To run {f}, add the global bin folder to $PATH:
                         \\
-                        \\<cyan>{}<r>
+                        \\<cyan>{f}<r>
                         \\
                     ,
                         .{

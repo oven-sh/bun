@@ -1750,7 +1750,7 @@ pub const js_bindings = struct {
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
-                writer.writer().print("{}", .{formatter}) catch |err| {
+                writer.writer().print("{f}", .{formatter}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },

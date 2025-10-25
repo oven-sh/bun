@@ -1033,8 +1033,8 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
         defer formatter.deinit();
         switch (message) {
             .version => |version| log("received ipc message: version: {}", .{version}),
-            .data => |jsvalue| log("received ipc message: {}", .{jsvalue.toFmt(&formatter)}),
-            .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
+            .data => |jsvalue| log("received ipc message: {f}", .{jsvalue.toFmt(&formatter)}),
+            .internal => |jsvalue| log("received ipc message: internal: {f}", .{jsvalue.toFmt(&formatter)}),
         }
     }
     var internal_command: ?IPCCommand = null;

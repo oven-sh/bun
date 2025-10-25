@@ -284,7 +284,7 @@ pub const Stringifier = struct {
                     const name_and_version, const patch_path = value.*;
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ bun.fmt.formatJSONStringUTF8(name_and_version, .{}), patch_path.fmtJson(buf, .{}) });
                 }
@@ -420,7 +420,7 @@ pub const Stringifier = struct {
 
                     try writer.writeByte('"');
                     // relative_path is empty string for root resolutions
-                    try writer.print("{}", .{
+                    try writer.print("{f}", .{
                         bun.fmt.formatJSONStringUTF8(relative_path, .{ .quote = false }),
                     });
 
@@ -431,7 +431,7 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
                     const dep_name = dep.name.slice(buf);
 
-                    try writer.print("{}\": ", .{
+                    try writer.print("{f}\": ", .{
                         bun.fmt.formatJSONStringUTF8(dep_name, .{ .quote = false }),
                     });
 
@@ -706,7 +706,7 @@ pub const Stringifier = struct {
                     try writer.writeAll(", ");
                 }
 
-                try writer.print("{}: {}", .{
+                try writer.print("{f}: {f}", .{
                     bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
                     bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
@@ -731,7 +731,7 @@ pub const Stringifier = struct {
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\{s}{}{s}
+                    \\{s}{f}{s}
                 , .{
                     if (i != 0) " " else "",
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
@@ -830,7 +830,7 @@ pub const Stringifier = struct {
             if (root_name.len > 0) {
                 try writer.writeByte('\n');
                 try incIndent(writer, indent);
-                try writer.print("\"name\": {}", .{
+                try writer.print("\"name\": {f}", .{
                     bun.fmt.formatJSONStringUTF8(root_name, .{}),
                 });
 
@@ -838,19 +838,19 @@ pub const Stringifier = struct {
                 any = true;
             }
         } else {
-            try writer.print("{}: {{", .{
+            try writer.print("{f}: {{", .{
                 bun.fmt.formatJSONStringUTF8(res.slice(buf), .{}),
             });
             try writer.writeByte('\n');
             try incIndent(writer, indent);
-            try writer.print("\"name\": {}", .{
+            try writer.print("\"name\": {f}", .{
                 bun.fmt.formatJSONStringUTF8(pkg_names[pkg_id].slice(buf), .{}),
             });
 
             if (workspace_versions.get(pkg_name_hashes[pkg_id])) |version| {
                 try writer.writeAll(",\n");
                 try writeIndent(writer, indent);
-                try writer.print("\"version\": \"{}\"", .{
+                try writer.print("\"version\": \"{f}\"", .{
                     version.fmt(buf),
                 });
             }
@@ -905,7 +905,7 @@ pub const Stringifier = struct {
                 const name = dep.name.slice(buf);
                 const version = dep.version.literal.slice(buf);
 
-                try writer.print("{}: {}", .{
+                try writer.print("{f}: {f}", .{
                     bun.fmt.formatJSONStringUTF8(name, .{}),
                     bun.fmt.formatJSONStringUTF8(version, .{}),
                 });
@@ -940,7 +940,7 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\{},
+                    \\{f},
                     \\
                 , .{
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),

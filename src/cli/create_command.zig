@@ -493,11 +493,11 @@ pub const CreateCommand = struct {
                                             }
 
                                             if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                                Output.err(err, "failed to copy file {}", .{
+                                                Output.err(err, "failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             } else {
-                                                Output.errGeneric("failed to copy file {}", .{
+                                                Output.errGeneric("failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             }
@@ -520,7 +520,7 @@ pub const CreateCommand = struct {
                                 break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
                                     node_.end();
                                     progress_.refresh();
-                                    Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     Global.crash();
                                 };
                             });
@@ -541,7 +541,7 @@ pub const CreateCommand = struct {
                             CopyFile.copyFile(infile, outfile).unwrap() catch |err| {
                                 node_.end();
                                 progress_.refresh();
-                                Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                 Global.crash();
                             };
                         }

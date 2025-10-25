@@ -441,7 +441,7 @@ pub fn generateChunksInParallel(
                             const bytecode, const cached_bytecode = result;
                             const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                             defer source_provider_url_str.deinit();
-                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                            debug("Bytecode cache generated {s}: {f}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 

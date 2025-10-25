@@ -3019,7 +3019,7 @@ pub fn handleParseTaskFailure(
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    debug.log("handleParseTaskFailure({}, .{s}, {}, {d} messages)", .{
+    debug.log("handleParseTaskFailure({}, .{s}, {f}, {d} messages)", .{
         err,
         @tagName(graph),
         bun.fmt.quote(abs_path),
@@ -3377,7 +3377,7 @@ fn printMemoryLine(dev: *DevServer) void {
     }
     if (!debug.isVisible()) return;
     const stats = dev.allocation_scope.stats();
-    Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
+    Output.prettyErrorln("<d>DevServer tracked {f}, measured: {} ({f}), process: {f}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
         stats.num_allocations,
         bun.fmt.size(stats.total_memory_allocated, .{}),
@@ -3565,7 +3565,7 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
     const bufw = &file_writer.interface;
 
     if (!bun.strings.hasSuffixComptime(rel_path, ".map")) {
-        try bufw.print("// {s} bundled for {s}\n", .{
+        try bufw.print("// {f} bundled for {s}\n", .{
             bun.fmt.quote(rel_path),
             @tagName(graph),
         });
@@ -4084,7 +4084,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
 pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     if (err.path.len > 0) {
-        Output.err(err, "failed to watch {} for hot-reloading", .{bun.fmt.quote(err.path)});
+        Output.err(err, "failed to watch {f} for hot-reloading", .{bun.fmt.quote(err.path)});
     } else {
         Output.err(err, "failed to watch files for hot-reloading", .{});
     }
@@ -4228,7 +4228,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll("\"), c => c.charCodeAt(0));\n");
     try file.writeAll(end);
 
-    Output.note("Dumped incremental bundler graph to {}", .{bun.fmt.quote(filepath)});
+    Output.note("Dumped incremental bundler graph to {f}", .{bun.fmt.quote(filepath)});
 }
 
 const RouteIndexAndRecurseFlag = packed struct(u32) {

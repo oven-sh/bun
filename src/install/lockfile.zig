@@ -799,7 +799,7 @@ pub fn cleanWithLogger(
     }
 
     if (log_level.isVerbose()) {
-        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
+        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {f}\n", .{
             old.packages.len,
             new.packages.len,
             bun.fmt.fmtDurationOneDecimal(timer.read()),
@@ -1118,7 +1118,7 @@ pub const Printer = struct {
                 Global.crash();
             },
             .not_found => {
-                Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
+                Output.prettyErrorln("<r><red>lockfile not found:<r> {f}", .{
                     bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();

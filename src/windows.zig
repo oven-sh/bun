@@ -3007,7 +3007,7 @@ pub const CreateHardLinkW = struct {
         const rc = run(newFileName, existingFileName, securityAttributes);
         if (comptime Environment.isDebug)
             bun.sys.syslog(
-                "CreateHardLinkW({}, {}) = {d}",
+                "CreateHardLinkW({f}, {f}) = {d}",
                 .{
                     bun.fmt.fmtOSPath(std.mem.span(newFileName), .{}),
                     bun.fmt.fmtOSPath(std.mem.span(existingFileName), .{}),
@@ -3274,7 +3274,7 @@ pub fn userUniqueId() u32 {
         return 0;
     }
     const name = buf[0..size];
-    bun.Output.scoped(.windowsUserUniqueId, .visible)("username: {}", .{bun.fmt.utf16(name)});
+    bun.Output.scoped(.windowsUserUniqueId, .visible)("username: {f}", .{bun.fmt.utf16(name)});
     return bun.hash32(std.mem.sliceAsBytes(name));
 }
 
@@ -3418,7 +3418,7 @@ pub fn GetFinalPathNameByHandle(
 
     var ret = out_buffer[0..@intCast(return_length)];
 
-    bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
+    bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {f}", .{ hFile, bun.fmt.utf16(ret) });
 
     if (bun.strings.hasPrefixComptimeType(u16, ret, long_path_prefix)) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
@@ -3534,7 +3534,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sy
         null,
         0,
     );
-    bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+    bun.sys.syslog("NtCreateFile({f}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     if (bun.sys.Maybe(void).errnoSys(rc, .open)) |err| {
         return err;
     }
@@ -3560,7 +3560,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sy
         @sizeOf(windows.FILE_DISPOSITION_INFORMATION_EX),
         .FileDispositionInformationEx,
     );
-    bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+    bun.sys.syslog("NtSetInformationFile({f}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     switch (rc) {
         .SUCCESS => return .success,
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
@@ -3582,7 +3582,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sy
             @sizeOf(windows.FILE_DISPOSITION_INFORMATION),
             .FileDispositionInformation,
         );
-        bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
+        bun.sys.syslog("NtSetInformationFile({f}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     }
     if (bun.sys.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
         return err;
@@ -4056,7 +4056,7 @@ pub fn moveOpenedFileAt(
         @intCast(struct_len), // already checked for error.NameTooLong
         .FileRenameInformationEx,
     );
-    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+    log("moveOpenedFileAt({f} ->> {f} '{f}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
 
     if (bun.Environment.isDebug) {
         if (rc == .ACCESS_DENIED) {

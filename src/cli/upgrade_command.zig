@@ -561,7 +561,7 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{f}\" \"{f}\" -Force",
                         .{
                             bun.fmt.escapePowershell(tmpname),
                             bun.fmt.escapePowershell(tmpdir_path),

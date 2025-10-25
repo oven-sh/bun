@@ -1211,7 +1211,7 @@ pub const String = struct {
             if (s.isUTF8()) {
                 try writer.print("\"{s}\"", .{s.data});
             } else {
-                try writer.print("\"{}\"", .{bun.fmt.utf16(s.slice16())});
+                try writer.print("\"{f}\"", .{bun.fmt.utf16(s.slice16())});
             }
             try writer.writeAll(")");
         } else {
@@ -1221,7 +1221,7 @@ pub const String = struct {
                 if (part.isUTF8()) {
                     try writer.print("\"{s}\"", .{part.data});
                 } else {
-                    try writer.print("\"{}\"", .{bun.fmt.utf16(part.slice16())});
+                    try writer.print("\"{f}\"", .{bun.fmt.utf16(part.slice16())});
                 }
                 it = part.next;
                 if (it != null) try writer.writeAll(" ");

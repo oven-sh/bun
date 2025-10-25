@@ -767,7 +767,7 @@ fn buildRequestBody(
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++
-            "Host: {any}\r\n" ++
+            "Host: {f}\r\n" ++
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++

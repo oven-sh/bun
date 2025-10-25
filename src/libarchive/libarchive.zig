@@ -402,7 +402,7 @@ pub const Archiver = struct {
                     const path_slice: bun.OSPathSlice = path.ptr[0..path.len];
 
                     if (options.log) {
-                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
+                        Output.prettyln(" {f}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
                     count += 1;
@@ -556,7 +556,7 @@ pub const Archiver = struct {
                                         .ok => break :possibly_retry,
                                         .retry => {
                                             if (options.log) {
-                                                Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
+                                                Output.err("libarchive error", "extracting {f}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
                                                     5,
@@ -566,7 +566,7 @@ pub const Archiver = struct {
                                         else => {
                                             if (options.log) {
                                                 const archive_error = bun.sliceTo(lib.Archive.errorString(@ptrCast(archive)), 0);
-                                                Output.err("libarchive error", "extracting {}: {s}", .{
+                                                Output.err("libarchive error", "extracting {f}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,
                                                 });

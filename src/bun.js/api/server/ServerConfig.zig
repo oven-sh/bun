@@ -543,11 +543,11 @@ pub fn fromJS(
                 }
 
                 if (path.len == 0 or (path[0] != '/')) {
-                    return global.throwInvalidArguments("Invalid route {}. Path must start with '/'", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Path must start with '/'", .{bun.fmt.quote(path)});
                 }
 
                 if (!is_ascii) {
-                    return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                 }
 
                 if (value == .false) {

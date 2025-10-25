@@ -793,7 +793,7 @@ pub const RunCommand = struct {
         const root_dir_info = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             ctx.log.print(Output.errorWriter()) catch {};
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {f}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
@@ -1693,7 +1693,7 @@ pub const BunXFastPath = struct {
         bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
-        debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
+        debug("Attempting to find and load bunx file: '{f}'", .{bun.fmt.utf16(path_to_use)});
         if (Environment.allow_assert) {
             bun.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
         }
@@ -1730,8 +1730,8 @@ pub const BunXFastPath = struct {
 
         if (Environment.isDebug) {
             debug("run_ctx.handle: '{}'", .{bun.FD.fromSystem(handle)});
-            debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
-            debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
+            debug("run_ctx.base_path: '{f}'", .{bun.fmt.utf16(run_ctx.base_path)});
+            debug("run_ctx.arguments: '{f}'", .{bun.fmt.utf16(run_ctx.arguments)});
             debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
         }
 

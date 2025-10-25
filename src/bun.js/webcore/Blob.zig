@@ -665,7 +665,7 @@ pub fn writeFormatForSize(is_jdom_file: bool, size: usize, writer: anytype, comp
         try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
     }
     try writer.print(
-        comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
+        comptime Output.prettyFmt(" (<yellow>{f}<r>)", enable_ansi_colors),
         .{
             bun.fmt.size(size, .{}),
         },

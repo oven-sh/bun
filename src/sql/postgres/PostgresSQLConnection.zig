@@ -213,13 +213,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) void {
 
     switch (this.status) {
         .connected => {
-            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
 }
@@ -228,7 +228,7 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return;
-    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
 }
 
 fn start(this: *PostgresSQLConnection) void {

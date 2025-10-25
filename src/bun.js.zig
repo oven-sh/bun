@@ -107,17 +107,17 @@ pub const Run = struct {
             const url = bun.URL.parse(url_str);
 
             if (!url.isHTTP() and !url.isHTTPS()) {
-                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (url.hostname.len == 0) {
-                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a hostname: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (!url.hasValidPort()) {
-                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a valid port: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 

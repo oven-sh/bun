@@ -126,7 +126,7 @@ const State = struct {
                 else => {
                     self.showTrace();
                     std.debug.panic(
-                        "race condition: thread {} tried to modify data being read by {}",
+                        "race condition: thread {} tried to modify data being read by {f}",
                         .{ current_id, OptionalThreadId.init(owner_id) },
                     );
                 },
@@ -135,7 +135,7 @@ const State = struct {
         } else {
             self.showTrace();
             std.debug.panic(
-                "race condition: thread {} tried to modify data being accessed by {}",
+                "race condition: thread {} tried to modify data being accessed by {f}",
                 .{ current_id, OptionalThreadId.init(owner_id) },
             );
         }

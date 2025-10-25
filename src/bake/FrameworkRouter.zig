@@ -1220,7 +1220,7 @@ pub const JSFrameworkRouter = struct {
                 try arr.putIndex(
                     global,
                     @intCast(i),
-                    global.createErrorInstance("Invalid route {}: {s}", .{
+                    global.createErrorInstance("Invalid route {f}: {s}", .{
                         bun.fmt.quote(item.rel_path),
                         item.log.msg.slice(),
                     }),

@@ -299,7 +299,7 @@ pub const Data = struct {
                         line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
+                    try to.print("{f}\n", .{bun.fmt.fmtJavaScript(line_text, .{
                         .enable_colors = enable_ansi_colors,
                         .redact_sensitive_information = redact_sensitive_information,
                     })});

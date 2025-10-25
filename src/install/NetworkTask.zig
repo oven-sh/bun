@@ -112,7 +112,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Failed to join registry {} and package {} URLs",
+                    "Failed to join registry {f} and package {f} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 ) catch |err| bun.handleOom(err);
             } else {
@@ -120,7 +120,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Failed to join registry {} and package {} URLs",
+                    "Failed to join registry {f} and package {f} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 ) catch |err| bun.handleOom(err);
             }
@@ -275,7 +275,7 @@ pub fn forTarball(
 
     if (!(strings.hasPrefixComptime(this.url_buf, "https://") or strings.hasPrefixComptime(this.url_buf, "http://"))) {
         const msg = .{
-            .fmt = "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
+            .fmt = "Expected tarball URL to start with https:// or http://, got {f} while fetching package {f}",
             .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
         };
 

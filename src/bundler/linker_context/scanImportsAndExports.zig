@@ -424,7 +424,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 var count: usize = 0;
                 if (is_entry_point and output_format == .esm) {
                     for (aliases) |alias| {
-                        count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
+                        count += std.fmt.count("export_{f}", .{bun.fmt.fmtIdentifier(alias)});
                     }
                 }
 
@@ -461,7 +461,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const copies = try this.allocator().alloc(Ref, aliases.len);
 
                 for (aliases, copies) |alias, *copy| {
-                    const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
+                    const original_name = builder.fmt("export_{f}", .{bun.fmt.fmtIdentifier(alias)});
                     copy.* = this.graph.generateNewSymbol(source_index, .other, original_name);
                 }
                 this.graph.meta.items(.cjs_export_copies)[id] = copies;
@@ -1131,8 +1131,8 @@ fn validateComposesFromProperties(
                         .{ .text = std.fmt.allocPrint(
                             v.allocator,
                             "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
-                                "The value of the {} property for {} may change unpredictably as the code is edited. " ++
-                                "Make sure that all definitions of {} for {} are in a single file.",
+                                "The value of the {f} property for {f} may change unpredictably as the code is edited. " ++
+                                "Make sure that all definitions of {f} for {f} are in a single file.",
                             .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
                         ) catch |err| bun.handleOom(err) },
                     },

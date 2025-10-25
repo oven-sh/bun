@@ -412,10 +412,10 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     .remote_tarball => try writer.writeAll(value.remote_tarball.slice(buf)),
                     .git => try value.git.formatAs("git+", buf, writer),
                     .github => try value.github.formatAs("github:", buf, writer),
-                    .workspace => try writer.print("workspace:{s}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
+                    .workspace => try writer.print("workspace:{f}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
                         .path_sep = formatter.path_sep,
                     })}),
-                    .symlink => try writer.print("link:{s}", .{bun.fmt.fmtPath(u8, value.symlink.slice(buf), .{
+                    .symlink => try writer.print("link:{f}", .{bun.fmt.fmtPath(u8, value.symlink.slice(buf), .{
                         .path_sep = formatter.path_sep,
                     })}),
                     .single_file_module => try writer.print("module:{s}", .{value.single_file_module.slice(buf)}),

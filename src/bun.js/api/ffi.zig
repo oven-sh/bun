@@ -483,7 +483,7 @@ pub const FFI = struct {
                 const duped = bun.handleOom(bun.default_allocator.dupeZ(u8, symbol));
                 defer bun.default_allocator.free(duped);
                 function.symbol_from_dynamic_library = state.getSymbol(duped) orelse {
-                    return globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source.first() });
+                    return globalThis.throw("{f} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source.first() });
                 };
             }
 

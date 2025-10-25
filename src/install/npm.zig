@@ -175,7 +175,7 @@ pub fn responseError(
         break :message @"error";
     };
 
-    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
+    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {f}\n", .{
         res.status_code,
         if (res.status.len > 0) " " else "",
         res.status,
@@ -1241,9 +1241,9 @@ pub const PackageManifest = struct {
         fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             return if (scope.url_hash == Registry.default_url_hash)
-                try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
+                try std.fmt.bufPrintZ(buf, "{f}.npm", .{file_id_hex_fmt})
             else
-                try std.fmt.bufPrintZ(buf, "{any}-{any}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
+                try std.fmt.bufPrintZ(buf, "{f}-{f}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
         }
 
         pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -1255,7 +1255,7 @@ pub const PackageManifest = struct {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             const hex_timestamp: usize = @intCast(@max(std.time.milliTimestamp(), 0));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
-            try dest_path_stream_writer.print("{any}.npm-{any}", .{ file_id_hex_fmt, hex_timestamp_fmt });
+            try dest_path_stream_writer.print("{f}.npm-{f}", .{ file_id_hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             const out_path = try manifestFileName(&out_path_buf, file_id, scope);

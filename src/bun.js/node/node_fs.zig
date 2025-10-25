@@ -5889,7 +5889,7 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
+            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {f}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((jsc.SystemError{
                 .message = bun.String.init(buf),
@@ -6544,7 +6544,7 @@ pub const NodeFS = struct {
 
 fn throwInvalidFdError(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
     if (value.isNumber()) {
-        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
+        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {f}", .{bun.fmt.double(value.asNumber())}).throw();
     }
     return global.throwInvalidArgumentTypeValue("fd", "number", value);
 }

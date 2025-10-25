@@ -42,7 +42,7 @@ pub fn replacePath(
     assert(assets.owner().magic == .valid);
     defer assert(assets.files.count() == assets.refs.items.len);
     const alloc = assets.owner().allocator();
-    debug.log("replacePath {} {} - {s}/{s} ({s})", .{
+    debug.log("replacePath {f} {} - {s}/{s} ({s})", .{
         bun.fmt.quote(abs_path),
         content_hash,
         DevServer.asset_prefix,

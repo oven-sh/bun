@@ -94,7 +94,7 @@ fn insert(
     // TODO: watch the parent dir too.
     const dev = store.owner();
 
-    debug.log("DirectoryWatchStore.insert({}, {}, {})", .{
+    debug.log("DirectoryWatchStore.insert({f}, {f}, {f})", .{
         bun.fmt.quote(dir_name_to_watch),
         bun.fmt.quote(file_path),
         bun.fmt.quote(specifier),

@@ -285,7 +285,7 @@ pub fn crashHandler(
                             var name: std.os.windows.PWSTR = undefined;
                             const result = bun.windows.GetThreadDescription(bun.windows.GetCurrentThread(), &name);
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
-                                writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
+                                writer.print("({f})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
                                 writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
@@ -552,7 +552,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     Output.prettyError(
                         \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
                         \\
-                        \\<d>Current limit: {d}<r>
+                        \\<d>Current limit: {f}<r>
                         \\
                         \\To fix this, try running:
                         \\
@@ -571,7 +571,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         \\
                         \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
                         \\
-                        \\<d>Current limit: {d}<r>
+                        \\<d>Current limit: {f}<r>
                         \\
                         \\To fix this, try running:
                         \\
@@ -617,7 +617,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         \\
                         \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
                         \\
-                        \\<d>Current limit: {d}<r>
+                        \\<d>Current limit: {f}<r>
                         \\
                         \\To fix this, try running:
                         \\
@@ -637,7 +637,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         \\
                         \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
                         \\
-                        \\<d>Current limit: {d}<r>
+                        \\<d>Current limit: {f}<r>
                         \\
                         \\To fix this, try running:
                         \\
@@ -1754,7 +1754,7 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
 
     const stderr = std.fs.File.stderr().writer();
     const result = child.spawnAndWait() catch |err| {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
+        stderr.print("Failed to invoke command: {f}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         if (bun.Environment.isWindows) {
             stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch {};
         }
@@ -1762,7 +1762,7 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
     };
 
     if (result != .Exited or result.Exited != 0) {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
+        stderr.print("Failed to invoke command: {f}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
     }
 }
 

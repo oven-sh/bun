@@ -833,7 +833,7 @@ pub const JestPrettyFormat = struct {
                             this.addForNewLine(key.len + 2);
 
                             writer.print(
-                                comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r><green>{f}<r><d>:<r> ", enable_ansi_colors),
                                 .{bun.fmt.formatJSONStringLatin1(key.slice())},
                             );
                         }

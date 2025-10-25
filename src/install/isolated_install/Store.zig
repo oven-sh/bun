@@ -172,7 +172,7 @@ pub const Store = struct {
                 }
 
                 if (peer_hash != .none) {
-                    try writer.print("+{}", .{
+                    try writer.print("+{f}", .{
                         bun.fmt.hexIntLower(peer_hash.cast()),
                     });
                 }

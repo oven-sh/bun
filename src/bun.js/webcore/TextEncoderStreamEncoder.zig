@@ -101,7 +101,7 @@ fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, 
 }
 
 fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
-    log("encodeUTF16: \"{}\"", .{bun.fmt.utf16(input)});
+    log("encodeUTF16: \"{f}\"", .{bun.fmt.utf16(input)});
 
     if (input.len == 0) return JSUint8Array.createEmpty(globalObject);
 

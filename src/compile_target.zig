@@ -420,7 +420,7 @@ pub fn from(input_: []const u8) CompileTarget {
 
                 if (unsupported_token) |token| {
                     Output.errGeneric(
-                        \\Unsupported target {} in "bun{s}"
+                        \\Unsupported target {f} in "bun{s}"
                         \\To see the supported targets:
                         \\  https://bun.com/docs/bundler/executables
                     , .{

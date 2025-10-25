@@ -401,7 +401,7 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
         std.posix.AF.INET6 => {
             var stack = std.heap.stackFallback(512, default_allocator);
             const allocator = stack.get();
-            var out = try std.fmt.allocPrint(allocator, "{any}", .{address.*});
+            var out = try std.fmt.allocPrint(allocator, "{f}", .{address.*});
             defer allocator.free(out);
             // TODO: this is a hack, fix it
             // This removes [.*]:port

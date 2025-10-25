@@ -212,7 +212,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     null,
                     logger.Loc.Empty,
                     bun.default_allocator,
-                    "{s} decompressing \"{s}\" to \"{}\"",
+                    "{s} decompressing \"{s}\" to \"{f}\"",
                     .{ @errorName(err), name, bun.fmt.fmtPath(u8, tmpname, .{}) },
                 ) catch unreachable;
                 return error.InstallFailed;
@@ -222,7 +222,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         if (PackageManager.verbose_install) {
             const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {D})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), elapsed });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {f} tgz file in {D})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), elapsed });
         }
 
         switch (this.resolution.tag) {

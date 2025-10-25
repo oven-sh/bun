@@ -1610,7 +1610,7 @@ pub const Formatter = struct {
                                 var buf: [124]u8 = undefined;
                                 const formatted = bun.fmt.FormatDouble.dtoa(&buf, converted);
                                 this.addForNewLine(formatted.len);
-                                writer.print("{s}", .{formatted});
+                                writer.print("{f}", .{formatted});
                             }
                         },
 
@@ -2002,7 +2002,7 @@ pub const Formatter = struct {
                         this.addForNewLine(key.len + 2);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r><green>{f}<r><d>:<r> ", enable_ansi_colors),
                             .{bun.fmt.formatJSONStringLatin1(key.slice())},
                         );
                     }
@@ -2262,7 +2262,7 @@ pub const Formatter = struct {
                     var buf: [124]u8 = undefined;
                     const formatted = bun.fmt.FormatDouble.dtoaWithNegativeZero(&buf, num);
                     this.addForNewLine(formatted.len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{formatted});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{f}<r>", enable_ansi_colors), .{formatted});
                 }
             },
             .Undefined => {
@@ -3510,10 +3510,14 @@ pub const Formatter = struct {
     fn writeTypedArray(this: *ConsoleObject.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
         const fmt_ = if (Number == i64 or Number == u64)
             "<r><yellow>{d}n<r>"
+        else if (@typeInfo(Number) == .float)
+            "<r><yellow>{f}<r>"
         else
             "<r><yellow>{d}<r>";
         const more = if (Number == i64 or Number == u64)
             "<r><d>n, ... {d} more<r>"
+        else if (@typeInfo(Number) == .float)
+            "<r><d>, ... {f} more<r>"
         else
             "<r><d>, ... {d} more<r>";
 

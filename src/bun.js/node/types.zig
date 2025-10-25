@@ -781,7 +781,7 @@ pub const Valid = struct {
 
     pub fn pathNullBytes(slice: []const u8, global: *jsc.JSGlobalObject) bun.JSError!void {
         if (bun.strings.indexOfChar(slice, 0) != null) {
-            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {f}", .{bun.fmt.quote(slice)}).throw();
         }
     }
 };
@@ -850,7 +850,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.jsc.ConsoleObject.Formatter{ .globalThis = ctx };
             defer formatter.deinit();
-            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {f}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 

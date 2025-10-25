@@ -245,7 +245,7 @@ pub const MacroEntryPoint = struct {
         const hash = hasher.final();
         const fmt = bun.fmt.hexIntLower(hash);
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{f}.js", .{fmt}) catch unreachable;
         len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);

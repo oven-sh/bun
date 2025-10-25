@@ -68,7 +68,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     if (array.isUndefinedOrNull() or !array.isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return globalThis.throw("Expected array, got {}", .{array.toFmt(&formatter)});
+        return globalThis.throw("Expected array, got {f}", .{array.toFmt(&formatter)});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });

@@ -160,7 +160,7 @@ pub const String = extern struct {
         };
 
         pub fn format(formatter: JsonFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+            try writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
         }
     };
 

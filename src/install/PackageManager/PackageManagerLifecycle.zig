@@ -37,7 +37,7 @@ pub const LifecycleScriptTimeLog = struct {
             };
 
             // extra \n will print a blank line after this one
-            Output.warn("{s}'s {s} script took {}\n\n", .{
+            Output.warn("{s}'s {s} script took {f}\n\n", .{
                 longest.package_name,
                 Lockfile.Scripts.names[longest.script_id],
                 bun.fmt.fmtDurationOneDecimal(longest.duration),
@@ -193,12 +193,12 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
             const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
 
             if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                Output.warn("{s}'s postinstall cost you {}\n", .{
+                Output.warn("{s}'s postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });
             } else {
-                Output.warn("{s}' postinstall cost you {}\n", .{
+                Output.warn("{s}' postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });

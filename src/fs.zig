@@ -726,7 +726,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
+                    debug("moveFileExW({f}, {f})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {

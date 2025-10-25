@@ -529,8 +529,8 @@ pub const Installer = struct {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to hardlink package folder
                                                     \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -588,8 +588,8 @@ pub const Installer = struct {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to copy package
                                                     \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -635,7 +635,7 @@ pub const Installer = struct {
 
                             if (installer.manager.options.log_level.isVerbose()) {
                                 bun.Output.prettyErrorln(
-                                    \\Cloning {} to {}
+                                    \\Cloning {f} to {f}
                                 ,
                                     .{
                                         bun.fmt.fmtOSPath(pkg_cache_dir_subpath.sliceZ(), .{ .path_sep = .auto }),
@@ -714,7 +714,7 @@ pub const Installer = struct {
                                             \\<red><b>error<r><d>:<r>Failed to hardlink package
                                             \\{}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -777,7 +777,7 @@ pub const Installer = struct {
                                             \\<red><b>error<r><d>:<r>Failed to copy package
                                             \\{}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{

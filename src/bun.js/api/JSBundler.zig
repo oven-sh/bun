@@ -1471,7 +1471,7 @@ pub const BuildArtifact = struct {
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1552,7 +1552,7 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        "<r>hash<r>: <green>\"{f}\"<r>",
                         enable_ansi_colors,
                     ),
                     .{bun.fmt.truncatedHash32(this.hash)},

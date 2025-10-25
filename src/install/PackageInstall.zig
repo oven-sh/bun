@@ -638,9 +638,9 @@ pub const PackageInstall = struct {
                                     }
 
                                     if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                        Output.prettyError("<r><red>{s}<r>: copying file {f}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                     } else {
-                                        Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                        Output.prettyError("<r><red>error<r> copying file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     }
 
                                     Global.crash();
@@ -667,7 +667,7 @@ pub const PackageInstall = struct {
                                     progress.refresh();
                                 }
 
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                Output.prettyErrorln("<r><red>{s}<r>: copying file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                 Global.crash();
                             };
                         };
@@ -684,7 +684,7 @@ pub const PackageInstall = struct {
                                 progress.refresh();
                             }
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Output.prettyError("<r><red>{s}<r>: copying file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     }
@@ -806,7 +806,7 @@ pub const PackageInstall = struct {
                     // Race condition: this shouldn't happen
                     if (comptime Environment.isDebug)
                         debug(
-                            "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
+                            "CreateHardLinkW returned EEXIST, this shouldn't happen: {f}",
                             .{bun.fmt.fmtPath(u16, dest, .{})},
                         );
                     _ = bun.windows.DeleteFileW(dest.ptr);
@@ -838,7 +838,7 @@ pub const PackageInstall = struct {
                 }.get();
 
                 if (once_log) {
-                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {f} -> {f}\n", .{
                         bun.fmt.fmtOSPath(src, .{}),
                         bun.fmt.fmtOSPath(dest, .{}),
                     });
@@ -1051,7 +1051,7 @@ pub const PackageInstall = struct {
                                             }.get();
 
                                             if (once_log) {
-                                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {f} -> {f}\n", .{
                                                     bun.fmt.fmtOSPath(src, .{}),
                                                     bun.fmt.fmtOSPath(dest, .{}),
                                                 });

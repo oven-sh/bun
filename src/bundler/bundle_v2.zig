@@ -431,7 +431,7 @@ pub const BundleV2 = struct {
             const targets: []options.Target = this.graph.ast.items(.target);
             for (visitor.reachable.items) |idx| {
                 const source = sources[idx.get()];
-                DebugLog.log("reachable file: #{d} {} ({s}) target=.{s}", .{
+                DebugLog.log("reachable file: #{d} {f} ({s}) target=.{s}", .{
                     source.index.get(),
                     bun.fmt.quote(source.path.pretty),
                     source.path.text,
@@ -1214,20 +1214,20 @@ pub const BundleV2 = struct {
                 if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
 
                 const client_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                     }),
                 });
                 const ssr_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         ssr_index,
                     }),
                 });
 
                 for (keys, client_manifest_items) |export_name_string, *client_item| {
-                    const server_key_string = try std.fmt.allocPrint(alloc, "{}S{d:0>8}#{s}", .{
+                    const server_key_string = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}#{s}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                         export_name_string,
@@ -2285,7 +2285,7 @@ pub const BundleV2 = struct {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {f} in namespace {f}", .{
                     bun.fmt.quote(source.path.pretty),
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
@@ -2421,7 +2421,7 @@ pub const BundleV2 = struct {
                 //
                 // We have no way of loading non-files.
                 if (resolve.import_record.kind == .entry_point_build) {
-                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {f} in namespace {f}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),
                     }) catch {};
@@ -2431,7 +2431,7 @@ pub const BundleV2 = struct {
                         source,
                         resolve.import_record.range,
                         bun.default_allocator,
-                        "Module not found {} in namespace {}",
+                        "Module not found {f} in namespace {f}",
                         .{
                             bun.fmt.quote(resolve.import_record.specifier),
                             bun.fmt.quote(resolve.import_record.namespace),
@@ -3514,7 +3514,7 @@ pub const BundleV2 = struct {
         var js_parser_options = bun.js_parser.Parser.Options.init(this.transpilerForTarget(target).options.jsx, .html);
         js_parser_options.bundle = true;
 
-        const unique_key = try std.fmt.allocPrint(this.allocator(), "{any}H{d:0>8}", .{
+        const unique_key = try std.fmt.allocPrint(this.allocator(), "{f}H{d:0>8}", .{
             bun.fmt.hexIntLower(this.unique_key),
             graph.html_imports.server_source_indices.len,
         });
@@ -4443,7 +4443,7 @@ pub fn generateUniqueKey() u64 {
     // with a number forces that optimization off.
     if (Environment.isDebug) {
         var buf: [16]u8 = undefined;
-        const hex = std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(key)}) catch
+        const hex = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.hexIntLower(key)}) catch
             unreachable;
         switch (hex[0]) {
             '0'...'9' => {},

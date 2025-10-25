@@ -549,10 +549,10 @@ const JSONBuilder = struct {
             if (dep_id == invalid_dependency_id) {
                 try writer.print(
                     \\  {{
-                    \\    "name": {},
+                    \\    "name": {f},
                     \\    "version": "{s}",
                     \\    "requestedRange": "{s}",
-                    \\    "tarball": {}
+                    \\    "tarball": {f}
                     \\  }}
                 , .{
                     bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
@@ -564,10 +564,10 @@ const JSONBuilder = struct {
                 const dep_version = this.manager.lockfile.buffers.dependencies.items[dep_id].version;
                 try writer.print(
                     \\  {{
-                    \\    "name": {},
+                    \\    "name": {f},
                     \\    "version": "{s}",
-                    \\    "requestedRange": {},
-                    \\    "tarball": {}
+                    \\    "requestedRange": {f},
+                    \\    "tarball": {f}
                     \\  }}
                 , .{
                     bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),

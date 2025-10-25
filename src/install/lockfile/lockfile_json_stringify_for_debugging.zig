@@ -199,7 +199,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             );
 
             try w.objectField("path");
-            try w.print("\"{}\"", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
+            try w.print("\"{f}\"", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
 
             try w.objectField("depth");
             try w.write(depth);

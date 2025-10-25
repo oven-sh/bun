@@ -372,7 +372,7 @@ pub const Route = struct {
                         var hashbuf: [64]u8 = undefined;
                         const etag_str = std.fmt.bufPrint(
                             &hashbuf,
-                            "{}",
+                            "{f}",
                             .{bun.fmt.hexIntLower(output_file.hash)},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => unreachable,

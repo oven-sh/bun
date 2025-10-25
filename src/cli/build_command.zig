@@ -176,13 +176,13 @@ pub const BuildCommand = struct {
             };
 
             var dir = bun.FD.fromStdDir(bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> opening root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             });
             defer dir.close();
 
             break :brk1 dir.getFdPath(&src_root_dir_buf) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
         };
@@ -378,7 +378,7 @@ pub const BuildCommand = struct {
                 std.fs.cwd()
             else
                 std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                    Output.err(err, "could not open output directory {}", .{bun.fmt.quote(root_path)});
+                    Output.err(err, "could not open output directory {f}", .{bun.fmt.quote(root_path)});
                     exitOrWatch(1, ctx.debug.hot_reload == .watch);
                     unreachable;
                 };
@@ -398,7 +398,7 @@ pub const BuildCommand = struct {
                     @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
                     max_path_len,
                 );
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             if (ctx.bundler_options.compile) {
@@ -495,12 +495,12 @@ pub const BuildCommand = struct {
             }
 
             for (output_files) |f| {
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             for (output_files) |f| {
                 f.writeToDisk(root_dir, from_path) catch |err| {
-                    Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                    Output.err(err, "failed to write file '{f}'", .{bun.fmt.quote(f.dest_path)});
                     had_err = true;
                     continue;
                 };
@@ -538,7 +538,7 @@ pub const BuildCommand = struct {
 
                 try writer.splatByteAll(' ', padding_count);
                 try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
-                try writer.splatByteAll(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                try writer.splatByteAll(' ', size_padding - std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
 
                 if (Output.enable_ansi_colors_stdout) {
                     try writer.writeAll("\x1b[2m");
@@ -606,14 +606,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         const delta: i64 = @as(i64, @truncate(@as(i65, @intCast(input_code_length)) - @as(i65, @intCast(output_size))));
         if (delta > 1024) {
             Output.prettyln(
-                "  <green>minify<r>  -{} <d>(estimate)<r>",
+                "  <green>minify<r>  -{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(delta)), .{}),
                 },
             );
         } else if (-delta > 1024) {
             Output.prettyln(
-                "  <b>minify<r>   +{} <d>(estimate)<r>",
+                "  <b>minify<r>   +{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(-delta)), .{}),
                 },

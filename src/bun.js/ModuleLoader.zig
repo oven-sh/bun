@@ -2099,12 +2099,12 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             try w.print(
                 \\{{
                 \\  "version": 3,
-                \\  "file": {},
+                \\  "file": {f},
                 \\  "sourceRoot": "",
-                \\  "sources": [{}],
-                \\  "sourcesContent": [{}],
+                \\  "sources": [{f}],
+                \\  "sourcesContent": [{f}],
                 \\  "names": [],
-                \\  "mappings": "{}"
+                \\  "mappings": "{f}"
                 \\}}
             , .{
                 bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),

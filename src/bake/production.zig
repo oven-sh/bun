@@ -388,14 +388,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 // Client-side resources will be written to disk for usage in on the client side
                 _ = file.writeToDisk(root_dir, ".") catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                    Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(file.dest_path)});
                 };
             },
             .server => {
                 if (ctx.bundler_options.bake_debug_dump_server) {
                     _ = file.writeToDisk(root_dir, ".") catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                        Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(file.dest_path)});
                     };
                 }
 
@@ -461,7 +461,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
             _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
+                Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
             };
         }
     }
@@ -504,7 +504,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             break :brk raw;
         } orelse {
             Output.errGeneric("Framework does not support static site generation", .{});
-            Output.note("The file {s} is missing the \"prerender\" export, which defines how to generate static files.", .{
+            Output.note("The file {f} is missing the \"prerender\" export, which defines how to generate static files.", .{
                 bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
             });
             bun.Global.crash();
@@ -520,7 +520,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 break :brk raw;
             } orelse {
                 Output.errGeneric("Framework does not support static site generation", .{});
-                Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
+                Output.note("The file {f} is missing the \"getParams\" export, which defines how to generate static files.", .{
                     bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
                 });
                 bun.Global.crash();
@@ -821,7 +821,7 @@ pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, sp
     defer referrer.deinit();
 
     if (bun.resolver.isPackagePath(specifier.slice())) {
-        return global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler", .{
+        return global.throw("Non-relative import {f} from {f} are not allowed in production assets. This is a bug in Bun's bundler", .{
             bun.fmt.quote(specifier.slice()),
             bun.fmt.quote(referrer.slice()),
         }) catch bun.String.dead;

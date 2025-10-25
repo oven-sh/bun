@@ -879,7 +879,7 @@ pub const Resolver = struct {
                 if (comptime Environment.enable_logs) {
                     if (result.path_pair.secondary) |secondary| {
                         debuglog(
-                            "resolve({}, from: {}, {s}) = {} (secondary: {})",
+                            "resolve({f}, from: {f}, {s}) = {f} (secondary: {f})",
                             .{
                                 bun.fmt.fmtPath(u8, import_path, .{}),
                                 bun.fmt.fmtPath(u8, source_dir, .{}),
@@ -890,7 +890,7 @@ pub const Resolver = struct {
                         );
                     } else {
                         debuglog(
-                            "resolve({}, from: {}, {s}) = {}",
+                            "resolve({f}, from: {f}, {s}) = {f}",
                             .{
                                 bun.fmt.fmtPath(u8, import_path, .{}),
                                 bun.fmt.fmtPath(u8, source_dir, .{}),
@@ -4183,9 +4183,9 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {f}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {f}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -4197,7 +4197,7 @@ pub const Resolver = struct {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
                                 @errorName(err),
                                 bun.fmt.QuotedFormatter{
                                     .text = abs_path,

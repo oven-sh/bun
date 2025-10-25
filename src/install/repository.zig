@@ -475,7 +475,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
+        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
 
@@ -536,7 +536,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: Install.Task.Id,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 

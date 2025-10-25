@@ -35,13 +35,13 @@ pub const PackCommand = struct {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
                 }
                 if (maybe_integrity) |integrity| {
-                    Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(integrity, .short)});
+                    Output.prettyln("<b><blue>Integrity<r>: {f}", .{bun.fmt.integrity(integrity, .short)});
                 }
-                Output.prettyln("<b><blue>Unpacked size<r>: {}", .{
+                Output.prettyln("<b><blue>Unpacked size<r>: {f}", .{
                     bun.fmt.size(stats.unpacked_size, .{ .space_between_number_and_unit = false }),
                 });
                 if (stats.packed_size > 0) {
-                    Output.pretty("<b><blue>Packed size<r>: {}\n", .{
+                    Output.pretty("<b><blue>Packed size<r>: {f}\n", .{
                         bun.fmt.size(stats.packed_size, .{ .space_between_number_and_unit = false }),
                     });
                 }
@@ -2465,7 +2465,7 @@ pub const PackCommand = struct {
     ) void {
         const root_dir = bun.FD.fromStdDir(root_dir_std);
         if (ctx.manager.options.log_level == .silent or ctx.manager.options.log_level == .quiet) return;
-        const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
+        const packed_fmt = "<r><b><cyan>packed<r> {f} {s}";
 
         if (comptime is_dry_run) {
             const package_json_stat = root_dir.statat("package.json").unwrap() catch |err| {

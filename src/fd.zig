@@ -482,7 +482,7 @@ pub const FD = packed struct(backing_int) {
                         } else print_with_path: {
                             var fd_path: bun.WPathBuffer = undefined;
                             const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
-                            return try writer.print("{d}[{}]", .{
+                            return try writer.print("{d}[{f}]", .{
                                 fd.value.as_system,
                                 bun.fmt.utf16(path),
                             });

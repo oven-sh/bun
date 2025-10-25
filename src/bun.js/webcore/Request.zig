@@ -247,7 +247,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
+    try writer.print("{s} ({f}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;
@@ -451,7 +451,7 @@ pub fn sizeOfURL(this: *const Request) usize {
                     .is_https = this.https,
                     .host = host,
                 };
-                return this.getProtocol().len + req_url.len + std.fmt.count("{any}", .{fmt});
+                return this.getProtocol().len + req_url.len + std.fmt.count("{f}", .{fmt});
             }
         }
         return req_url.len;
@@ -478,7 +478,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     .is_https = this.https,
                     .host = host,
                 };
-                const url_bytelength = std.fmt.count("{s}{any}{s}", .{
+                const url_bytelength = std.fmt.count("{s}{f}{s}", .{
                     this.getProtocol(),
                     fmt,
                     req_url,

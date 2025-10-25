@@ -65,7 +65,7 @@ pub fn enqueueDependencyList(
             false,
         ) catch |err| {
             const note = .{
-                .fmt = "error occurred while resolving {}",
+                .fmt = "error occurred while resolving {f}",
                 .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                     .path_sep = switch (dependency.version.tag) {
                         .folder => .auto,

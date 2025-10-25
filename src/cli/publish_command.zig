@@ -90,7 +90,7 @@ pub const PublishCommand = struct {
                         const stripped = pathname[slash + 1 ..];
                         if (stripped.len == 0) continue;
 
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(stripped, .{}),
                         });
@@ -113,7 +113,7 @@ pub const PublishCommand = struct {
                             }
                         }
                     } else {
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(pathname, .{}),
                         });
@@ -587,7 +587,7 @@ pub const PublishCommand = struct {
 
         var response_buf = try MutableString.init(ctx.allocator, 1024);
 
-        try print_writer.print("{s}/{s}", .{
+        try print_writer.print("{s}/{f}", .{
             strings.withoutTrailingSlash(registry.url.href),
             bun.fmt.dependencyUrl(ctx.package_name),
         });
@@ -935,7 +935,7 @@ pub const PublishCommand = struct {
 
         const version_without_build_tag = Dependency.withoutBuildTag(package_version);
 
-        const integrity_fmt = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)});
+        const integrity_fmt = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)});
 
         try json.setString(allocator, "_id", try std.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
         try json.setString(allocator, "_integrity", integrity_fmt);
@@ -954,7 +954,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
+                .{ .data = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)}) },
                 logger.Loc.Empty,
             ),
         };

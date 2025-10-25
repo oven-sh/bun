@@ -603,7 +603,7 @@ pub const PackageInstaller = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {f}:{f} (dependency_id: {d})", .{
                 bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
                 bun.fmt.quote(data.url),
                 dependency_id,
@@ -1031,7 +1031,7 @@ pub const PackageInstaller = struct {
             // creating this directory now, right before installing package
             var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                 if (log_level != .silent) {
-                    Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                    Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {f}", .{
                         pkg_name.slice(this.lockfile.buffers.string_bytes.items),
                         bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
                     });

@@ -192,7 +192,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
         i += event.size();
         count += 1;
         if (Environment.enable_logs)
-            log("{} read event {} {} {} {}", .{
+            log("{f} read event {} {} {} {f}", .{
                 this.fd,
                 event.watch_descriptor,
                 event.cookie,

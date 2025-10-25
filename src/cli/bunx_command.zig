@@ -742,7 +742,7 @@ pub const BunxCommand = struct {
 
         const argv_to_use = args.slice();
 
-        debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
+        debug("installing package: {f}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
         bun.handleOom(this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true"));
 
         const spawn_result = switch ((bun.spawnSync(&.{

@@ -382,7 +382,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -446,7 +446,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -607,7 +607,7 @@ fn getAST(
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "{any}A{d:0>8}",
+                    "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
             const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
@@ -675,7 +675,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "File not found {}",
+                            "File not found {f}",
                             .{bun.fmt.quote(file_path.text)},
                         ) catch {};
                         return error.FileNotFound;
@@ -685,7 +685,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "{s} reading file: {}",
+                            "{s} reading file: {f}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },
                         ) catch {};
                     },

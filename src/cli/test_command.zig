@@ -1451,9 +1451,9 @@ pub const TestCommand = struct {
                     // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
                         if (Output.isAIAgent()) {
-                            Output.prettyErrorln("Test filter <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                            Output.prettyErrorln("Test filter <b>{f}<r> had no matches in --cwd={f}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
                         } else {
-                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                            Output.prettyErrorln("Test filter <b>{f}<r> had no matches", .{bun.fmt.quote(arg)});
                         }
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
@@ -1495,9 +1495,9 @@ pub const TestCommand = struct {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.DoesNotExist => {
                     if (Output.isAIAgent()) {
-                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}", .{ bun.fmt.quote(dir_to_scan), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {f} in --cwd={f}", .{ bun.fmt.quote(dir_to_scan), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
                     } else {
-                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {f}", .{bun.fmt.quote(dir_to_scan)});
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
@@ -1576,7 +1576,7 @@ pub const TestCommand = struct {
             if (ctx.positionals.len < 2) {
                 if (Output.isAIAgent()) {
                     // Be very clear to ai.
-                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={f}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
                 } else {
                     // Be friendlier to humans.
                     Output.prettyErrorln(
@@ -1588,7 +1588,7 @@ pub const TestCommand = struct {
                 }
             } else {
                 if (Output.isAIAgent()) {
-                    Output.prettyErrorln("<yellow>The following filters did not match any test files in --cwd={}:<r>", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    Output.prettyErrorln("<yellow>The following filters did not match any test files in --cwd={f}:<r>", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
                 } else {
                     Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
                 }
@@ -1741,7 +1741,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                Output.prettyError("<red>error<r><d>:<r> regex <b>{f}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
                     bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
                     summary.files,
                     if (summary.files == 1) "" else "s",

@@ -177,7 +177,7 @@ pub const PackageManagerCommand = struct {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                     },
                     error.ProbablyInvalidAuth => {
-                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                        Output.errGeneric("failed to authenticate with registry '{f}'", .{
                             bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
                         });
                     },

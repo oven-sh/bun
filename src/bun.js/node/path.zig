@@ -2952,6 +2952,98 @@ comptime {
     @export(&bun.jsc.host_fn.wrap4v(Path.toNamespacedPath), .{ .name = "Bun__Path__toNamespacedPath" });
 }
 
+/// Utility for getting managing path buffers from the pool. Many functions use two buffers.
+pub const BufferPair = struct {
+    buf1: *bun.PathBuffer,
+    buf2: *bun.PathBuffer,
+
+    pub fn init() BufferPair {
+        return .{
+            .buf1 = bun.path_buffer_pool.get(),
+            .buf2 = bun.path_buffer_pool.get(),
+        };
+    }
+
+    pub fn deinit(self: *BufferPair) void {
+        bun.path_buffer_pool.put(self.buf1);
+        bun.path_buffer_pool.put(self.buf2);
+    }
+};
+
+/// Utility for getting managing path buffers from the pool. Many functions use three buffers.
+pub const BufferTriplet = struct {
+    pair: BufferPair,
+    buf3: *bun.PathBuffer,
+
+    pub fn init() BufferTriplet {
+        return .{
+            .pair = BufferPair.init(),
+            .buf3 = bun.path_buffer_pool.get(),
+        };
+    }
+
+    pub fn deinit(self: *BufferTriplet) void {
+        self.pair.deinit();
+        bun.path_buffer_pool.put(self.buf3);
+    }
+};
+
+/// JS path.resolve equivalent.
+pub fn resolvePath(
+    segments: []const []const u8,
+    buffers: *BufferPair,
+) error{ OutOfMemory, InvalidPath }![]const u8 {
+    const result = if (bun.Environment.isWindows)
+        resolveWindowsT(u8, segments, buffers.buf1, buffers.buf2)
+    else
+        resolvePosixT(u8, segments, buffers.buf1, buffers.buf2);
+
+    return switch (result) {
+        .result => |r| r,
+        .err => error.InvalidPath,
+    };
+}
+
+pub fn resolveWithPrefix(
+    allocator: std.mem.Allocator,
+    comptime prefix: []const u8,
+    segments: []const []const u8,
+    buffers: *BufferPair,
+) ![]u8 {
+    const resolved = try resolvePath(segments, buffers);
+    return std.fmt.allocPrint(allocator, prefix ++ "{s}", .{resolved});
+}
+
+pub fn computeRelative(
+    from: []const u8,
+    to: []const u8,
+    buffers: *BufferTriplet,
+) ![]const u8 {
+    const result = if (bun.Environment.isWindows)
+        relativeWindowsT(
+            u8,
+            from,
+            to,
+            buffers.pair.buf1,
+            buffers.pair.buf2,
+            buffers.buf3,
+        )
+    else
+        relativePosixT(
+            u8,
+            from,
+            to,
+            buffers.pair.buf1,
+            buffers.pair.buf2,
+            buffers.buf3,
+        );
+
+    return switch (result) {
+        .result => |r| r,
+        .err => error.InvalidPath,
+    };
+}
+
 const string = []const u8;
 
 const std = @import("std");

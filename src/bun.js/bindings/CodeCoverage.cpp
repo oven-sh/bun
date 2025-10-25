@@ -1,5 +1,4 @@
 #include "root.h"
-#include "ZigSourceProvider.h"
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 using namespace JSC;

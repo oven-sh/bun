@@ -66,7 +66,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -1311,14 +1311,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
+    ModuleResult res;
+    memset(&res, 0, sizeof res);
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (result) {
-        if (res.success)
+        if (res.tag != ModuleResult::Tag::err)
             return JSC::JSValue::encode(result);
     }
     throwScope.assertNoExceptionExceptTermination();
@@ -1337,7 +1336,7 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 void JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
-    ResolvedSource& source,
+    TranspiledSource& source,
     bool isBuiltIn)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1346,26 +1345,22 @@ void JSCommonJSModule::evaluate(
         auto string = source.source_code.toWTFString(BunString::ZeroCopy);
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
-            if (source.needsDeref && !isBuiltIn) {
-                source.needsDeref = false;
-                source.source_code.deref();
-            }
             auto wrapperStart = globalObject->m_moduleWrapperStart;
             auto wrapperEnd = globalObject->m_moduleWrapperEnd;
             source.source_code = Bun::toStringRef(makeString(
                 wrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
                 wrapperEnd));
-            source.needsDeref = true;
         }
     }
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-    this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
+    auto* sourceProvider = Bun__createSourceProvider(globalObject, &source);
+    // Note: ignoreESModuleAnnotation was removed from TranspiledSource
+    // The package.json type:module handling is now done in the transpiler
     if (this->hasEvaluated)
         return;
 
-    this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
+    this->sourceCode = JSC::SourceCode(adoptRef(*sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1374,7 +1369,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     JSValue keyJSString,
-    ResolvedSource& source)
+    TranspiledSource& source)
 {
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
@@ -1390,10 +1385,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
         RETURN_IF_EXCEPTION(scope, );
-        if (source.needsDeref) {
-            source.needsDeref = false;
-            source.source_code.deref();
-        }
+
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;
@@ -1420,7 +1412,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSString* requireMapKey,
-    ResolvedSource& source,
+    TranspiledSource& source,
     bool isBuiltIn)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1430,7 +1422,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
-    bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
 
     if (entry) {
@@ -1457,16 +1448,15 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 globalObject->m_moduleWrapperStart,
                 source.source_code.toWTFString(BunString::ZeroCopy),
                 globalObject->m_moduleWrapperEnd);
-            source.source_code.deref();
             source.source_code = Bun::toStringRef(concat);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto* sourceProvider = Bun__createSourceProvider(globalObject, &source);
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(WTFMove(sourceProvider))));
+            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(adoptRef(*sourceProvider))));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1475,10 +1465,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         requireMap->set(globalObject, filename, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
+        sourceOrigin = JSC::SourceOrigin(URL(sourceURL));
     }
 
-    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    // Note: ignoreESModuleAnnotation field removed - now handled by transpiler
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(

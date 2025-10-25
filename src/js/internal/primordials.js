@@ -84,6 +84,27 @@ const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, Array
 
 const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
+const RegExpPrototype = RegExp.prototype;
+const SymbolMatch = Symbol.match;
+const SymbolMatchAll = Symbol.matchAll;
+const SymbolReplace = Symbol.replace;
+const SymbolSearch = Symbol.search;
+const SymbolSplit = Symbol.split;
+const RegExpPrototypeSymbolMatch = RegExpPrototype[SymbolMatch];
+const RegExpPrototypeSymbolMatchAll = RegExpPrototype[SymbolMatchAll];
+const RegExpPrototypeSymbolReplace = RegExpPrototype[SymbolReplace];
+const RegExpPrototypeSymbolSearch = RegExpPrototype[SymbolSearch];
+const RegExpPrototypeSymbolSplit = RegExpPrototype[SymbolSplit];
+const RegExpPrototypeExec = RegExpPrototype.exec;
+const RegExpPrototypeGetDotAll = getGetter(RegExp, "dotAll");
+const RegExpPrototypeGetGlobal = getGetter(RegExp, "global");
+const RegExpPrototypeGetHasIndices = getGetter(RegExp, "hasIndices");
+const RegExpPrototypeGetIgnoreCase = getGetter(RegExp, "ignoreCase");
+const RegExpPrototypeGetMultiline = getGetter(RegExp, "multiline");
+const RegExpPrototypeGetSource = getGetter(RegExp, "source");
+const RegExpPrototypeGetSticky = getGetter(RegExp, "sticky");
+const RegExpPrototypeGetUnicode = getGetter(RegExp, "unicode");
+const RegExpPrototypeGetFlags = getGetter(RegExp, "flags");
 
 const arrayToSafePromiseIterable = (promises, mapFn) =>
   new SafeArrayIterator(
@@ -117,6 +138,113 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
       );
     }
   });
+
+class RegExpLikeForStringSplitting {
+  #regex;
+  constructor() {
+    this.#regex = ReflectConstruct(RegExp, arguments);
+  }
+
+  get lastIndex() {
+    return ReflectGet(this.#regex, "lastIndex");
+  }
+  set lastIndex(value) {
+    ReflectSet(this.#regex, "lastIndex", value);
+  }
+
+  exec() {
+    return ReflectApply(RegExpPrototypeExec, this.#regex, arguments);
+  }
+}
+ObjectSetPrototypeOf(RegExpLikeForStringSplitting.prototype, null);
+
+function hardenRegExp(pattern) {
+  ObjectDefineProperties(pattern, {
+    [SymbolMatch]: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeSymbolMatch,
+    },
+    [SymbolMatchAll]: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeSymbolMatchAll,
+    },
+    [SymbolReplace]: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeSymbolReplace,
+    },
+    [SymbolSearch]: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeSymbolSearch,
+    },
+    [SymbolSplit]: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeSymbolSplit,
+    },
+    constructor: {
+      __proto__: null,
+      configurable: true,
+      value: {
+        [SymbolSpecies]: RegExpLikeForStringSplitting,
+      },
+    },
+    dotAll: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetDotAll(pattern),
+    },
+    exec: {
+      __proto__: null,
+      configurable: true,
+      value: OriginalRegExpPrototypeExec,
+    },
+    global: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetGlobal(pattern),
+    },
+    hasIndices: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetHasIndices(pattern),
+    },
+    ignoreCase: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetIgnoreCase(pattern),
+    },
+    multiline: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetMultiline(pattern),
+    },
+    source: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetSource(pattern),
+    },
+    sticky: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetSticky(pattern),
+    },
+    unicode: {
+      __proto__: null,
+      configurable: true,
+      value: RegExpPrototypeGetUnicode(pattern),
+    },
+  });
+  ObjectDefineProperty(pattern, "flags", {
+    __proto__: null,
+    configurable: true,
+    value: RegExpPrototypeGetFlags(pattern),
+  });
+  return pattern;
+}
 
 export default {
   Array,
@@ -177,4 +305,5 @@ export default {
   BigUint64Array,
   BigInt64Array,
   uncurryThis,
+  hardenRegExp,
 };

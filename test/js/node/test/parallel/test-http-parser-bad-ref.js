@@ -2,7 +2,7 @@
 // Run this program with valgrind or efence with --expose_gc to expose the
 // problem.
 
-// Flags: --expose_gc
+// Flags: --expose-gc
 
 require('../common');
 const assert = require('assert');
@@ -18,7 +18,7 @@ let messagesComplete = 0;
 
 function flushPool() {
   Buffer.allocUnsafe(Buffer.poolSize - 1);
-  Bun.gc(true)
+  globalThis.gc();
 }
 
 function demoBug(part1, part2) {

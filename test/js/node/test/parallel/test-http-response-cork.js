@@ -1,16 +1,16 @@
 'use strict';
 const common = require('../common');
+if ('Bun' in globalThis) common.skip("TODO: BUN: test was edited and never worked");
 const http = require('http');
 const assert = require('assert');
 
 const server = http.createServer((req, res) => {
   let corked = false;
   const originalWrite = res.socket.write;
-  // This calls are not visible neither in the same quantity than node.js implementation
-  // res.socket.write = common.mustCall((...args) => {
-  //   assert.strictEqual(corked, false);
-  //   return originalWrite.call(res.socket, ...args);
-  // }, 5);
+  res.socket.write = common.mustCall((...args) => {
+    assert.strictEqual(corked, false);
+    return originalWrite.call(res.socket, ...args);
+  }, 5);
   corked = true;
   res.cork();
   assert.strictEqual(res.writableCorked, res.socket.writableCorked);

@@ -172,19 +172,101 @@ function getValidCiphersSet() {
       "TLS_AES_128_GCM_SHA256",
       "TLS_AES_256_GCM_SHA384",
       "TLS_CHACHA20_POLY1305_SHA256",
-
-      // Configurations include in the default cipher list
-      "HIGH",
-      "!aNULL",
-      "!eNULL",
-      "!EXPORT",
-      "!DES",
-      "!RC4",
-      "!MD5",
-      "!PSK",
-      "!SRP",
-      "!CAMELLIA",
     ]);
+
+    // https://github.com/openssl/openssl/blob/openssl-3.5.2/include/openssl/ssl.h.in#L76
+    const txt = [
+      "LOW",
+      "MEDIUM",
+      "HIGH",
+      "FIPS",
+      "aNULL",
+      "eNULL",
+      "NULL",
+      "kRSA",
+      "kDHr",
+      "kDHd",
+      "kDH",
+      "kEDH",
+      "kDHE",
+      "kECDHr",
+      "kECDHe",
+      "kECDH",
+      "kEECDH",
+      "kECDHE",
+      "kPSK",
+      "kRSAPSK",
+      "kECDHEPSK",
+      "kDHEPSK",
+      "kGOST",
+      "kGOST18",
+      "kSRP",
+      "aRSA",
+      "aDSS",
+      "aDH",
+      "aECDH",
+      "aECDSA",
+      "aPSK",
+      "aGOST94",
+      "aGOST01",
+      "aGOST12",
+      "aGOST",
+      "aSRP",
+      "DSS",
+      "DH",
+      "DHE",
+      "EDH",
+      "ADH",
+      "RSA",
+      "ECDH",
+      "EECDH",
+      "ECDHE",
+      "AECDH",
+      "ECDSA",
+      "PSK",
+      "SRP",
+      "DES",
+      "3DES",
+      "RC4",
+      "RC2",
+      "IDEA",
+      "SEED",
+      "AES128",
+      "AES256",
+      "AES",
+      "AESGCM",
+      "AESCCM",
+      "AESCCM8",
+      "CAMELLIA128",
+      "CAMELLIA256",
+      "CAMELLIA",
+      "CHACHA20",
+      "GOST89",
+      "ARIA",
+      "ARIAGCM",
+      "ARIA128",
+      "ARIA256",
+      "GOST2012-GOST8912-GOST8912",
+      "CBC",
+      "MD5",
+      "SHA1",
+      "SHA",
+      "GOST94",
+      "GOST89MAC",
+      "GOST12",
+      "GOST89MAC12",
+      "SHA256",
+      "SHA384",
+      "SSLv3",
+      "TLSv1",
+      "TLSv1.1",
+      "TLSv1.2",
+      "ALL",
+    ];
+    for (const c of txt) _VALID_CIPHERS_SET.$add(c);
+    for (const c of txt) _VALID_CIPHERS_SET.$add("!" + c);
+    _VALID_CIPHERS_SET.$add("!EXPORT");
+    _VALID_CIPHERS_SET.$add("!SSLv2");
   }
   return _VALID_CIPHERS_SET;
 }
@@ -199,10 +281,11 @@ function validateCiphers(ciphers: string, name: string = "options") {
     // TODO: right now we need this because we dont create the CTX before listening/connecting
     // we need to change that in the future and let BoringSSL do the validation
     const ciphersSet = getValidCiphersSet();
+    ciphersSet.add("DEFAULT");
     const requested = ciphers.split(":");
     for (const r of requested) {
       if (r && !ciphersSet.has(r)) {
-        throw $ERR_SSL_NO_CIPHER_MATCH();
+        throw $ERR_SSL_NO_CIPHER_MATCH(r);
       }
     }
   }

@@ -173,11 +173,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                // Inject here if scripts were in head (script_in_body == false)
-                // or if no scripts were found yet (script_in_body == null)
-                const inject_in_head = if (this.script_in_body) |in_body| !in_body else false;
-                if (inject_in_head) {
-                    this.addHeadTags(end) catch return .stop;
+                // Only inject if scripts were explicitly found in head (script_in_body == false)
+                // If script_in_body is null, we haven't seen any scripts yet, so defer injection
+                if (this.script_in_body) |in_body| {
+                    if (!in_body) {
+                        // Scripts were in head, inject here
+                        this.addHeadTags(end) catch return .stop;
+                    }
                 }
             } else {
                 this.end_tag_indices.head = @intCast(this.output.items.len);
@@ -188,11 +190,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                // Inject here if scripts were in body (script_in_body == true)
-                // or if no scripts were found yet (script_in_body == null) - default to body
-                const inject_in_body = if (this.script_in_body) |in_body| in_body else true;
-                if (inject_in_body) {
-                    this.addHeadTags(end) catch return .stop;
+                // Only inject if scripts were explicitly found in body (script_in_body == true)
+                // If script_in_body is null, we haven't seen any scripts yet, defer to html tag fallback
+                if (this.script_in_body) |in_body| {
+                    if (in_body) {
+                        // Scripts were in body, inject here
+                        this.addHeadTags(end) catch return .stop;
+                    }
                 }
             } else {
                 this.end_tag_indices.body = @intCast(this.output.items.len);
@@ -246,30 +250,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     // element. In this case, we do a simple search through the page.
     // See https://github.com/oven-sh/bun/issues/17554
     const script_injection_offset: u32 = if (c.dev_server != null) brk: {
-        // Respect the user's original script location preference
-        const prefer_body = if (html_loader.script_in_body) |in_body| in_body else true;
-
-        if (prefer_body) {
-            // Try body first (user had scripts in body or no scripts at all)
-            if (html_loader.end_tag_indices.body) |body|
-                break :brk body;
-            if (bun.strings.indexOf(html_loader.output.items, "</body>")) |body|
-                break :brk @intCast(body);
-            // Fall back to head
-            if (html_loader.end_tag_indices.head) |head|
-                break :brk head;
-        } else {
-            // Try head first (user had scripts in head)
-            if (html_loader.end_tag_indices.head) |head|
-                break :brk head;
-            if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
-                break :brk @intCast(head);
-            // Fall back to body
-            if (html_loader.end_tag_indices.body) |body|
-                break :brk body;
-        }
-
-        // Final fallback
+        // Original dev server logic - try head first, then body
+        if (html_loader.end_tag_indices.head) |head|
+            break :brk head;
+        if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
+            break :brk @intCast(head);
+        if (html_loader.end_tag_indices.body) |body|
+            break :brk body;
         if (html_loader.end_tag_indices.html) |html|
             break :brk html;
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.

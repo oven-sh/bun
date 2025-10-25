@@ -1199,13 +1199,11 @@ function _writeHead(statusCode, reason, obj, response) {
 
   // Telemetry: notify about response headers
   try {
-    Bun.telemetry?.nativeHooks()?.notifyInject(1, response._telemetry_op_id || 0, {
+    Bun.telemetry?.nativeHooks()?.notifyInject(6, response._telemetry_op_id ?? 0, {
       http_req: response.req,
       http_res: response,
     });
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

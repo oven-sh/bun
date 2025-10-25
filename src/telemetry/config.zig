@@ -528,4 +528,96 @@ pub const TelemetryConfig = struct {
             }
         }
     }
+
+    /// Rebuild capture header configuration from multiple instrument configs
+    /// Merges all captureAttributes from instruments into this TelemetryConfig
+    /// Uses union (duplicates allowed)
+    ///
+    /// This method is called when instruments are attached/detached to rebuild
+    /// the global header capture configuration.
+    pub fn rebuildCaptureConfig(
+        self: *TelemetryConfig,
+        kind: telemetry.InstrumentKind,
+        instrument_records: []const telemetry.InstrumentRecord,
+    ) !void {
+        // Determine which configuration properties to update based on kind
+        const request_prop_id: ?u8 = switch (kind) {
+            .http => @intFromEnum(ConfigurationProperty.http_capture_headers_server_request),
+            .fetch => @intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request),
+            else => null,
+        };
+
+        const response_prop_id: ?u8 = switch (kind) {
+            .http => @intFromEnum(ConfigurationProperty.http_capture_headers_server_response),
+            .fetch => @intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response),
+            else => null,
+        };
+
+        // Early return if this kind doesn't support header capture
+        if (request_prop_id == null and response_prop_id == null) return;
+
+        // Collect all header names from instruments (union)
+        var request_headers = std.ArrayList(JSValue).init(self.allocator);
+        defer request_headers.deinit();
+
+        var response_headers = std.ArrayList(JSValue).init(self.allocator);
+        defer response_headers.deinit();
+
+        for (instrument_records) |*record| {
+            if (record.instrument_config) |*inst_config| {
+                // Collect request headers
+                if (request_prop_id) |req_prop| {
+                    const req_headers = inst_config.get(req_prop);
+                    if (req_headers.isArray()) {
+                        const len = try req_headers.getLength(self.global);
+                        var i: u32 = 0;
+                        while (i < len) : (i += 1) {
+                            const header = try req_headers.getIndex(self.global, i);
+                            try request_headers.append(header);
+                        }
+                    }
+                }
+
+                // Collect response headers
+                if (response_prop_id) |res_prop| {
+                    const res_headers = inst_config.get(res_prop);
+                    if (res_headers.isArray()) {
+                        const len = try res_headers.getLength(self.global);
+                        var i: u32 = 0;
+                        while (i < len) : (i += 1) {
+                            const header = try res_headers.getIndex(self.global, i);
+                            try response_headers.append(header);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create JS arrays and set configuration
+        if (request_prop_id) |req_prop| {
+            if (request_headers.items.len > 0) {
+                const js_array = try JSValue.createEmptyArray(self.global, request_headers.items.len);
+                for (request_headers.items, 0..) |header, i| {
+                    try js_array.putIndex(self.global, @intCast(i), header);
+                }
+                try self.set(req_prop, js_array);
+            } else {
+                // No headers configured, set to undefined
+                try self.set(req_prop, .js_undefined);
+            }
+        }
+
+        if (response_prop_id) |res_prop| {
+            if (response_headers.items.len > 0) {
+                const js_array = try JSValue.createEmptyArray(self.global, response_headers.items.len);
+                for (response_headers.items, 0..) |header, i| {
+                    try js_array.putIndex(self.global, @intCast(i), header);
+                }
+                try self.set(res_prop, js_array);
+            } else {
+                // No headers configured, set to undefined
+                try self.set(res_prop, .js_undefined);
+            }
+        }
+    }
 };

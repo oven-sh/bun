@@ -1044,7 +1044,12 @@ pub const FetchTasklet = struct {
         this.native_response = response.ref();
 
         // OpenTelemetry: Notify operation end
-        bun.telemetry.fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.result.metadata, this.result.body);
+        const content_length: u64 = switch (this.body_size) {
+            .total_received => |size| size,
+            .content_length => |size| size,
+            .unknown => 0,
+        };
+        bun.telemetry.fetch.notifyFetchEnd(this.global_this, this.telemetry_request_id, this.telemetry_start_time_ns, this.metadata, content_length);
         this.telemetry_request_id = 0;
 
         return response_js;

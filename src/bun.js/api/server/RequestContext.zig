@@ -2253,6 +2253,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var has_content_range = false;
             if (response.swapInitHeaders()) |headers_| {
                 defer headers_.deref();
+
+                // OpenTelemetry: Capture response headers before they're freed
+                bun.telemetry.http.notifyHttpResponseHeaders(&this.telemetry_ctx, this.server.?.globalThis, headers_);
+
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
                 needs_content_range = needs_content_range and has_content_range;

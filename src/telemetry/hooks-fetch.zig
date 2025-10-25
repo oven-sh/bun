@@ -11,6 +11,8 @@ const http = @import("../http.zig");
 const Method = http.Method;
 const simple_url_parser = @import("simple_url_parser.zig");
 
+const debug = bun.Output.scoped(.telemetry_fetch_hooks, .visible);
+
 /// Build fetch request start attributes following OpenTelemetry semantic conventions
 ///
 /// Reference: specs/001-opentelemetry-support/tasks.md T033
@@ -228,19 +230,31 @@ fn capturePicohttpResponseHeaders(
     comptime config_property: telemetry.ConfigurationProperty,
 ) void {
     _ = globalObject;
-    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse {
+        debug("No telemetry instance", .{});
+        return;
+    };
 
     // Get pre-computed HeaderNameList from telemetry config
     const config_property_id = @intFromEnum(config_property);
-    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse {
+        debug("No header list for property {}", .{config_property_id});
+        return;
+    };
+
+    debug("Header list has {} items", .{header_list.items.items.len});
 
     // Iterate through pre-computed AttributeKey pointers
     for (header_list.items.items) |attr_key| {
         if (attr_key.http_header) |header_name| {
+            debug("Looking for header: {s}", .{header_name});
             // Get header value using naked header name (case-insensitive lookup)
             if (pico_headers.get(header_name)) |header_value| {
+                debug("Found header value: {s}", .{header_value});
                 // Set using AttributeKey pointer directly (no string conversion!)
                 attrs.set(attr_key, header_value);
+            } else {
+                debug("Header not found in response", .{});
             }
         }
     }
@@ -341,11 +355,10 @@ pub fn notifyFetchEnd(
     request_id: u64,
     start_time_ns: telemetry.OpTime,
     metadata: ?http.HTTPResponseMetadata,
-    body: ?*bun.MutableString,
+    content_length: u64,
 ) void {
     if (request_id == 0) return;
     if (telemetry.getGlobalTelemetry()) |telemetry_instance| {
-        const content_length: u64 = if (body) |b| b.list.items.len else 0;
         var end_attrs = buildFetchEndAttributes(globalObject, start_time_ns, metadata, content_length);
         telemetry_instance.notifyOperationEnd(.fetch, request_id, &end_attrs);
     }

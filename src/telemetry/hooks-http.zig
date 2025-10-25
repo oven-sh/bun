@@ -153,6 +153,39 @@ pub fn buildHttpEndAttributes(
     return attrs;
 }
 
+/// Build HTTP response end attributes using native FetchHeaders (optimized path)
+/// Same as buildHttpEndAttributes but uses FetchHeaders pointer for O(1) header access
+fn buildHttpEndAttributesNative(
+    globalObject: *JSGlobalObject,
+    start_timestamp_ns: telemetry.OpTime,
+    status_code: u16,
+    content_length: u64,
+    fetch_headers: ?*bun.webcore.FetchHeaders,
+) AttributeMap {
+    const otel = telemetry.getGlobalTelemetry() orelse {
+        return AttributeMap.init(globalObject);
+    };
+
+    var attrs = AttributeMap.init(globalObject);
+
+    // HTTP response status
+    attrs.set(otel.semconv.http_response_status_code, status_code);
+
+    // Response body size
+    attrs.set(otel.semconv.http_response_body_size, content_length);
+
+    // Operation duration (uses centralized timing utility)
+    const duration_ns = telemetry.calculateDuration(start_timestamp_ns);
+    attrs.set(otel.semconv.operation_duration, duration_ns);
+
+    // Response headers capture (native FetchHeaders - optimized)
+    if (fetch_headers) |headers| {
+        captureNativeFetchHeaders(&attrs, headers, globalObject, .http_capture_headers_server_response);
+    }
+
+    return attrs;
+}
+
 /// Build HTTP error attributes following OpenTelemetry semantic conventions
 ///
 /// Reference: specs/001-opentelemetry-support/contracts/hook-lifecycle.md lines 336-346
@@ -466,8 +499,27 @@ pub inline fn notifyHttpRequestError(
     telemetry_inst.notifyOperationError(.http, ctx.request_id, &error_attrs);
 }
 
+/// Notify response headers available - call this in renderMetadata when headers are being written
+/// Sends an operation progress event with response headers (before they're freed)
+pub inline fn notifyHttpResponseHeaders(
+    ctx: *const HttpTelemetryContext,
+    globalObject: *JSGlobalObject,
+    fetch_headers: *bun.webcore.FetchHeaders,
+) void {
+    if (!ctx.isEnabled()) return;
+    const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
+
+    // Build attributes with only response headers
+    var progress_attrs = AttributeMap.init(globalObject);
+    captureNativeFetchHeaders(&progress_attrs, fetch_headers, globalObject, .http_capture_headers_server_response);
+
+    // Send progress event (preserves request state, adds these attributes)
+    telemetry_inst.notifyOperationProgress(.http, ctx.request_id, &progress_attrs);
+}
+
 /// Notify HTTP request end - call this in finalizeWithoutDeinit
 /// Automatically resets the context to prevent double-cleanup
+/// Note: Response headers are captured earlier in notifyHttpResponseHeaders()
 pub inline fn notifyHttpRequestEnd(
     ctx: *HttpTelemetryContext,
     globalObject: *JSGlobalObject,
@@ -477,8 +529,9 @@ pub inline fn notifyHttpRequestEnd(
     if (!ctx.isEnabled()) return;
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Build and send end attributes
-    var end_attrs = buildHttpEndAttributes(globalObject, ctx.start_time_ns, status_code, content_length, null);
+    // Build end attributes (status code, body size, duration)
+    // Headers were already captured in notifyHttpResponseHeaders() via notifyOperationUpdate
+    var end_attrs = buildHttpEndAttributesNative(globalObject, ctx.start_time_ns, status_code, content_length, null);
     telemetry_inst.notifyOperationEnd(.http, ctx.request_id, &end_attrs);
 
     // CRITICAL: Reset to prevent double-cleanup

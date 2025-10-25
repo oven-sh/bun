@@ -142,25 +142,62 @@ pub const InstrumentRecord = struct {
             return error.NoHooksProvided;
         }
 
-        // Parse injectHeaders configuration if present
+        // Parse injectHeaders and captureAttributes configuration if present
         var instrument_config: ?TelemetryConfig = null;
 
         const inject_headers = try instrument_obj.get(globalObject, "injectHeaders") orelse .js_undefined;
-        if (inject_headers.isObject()) {
-            // Create a minimal TelemetryConfig just for this instrument's header injection
+        const capture_attrs = try instrument_obj.get(globalObject, "captureAttributes") orelse .js_undefined;
+
+        if (inject_headers.isObject() or capture_attrs.isObject()) {
+            // Create a minimal TelemetryConfig for this instrument's configuration
             var config = try TelemetryConfig.init(allocator, globalObject, telemetry_context.semconv);
             errdefer config.deinit();
 
-            // Parse request headers (for fetch client)
-            const request_headers = try inject_headers.get(globalObject, "request") orelse .js_undefined;
-            if (request_headers.isArray()) {
-                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request), request_headers);
+            // Parse injectHeaders if present
+            if (inject_headers.isObject()) {
+                // Parse request headers (for fetch client)
+                const request_headers = try inject_headers.get(globalObject, "request") orelse .js_undefined;
+                if (request_headers.isArray()) {
+                    try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request), request_headers);
+                }
+
+                // Parse response headers (for HTTP server)
+                const response_headers = try inject_headers.get(globalObject, "response") orelse .js_undefined;
+                if (response_headers.isArray()) {
+                    try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_server_response), response_headers);
+                }
             }
 
-            // Parse response headers (for HTTP server)
-            const response_headers = try inject_headers.get(globalObject, "response") orelse .js_undefined;
-            if (response_headers.isArray()) {
-                try config.set(@intFromEnum(ConfigurationProperty.http_propagate_headers_server_response), response_headers);
+            // Parse captureAttributes if present
+            if (capture_attrs.isObject()) {
+                // Determine capture configuration properties based on instrument kind
+                const req_capture_prop: ?ConfigurationProperty = switch (kind) {
+                    .http => .http_capture_headers_server_request,
+                    .fetch => .http_capture_headers_fetch_request,
+                    else => null,
+                };
+
+                const res_capture_prop: ?ConfigurationProperty = switch (kind) {
+                    .http => .http_capture_headers_server_response,
+                    .fetch => .http_capture_headers_fetch_response,
+                    else => null,
+                };
+
+                // Parse request headers
+                if (req_capture_prop) |prop| {
+                    const request_headers = try capture_attrs.get(globalObject, "requestHeaders") orelse .js_undefined;
+                    if (request_headers.isArray()) {
+                        try config.set(@intFromEnum(prop), request_headers);
+                    }
+                }
+
+                // Parse response headers
+                if (res_capture_prop) |prop| {
+                    const response_headers = try capture_attrs.get(globalObject, "responseHeaders") orelse .js_undefined;
+                    if (response_headers.isArray()) {
+                        try config.set(@intFromEnum(prop), response_headers);
+                    }
+                }
             }
 
             instrument_config = config;
@@ -405,9 +442,10 @@ pub const TelemetryContext = struct {
         const kind_index = @intFromEnum(kind);
         try self.instrument_table[kind_index].append(record);
 
-        // Rebuild inject config for this kind if it's HTTP or Fetch
+        // Rebuild inject and capture config for this kind if it's HTTP or Fetch
         if (kind == .http or kind == .fetch) {
             try self.config.rebuildInjectConfig(kind, self.instrument_table[kind_index].items);
+            try self.config.rebuildCaptureConfig(kind, self.instrument_table[kind_index].items);
         }
         // Rebuild operations table
         self.rebuildOperationTable();
@@ -459,10 +497,13 @@ pub const TelemetryContext = struct {
                     record.dispose();
                     _ = list.swapRemove(i);
 
-                    // Rebuild inject config for this kind if it's HTTP or Fetch
+                    // Rebuild inject and capture config for this kind if it's HTTP or Fetch
                     if (kind == .http or kind == .fetch) {
                         self.config.rebuildInjectConfig(kind, list.items) catch |err| {
                             std.debug.print("Telemetry: Failed to rebuild inject config on detach: {}\n", .{err});
+                        };
+                        self.config.rebuildCaptureConfig(kind, list.items) catch |err| {
+                            std.debug.print("Telemetry: Failed to rebuild capture config on detach: {}\n", .{err});
                         };
                     }
                     // Rebuild operations table

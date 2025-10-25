@@ -1065,7 +1065,7 @@ install_llvm() {
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld" \
+			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac

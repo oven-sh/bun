@@ -18,7 +18,7 @@ pub const NoOpRenamer = struct {
         if (renamer.symbols.getConst(resolved)) |symbol| {
             return symbol.original_name;
         } else {
-            Output.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
+            Output.panic("Invalid symbol {f} in {s}", .{ ref, renamer.source.path.text });
         }
     }
 

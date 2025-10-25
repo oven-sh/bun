@@ -122,7 +122,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         var expected_class = ZigString.Empty;
         try expected_value.getClassName(globalThis, &expected_class);
         const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .js_undefined;
-        return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{f}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
+        return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{f}<r>\n\nReceived message: <red>{f}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
     }
 
     if (did_throw) {
@@ -247,7 +247,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         try expected_value.getClassName(globalThis, &expected_class);
         try result.getClassName(globalThis, &received_class);
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
-        const fmt = signature ++ "\n\nExpected constructor: <green>{s}<r>\nReceived constructor: <red>{s}<r>\n\n";
+        const fmt = signature ++ "\n\nExpected constructor: <green>{f}<r>\nReceived constructor: <red>{f}<r>\n\n";
 
         if (_received_message) |received_message| {
             const message_fmt = fmt ++ "Received message: <red>{f}<r>\n";
@@ -298,7 +298,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         return this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
     }
 
-    const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
+    const expected_fmt = "\n\nExpected constructor: <green>{f}<r>\n\n" ++ received_line;
     var expected_class = ZigString.Empty;
     try expected_value.getClassName(globalThis, &expected_class);
     return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });

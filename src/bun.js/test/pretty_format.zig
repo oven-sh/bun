@@ -1575,7 +1575,7 @@ pub const JestPrettyFormat = struct {
                                     needs_space = false;
 
                                     writer.print(
-                                        comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt("<r><blue>{f}<d>=<r>", enable_ansi_colors),
                                         .{prop.trunc(128)},
                                     );
 
@@ -2122,7 +2122,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("not ");
                 }
                 this.addForNewLine(matcher_name.length() + 1);
-                writer.print("{s}", .{matcher_name});
+                writer.print("{f}", .{matcher_name});
                 writer.writeAll(" ");
                 try this.printAs(.Array, @TypeOf(writer_), writer_, args_value, .Array, enable_ansi_colors);
             }

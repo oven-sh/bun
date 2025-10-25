@@ -617,7 +617,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     var val = jsc.ZigString.init("");

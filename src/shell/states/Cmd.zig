@@ -599,7 +599,7 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                 const flags = this.node.redirect.toFlags();
                 const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                     .err => |e| {
-                        return this.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                        return this.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
                     },
                     .result => |f| f,
                 };

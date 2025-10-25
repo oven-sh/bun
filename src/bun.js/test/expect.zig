@@ -1007,7 +1007,7 @@ pub const Expect = struct {
         defer formatter.deinit();
 
         const fmt =
-            "Unexpected return from matcher function `{s}`.\n" ++
+            "Unexpected return from matcher function `{f}`.\n" ++
             "Matcher functions should return an object in the following format:\n" ++
             "  {{message?: string | function, pass: boolean}}\n" ++
             "'{f}' was returned";
@@ -1046,7 +1046,7 @@ pub const Expect = struct {
                 .rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     jsc.VirtualMachine.get().runErrorHandler(result, null);
-                    return globalThis.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
+                    return globalThis.throw("Matcher `{f}` returned a promise that rejected", .{matcher_name});
                 },
             }
         }
@@ -1695,7 +1695,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
         const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse {
-            globalThis.throw("expect.{s} misused, it needs to be instantiated by calling it with 0 or more arguments", .{matcher_name}) catch {};
+            globalThis.throw("expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments", .{matcher_name}) catch {};
             return false;
         };
         captured_args.ensureStillAlive();
@@ -1932,11 +1932,11 @@ pub const ExpectMatcherUtils = struct {
         };
 
         if (is_not) {
-            const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", true);
+            const signature = comptime Expect.getSignature("{f}", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{f}\n";
             return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         } else {
-            const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", false);
+            const signature = comptime Expect.getSignature("{f}", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{f}\n";
             return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         }

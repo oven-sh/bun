@@ -1687,7 +1687,7 @@ pub const Error = enum(i32) {
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
                 .message = if (this.hostname) |hostname|
-                    bun.handleOom(bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }))
+                    bun.handleOom(bun.String.createFormat("{s} {s} {f}", .{ this.syscall, this.errno.code()[4..], hostname }))
                 else
                     bun.handleOom(bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] })),
                 .syscall = bun.String.cloneUTF8(this.syscall),

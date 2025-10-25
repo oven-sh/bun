@@ -435,7 +435,7 @@ fn initRedirections(
                     if (node.redirect.stdin) {
                         break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
                             .err => |e| {
-                                return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
                             },
                             .result => |f| f,
                         };
@@ -461,13 +461,13 @@ fn initRedirections(
 
                     break :redirfd switch (result) {
                         .err => |e| {
-                            return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                            return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
                         },
                         .result => |f| {
                             if (bun.Environment.isWindows) {
                                 switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                     .err => |e| {
-                                        return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                        return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
                                     },
                                     .result => |f2| break :redirfd f2,
                                 }
@@ -733,7 +733,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
         },
         jsc.SystemError => {
             if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
-            return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.message.byteSlice(), err.path });
+            return this.fmtErrorArena(kind, "{s}: {f}\n", .{ err.message.byteSlice(), err.path });
         },
         bun.shell.ShellErr => return switch (err) {
             .sys => this.taskErrorToString(kind, err.sys),

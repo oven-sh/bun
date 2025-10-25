@@ -3159,7 +3159,7 @@ pub const Formatter = struct {
                                 needs_space = false;
 
                                 writer.print(
-                                    comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
+                                    comptime Output.prettyFmt("<r><blue>{f}<d>=<r>", enable_ansi_colors),
                                     .{prop.trunc(128)},
                                 );
 

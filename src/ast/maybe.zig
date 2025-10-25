@@ -425,7 +425,7 @@ pub fn AstMaybe(
                             // Inline import.meta.url as file:// URL
                             const bunstr = bun.String.fromBytes(p.source.path.text);
                             defer bunstr.deref();
-                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            const url = std.fmt.allocPrint(p.allocator, "{f}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
                             return p.newExpr(E.String.init(url), name_loc);
                         }
                     }

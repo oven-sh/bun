@@ -132,10 +132,10 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
             const bound = if (args.callback) |cb| try cb.bind(globalThis, item, &bun.String.static("cb"), 0, args_list_raw.items) else null;
-            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, bound, formatted_label, args.options.timeout, callback_length -| args_list.items.len, line_no);
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, bound, formatted_label, .{ .timeout = args.options.timeout, .retry = args.options.retry, .repeats = args.options.repeats }, callback_length -| args_list.items.len, line_no);
         }
     } else {
-        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, args.callback, args.description, args.options.timeout, callback_length, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, args.callback, args.description, .{ .timeout = args.options.timeout, .retry = args.options.retry, .repeats = args.options.repeats }, callback_length, line_no);
     }
 
     return .js_undefined;
@@ -169,7 +169,7 @@ fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_i
     }
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, options: struct { timeout: u32, retry: ?f64, repeats: ?f64 }, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -246,9 +246,14 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             bun.assert(!bunTest.collection.locked);
             groupLog.log("enqueueTestCallback / {s} / in scope: {s}", .{ description orelse "(unnamed)", bunTest.collection.active_scope.base.name orelse "(unnamed)" });
 
+            const retry_count: u32 = if (options.retry) |r| @intFromFloat(@max(0, @min(r, std.math.maxInt(u32)))) else 0;
+            const repeat_count: u32 = if (options.repeats) |r| @intFromFloat(@max(1, @min(r, std.math.maxInt(u32)))) else 1;
+
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
-                .timeout = timeout,
+                .timeout = options.timeout,
+                .retry_count = retry_count,
+                .repeat_count = repeat_count,
             }, base, .collection);
         },
     }

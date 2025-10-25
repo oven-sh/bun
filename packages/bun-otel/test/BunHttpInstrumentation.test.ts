@@ -12,12 +12,12 @@
  * - HTTP status code handling (4xx vs 5xx)
  */
 
-import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunHttpInstrumentation } from "../src/instruments/BunHttpInstrumentation";
-import { ConfigurationProperty } from "../types";
-import { TempConfig } from "./config-helper";
+import { waitForSpans } from "./test-utils";
 
 describe("BunHttpInstrumentation", () => {
   let exporter: InMemorySpanExporter;
@@ -26,13 +26,10 @@ describe("BunHttpInstrumentation", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
   let serverUrl: string;
 
-  using _globalConfig = new TempConfig({
-    [ConfigurationProperty.http_capture_headers_server_request]: ["user-agent", "x-request-id"],
-    [ConfigurationProperty.http_capture_headers_server_response]: ["content-type", "x-trace-id"],
-    [ConfigurationProperty.http_propagate_headers_server_response]: ["traceparent", "tracestate"],
-  });
-
   beforeAll(async () => {
+    // Setup W3C trace context propagator (required for traceparent header extraction)
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+
     // Setup tracer provider with in-memory exporter
     exporter = new InMemorySpanExporter();
     provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
@@ -123,7 +120,7 @@ describe("BunHttpInstrumentation", () => {
     expect(await response.text()).toBe("Hello, World!");
 
     // Wait for span to be exported
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     expect(spans.length).toBeGreaterThanOrEqual(1);
@@ -146,13 +143,6 @@ describe("BunHttpInstrumentation", () => {
   });
 
   test("captures configured request headers as span attributes", async () => {
-    // Configuration changes require disable/enable for native layer to pick them up
-    using configHelper = new TempConfig({
-      [ConfigurationProperty.http_capture_headers_server_request]: ["user-agent", "x-request-id"],
-    });
-    instrumentation.disable();
-    instrumentation.enable();
-
     exporter.reset();
 
     await fetch(`${serverUrl}/hello`, {
@@ -163,7 +153,7 @@ describe("BunHttpInstrumentation", () => {
       },
     });
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -174,18 +164,11 @@ describe("BunHttpInstrumentation", () => {
   });
 
   test("captures configured response headers as span attributes", async () => {
-    // Configuration changes require disable/enable for native layer to pick them up
-    using configHelper = new TempConfig({
-      [ConfigurationProperty.http_capture_headers_server_response]: ["content-type", "x-trace-id"],
-    });
-    instrumentation.disable();
-    instrumentation.enable();
-
     exporter.reset();
 
     await fetch(`${serverUrl}/hello`);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -208,7 +191,7 @@ describe("BunHttpInstrumentation", () => {
       },
     });
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -227,7 +210,7 @@ describe("BunHttpInstrumentation", () => {
       method: "POST",
     });
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -242,7 +225,7 @@ describe("BunHttpInstrumentation", () => {
     const response = await fetch(`${serverUrl}/not-found`);
     expect(response.status).toBe(404);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -258,7 +241,7 @@ describe("BunHttpInstrumentation", () => {
     const response = await fetch(`${serverUrl}/error`);
     expect(response.status).toBe(500);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -281,7 +264,7 @@ describe("BunHttpInstrumentation", () => {
     const responses = await Promise.all(promises);
     expect(responses.every(r => r.ok)).toBe(true);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 10);
 
     const spans = exporter.getFinishedSpans();
     const serverSpans = spans.filter(s => s.kind === SpanKind.SERVER);
@@ -357,7 +340,7 @@ describe("BunHttpInstrumentation", () => {
 
     await fetch(`${serverUrl}/hello?foo=bar&baz=qux`);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
@@ -379,7 +362,7 @@ describe("BunHttpInstrumentation", () => {
 
     expect(response.ok).toBe(true);
 
-    await Bun.sleep(100);
+    await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
     const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);

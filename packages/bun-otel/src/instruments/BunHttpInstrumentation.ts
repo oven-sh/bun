@@ -289,11 +289,13 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
     // Get tracer (use explicit provider if set, otherwise use global API)
     const tracer = this._tracer || trace.getTracer(this.instrumentationName, this.instrumentationVersion);
 
-    // Extract header configuration
-    const requestHeaders =
-      this._config.headersToSpanAttributes?.server?.requestHeaders || this._config.captureAttributes?.requestHeaders;
-    const responseHeaders =
-      this._config.headersToSpanAttributes?.server?.responseHeaders || this._config.captureAttributes?.responseHeaders;
+    // Extract header configuration with defaults matching Zig config.zig defaults
+    // Default request headers: content-type, user-agent, accept, content-length
+    // Default response headers: content-type, content-length
+    const requestHeaders = this._config.headersToSpanAttributes?.server?.requestHeaders ||
+      this._config.captureAttributes?.requestHeaders || ["content-type", "user-agent", "accept", "content-length"];
+    const responseHeaders = this._config.headersToSpanAttributes?.server?.responseHeaders ||
+      this._config.captureAttributes?.responseHeaders || ["content-type", "content-length"];
 
     // Attach to Bun's native HTTP server hooks
     this._instrumentId = Bun.telemetry.attach({
@@ -436,6 +438,25 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
         }
       },
 
+      onOperationProgress: (id: number, attributes: Record<string, any>) => {
+        const span = this._activeSpans.get(id);
+        if (!span) {
+          return;
+        }
+
+        // Add captured response headers (sent early by Zig layer before request completes)
+        if (responseHeaders) {
+          for (const headerName of responseHeaders) {
+            const attrKey = `http.response.header.${headerName}`;
+            if (attributes[attrKey] !== undefined) {
+              span.setAttribute(attrKey, attributes[attrKey]);
+            }
+          }
+        }
+
+        // Note: Do NOT end the span here - onOperationEnd will handle that
+      },
+
       onOperationEnd: (id: number, attributes: Record<string, any>) => {
         const span = this._activeSpans.get(id);
         if (!span) {
@@ -452,15 +473,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
           span.setAttribute("http.response.body.size", attributes["http.response.body.size"]);
         }
 
-        // Add captured response headers if configured
-        if (responseHeaders) {
-          for (const headerName of responseHeaders) {
-            const attrKey = `http.response.header.${headerName}`;
-            if (attributes[attrKey] !== undefined) {
-              span.setAttribute(attrKey, attributes[attrKey]);
-            }
-          }
-        }
+        // Note: Response headers are added in onOperationProgress, not here
 
         // Call responseHook if provided
         if (this._config.responseHook) {

@@ -151,6 +151,12 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/streams/transform                  processBindingNativesGetter     PropertyCallback
     internal/streams/utils                      processBindingNativesGetter     PropertyCallback
     internal/streams/writable                   processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/dot                  processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/junit                processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/lcov                 processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/spec                 processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/tap                  processBindingNativesGetter     PropertyCallback
+    internal/test/reporter/utils                processBindingNativesGetter     PropertyCallback
     internal/timers                             processBindingNativesGetter     PropertyCallback
     internal/tls                                processBindingNativesGetter     PropertyCallback
     internal/tty                                processBindingNativesGetter     PropertyCallback

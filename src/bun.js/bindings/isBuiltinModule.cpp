@@ -79,6 +79,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "inspector/promises"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
+    "node:test/reporters"_s,
 };
 
 namespace Bun {

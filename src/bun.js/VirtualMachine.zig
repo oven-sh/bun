@@ -1545,7 +1545,7 @@ pub fn fetchWithoutOnLoadPlugins(
     defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
     errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
-    return try ModuleLoader.transpileSourceCode(
+    const module_result = try ModuleLoader.transpileSourceCode(
         jsc_vm,
         lr.specifier,
         referrer_clone.slice(),
@@ -1560,6 +1560,7 @@ pub fn fetchWithoutOnLoadPlugins(
         globalObject,
         flags,
     );
+    return ModuleLoader.moduleResultToResolvedSource(module_result, _specifier);
 }
 
 pub const ResolveFunctionResult = struct {

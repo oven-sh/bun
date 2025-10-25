@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// Minimal POD struct for transpiled source code
 /// Can be safely created on worker threads

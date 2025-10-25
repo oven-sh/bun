@@ -1,5 +1,6 @@
-const bun = @import("root").bun;
-const JSValue = bun.JSC.JSValue;
+const bun = @import("bun");
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
 
 /// For special cases that need JSValue handling
 /// Main thread only (contains JSValue)

@@ -3512,6 +3512,24 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto* bun = globalObject->bunObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* requireMap = globalObject->requireMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
+}
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     JSNextTickQueue* nextTickQueueObject;
@@ -3908,7 +3926,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

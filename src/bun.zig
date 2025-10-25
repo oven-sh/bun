@@ -3770,3 +3770,6 @@ const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");

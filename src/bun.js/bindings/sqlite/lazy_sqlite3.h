@@ -9,6 +9,12 @@
 #include <windows.h>
 #endif
 
+// SQLite trace event codes
+#define SQLITE_TRACE_STMT    0x01
+#define SQLITE_TRACE_PROFILE 0x02
+#define SQLITE_TRACE_ROW     0x04
+#define SQLITE_TRACE_CLOSE   0x08
+
 typedef int (*lazy_sqlite3_bind_blob_type)(sqlite3_stmt*, int, const void*, int n, void (*)(void*));
 typedef int (*lazy_sqlite3_bind_double_type)(sqlite3_stmt*, int, double);
 typedef int (*lazy_sqlite3_bind_int_type)(sqlite3_stmt*, int, int);
@@ -41,6 +47,9 @@ typedef int (*lazy_sqlite3_error_offset_type)(sqlite3*);
 typedef int64_t (*lazy_sqlite3_memory_used_type)();
 typedef const char* (*lazy_sqlite3_errstr_type)(int);
 typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
+typedef const char* (*lazy_sqlite3_sql_type)(sqlite3_stmt* pStmt);
+typedef const char* (*lazy_sqlite3_db_filename_type)(sqlite3*, const char*);
+typedef int (*lazy_sqlite3_trace_v2_type)(sqlite3*, unsigned uMask, int(*xCallback)(unsigned,void*,void*,void*), void *pCtx);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
 typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
@@ -123,6 +132,9 @@ static lazy_sqlite3_column_type_type lazy_sqlite3_column_type;
 static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg;
 static lazy_sqlite3_errstr_type lazy_sqlite3_errstr;
 static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql;
+static lazy_sqlite3_sql_type lazy_sqlite3_sql;
+static lazy_sqlite3_db_filename_type lazy_sqlite3_db_filename;
+static lazy_sqlite3_trace_v2_type lazy_sqlite3_trace_v2;
 static lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
 static lazy_sqlite3_free_type lazy_sqlite3_free;
 static lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit;
@@ -174,6 +186,9 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_errmsg lazy_sqlite3_errmsg
 #define sqlite3_errstr lazy_sqlite3_errstr
 #define sqlite3_expanded_sql lazy_sqlite3_expanded_sql
+#define sqlite3_sql lazy_sqlite3_sql
+#define sqlite3_db_filename lazy_sqlite3_db_filename
+#define sqlite3_trace_v2 lazy_sqlite3_trace_v2
 #define sqlite3_finalize lazy_sqlite3_finalize
 #define sqlite3_free lazy_sqlite3_free
 #define sqlite3_get_autocommit lazy_sqlite3_get_autocommit
@@ -262,6 +277,9 @@ static int lazyLoadSQLite()
     lazy_sqlite3_errmsg = (lazy_sqlite3_errmsg_type)dlsym(sqlite3_handle, "sqlite3_errmsg");
     lazy_sqlite3_errstr = (lazy_sqlite3_errstr_type)dlsym(sqlite3_handle, "sqlite3_errstr");
     lazy_sqlite3_expanded_sql = (lazy_sqlite3_expanded_sql_type)dlsym(sqlite3_handle, "sqlite3_expanded_sql");
+    lazy_sqlite3_sql = (lazy_sqlite3_sql_type)dlsym(sqlite3_handle, "sqlite3_sql");
+    lazy_sqlite3_db_filename = (lazy_sqlite3_db_filename_type)dlsym(sqlite3_handle, "sqlite3_db_filename");
+    lazy_sqlite3_trace_v2 = (lazy_sqlite3_trace_v2_type)dlsym(sqlite3_handle, "sqlite3_trace_v2");
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");
     lazy_sqlite3_get_autocommit = (lazy_sqlite3_get_autocommit_type)dlsym(sqlite3_handle, "sqlite3_get_autocommit");

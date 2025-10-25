@@ -333,6 +333,9 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
+extern "C" int Bun__Telemetry__init(JSC::JSGlobalObject*);
+extern "C" void Bun__Telemetry__deinit();
+
 // Declare the Zig functions for LazyProperty initializers
 extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
@@ -552,6 +555,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             initializeWorker(*worker);
         }
     }
+
+    // Initialize telemetry system
+    Bun__Telemetry__init(globalObject);
 
     return globalObject;
 }

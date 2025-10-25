@@ -2084,6 +2084,25 @@ void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned ch
     *arg2 = Zig::toZigString(str);
 }
 
+// Telemetry: Fast HTTP header name lookup using existing gperf perfect hash
+// Maps lowercase header string to HTTPHeaderName enum (0-92)
+// Returns 255 if header not found (sentinel value)
+extern "C" uint8_t Bun__HTTPHeaderName__fromString(const char* str, size_t len)
+{
+    WebCore::HTTPHeaderName name;
+
+    // Use existing gperf-generated perfect hash function
+    // This is case-insensitive and highly optimized
+    if (WebCore::findHTTPHeaderName(
+        WTF::StringView(std::span { reinterpret_cast<const Latin1Character*>(str), len }),
+        name))
+    {
+        return static_cast<uint8_t>(name);
+    }
+
+    return 255; // Sentinel: header not in HTTPHeaderName enum
+}
+
 WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
     return WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue0);
@@ -4282,6 +4301,24 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
     } else {
         *arg2 = ZigStringEmpty;
     }
+}
+
+JSC::EncodedJSValue JSC__JSGlobalObject__getDisposeSymbol(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    // Get the Symbol object from global
+    JSC::JSValue symbolValue = globalObject->get(globalObject, vm.propertyNames->Symbol);
+    if (!symbolValue.isObject()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSObject* symbolObject = JSC::asObject(symbolValue);
+
+    // Get Symbol.dispose
+    JSC::JSValue disposeSymbol = symbolObject->get(globalObject, vm.propertyNames->dispose);
+
+    return JSC::JSValue::encode(disposeSymbol);
 }
 
 JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, ZigString* arg2)

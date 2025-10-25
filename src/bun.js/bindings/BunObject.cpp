@@ -72,6 +72,19 @@ BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__attach);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__detach);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__isEnabledFor);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__listInstruments);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__getActiveSpan);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyStart);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyEnd);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyError);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyProgress);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__notifyInject);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__getConfigurationProperty);
+BUN_DECLARE_HOST_FUNCTION(Bun__Telemetry__nativeHooks__setConfigurationProperty);
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
@@ -431,6 +444,49 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     return dnsObject;
 }
 
+static JSValue constructTelemetryObject(VM& vm, JSObject* bunObject)
+{
+    JSGlobalObject* globalObject = bunObject->globalObject();
+    JSC::JSObject* telemetryObject = JSC::constructEmptyObject(globalObject);
+
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "attach"_s), 1, Bun__Telemetry__attach, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "detach"_s), 1, Bun__Telemetry__detach, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "listInstruments"_s), 0, Bun__Telemetry__listInstruments, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getActiveSpan"_s), 0, Bun__Telemetry__getActiveSpan, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    // Create nativeHooks object for internal TypeScript bridges
+    JSC::JSObject* nativeHooksObject = JSC::constructEmptyObject(globalObject);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isEnabledFor"_s), 1, Bun__Telemetry__isEnabledFor, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyStart"_s), 3, Bun__Telemetry__nativeHooks__notifyStart, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyEnd"_s), 3, Bun__Telemetry__nativeHooks__notifyEnd, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyError"_s), 3, Bun__Telemetry__nativeHooks__notifyError, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyProgress"_s), 3, Bun__Telemetry__nativeHooks__notifyProgress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "notifyInject"_s), 3, Bun__Telemetry__nativeHooks__notifyInject, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getConfigurationProperty"_s), 1, Bun__Telemetry__nativeHooks__getConfigurationProperty, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    nativeHooksObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setConfigurationProperty"_s), 2, Bun__Telemetry__nativeHooks__setConfigurationProperty, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    // Store nativeHooks object in a private property for jsNativeHooks() to return
+    telemetryObject->putDirect(vm, JSC::Identifier::fromString(vm, "_nativeHooksObject"_s), nativeHooksObject, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+
+    // Add nativeHooks() function that returns the object if telemetry is enabled, undefined otherwise
+    telemetryObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "nativeHooks"_s), 0, Bun__Telemetry__nativeHooks, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    return telemetryObject;
+}
+
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
@@ -740,6 +796,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
+    telemetry                                      constructTelemetryObject                                            ReadOnly|DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback

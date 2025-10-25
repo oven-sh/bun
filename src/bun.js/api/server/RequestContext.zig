@@ -77,6 +77,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
+        /// OpenTelemetry HTTP request tracking context
+        /// Reference: specs/001-opentelemetry-support/plan.md lines 267-268
+        telemetry_ctx: bun.telemetry.http.HttpTelemetryContext = .{},
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -318,6 +322,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         fn handleReject(ctx: *RequestContext, value: jsc.JSValue) void {
             if (ctx.isAbortedOrEnded()) {
                 return;
+            }
+
+            // OpenTelemetry: Notify operation error BEFORE error handling
+            if (ctx.server) |server| {
+                bun.telemetry.http.notifyHttpRequestError(&ctx.telemetry_ctx, server.globalThis, value);
             }
 
             const resp = ctx.resp.?;
@@ -699,6 +708,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
+
+            // OpenTelemetry: Notify operation end
+            const status_code: u16 = if (this.response_ptr) |resp| resp.getInitStatusCode() else 500;
+            const content_length: u64 = if (this.response_ptr) |resp| resp.getBodyLen() else 0;
+            bun.telemetry.http.notifyHttpRequestEnd(&this.telemetry_ctx, globalThis, status_code, content_length);
 
             if (this.response_jsvalue != .zero) {
                 ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
@@ -2239,6 +2253,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var has_content_range = false;
             if (response.swapInitHeaders()) |headers_| {
                 defer headers_.deref();
+
+                // OpenTelemetry: Capture response headers before they're freed
+                bun.telemetry.http.notifyHttpResponseHeaders(&this.telemetry_ctx, this.server.?.globalThis, headers_);
+
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
                 needs_content_range = needs_content_range and has_content_range;
@@ -2306,6 +2324,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     ) catch "bytes */*",
                 );
                 this.flags.needs_content_range = false;
+            }
+
+            // OpenTelemetry: Inject propagation headers at the very end, using stack buffers
+            if (this.telemetry_ctx.isEnabled()) {
+                bun.telemetry.http.renderInjectedTraceHeadersToUWSResponse(
+                    .http,
+                    this.telemetry_ctx.request_id,
+                    this.resp.?,
+                    this.server.?.globalThis,
+                );
             }
         }
 

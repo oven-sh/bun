@@ -6,6 +6,7 @@ const { validateObject, validateLinkHeaderValue, validateBoolean, validateIntege
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
+
 const {
   kInternalSocketData,
   serverSymbol,
@@ -552,6 +553,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
 
+        try {
+          Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentKind.Node = 6
+        } catch {}
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -741,11 +746,13 @@ Server.prototype.setTimeout = function (msecs, callback) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
+
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
+
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
@@ -1189,6 +1196,16 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 
   updateHasBody(response, statusCode);
+
+  // Telemetry: notify about response headers
+  try {
+    Bun.telemetry?.nativeHooks()?.notifyInject(1, response._telemetry_op_id || 0, {
+      http_req: response.req,
+      http_res: response,
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

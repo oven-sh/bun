@@ -5993,8 +5993,8 @@ declare module "bun" {
      * ```
      * @param options The options to use when creating the router
      * @param options.dir The root directory containing the files to route
-     * @param options.style The style of router to use (only "nextjs" supported
-     * for now)
+     * @param options.style The file routing convention to use ("nextjs" or
+     * "react-router")
      */
     constructor(options: {
       /**
@@ -6008,7 +6008,7 @@ declare module "bun" {
        *   dir:
        */
       dir: string;
-      style: "nextjs";
+      style: "nextjs" | "react-router";
 
       /** The base path to use when routing */
       assetPrefix?: string;
@@ -6022,7 +6022,7 @@ declare module "bun" {
 
     readonly assetPrefix: string;
     readonly origin: string;
-    readonly style: string;
+    readonly style: "nextjs" | "react-router";
     readonly routes: Record<string, string>;
 
     reload(): void;

@@ -114,6 +114,14 @@ using namespace Zig;
         (_env)->checkGC();             \
     } while (0)
 
+// Check if the VM is terminating and return early if so
+#define NAPI_CHECK_VM_NOT_TERMINATING(_env) \
+    do {                                    \
+        if ((_env)->isVMTerminating()) {    \
+            return napi_set_last_error(_env, napi_cannot_run_js); \
+        }                                   \
+    } while (0)
+
 // Return the specified code if condition is false. Only use for input validation.
 #define NAPI_RETURN_EARLY_IF_FALSE(_env, condition, code) \
     do {                                                  \
@@ -1366,6 +1374,7 @@ extern "C" napi_status node_api_create_syntax_error(napi_env env,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_VM_NOT_TERMINATING(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::SyntaxError, result);
 }
@@ -1390,6 +1399,7 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_VM_NOT_TERMINATING(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
@@ -1536,6 +1546,7 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_VM_NOT_TERMINATING(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::Error, result);
 }
@@ -1593,6 +1604,7 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_VM_NOT_TERMINATING(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::RangeError, result);
 }

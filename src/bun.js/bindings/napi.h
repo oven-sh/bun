@@ -711,6 +711,12 @@ public:
 
     void callFinalizer()
     {
+        // Skip calling finalizers when VM is terminating (e.g., during process.exit)
+        // as they may try to create JavaScript objects/errors which is not allowed
+        if (env->isVMTerminating()) {
+            return;
+        }
+
         // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
         // calling the finalizer
         Bun::NapiFinalizer saved_finalizer = this->finalizer;

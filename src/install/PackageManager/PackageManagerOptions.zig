@@ -93,6 +93,7 @@ pub const PublishConfig = struct {
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
+    provenance: bool = false,
     tolerate_republish: bool = false,
 };
 
@@ -666,6 +667,9 @@ pub fn load(
         }
         if (cli.publish_config.auth_type) |auth_type| {
             this.publish_config.auth_type = auth_type;
+        }
+        if (cli.publish_config.provenance) {
+            this.publish_config.provenance = true;
         }
         this.publish_config.tolerate_republish = cli.tolerate_republish;
 

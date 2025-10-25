@@ -1519,11 +1519,11 @@ pub fn fetchWithoutOnLoadPlugins(
     referrer: String,
     log: *logger.Log,
     comptime flags: FetchFlags,
-) anyerror!ResolvedSource {
+) anyerror!ModuleResult {
     bun.assert(VirtualMachine.isLoaded());
 
-    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
-        return builtin;
+    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |module_result| {
+        return module_result;
     }
 
     const specifier_clone = _specifier.toUTF8(bun.default_allocator);
@@ -1863,7 +1863,7 @@ pub fn drainMicrotasks(this: *VirtualMachine) void {
     this.eventLoop().drainMicrotasks() catch {}; // TODO: properly propagate exception upwards
 }
 
-pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableModuleResult, err: anyerror) void {
     switch (log.msgs.items.len) {
         0 => {
             const msg: logger.Msg = brk: {
@@ -1882,14 +1882,14 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
+                ret.* = ErrorableModuleResult.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
 
         1 => {
             const msg = log.msgs.items[0];
-            ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
+            ret.* = ErrorableModuleResult.err(err, switch (msg.metadata) {
                 .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
@@ -1919,7 +1919,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             }
 
-            ret.* = ErrorableResolvedSource.err(
+            ret.* = ErrorableModuleResult.err(
                 err,
                 globalThis.createAggregateError(
                     errors,
@@ -2797,9 +2797,12 @@ pub fn remapZigException(
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            var module_result = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             must_reset_parser_arena_later.* = true;
-            break :code original_source.source_code.toUTF8(bun.default_allocator);
+            break :code switch (module_result.tag) {
+                .transpiled => module_result.value.transpiled.source_code.toUTF8(bun.default_allocator),
+                else => return, // For builtin/special modules, we can't show source
+            };
         };
 
         if (enable_source_code_preview and code.len == 0) {
@@ -3729,6 +3732,7 @@ const DNSResolver = bun.api.dns.Resolver;
 
 const jsc = bun.jsc;
 const ConsoleObject = jsc.ConsoleObject;
+const ErrorableModuleResult = jsc.ErrorableModuleResult;
 const ErrorableResolvedSource = jsc.ErrorableResolvedSource;
 const ErrorableString = jsc.ErrorableString;
 const EventLoop = jsc.EventLoop;
@@ -3737,6 +3741,7 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSInternalPromise = jsc.JSInternalPromise;
 const JSModuleLoader = jsc.JSModuleLoader;
 const JSValue = jsc.JSValue;
+const ModuleResult = jsc.ModuleResult;
 const Node = jsc.Node;
 const ResolvedSource = jsc.ResolvedSource;
 const SavedSourceMap = jsc.SavedSourceMap;

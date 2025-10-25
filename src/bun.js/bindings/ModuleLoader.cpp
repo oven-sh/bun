@@ -11,8 +11,6 @@
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
-#include "ZigSourceProvider.h"
-
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>

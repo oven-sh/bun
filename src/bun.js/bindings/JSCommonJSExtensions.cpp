@@ -260,7 +260,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
-    ErrorableResolvedSource res;
+    ErrorableModuleResult res;
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
 

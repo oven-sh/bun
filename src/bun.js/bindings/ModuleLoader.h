@@ -93,7 +93,7 @@ public:
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,
-    ErrorableResolvedSource* res,
+    ErrorableModuleResult* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
@@ -101,7 +101,7 @@ JSValue fetchESMSourceCodeSync(
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,
-    ErrorableResolvedSource* res,
+    ErrorableModuleResult* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
@@ -123,7 +123,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::JSValue specifierValue,
     BunString* referrer,
     BunString* typeAttribute,
-    ErrorableResolvedSource* res,
+    ErrorableModuleResult* res,
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
@@ -136,6 +136,6 @@ JSValue resolveAndFetchBuiltinModule(
 JSValue fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     BunString* specifier,
-    ErrorableResolvedSource* res);
+    ErrorableModuleResult* res);
 
 } // namespace Bun

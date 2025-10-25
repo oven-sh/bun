@@ -129,6 +129,67 @@ typedef struct ErrorableResolvedSource {
     bool success;
 } ErrorableResolvedSource;
 
+// New module result types for Phase 2 refactoring
+typedef struct TranspiledSourceFlags {
+    bool is_commonjs;
+    bool is_already_bundled;
+    uint32_t _padding : 30;
+} TranspiledSourceFlags;
+
+typedef struct TranspiledSource {
+    BunString source_code;
+    BunString source_url;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_len;
+    TranspiledSourceFlags flags;
+} TranspiledSource;
+
+#ifdef __cplusplus
+enum class SpecialModuleTag : uint8_t {
+    exports_object = 0,
+    export_default_object = 1,
+    custom_extension = 2,
+};
+#else
+typedef uint8_t SpecialModuleTag;
+#endif
+
+typedef struct SpecialModule {
+    SpecialModuleTag tag;
+    JSC::EncodedJSValue jsvalue;
+} SpecialModule;
+
+#ifdef __cplusplus
+enum class ModuleResultTag : uint8_t {
+    transpiled = 0,
+    special = 1,
+    builtin = 2,
+};
+#else
+typedef uint8_t ModuleResultTag;
+#endif
+
+typedef union ModuleResultValue {
+    TranspiledSource transpiled;
+    SpecialModule special;
+    uint32_t builtin_id;
+} ModuleResultValue;
+
+typedef struct ModuleResult {
+    ModuleResultTag tag;
+    ModuleResultValue value;
+} ModuleResult;
+
+typedef union ErrorableModuleResultResult {
+    ModuleResult value;
+    ZigErrorType err;
+} ErrorableModuleResultResult;
+
+typedef struct ErrorableModuleResult {
+    ErrorableModuleResultResult result;
+    bool success;
+} ErrorableModuleResult;
+
 typedef struct SystemError {
     int errno_;
     BunString code;
@@ -354,7 +415,7 @@ extern "C" bool Bun__transpileVirtualModule(
     const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
-    ErrorableResolvedSource* result);
+    ErrorableModuleResult* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
@@ -366,7 +427,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     BunString* specifier,
     BunString* referrer,
     const BunString* typeAttribute,
-    ErrorableResolvedSource* result,
+    ErrorableModuleResult* result,
     bool allowPromise,
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType);
@@ -376,11 +437,11 @@ extern "C" bool Bun__fetchBuiltinModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ErrorableResolvedSource* result);
+    ErrorableModuleResult* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,
     const BunString* specifier,
-    ErrorableResolvedSource* result);
+    ErrorableModuleResult* result);
 
 // Used in process.version
 extern "C" const char* Bun__version;

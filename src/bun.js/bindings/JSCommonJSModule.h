@@ -177,6 +177,21 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
     return createCommonJSModule(globalObject, specifierValue, source, false);
 }
 
+// New overload for TranspiledSource
+std::optional<JSC::SourceCode> createCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierValue,
+    const TranspiledSource& source,
+    bool isBuiltIn);
+
+inline std::optional<JSC::SourceCode> createCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierValue,
+    const TranspiledSource& source)
+{
+    return createCommonJSModule(globalObject, specifierValue, source, false);
+}
+
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

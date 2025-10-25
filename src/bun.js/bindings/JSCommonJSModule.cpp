@@ -66,7 +66,6 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -82,6 +81,14 @@
 #include "ErrorCode.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
+extern "C" JSC::SourceProvider* Bun__createSourceProvider(
+    Zig::GlobalObject* globalObject,
+    const TranspiledSource* source,
+    bool isBuiltin);
+
+namespace Zig {
+JSC::SourceOrigin toSourceOrigin(const WTF::String& sourceURL, bool isBuiltin);
+}
 
 namespace Bun {
 using namespace JSC;
@@ -1311,7 +1318,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ErrorableResolvedSource res;
+    ErrorableModuleResult res;
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
@@ -1360,12 +1367,21 @@ void JSCommonJSModule::evaluate(
         }
     }
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+    // Convert ResolvedSource to TranspiledSource for Bun__createSourceProvider
+    TranspiledSource transpiledSource;
+    transpiledSource.source_code = source.source_code;
+    transpiledSource.source_url = source.source_url;
+    transpiledSource.bytecode_cache = source.bytecode_cache;
+    transpiledSource.bytecode_cache_len = source.bytecode_cache_size;
+    transpiledSource.flags.is_commonjs = source.isCommonJSModule;
+    transpiledSource.flags.is_already_bundled = source.already_bundled;
+
+    auto* sourceProvider = Bun__createSourceProvider(globalObject, &transpiledSource, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (this->hasEvaluated)
         return;
 
-    this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
+    this->sourceCode = JSC::SourceCode(adoptRef(*sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1461,12 +1477,21 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             source.source_code = Bun::toStringRef(concat);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        // Convert ResolvedSource to TranspiledSource for Bun__createSourceProvider
+        TranspiledSource transpiledSource;
+        transpiledSource.source_code = source.source_code;
+        transpiledSource.source_url = source.source_url;
+        transpiledSource.bytecode_cache = source.bytecode_cache;
+        transpiledSource.bytecode_cache_len = source.bytecode_cache_size;
+        transpiledSource.flags.is_commonjs = source.isCommonJSModule;
+        transpiledSource.flags.is_already_bundled = source.already_bundled;
+
+        auto* sourceProvider = Bun__createSourceProvider(globalObject, &transpiledSource, isBuiltIn);
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(WTFMove(sourceProvider))));
+            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(adoptRef(*sourceProvider))));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1479,6 +1504,118 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+
+    return JSC::SourceCode(
+        JSC::SyntheticSourceProvider::create(
+            [](JSC::JSGlobalObject* lexicalGlobalObject,
+                const JSC::Identifier& moduleKey,
+                Vector<JSC::Identifier, 4>& exportNames,
+                JSC::MarkedArgumentBuffer& exportValues) -> void {
+                auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+                auto& vm = JSC::getVM(globalObject);
+                auto scope = DECLARE_THROW_SCOPE(vm);
+
+                JSValue keyValue = identifierToJSValue(vm, moduleKey);
+                JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                if (entry) {
+                    if (auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(entry)) {
+                        if (!moduleObject->hasEvaluated) {
+                            evaluateCommonJSModuleOnce(
+                                vm,
+                                globalObject,
+                                moduleObject,
+                                moduleObject->m_dirname.get(),
+                                moduleObject->m_filename.get());
+                            if (auto exception = scope.exception()) {
+                                scope.clearException();
+
+                                // On error, remove the module from the require map
+                                // so that it can be re-evaluated on the next require.
+                                globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+                                RETURN_IF_EXCEPTION(scope, {});
+
+                                scope.throwException(globalObject, exception);
+                                return;
+                            }
+                        }
+
+                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
+                } else {
+                    // require map was cleared of the entry
+                }
+            },
+            sourceOrigin,
+            sourceURL));
+}
+
+// New overload for TranspiledSource
+std::optional<JSC::SourceCode> createCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSString* requireMapKey,
+    const TranspiledSource& source,
+    bool isBuiltIn)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSCommonJSModule* moduleObject = nullptr;
+    WTF::String sourceURL = source.source_url.toWTFString();
+
+    JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, {});
+    SourceOrigin sourceOrigin;
+
+    if (entry) {
+        moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
+    }
+
+    if (!moduleObject) {
+        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        JSString* dirname;
+        JSString* filename = requireMapKey;
+        if (index != WTF::notFound) {
+            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            dirname = jsEmptyString(vm);
+        }
+        auto requireMap = globalObject->requireMap();
+        if (requireMap->size() == 0) {
+            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+        }
+
+        // Handle module wrapper if needed
+        auto sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
+        if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+            sourceString = makeString(
+                globalObject->m_moduleWrapperStart,
+                sourceString,
+                globalObject->m_moduleWrapperEnd);
+        }
+
+        // Create source provider using Bun__createSourceProvider
+        auto* provider = Bun__createSourceProvider(globalObject, &source, isBuiltIn);
+        sourceOrigin = provider->sourceOrigin();
+
+        moduleObject = JSCommonJSModule::create(
+            vm,
+            globalObject->CommonJSModuleObjectStructure(),
+            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(adoptRef(*provider))));
+
+        moduleObject->putDirect(vm,
+            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+            JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
+
+        requireMap->set(globalObject, filename, moduleObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
+    }
+
+    moduleObject->ignoreESModuleAnnotation = false; // TranspiledSource doesn't have package.json type flag
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(

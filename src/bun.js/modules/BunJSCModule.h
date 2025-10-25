@@ -44,7 +44,6 @@
 #endif
 
 #include "JSDOMConvertBase.h"
-#include "ZigSourceProvider.h"
 #include "mimalloc.h"
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
@@ -61,6 +60,22 @@
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
+
+// Extern declarations for code coverage support functions from Zig
+extern "C" void* ByteRangeMapping__find(BunString sourceURL);
+extern "C" JSC::SourceID ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
+
+namespace Zig {
+// Helper function to find source ID for a given source URL (used for code coverage)
+inline JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
+{
+    void* mappings = ByteRangeMapping__find(Bun::toString(sourceURL));
+    if (!mappings) {
+        return 0;
+    }
+    return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
+}
+} // namespace Zig
 
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,

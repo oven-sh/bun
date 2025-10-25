@@ -2077,7 +2077,7 @@ export fn Bun__transpileVirtualModule(
     );
 
     // Check if the result is an error
-    if (module_result.tag == .err) {
+    if (module_result.tag == @intFromEnum(jsc.ModuleResult.Tag.err)) {
         ret.* = jsc.ErrorableModuleResult.ok(module_result);
         return true;
     }

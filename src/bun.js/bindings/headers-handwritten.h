@@ -280,6 +280,7 @@ typedef struct ModuleResultError {
 // ModuleResult - tagged union return type
 typedef struct ModuleResult {
     ModuleResultTag tag;
+    uint8_t _padding[7];  // Explicit padding to match Zig struct alignment
     union {
         TranspiledSource transpiled;
         SpecialModule special;

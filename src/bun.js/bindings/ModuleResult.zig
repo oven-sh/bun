@@ -2,7 +2,10 @@
 /// This is the main result type returned by the transpiler to C++.
 pub const ModuleResult = extern struct {
     /// Tag indicating which variant is active
-    tag: Tag,
+    tag: u8,
+
+    /// Explicit padding to match C struct alignment
+    _padding: [7]u8,
 
     /// The actual result data (tagged union)
     result: Result,
@@ -43,7 +46,8 @@ pub const ModuleResult = extern struct {
     /// Helper to create a transpiled result
     pub fn transpiled(source: TranspiledSource) ModuleResult {
         return .{
-            .tag = .transpiled,
+            .tag = @intFromEnum(Tag.transpiled),
+            ._padding = undefined,
             .result = .{ .transpiled = source },
         };
     }
@@ -51,7 +55,8 @@ pub const ModuleResult = extern struct {
     /// Helper to create a special module result
     pub fn special(spec: SpecialModule) ModuleResult {
         return .{
-            .tag = .special,
+            .tag = @intFromEnum(Tag.special),
+            ._padding = undefined,
             .result = .{ .special = spec },
         };
     }
@@ -59,7 +64,8 @@ pub const ModuleResult = extern struct {
     /// Helper to create a builtin module result
     pub fn builtin(specifier: bun.String) ModuleResult {
         return .{
-            .tag = .builtin,
+            .tag = @intFromEnum(Tag.builtin),
+            ._padding = undefined,
             .result = .{ .builtin = specifier },
         };
     }
@@ -67,7 +73,8 @@ pub const ModuleResult = extern struct {
     /// Helper to create an error result
     pub fn err(exception: jsc.JSValue) ModuleResult {
         return .{
-            .tag = .err,
+            .tag = @intFromEnum(Tag.err),
+            ._padding = undefined,
             .result = .{ .err = .{ .exception = exception } },
         };
     }

@@ -2794,10 +2794,10 @@ pub fn remapZigException(
             const module_result = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             must_reset_parser_arena_later.* = true;
             // Extract source code from the module result
-            const source_code = switch (module_result.tag) {
-                .transpiled => module_result.result.transpiled.source_code,
-                else => bun.String.empty,
-            };
+            const source_code = if (module_result.tag == @intFromEnum(jsc.ModuleResult.Tag.transpiled))
+                module_result.result.transpiled.source_code
+            else
+                bun.String.empty;
             break :code source_code.toUTF8(bun.default_allocator);
         };
 

@@ -2,6 +2,7 @@ pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
         success: bool,
+        _padding: [7]u8 = undefined, // Explicit padding to match C alignment
 
         pub const Result = extern union {
             value: Type,

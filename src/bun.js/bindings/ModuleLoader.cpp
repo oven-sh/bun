@@ -676,11 +676,11 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
                 promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
-                JSC::throwException(globalObject, scope, promise->result(vm));
+                JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
@@ -693,7 +693,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
                     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -727,11 +727,11 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
                 promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
-                JSC::throwException(globalObject, scope, promise->result(vm));
+                JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
@@ -744,7 +744,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
                     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
                     RETURN_IF_EXCEPTION(scope, {});
                 }

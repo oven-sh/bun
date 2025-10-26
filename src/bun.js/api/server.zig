@@ -2726,14 +2726,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             httplog("listen", .{});
             var app: *App = undefined;
             const globalThis = this.globalThis;
-
-            // Set the websocketServerContext on the server JSValue to keep it alive through GC
-            if (this.config.websocket_js_context != .zero) {
-                const server_value = this.jsValueAssertAlive();
-                const js = bun.JSC.Codegen.JSHTTPServerClass(comptime protocol, comptime development);
-                js.websocketServerContextSetCachedValue(server_value, globalThis, this.config.websocket_js_context);
-            }
-
             var route_list_value = jsc.JSValue.zero;
             if (ssl_enabled) {
                 bun.BoringSSL.load();

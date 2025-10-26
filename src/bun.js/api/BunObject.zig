@@ -1086,6 +1086,9 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
+                    if (config.websocket_js_context != .zero) {
+                        ServerType.js.websocketServerContextSetCached(obj, globalObject, config.websocket_js_context);
+                    }
                     server.js_value.setStrong(obj, globalObject);
 
                     if (config.allow_hot) {

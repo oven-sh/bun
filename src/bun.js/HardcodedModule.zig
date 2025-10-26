@@ -203,7 +203,7 @@ pub const HardcodedModule = enum {
                 },
             };
         }
-        fn entry(path: [:0]const u8) struct { string, Alias } {
+        fn entry(comptime path: [:0]const u8) struct { string, Alias } {
             return .{ path, .{ .path = path } };
         }
 

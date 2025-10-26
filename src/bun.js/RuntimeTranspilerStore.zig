@@ -529,6 +529,16 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
+            // Cap buffer size to prevent unbounded growth
+            const max_buffer_cap = 512 * 1024;
+            if (printer.ctx.buffer.list.capacity > max_buffer_cap) {
+                printer.ctx.buffer.deinit();
+                const writer = js_printer.BufferWriter.init(bun.default_allocator);
+                source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+                source_code_printer.?.ctx.append_null_byte = false;
+                printer = source_code_printer.?.*;
+            }
+
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
@@ -555,6 +565,10 @@ pub const RuntimeTranspilerStore = struct {
 
                 if (written.len > 1024 * 1024 * 2 or vm.smol) {
                     printer.ctx.buffer.deinit();
+                    const writer = js_printer.BufferWriter.init(bun.default_allocator);
+                    source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+                    source_code_printer.?.ctx.append_null_byte = false;
+                } else {
                     source_code_printer.?.* = printer;
                 }
 

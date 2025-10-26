@@ -74,6 +74,27 @@ describe("Bun.telemetry.attach() validation", () => {
         onOperationStart: () => {},
       });
     }).toThrow(/type/i);
+
+    // Invalid string types should throw, not silently default to "custom"
+    expect(() => {
+      Bun.telemetry.attach({
+        // @ts-expect-error - testing error case
+        type: "invalid-kind",
+        name: "test",
+        version: "1.0.0",
+        onOperationStart: () => {},
+      });
+    }).toThrow(/type/i);
+
+    expect(() => {
+      Bun.telemetry.attach({
+        // @ts-expect-error - testing error case
+        type: "foo",
+        name: "test",
+        version: "1.0.0",
+        onOperationStart: () => {},
+      });
+    }).toThrow(/type/i);
   });
 
   test("throws when no hook functions are provided", () => {

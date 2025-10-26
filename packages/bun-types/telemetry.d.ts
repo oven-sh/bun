@@ -289,7 +289,7 @@ declare module "bun" {
      * All registered instruments receive lifecycle callbacks in registration order.
      *
      * Validation:
-     * - type must be a valid operation kind string (or it will go in as "custom")
+     * - type must be a valid InstrumentKind value ("custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node")
      * - name must be a non-empty string (max 256 chars)
      * - version must be a non-empty string (semver format)
      * - At least one hook function (onOperationStart/End/Error/Progress/Inject) must be provided

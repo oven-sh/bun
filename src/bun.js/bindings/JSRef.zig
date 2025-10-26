@@ -116,6 +116,22 @@ pub const JSRef = union(enum) {
         this.deinit();
         this.* = .{ .finalized = {} };
     }
+
+    pub fn update(this: *@This(), globalThis: *jsc.JSGlobalObject, value: JSValue) void {
+        switch (this.*) {
+            .weak => {
+                this.weak = value;
+            },
+            .strong => {
+                if (this.strong.get() != value) {
+                    this.strong.set(globalThis, value);
+                }
+            },
+            .finalized => {
+                bun.debugAssert(false);
+            },
+        }
+    }
 };
 
 const bun = @import("bun");

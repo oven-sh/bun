@@ -48,6 +48,7 @@ unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+cpu_profiler_config: ?CPUProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -832,6 +833,13 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Write CPU profile if profiling was enabled - do this FIRST before any shutdown begins
+    if (this.cpu_profiler_config) |config| {
+        CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.errGeneric("Failed to write CPU profile: {s}", .{@errorName(err)});
+        };
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -855,6 +863,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     // FIXME: we should be doing this, but we're not, but unfortunately doing it
     //        causes like 50+ tests to break
     // this.eventLoop().tick();
+
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
@@ -3698,6 +3707,8 @@ const IPC = @import("./ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
+const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;

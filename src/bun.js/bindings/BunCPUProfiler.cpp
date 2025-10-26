@@ -1,0 +1,241 @@
+#include "BunCPUProfiler.h"
+#include "ZigGlobalObject.h"
+#include "helpers.h"
+#include "BunString.h"
+#include <JavaScriptCore/SamplingProfiler.h>
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/SourceProvider.h>
+#include <wtf/Stopwatch.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/JSONValues.h>
+#include <wtf/HashMap.h>
+
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
+extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
+
+namespace Bun {
+
+void startCPUProfiler(JSC::VM& vm)
+{
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
+    samplingProfiler.start();
+}
+
+struct ProfileNode {
+    int id;
+    WTF::String functionName;
+    WTF::String url;
+    int lineNumber;
+    int columnNumber;
+    int hitCount;
+    WTF::Vector<int> children;
+    WTF::HashMap<WTF::String, int> positionTicks;
+};
+
+WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
+{
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+    if (!profiler)
+        return WTF::String();
+
+    // Need to hold the VM lock to safely access stack traces
+    JSC::JSLockHolder locker(vm);
+
+    auto& lock = profiler->getLock();
+    WTF::Locker profilerLocker { lock };
+
+    profiler->pause();
+    profiler->processUnverifiedStackTraces();
+
+    auto stackTraces = profiler->releaseStackTraces();
+
+    if (stackTraces.isEmpty())
+        return WTF::String();
+
+    // Build Chrome CPU Profiler format
+    // Map from stack frame signature to node ID
+    WTF::HashMap<WTF::String, int> nodeMap;
+    WTF::Vector<ProfileNode> nodes;
+
+    // Create root node
+    ProfileNode rootNode;
+    rootNode.id = 1;
+    rootNode.functionName = "(root)"_s;
+    rootNode.url = ""_s;
+    rootNode.lineNumber = -1;
+    rootNode.columnNumber = -1;
+    rootNode.hitCount = 0;
+    nodes.append(WTFMove(rootNode));
+
+    int nextNodeId = 2;
+    WTF::Vector<int> samples;
+    WTF::Vector<int> timeDeltas;
+
+    double startTime = stackTraces[0].stopwatchTimestamp.seconds() * 1000000.0;
+    double lastTime = startTime;
+
+    // Process each stack trace
+    for (const auto& stackTrace : stackTraces) {
+        if (stackTrace.frames.isEmpty()) {
+            samples.append(1); // Root node
+            double currentTime = stackTrace.stopwatchTimestamp.seconds() * 1000000.0;
+            timeDeltas.append(static_cast<int>(currentTime - lastTime));
+            lastTime = currentTime;
+            continue;
+        }
+
+        int currentParentId = 1; // Start from root
+
+        // Process frames from bottom to top (reverse order for Chrome format)
+        for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
+            const auto& frame = stackTrace.frames[i];
+
+            WTF::String functionName;
+            WTF::String url;
+            int lineNumber = -1;
+            int columnNumber = -1;
+
+            if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+                functionName = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->displayName(vm);
+
+                auto sourceProviderAndID = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->sourceProviderAndID();
+                if (std::get<0>(sourceProviderAndID)) {
+                    url = std::get<0>(sourceProviderAndID)->sourceURL();
+                }
+
+                if (frame.hasExpressionInfo()) {
+                    lineNumber = frame.lineNumber();
+                    columnNumber = frame.columnNumber();
+                }
+            } else if (frame.frameType == JSC::SamplingProfiler::FrameType::Host) {
+                functionName = "(native)"_s;
+            } else if (frame.frameType == JSC::SamplingProfiler::FrameType::C || frame.frameType == JSC::SamplingProfiler::FrameType::Unknown) {
+                functionName = "(program)"_s;
+            } else {
+                functionName = "(anonymous)"_s;
+            }
+
+            // Create a unique key for this frame
+            WTF::StringBuilder keyBuilder;
+            keyBuilder.append(functionName);
+            keyBuilder.append(':');
+            keyBuilder.append(url);
+            keyBuilder.append(':');
+            keyBuilder.append(lineNumber);
+            keyBuilder.append(':');
+            keyBuilder.append(columnNumber);
+            keyBuilder.append(':');
+            keyBuilder.append(currentParentId);
+
+            WTF::String key = keyBuilder.toString();
+
+            int nodeId;
+            auto it = nodeMap.find(key);
+            if (it == nodeMap.end()) {
+                // Create new node
+                nodeId = nextNodeId++;
+                nodeMap.add(key, nodeId);
+
+                ProfileNode node;
+                node.id = nodeId;
+                node.functionName = functionName;
+                node.url = url;
+                node.lineNumber = lineNumber;
+                node.columnNumber = columnNumber;
+                node.hitCount = 0;
+
+                nodes.append(WTFMove(node));
+
+                // Add this node as child of parent
+                nodes[currentParentId - 1].children.append(nodeId);
+            } else {
+                nodeId = it->value;
+            }
+
+            currentParentId = nodeId;
+
+            // If this is the top frame, increment hit count
+            if (i == 0) {
+                nodes[nodeId - 1].hitCount++;
+            }
+        }
+
+        // Add sample pointing to the top frame
+        samples.append(currentParentId);
+
+        // Add time delta
+        double currentTime = stackTrace.stopwatchTimestamp.seconds() * 1000000.0;
+        timeDeltas.append(static_cast<int>(currentTime - lastTime));
+        lastTime = currentTime;
+    }
+
+    double endTime = lastTime;
+
+    // Build JSON using WTF::JSON
+    using namespace WTF;
+    auto json = JSON::Object::create();
+
+    // Add nodes array
+    auto nodesArray = JSON::Array::create();
+    for (const auto& node : nodes) {
+        auto nodeObj = JSON::Object::create();
+        nodeObj->setInteger("id"_s, node.id);
+
+        auto callFrame = JSON::Object::create();
+        callFrame->setString("functionName"_s, node.functionName);
+        callFrame->setString("scriptId"_s, "0"_s);
+        callFrame->setString("url"_s, node.url);
+        callFrame->setInteger("lineNumber"_s, node.lineNumber);
+        callFrame->setInteger("columnNumber"_s, node.columnNumber);
+
+        nodeObj->setValue("callFrame"_s, callFrame);
+        nodeObj->setInteger("hitCount"_s, node.hitCount);
+
+        if (!node.children.isEmpty()) {
+            auto childrenArray = JSON::Array::create();
+            for (int childId : node.children) {
+                childrenArray->pushInteger(childId);
+            }
+            nodeObj->setValue("children"_s, childrenArray);
+        }
+
+        nodesArray->pushValue(nodeObj);
+    }
+    json->setValue("nodes"_s, nodesArray);
+
+    // Add timing info
+    json->setDouble("startTime"_s, startTime);
+    json->setDouble("endTime"_s, endTime);
+
+    // Add samples array
+    auto samplesArray = JSON::Array::create();
+    for (int sample : samples) {
+        samplesArray->pushInteger(sample);
+    }
+    json->setValue("samples"_s, samplesArray);
+
+    // Add timeDeltas array
+    auto timeDeltasArray = JSON::Array::create();
+    for (int delta : timeDeltas) {
+        timeDeltasArray->pushInteger(delta);
+    }
+    json->setValue("timeDeltas"_s, timeDeltasArray);
+
+    return json->toJSONString();
+}
+
+} // namespace Bun
+
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
+{
+    Bun::startCPUProfiler(*vm);
+}
+
+extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm)
+{
+    WTF::String result = Bun::stopCPUProfilerAndGetJSON(*vm);
+    return Bun::toStringRef(result);
+}

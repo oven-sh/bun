@@ -2,6 +2,7 @@ pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 pub const bindgen = @import("./bun.js/bindgen.zig");
+const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -263,6 +264,20 @@ pub const Run = struct {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        // Start CPU profiler if enabled
+        if (this.ctx.runtime_options.cpu_prof.enabled) {
+            const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
+
+            vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
+                .enabled = true,
+                .name_ptr = if (cpu_prof_opts.name.len > 0) cpu_prof_opts.name.ptr else "",
+                .name_len = cpu_prof_opts.name.len,
+                .dir_ptr = if (cpu_prof_opts.dir.len > 0) cpu_prof_opts.dir.ptr else "",
+                .dir_len = cpu_prof_opts.dir.len,
+            };
+            CPUProfiler.startCPUProfiler(vm.jsc_vm);
+        }
 
         this.addConditionalGlobals();
         do_redis_preconnect: {

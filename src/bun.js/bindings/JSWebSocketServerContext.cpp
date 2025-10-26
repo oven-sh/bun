@@ -60,10 +60,28 @@ public:
 
     static JSWebSocketServerContext* create(
         JSC::VM& vm,
-        JSC::Structure* structure)
+        JSC::Structure* structure,
+        JSValue onOpen,
+        JSValue onMessage,
+        JSValue onClose,
+        JSValue onDrain,
+        JSValue onError,
+        JSValue onPing,
+        JSValue onPong,
+        JSValue server,
+        void* app,
+        void* vmPtr,
+        bool ssl,
+        bool publishToSelf)
     {
-        auto* context = new (NotNull, JSC::allocateCell<JSWebSocketServerContext>(vm)) JSWebSocketServerContext(vm, structure);
+        auto* context = new (NotNull, JSC::allocateCell<JSWebSocketServerContext>(vm))
+            JSWebSocketServerContext(vm, structure, onOpen, onMessage, onClose, onDrain, onError, onPing, onPong, server);
         context->finishCreation(vm);
+        context->app = app;
+        context->vm = vmPtr;
+        context->flags.ssl = ssl;
+        context->flags.publish_to_self = publishToSelf;
+        context->active_connections = 0;
         return context;
     }
 
@@ -127,28 +145,59 @@ public:
     void decrementActiveConnections() { if (active_connections > 0) active_connections--; }
 
 private:
-    JSWebSocketServerContext(JSC::VM& vm, JSC::Structure* structure)
+    JSWebSocketServerContext(JSC::VM& vm, JSC::Structure* structure,
+                              JSValue onOpen, JSValue onMessage, JSValue onClose,
+                              JSValue onDrain, JSValue onError, JSValue onPing,
+                              JSValue onPong, JSValue server)
         : Base(vm, structure)
     {
+        // Initialize internal fields with the provided callbacks
+        Base::internalField(onOpenFieldIndex).setWithoutWriteBarrier(onOpen);
+        Base::internalField(onMessageFieldIndex).setWithoutWriteBarrier(onMessage);
+        Base::internalField(onCloseFieldIndex).setWithoutWriteBarrier(onClose);
+        Base::internalField(onDrainFieldIndex).setWithoutWriteBarrier(onDrain);
+        Base::internalField(onErrorFieldIndex).setWithoutWriteBarrier(onError);
+        Base::internalField(onPingFieldIndex).setWithoutWriteBarrier(onPing);
+        Base::internalField(onPongFieldIndex).setWithoutWriteBarrier(onPong);
+        Base::internalField(serverFieldIndex).setWithoutWriteBarrier(server);
     }
 
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        // Initialize all fields to undefined
-        for (unsigned i = 0; i < Base::numberOfInternalFields; i++) {
-            Base::internalField(i).set(vm, this, jsUndefined());
-        }
     }
 };
 
 const JSC::ClassInfo JSWebSocketServerContext::s_info = { "JSWebSocketServerContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocketServerContext) };
 
-extern "C" JSC::EncodedJSValue Bun__JSWebSocketServerContext__create(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__JSWebSocketServerContext__create(
+    Zig::GlobalObject* globalObject,
+    JSC::EncodedJSValue onOpen,
+    JSC::EncodedJSValue onMessage,
+    JSC::EncodedJSValue onClose,
+    JSC::EncodedJSValue onDrain,
+    JSC::EncodedJSValue onError,
+    JSC::EncodedJSValue onPing,
+    JSC::EncodedJSValue onPong,
+    JSC::EncodedJSValue server,
+    void* app,
+    void* vmPtr,
+    bool ssl,
+    bool publishToSelf)
 {
     auto& vm = globalObject->vm();
     auto* structure = globalObject->m_JSWebSocketServerContextStructure.get(globalObject);
-    auto* context = JSWebSocketServerContext::create(vm, structure);
+    auto* context = JSWebSocketServerContext::create(
+        vm, structure,
+        JSValue::decode(onOpen),
+        JSValue::decode(onMessage),
+        JSValue::decode(onClose),
+        JSValue::decode(onDrain),
+        JSValue::decode(onError),
+        JSValue::decode(onPing),
+        JSValue::decode(onPong),
+        JSValue::decode(server),
+        app, vmPtr, ssl, publishToSelf);
     return JSValue::encode(context);
 }
 
@@ -289,6 +338,19 @@ extern "C" void Bun__JSWebSocketServerContext__incrementActiveConnections(JSWebS
 extern "C" void Bun__JSWebSocketServerContext__decrementActiveConnections(JSWebSocketServerContext* context)
 {
     context->decrementActiveConnections();
+}
+
+extern "C" JSWebSocketServerContext* Bun__JSWebSocketServerContext__fromJS(JSC::EncodedJSValue value)
+{
+    JSValue jsValue = JSValue::decode(value);
+    if (!jsValue.isCell())
+        return nullptr;
+
+    JSCell* cell = jsValue.asCell();
+    if (cell->type() != JSC::InternalFieldTupleType)
+        return nullptr;
+
+    return jsCast<JSWebSocketServerContext*>(cell);
 }
 
 Structure* createJSWebSocketServerContextStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)

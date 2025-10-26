@@ -47,6 +47,7 @@ onRequest: jsc.JSValue = jsc.JSValue.zero,
 onNodeHTTPRequest: jsc.JSValue = jsc.JSValue.zero,
 
 websocket: ?WebSocketServerContext = null,
+websocket_js_context: jsc.JSValue = jsc.JSValue.zero,
 
 inspector: bool = false,
 reuse_port: bool = false,
@@ -744,7 +745,9 @@ pub fn fromJS(
             }
 
             errdefer if (args.ssl_config) |*conf| conf.deinit();
-            args.websocket = try WebSocketServerContext.onCreate(global, websocket_object);
+            const ws_result = try WebSocketServerContext.onCreate(global, websocket_object);
+            args.websocket = ws_result.context;
+            args.websocket_js_context = ws_result.js_context;
         }
         if (global.hasException()) return error.JSError;
 

@@ -2,7 +2,6 @@ const WebSocketServerContext = @This();
 
 globalObject: *jsc.JSGlobalObject = undefined,
 handler: Handler = .{},
-js_context: jsc.JSValue = .zero, // The JSWebSocketServerContext object
 
 maxPayloadLength: u32 = 1024 * 1024 * 16, // 16MB
 maxLifetime: u16 = 0,
@@ -123,13 +122,10 @@ const DecompressTable = bun.ComptimeStringMap(i32, .{
     .{ "256KB", uws.DEDICATED_COMPRESSOR_256KB },
 });
 
-pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!WebSocketServerContext {
+pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!struct { context: WebSocketServerContext, js_context: jsc.JSValue } {
     var server = WebSocketServerContext{};
     server.handler = try Handler.fromJS(globalObject, object);
     server.globalObject = globalObject;
-
-    // Create the GC-managed JSWebSocketServerContext object
-    server.js_context = JSWebSocketServerContext.create(globalObject);
 
     if (try object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
         getter: {
@@ -239,23 +235,24 @@ pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!
         }
     }
 
-    // Store callbacks and settings in the GC-managed context instead of using protect()
-    const js_ctx: *JSWebSocketServerContext = @ptrFromInt(@intFromPtr(server.js_context.asObjectRef()));
-    js_ctx.setOnOpen(globalObject, server.handler.onOpen);
-    js_ctx.setOnMessage(globalObject, server.handler.onMessage);
-    js_ctx.setOnClose(globalObject, server.handler.onClose);
-    js_ctx.setOnDrain(globalObject, server.handler.onDrain);
-    js_ctx.setOnError(globalObject, server.handler.onError);
-    js_ctx.setOnPing(globalObject, server.handler.onPing);
-    js_ctx.setOnPong(globalObject, server.handler.onPong);
+    // Create the GC-managed JSWebSocketServerContext object with all callbacks and settings
+    const js_context = JSWebSocketServerContext.create(
+        globalObject,
+        server.handler.onOpen,
+        server.handler.onMessage,
+        server.handler.onClose,
+        server.handler.onDrain,
+        server.handler.onError,
+        server.handler.onPing,
+        server.handler.onPong,
+        .zero, // server - will be set later when the server is created
+        server.handler.app,
+        server.handler.vm,
+        false, // ssl - will be set later
+        server.handler.flags.publish_to_self,
+    );
 
-    // Set the C++ members
-    js_ctx.setApp(server.handler.app);
-    js_ctx.setVM(server.handler.vm);
-    js_ctx.setPublishToSelf(server.handler.flags.publish_to_self);
-    // SSL will be set later when the socket is created
-
-    return server;
+    return .{ .context = server, .js_context = js_context };
 }
 
 const bun = @import("bun");

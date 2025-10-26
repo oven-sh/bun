@@ -990,7 +990,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws_ctx: *JSWebSocketServerContext = @ptrFromInt(@intFromPtr(this.config.websocket.?.js_context.asObjectRef()));
+            const ws_ctx = JSWebSocketServerContext.fromJS(this.config.websocket_js_context) orelse unreachable;
             const ws = ServerWebSocket.init(ws_ctx, data_value, signal);
             data_value.ensureStillAlive();
 
@@ -1041,18 +1041,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 ws.handler.flags.ssl = ssl_enabled;
                 if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
                     // Update the existing JSWebSocketServerContext with new callbacks
-                    const ws_ctx: *JSWebSocketServerContext = @ptrFromInt(@intFromPtr(ws.js_context.asObjectRef()));
-                    ws_ctx.setSSL(ssl_enabled);
-                    ws_ctx.setOnOpen(globalThis, ws.handler.onOpen);
-                    ws_ctx.setOnMessage(globalThis, ws.handler.onMessage);
-                    ws_ctx.setOnClose(globalThis, ws.handler.onClose);
-                    ws_ctx.setOnDrain(globalThis, ws.handler.onDrain);
-                    ws_ctx.setOnError(globalThis, ws.handler.onError);
-                    ws_ctx.setOnPing(globalThis, ws.handler.onPing);
-                    ws_ctx.setOnPong(globalThis, ws.handler.onPong);
+                    if (JSWebSocketServerContext.fromJS(new_config.websocket_js_context)) |ws_ctx| {
+                        ws_ctx.setSSL(ssl_enabled);
+                        ws_ctx.setOnOpen(globalThis, ws.handler.onOpen);
+                        ws_ctx.setOnMessage(globalThis, ws.handler.onMessage);
+                        ws_ctx.setOnClose(globalThis, ws.handler.onClose);
+                        ws_ctx.setOnDrain(globalThis, ws.handler.onDrain);
+                        ws_ctx.setOnError(globalThis, ws.handler.onError);
+                        ws_ctx.setOnPing(globalThis, ws.handler.onPing);
+                        ws_ctx.setOnPong(globalThis, ws.handler.onPong);
+                    }
 
                     ws.globalObject = globalThis;
                     this.config.websocket = ws.*;
+                    this.config.websocket_js_context = new_config.websocket_js_context;
                 } // we don't remove it
             }
 
@@ -3124,7 +3126,7 @@ pub const AnyServer = struct {
         };
     }
 
-    pub fn webSocketHandler(this: AnyServer) ?*WebSocketServerContext.Handler {
+    pub fn webSocketHandler(this: AnyServer) ?*JSWebSocketServerContext {
         const server_config: *ServerConfig = switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => &this.ptr.as(HTTPServer).config,
             Ptr.case(HTTPSServer) => &this.ptr.as(HTTPSServer).config,
@@ -3133,7 +3135,7 @@ pub const AnyServer = struct {
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
         if (server_config.websocket == null) return null;
-        return &server_config.websocket.?.handler;
+        return JSWebSocketServerContext.fromJS(server_config.websocket_js_context);
     }
 
     pub fn onRequest(

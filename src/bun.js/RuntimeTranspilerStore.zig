@@ -180,6 +180,7 @@ pub const RuntimeTranspilerStore = struct {
                 .file = {},
             },
             .resolved_source = resolved_source,
+            .generation_number = this.generation_number.load(.seq_cst),
         };
         if (comptime Environment.allow_assert)
             debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });

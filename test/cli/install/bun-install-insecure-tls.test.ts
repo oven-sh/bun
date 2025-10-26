@@ -1,7 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { writeFile } from "fs/promises";
-import { bunEnv, bunExe, readdirSorted, tmpdirSync, tls } from "harness";
+import { bunEnv, bunExe, readdirSorted, tempDir, tls } from "harness";
 import { join } from "path";
 
 describe("bun install --insecure with HTTPS", () => {
@@ -37,26 +36,20 @@ describe("bun install --insecure with HTTPS", () => {
       ...tls, // Use self-signed cert
     });
 
-    const testDir = tmpdirSync();
-    await writeFile(
-      join(testDir, "package.json"),
-      JSON.stringify({
+    using testDir = tempDir("test-insecure-https", {
+      "package.json": JSON.stringify({
         name: "test-insecure-https",
         version: "1.0.0",
         dependencies: {
           bar: "0.0.2",
         },
       }),
-    );
-
-    await writeFile(
-      join(testDir, "bunfig.toml"),
-      `
+      "bunfig.toml": `
 [install]
 cache = false
 registry = "https://localhost:${server.port}/"
 `,
-    );
+    });
 
     // First, try without --insecure - should fail with certificate error
     const { stderr: stderr1, exited: exited1 } = spawn({

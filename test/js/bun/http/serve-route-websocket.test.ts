@@ -690,21 +690,22 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     await new Promise(resolve => setTimeout(resolve, 100));
   });
 
-  test("websocket error handler is called", async () => {
+  test("websocket error handler is called on server-side exceptions", async () => {
     let errorCalled = false;
-    let errorMessage = "";
 
     using server = Bun.serve({
       port: 0,
       routes: {
         "/ws": {
           websocket: {
-            open(ws) {
-              ws.send("ready");
+            message(ws, message) {
+              // Trigger an error when receiving "trigger-error"
+              if (message === "trigger-error") {
+                throw new Error("Intentional test error");
+              }
             },
             error(ws, error) {
               errorCalled = true;
-              errorMessage = error?.message || "error occurred";
             },
           },
           upgrade(req, server) {
@@ -717,14 +718,14 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     const ws = new WebSocket(`ws://localhost:${server.port}/ws`);
     await new Promise(resolve => (ws.onopen = resolve));
 
-    // Send invalid data to trigger error
-    // @ts-ignore - accessing private property for testing
-    ws._socket?.write(Buffer.from([0xff, 0xff, 0xff, 0xff]));
+    // Send message that triggers server-side error
+    ws.send("trigger-error");
 
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait for error handler to be called
+    await Bun.sleep(100);
 
-    // Error handler may or may not be called depending on how WebSocket handles it
-    // Just verify the connection can be closed
+    expect(errorCalled).toBe(true);
+
     ws.close();
   });
 

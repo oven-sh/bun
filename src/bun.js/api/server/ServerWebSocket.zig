@@ -329,8 +329,10 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         // Release the shared context reference if we have one
         // When the last reference is released, WebSocketServerContext.deinit()
         // will be called automatically to unprotect JSValues
-        if (this.#shared_context) |*shared_ctx| {
-            shared_ctx.deinit();
+        if (this.#shared_context) |shared_ctx| {
+            var ctx = shared_ctx;
+            this.#shared_context = null;
+            ctx.deinit();
         }
     }
 

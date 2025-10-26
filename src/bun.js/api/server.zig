@@ -563,12 +563,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         /// Per-route WebSocket contexts. Index is (id - 2) where id comes from app.ws()
         /// Use Shared pointers to ensure stable addresses (ServerWebSocket stores raw pointers to handlers)
+        /// When ref count reaches 0, WebSocketServerContext.deinit() is automatically called to unprotect JSValues
         route_websocket_contexts: std.ArrayListUnmanaged(SharedWebSocketContext) = .{},
 
         on_clienterror: jsc.Strong.Optional = .empty,
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
 
+        /// Shared pointer type for route-specific WebSocket contexts
+        /// .deinit = true enables automatic cleanup: when the last reference is released,
+        /// WebSocketServerContext.deinit() is called to unprotect JSValues
         pub const SharedWebSocketContext = bun.ptr.shared.WithOptions(*WebSocketServerContext, .{ .deinit = true });
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);

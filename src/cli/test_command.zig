@@ -1262,6 +1262,8 @@ pub const CommandLineReporter = struct {
                     .auto,
                 ),
             ) catch |err| {
+                // Clean up the temporary file before exiting
+                _ = bun.sys.unlink(cobertura_name);
                 Output.err(err, "Failed to save cobertura.xml file", .{});
                 Global.exit(1);
             };
@@ -1273,17 +1275,17 @@ pub const CommandLineReporter = struct {
                 var has_low_coverage = false;
 
                 for (cobertura_reports.items) |*report| {
-                    // Check if this report fails the coverage thresholds
-                    const functions_pct = if (report.functions.items.len > 0)
-                        @as(f64, @floatFromInt(report.functions_which_have_executed.count())) / @as(f64, @floatFromInt(report.functions.items.len)) * 100.0
+                    // Check if this report fails the coverage thresholds (fractions are 0..1)
+                    const functions_frac = if (report.functions.items.len > 0)
+                        @as(f64, @floatFromInt(report.functions_which_have_executed.count())) / @as(f64, @floatFromInt(report.functions.items.len))
                     else
-                        100.0;
-                    const lines_pct = if (report.executable_lines.count() > 0)
-                        @as(f64, @floatFromInt(report.lines_which_have_executed.count())) / @as(f64, @floatFromInt(report.executable_lines.count())) * 100.0
+                        1.0;
+                    const lines_frac = if (report.executable_lines.count() > 0)
+                        @as(f64, @floatFromInt(report.lines_which_have_executed.count())) / @as(f64, @floatFromInt(report.executable_lines.count()))
                     else
-                        100.0;
+                        1.0;
 
-                    if (functions_pct < fraction_threshold.functions or lines_pct < fraction_threshold.lines) {
+                    if (functions_frac < fraction_threshold.functions or lines_frac < fraction_threshold.lines) {
                         has_low_coverage = true;
                         break;
                     }

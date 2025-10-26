@@ -9,11 +9,11 @@
  */
 
 import { SpanKind } from "@opentelemetry/api";
-import { ATTR_HTTP_RESPONSE_BODY_SIZE } from "@opentelemetry/semantic-conventions/incubating";
 import { OpId } from "bun";
 import {
   ATTR_HTTP_REQUEST_HEADER,
   ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_BODY_SIZE,
   ATTR_HTTP_RESPONSE_HEADER,
   ATTR_HTTP_RESPONSE_STATUS_CODE,
   ATTR_SERVER_ADDRESS,

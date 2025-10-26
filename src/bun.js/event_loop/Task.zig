@@ -129,10 +129,6 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         }
     }
 
-    // This is the start of a runloop turn, we can release any weakrefs here.
-    // This matches WebKit's DeferredWorkTimer::doWork() implementation.
-    global_vm.releaseWeakRefs();
-
     while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
         defer counter.* += 1;

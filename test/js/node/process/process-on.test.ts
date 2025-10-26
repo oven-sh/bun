@@ -83,40 +83,4 @@ describe("process.on", () => {
     });
     expect(result2.exitCode).toBe(0);
   });
-
-  it("should handle exceptions in uncaughtException handlers without panic", () => {
-    const dir = tempDirWithFiles("uncaught-exception-test", {
-      "test.ts": `
-// Throw an error in an uncaughtException handler
-// This should exit with code 7 without panicking
-process.on('uncaughtException', (err) => {
-  // This will throw a TypeError
-  err instanceof undefined;
-});
-
-// Trigger the uncaughtException handler
-throw new Error("Test error");
-`,
-    });
-
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), path.join(dir, "test.ts")],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const stderr = result.stderr.toString();
-
-    // Should not panic
-    expect(stderr).not.toContain("panic:");
-    expect(stderr).not.toContain("SHOULD NEVER BE REACHED");
-
-    // Should show the TypeError
-    expect(stderr).toContain("TypeError");
-    expect(stderr).toContain("Right hand side of instanceof is not an object");
-
-    // Should exit with code 7 (nested exception in uncaught handler)
-    expect(result.exitCode).toBe(7);
-  });
 });

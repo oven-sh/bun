@@ -57,6 +57,60 @@ export class Y {
   );
 });
 
+test("cobertura coverage reporter", () => {
+  const dir = tempDirWithFiles("cov", {
+    "src/foo.ts": `
+export function fooOne(x) {
+  if (x === 1) {
+    return x + 1;
+  }
+
+  if (x === 2) {
+    return x + 1;
+  }
+
+  const result = x + 1;
+
+  return result + 1;
+}
+`,
+    "src/foo.test.ts": `
+import { describe, it, expect } from 'bun:test';
+import { fooOne } from './foo';
+
+describe('fooTest', () => {
+  it('returns result', () => {
+    const result = fooOne(12);
+
+    expect(result).toBe(14);
+  });
+
+  it('handles when x equals to 2', () => {
+    const result = fooOne(2);
+
+    expect(result).toBe(3);
+  });
+});
+`,
+  });
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura", "./src/foo.test.ts"],
+    {
+      cwd: dir,
+      env: {
+        ...bunEnv,
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+  let coberturaXml = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8"), dir);
+  // Normalize timestamp to avoid snapshot differences
+  coberturaXml = coberturaXml.replace(/timestamp="\d+"/, 'timestamp="0"');
+  expect(coberturaXml).toMatchSnapshot("cobertura-coverage-reporter-output");
+});
+
 test("coverage excludes node_modules directory", () => {
   const dir = tempDirWithFiles("cov", {
     "node_modules/pi/index.js": `

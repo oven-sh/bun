@@ -26,3 +26,70 @@ LF:7
 LH:5
 end_of_record"
 `;
+
+exports[`cobertura coverage reporter: cobertura-coverage-reporter-output 1`] = `
+"<?xml version="1.0" ?>
+<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">
+<coverage lines-valid="21" lines-covered="20" line-rate="0.9524" timestamp="0" complexity="0" version="0.1">
+    <sources>
+        <source><dir></source>
+    </sources>
+    <packages>
+        <package name="src" line-rate="0.9524">
+            <class name="foo.test.ts" filename="src/foo.test.ts" line-rate="1.0000">
+                <methods>
+                    <method name="(anonymous_0)" hits="1" signature="()V">
+                        <lines>
+                            <line number="6" hits="1"/>
+                        </lines>
+                    </method>
+                    <method name="(anonymous_1)" hits="1" signature="()V">
+                        <lines>
+                            <line number="5" hits="1"/>
+                        </lines>
+                    </method>
+                    <method name="(anonymous_2)" hits="1" signature="()V">
+                        <lines>
+                            <line number="12" hits="1"/>
+                        </lines>
+                    </method>
+                </methods>
+                <lines>
+                    <line number="2" hits="48"/>
+                    <line number="3" hits="31"/>
+                    <line number="5" hits="27"/>
+                    <line number="6" hits="31"/>
+                    <line number="7" hits="30"/>
+                    <line number="9" hits="26"/>
+                    <line number="10" hits="4"/>
+                    <line number="12" hits="43"/>
+                    <line number="13" hits="29"/>
+                    <line number="15" hits="25"/>
+                    <line number="16" hits="3"/>
+                    <line number="17" hits="2"/>
+                </lines>
+            </class>
+            <class name="foo.ts" filename="src/foo.ts" line-rate="0.8889">
+                <methods>
+                    <method name="(anonymous_0)" hits="1" signature="()V">
+                        <lines>
+                            <line number="2" hits="1"/>
+                        </lines>
+                    </method>
+                </methods>
+                <lines>
+                    <line number="2" hits="12"/>
+                    <line number="3" hits="12"/>
+                    <line number="4" hits="0"/>
+                    <line number="5" hits="2"/>
+                    <line number="7" hits="17"/>
+                    <line number="8" hits="12"/>
+                    <line number="9" hits="2"/>
+                    <line number="11" hits="23"/>
+                    <line number="13" hits="17"/>
+                </lines>
+            </class>
+        </package>
+    </packages>
+</coverage>"
+`;

@@ -55,7 +55,11 @@ pub const PerfEvent = enum(i32) {
     @"RuntimeTranspilerCache.toFile",
     @"StandaloneModuleGraph.serialize",
     @"Symbols.followAll",
+    @"TestCommand.printCodeCoverageCobertura",
+    @"TestCommand.printCodeCoverageCoberturaAndText",
     @"TestCommand.printCodeCoverageLCov",
+    @"TestCommand.printCodeCoverageLCovAndCobertura",
     @"TestCommand.printCodeCoverageLCovAndText",
+    @"TestCommand.printCodeCoverageLCovCoberturaAndText",
     @"TestCommand.printCodeCoverageText",
 };

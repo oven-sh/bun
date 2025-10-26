@@ -432,14 +432,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.options("--coverage-reporter").len > 0) {
-            ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+            ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false, .cobertura = false };
             for (args.options("--coverage-reporter")) |reporter| {
                 if (bun.strings.eqlComptime(reporter, "text")) {
                     ctx.test_options.coverage.reporters.text = true;
                 } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                     ctx.test_options.coverage.reporters.lcov = true;
+                } else if (bun.strings.eqlComptime(reporter, "cobertura")) {
+                    ctx.test_options.coverage.reporters.cobertura = true;
                 } else {
-                    Output.prettyErrorln("<r><red>error<r>: invalid coverage reporter '{s}'. Available options: 'text' (console output), 'lcov' (code coverage file)", .{reporter});
+                    Output.prettyErrorln("<r><red>error<r>: invalid coverage reporter '{s}'. Available options: 'text' (console output), 'lcov' (code coverage file), 'cobertura' (XML coverage file)", .{reporter});
                     Global.exit(1);
                 }
             }

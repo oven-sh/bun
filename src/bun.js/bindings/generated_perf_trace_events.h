@@ -56,7 +56,11 @@
   macro(RuntimeTranspilerCache.toFile, 52) \
   macro(StandaloneModuleGraph.serialize, 53) \
   macro(Symbols.followAll, 54) \
-  macro(TestCommand.printCodeCoverageLCov, 55) \
-  macro(TestCommand.printCodeCoverageLCovAndText, 56) \
-  macro(TestCommand.printCodeCoverageText, 57) \
+  macro(TestCommand.printCodeCoverageCobertura, 55) \
+  macro(TestCommand.printCodeCoverageCoberturaAndText, 56) \
+  macro(TestCommand.printCodeCoverageLCov, 57) \
+  macro(TestCommand.printCodeCoverageLCovAndCobertura, 58) \
+  macro(TestCommand.printCodeCoverageLCovAndText, 59) \
+  macro(TestCommand.printCodeCoverageLCovCoberturaAndText, 60) \
+  macro(TestCommand.printCodeCoverageText, 61) \
   // end

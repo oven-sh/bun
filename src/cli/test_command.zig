@@ -954,7 +954,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.cobertura) {
             return;
         }
 
@@ -988,18 +988,26 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = if (reporters.text and reporters.lcov)
+        const trace = if (reporters.text and reporters.lcov and reporters.cobertura)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovCoberturaAndText")
+        else if (reporters.text and reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text and reporters.cobertura)
+            bun.perf.trace("TestCommand.printCodeCoverageCoberturaAndText")
+        else if (reporters.lcov and reporters.cobertura)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndCobertura")
         else if (reporters.text)
             bun.perf.trace("TestCommand.printCodeCoverageText")
         else if (reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else if (reporters.cobertura)
+            bun.perf.trace("TestCommand.printCodeCoverageCobertura")
         else
             @compileError("No reporters enabled");
 
         defer trace.end();
 
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.cobertura) {
             @compileError("No reporters enabled");
         }
 
@@ -1127,6 +1135,134 @@ pub const CommandLineReporter = struct {
             }
         }
         // --- LCOV ---
+
+        // --- COBERTURA ---
+        var cobertura_name_buf: bun.PathBuffer = undefined;
+        const cobertura_file, const cobertura_name, const cobertura_buffered_writer, const cobertura_writer = brk: {
+            if (comptime !reporters.cobertura) break :brk .{ {}, {}, {}, {} };
+
+            // Ensure the directory exists
+            var fs = bun.jsc.Node.fs.NodeFS{};
+            _ = fs.mkdirRecursive(
+                .{
+                    .path = bun.jsc.Node.PathLike{
+                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                    },
+                    .always_return_none = true,
+                },
+            );
+
+            // Write the cobertura.xml file to a temporary file we atomically rename to the final name after it succeeds
+            var base64_bytes: [8]u8 = undefined;
+            var shortname_buf: [512]u8 = undefined;
+            bun.csprng(&base64_bytes);
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".cobertura.xml.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            const path = bun.path.joinAbsStringBufZ(relative_dir, &cobertura_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
+            const file = bun.sys.File.openat(
+                .cwd(),
+                path,
+                bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                0o644,
+            );
+
+            switch (file) {
+                .err => |err| {
+                    Output.err(.coberturaCoverageError, "Failed to create cobertura file", .{});
+                    Output.printError("\n{s}", .{err});
+                    Global.exit(1);
+                },
+                .result => |f| {
+                    const buffered = buffered_writer: {
+                        const writer = f.writer();
+                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        ptr.* = .{
+                            .end = 0,
+                            .unbuffered_writer = writer,
+                        };
+                        break :buffered_writer ptr;
+                    };
+
+                    break :brk .{
+                        f,
+                        path,
+                        buffered,
+                        buffered.writer(),
+                    };
+                },
+            }
+        };
+        errdefer {
+            if (comptime reporters.cobertura) {
+                cobertura_file.close();
+                _ = bun.sys.unlink(
+                    cobertura_name,
+                );
+            }
+        }
+
+        // --- COBERTURA ---
+
+        // Separate scope for cobertura to avoid accessing uninitialized memory when disabled
+        if (comptime reporters.cobertura) {
+            var cobertura_reports = std.ArrayList(CodeCoverageReport).init(bun.default_allocator);
+            defer {
+                for (cobertura_reports.items) |*r| r.deinit(bun.default_allocator);
+                cobertura_reports.deinit();
+            }
+
+            // Collect all reports
+            for (byte_ranges) |*entry| {
+                // Check if this file should be ignored based on coveragePathIgnorePatterns
+                if (opts.ignore_patterns.len > 0) {
+                    const utf8 = entry.source_url.slice();
+                    const relative_path = bun.path.relative(relative_dir, utf8);
+
+                    var should_ignore = false;
+                    for (opts.ignore_patterns) |pattern| {
+                        if (bun.glob.match(pattern, relative_path).matches()) {
+                            should_ignore = true;
+                            break;
+                        }
+                    }
+
+                    if (should_ignore) {
+                        continue;
+                    }
+                }
+
+                const report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+                try cobertura_reports.append(report);
+            }
+
+            // Write cobertura XML
+            var cobertura_state = CodeCoverageReport.Cobertura.State.init(bun.default_allocator, relative_dir);
+            defer cobertura_state.deinit();
+
+            for (cobertura_reports.items) |*r| {
+                try cobertura_state.addReport(r);
+            }
+
+            try cobertura_state.writeFormat(cobertura_writer);
+            try cobertura_buffered_writer.flush();
+            cobertura_file.close();
+
+            const cwd = bun.FD.cwd();
+            bun.sys.moveFileZ(
+                cwd,
+                cobertura_name,
+                cwd,
+                bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{ opts.reports_directory, "cobertura.xml" },
+                    .auto,
+                ),
+            ) catch |err| {
+                Output.err(err, "Failed to save cobertura.xml file", .{});
+                Global.exit(1);
+            };
+
+            return; // Done with cobertura, skip the normal loop below
+        }
 
         for (byte_ranges) |*entry| {
             // Check if this file should be ignored based on coveragePathIgnorePatterns
@@ -1278,7 +1414,7 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
-        reporters: Reporters = .{ .text = true, .lcov = false },
+        reporters: Reporters = .{ .text = true, .lcov = false, .cobertura = false },
         reports_directory: string = "coverage",
         fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
@@ -1289,10 +1425,12 @@ pub const TestCommand = struct {
     pub const Reporter = enum {
         text,
         lcov,
+        cobertura,
     };
     const Reporters = struct {
         text: bool,
         lcov: bool,
+        cobertura: bool,
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -1641,8 +1779,10 @@ pub const TestCommand = struct {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {
-                            inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
+                            inline else => |lcov| switch (coverage_options.reporters.cobertura) {
+                                inline else => |cobertura| {
+                                    try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov, .cobertura = cobertura }, colors);
+                                },
                             },
                         },
                     },

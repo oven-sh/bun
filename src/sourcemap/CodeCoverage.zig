@@ -261,6 +261,220 @@ pub const Report = struct {
         }
     };
 
+    pub const Cobertura = struct {
+        fn escapeXml(str: []const u8, writer: anytype) !void {
+            var last: usize = 0;
+            var i: usize = 0;
+            const len = str.len;
+            while (i < len) : (i += 1) {
+                const c = str[i];
+                switch (c) {
+                    '&', '<', '>', '"', '\'' => {
+                        if (i > last) {
+                            try writer.writeAll(str[last..i]);
+                        }
+                        const escaped = switch (c) {
+                            '&' => "&amp;",
+                            '<' => "&lt;",
+                            '>' => "&gt;",
+                            '"' => "&quot;",
+                            '\'' => "&apos;",
+                            else => unreachable,
+                        };
+                        try writer.writeAll(escaped);
+                        last = i + 1;
+                    },
+                    0...0x1f => {
+                        if (i > last) {
+                            try writer.writeAll(str[last..i]);
+                        }
+                        // Escape control characters
+                        try writer.print("&#{d};", .{c});
+                        last = i + 1;
+                    },
+                    else => {},
+                }
+            }
+            if (len > last) {
+                try writer.writeAll(str[last..]);
+            }
+        }
+
+        pub const State = struct {
+            reports: std.ArrayListUnmanaged(*const Report) = .{},
+            base_path: []const u8 = "",
+            allocator: std.mem.Allocator,
+
+            pub fn init(allocator: std.mem.Allocator, base_path: []const u8) State {
+                return .{
+                    .allocator = allocator,
+                    .base_path = base_path,
+                };
+            }
+
+            pub fn addReport(this: *State, report: *const Report) !void {
+                try this.reports.append(this.allocator, report);
+            }
+
+            pub fn writeFormat(this: *const State, writer: anytype) !void {
+                // Calculate totals
+                var total_lines_valid: u32 = 0;
+                var total_lines_covered: u32 = 0;
+
+                for (this.reports.items) |report| {
+                    total_lines_valid += @intCast(report.executable_lines.count());
+                    total_lines_covered += @intCast(report.lines_which_have_executed.count());
+                }
+
+                const line_rate = if (total_lines_valid > 0)
+                    @as(f64, @floatFromInt(total_lines_covered)) / @as(f64, @floatFromInt(total_lines_valid))
+                else
+                    1.0;
+
+                const timestamp = std.time.milliTimestamp();
+
+                // Write XML header
+                try writer.writeAll("<?xml version=\"1.0\" ?>\n");
+                try writer.writeAll("<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n");
+                try writer.print("<coverage lines-valid=\"{d}\" lines-covered=\"{d}\" line-rate=\"{d:.4}\" timestamp=\"{d}\" complexity=\"0\" version=\"0.1\">\n", .{
+                    total_lines_valid,
+                    total_lines_covered,
+                    line_rate,
+                    timestamp,
+                });
+
+                // Write sources
+                try writer.writeAll("    <sources>\n");
+                try writer.writeAll("        <source>");
+                try escapeXml(this.base_path, writer);
+                try writer.writeAll("</source>\n");
+                try writer.writeAll("    </sources>\n");
+
+                // Write packages
+                try writer.writeAll("    <packages>\n");
+
+                // Group reports by directory
+                var package_map = std.StringHashMap(std.ArrayListUnmanaged(*const Report)).init(this.allocator);
+                defer {
+                    var iter = package_map.iterator();
+                    while (iter.next()) |entry| {
+                        entry.value_ptr.deinit(this.allocator);
+                    }
+                    package_map.deinit();
+                }
+
+                for (this.reports.items) |report| {
+                    var filename = report.source_url.slice();
+                    if (this.base_path.len > 0) {
+                        filename = bun.path.relative(this.base_path, filename);
+                    }
+
+                    const dir = bun.path.dirname(filename, .auto);
+                    const package_name = if (dir.len > 0) dir else ".";
+                    const entry = try package_map.getOrPut(package_name);
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = .{};
+                    }
+                    try entry.value_ptr.append(this.allocator, report);
+                }
+
+                var package_iter = package_map.iterator();
+                while (package_iter.next()) |package_entry| {
+                    const package_name = package_entry.key_ptr.*;
+                    const package_reports = package_entry.value_ptr.items;
+
+                    // Calculate package-level metrics
+                    var package_lines_valid: u32 = 0;
+                    var package_lines_covered: u32 = 0;
+
+                    for (package_reports) |report| {
+                        package_lines_valid += @intCast(report.executable_lines.count());
+                        package_lines_covered += @intCast(report.lines_which_have_executed.count());
+                    }
+
+                    const package_line_rate = if (package_lines_valid > 0)
+                        @as(f64, @floatFromInt(package_lines_covered)) / @as(f64, @floatFromInt(package_lines_valid))
+                    else
+                        1.0;
+
+                    try writer.writeAll("        <package name=\"");
+                    try escapeXml(package_name, writer);
+                    try writer.print("\" line-rate=\"{d:.4}\">\n", .{package_line_rate});
+
+                    // Write classes (files)
+                    for (package_reports) |report| {
+                        try writeReportAsClass(report, this.base_path, writer);
+                    }
+
+                    try writer.writeAll("        </package>\n");
+                }
+
+                try writer.writeAll("    </packages>\n");
+                try writer.writeAll("</coverage>\n");
+            }
+
+            pub fn deinit(this: *State) void {
+                this.reports.deinit(this.allocator);
+            }
+        };
+
+        fn writeReportAsClass(
+            report: *const Report,
+            base_path: []const u8,
+            writer: anytype,
+        ) !void {
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
+
+            const basename = bun.path.basename(filename);
+
+            const lines_valid = report.executable_lines.count();
+            const lines_covered = report.lines_which_have_executed.count();
+            const line_rate = if (lines_valid > 0)
+                @as(f64, @floatFromInt(lines_covered)) / @as(f64, @floatFromInt(lines_valid))
+            else
+                1.0;
+
+            try writer.writeAll("            <class name=\"");
+            try escapeXml(basename, writer);
+            try writer.writeAll("\" filename=\"");
+            try escapeXml(filename, writer);
+            try writer.print("\" line-rate=\"{d:.4}\">\n", .{line_rate});
+
+            // Write methods (functions)
+            try writer.writeAll("                <methods>\n");
+
+            for (report.functions.items, 0..) |function, i| {
+                const hits: u32 = if (report.functions_which_have_executed.isSet(i)) 1 else 0;
+                try writer.print("                    <method name=\"(anonymous_{d})\" hits=\"{d}\" signature=\"()V\">\n", .{ i, hits });
+                try writer.writeAll("                        <lines>\n");
+                try writer.print("                            <line number=\"{d}\" hits=\"{d}\"/>\n", .{ function.start_line + 1, hits });
+                try writer.writeAll("                        </lines>\n");
+                try writer.writeAll("                    </method>\n");
+            }
+
+            try writer.writeAll("                </methods>\n");
+
+            // Write lines
+            try writer.writeAll("                <lines>\n");
+
+            var executable_lines = bun.handleOom(report.executable_lines.clone(bun.default_allocator));
+            defer executable_lines.deinit(bun.default_allocator);
+            var iter = executable_lines.iterator(.{});
+
+            const line_hits = report.line_hits.slice();
+            while (iter.next()) |line| {
+                const hits = line_hits[line];
+                try writer.print("                    <line number=\"{d}\" hits=\"{d}\"/>\n", .{ line + 1, hits });
+            }
+
+            try writer.writeAll("                </lines>\n");
+            try writer.writeAll("            </class>\n");
+        }
+    };
+
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);

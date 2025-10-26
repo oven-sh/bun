@@ -260,13 +260,15 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("coverageReporter")) |expr| brk: {
-                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false, .cobertura = false };
                         if (expr.data == .e_string) {
                             const item_str = expr.asString(bun.default_allocator) orelse "";
                             if (bun.strings.eqlComptime(item_str, "text")) {
                                 this.ctx.test_options.coverage.reporters.text = true;
                             } else if (bun.strings.eqlComptime(item_str, "lcov")) {
                                 this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else if (bun.strings.eqlComptime(item_str, "cobertura")) {
+                                this.ctx.test_options.coverage.reporters.cobertura = true;
                             } else {
                                 try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
                             }
@@ -283,6 +285,8 @@ pub const Bunfig = struct {
                                 this.ctx.test_options.coverage.reporters.text = true;
                             } else if (bun.strings.eqlComptime(item_str, "lcov")) {
                                 this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else if (bun.strings.eqlComptime(item_str, "cobertura")) {
+                                this.ctx.test_options.coverage.reporters.cobertura = true;
                             } else {
                                 try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
                             }

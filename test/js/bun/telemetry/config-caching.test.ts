@@ -105,7 +105,7 @@ test("detach rebuilds inject config without detached instrument", () => {
   expect(config.length).toBe(2);
 
   // Detach first instrument
-  Bun.telemetry.detach(instrument1.id);
+  Bun.telemetry.detach(instrument1);
 
   // After detach: only second instrument's header remains
   config = Bun.telemetry

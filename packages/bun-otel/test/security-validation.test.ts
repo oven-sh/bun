@@ -3,11 +3,7 @@
  * Tests that blocked headers are rejected at SDK level before reaching native code
  */
 import { describe, expect, test } from "bun:test";
-import {
-  validateCaptureAttributes,
-  validateHeaderName,
-  validateInjectHeaders,
-} from "../../../../packages/bun-otel/src/validation";
+import { validateCaptureAttributes, validateHeaderName, validateInjectHeaders } from "../src/validation";
 
 describe("validateHeaderName()", () => {
   describe("blocked headers (exact match)", () => {

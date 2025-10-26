@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { InstrumentKind } from "./types";
+import { InstrumentRef } from "bun";
 
 describe("Bun.telemetry.attach()", () => {
   test("returns InstrumentRef with unique ID for each attached instrument", () => {
@@ -125,7 +126,7 @@ describe("Bun.telemetry.detach()", () => {
 
   test("returns false for non-existent ref", () => {
     // Create a fake ref object that doesn't correspond to a real instrument
-    const fakeRef = { id: 999999 };
+    const fakeRef = { id: 999999 } as unknown as InstrumentRef;
     const removed = Bun.telemetry.detach(fakeRef);
     expect(removed).toBe(false);
   });
@@ -146,7 +147,7 @@ describe("Bun.telemetry.detach()", () => {
   });
 
   test("can detach instruments in any order", () => {
-    const refs = [];
+    const refs: InstrumentRef[] = [];
     for (let i = 0; i < 5; i++) {
       const ref = Bun.telemetry.attach({
         type: InstrumentKind.HTTP,
@@ -191,7 +192,7 @@ describe("Bun.telemetry.listInstruments()", () => {
     // Clean up any leftover instruments from previous tests
     const existing = Bun.telemetry.listInstruments();
     existing.forEach((info: any) => {
-      Bun.telemetry.detach({ id: info.id });
+      Bun.telemetry.detach({ id: info.id } as unknown as InstrumentRef);
     });
 
     const list = Bun.telemetry.listInstruments();
@@ -214,47 +215,45 @@ describe("Bun.telemetry.listInstruments()", () => {
       onOperationEnd: () => {},
     };
 
-    const ref1 = Bun.telemetry.attach(instrument1);
-    const ref2 = Bun.telemetry.attach(instrument2);
+    using ref1 = Bun.telemetry.attach(instrument1);
+    using ref2 = Bun.telemetry.attach(instrument2);
 
     const list = Bun.telemetry.listInstruments();
 
     expect(list.length).toBe(2);
 
-    const info1 = list.find((i: any) => i.id === ref1.id);
-    const info2 = list.find((i: any) => i.id === ref2.id);
-
+    const info1 = list.find((i: any) => i.id === ref1.id) as any;
+    const info2 = list.find((i: any) => i.id === ref2.id) as any;
     expect(info1).toBeDefined();
-    expect(info1.kind).toBe(InstrumentKind.HTTP);
-    expect(info1.name).toBe("http-instrument");
-    expect(info1.version).toBe("1.0.0");
-
     expect(info2).toBeDefined();
-    expect(info2.kind).toBe(InstrumentKind.Fetch);
-    expect(info2.name).toBe("fetch-instrument");
-    expect(info2.version).toBe("2.0.0");
+    if (!info1 || !info2) {
+      throw new Error("Instruments not found in list");
+    }
+    expect(info1.name).toBe(instrument1.name);
+    expect(info1.version).toBe(instrument1.version);
+    expect(info1.kind).toBe(instrument1.type);
 
-    // Cleanup
-    Bun.telemetry.detach(ref1);
-    Bun.telemetry.detach(ref2);
+    expect(info2.name).toBe(instrument2.name);
+    expect(info2.version).toBe(instrument2.version);
+    expect(info2.kind).toBe(instrument2.type);
   });
 
   test("filters instruments by kind", () => {
-    const httpRef1 = Bun.telemetry.attach({
+    using httpRef1 = Bun.telemetry.attach({
       type: InstrumentKind.HTTP,
       name: "http-1",
       version: "1.0.0",
       onOperationStart: () => {},
     });
 
-    const httpRef2 = Bun.telemetry.attach({
+    using httpRef2 = Bun.telemetry.attach({
       type: InstrumentKind.HTTP,
       name: "http-2",
       version: "1.0.0",
       onOperationStart: () => {},
     });
 
-    const fetchRef = Bun.telemetry.attach({
+    using fetchRef = Bun.telemetry.attach({
       type: InstrumentKind.Fetch,
       name: "fetch-1",
       version: "1.0.0",
@@ -269,11 +268,6 @@ describe("Bun.telemetry.listInstruments()", () => {
 
     expect(httpList.every((i: any) => i.kind === InstrumentKind.HTTP)).toBe(true);
     expect(fetchList.every((i: any) => i.kind === InstrumentKind.Fetch)).toBe(true);
-
-    // Cleanup
-    Bun.telemetry.detach(httpRef1);
-    Bun.telemetry.detach(httpRef2);
-    Bun.telemetry.detach(fetchRef);
   });
 
   test("updates list after detachment", () => {

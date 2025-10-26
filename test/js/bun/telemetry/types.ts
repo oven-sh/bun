@@ -15,6 +15,8 @@
  *   });
  */
 
+import { NativeInstrument } from "bun";
+
 // export { ConfigurationProperty, InstrumentKind } from "bun-otel";
 
 // TODO - codegen or figure out a better way to share these!
@@ -66,21 +68,39 @@ export enum ConfigurationProperty {
 declare global {
   namespace Bun {
     namespace telemetry {
-      namespace internal {
-        function isEnabledFor(kind: number): boolean;
-        function notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
-        function notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
-        function notifyError(kind: number, id: number, attributes: Record<string, any>): void;
-        function notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
-        function notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
-        function getConfigurationProperty(propertyId: number): any;
-        function setConfigurationProperty(propertyId: number, value: any): void;
-        function getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
-      }
+      export function listInstruments(kind?: InstrumentKind | number): Array<{
+        id: number;
+        name: string;
+        version: string;
+        kind: InstrumentKind;
+      }>;
+
+      export type NativeInstrumentInternal = Omit<NativeInstrument, "type"> & {
+        type: number | string;
+      };
+
+      export function attach(instrument: NativeInstrumentInternal): {
+        id: number;
+        [Symbol.dispose](): void;
+        dispose(): void;
+      };
+
+      export function nativeHooks(): {
+        isEnabledFor(kind: number): boolean;
+        notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
+        notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
+        notifyError(kind: number, id: number, attributes: Record<string, any>): void;
+        notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
+        notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
+        getConfigurationProperty(propertyId: number): any;
+        setConfigurationProperty(propertyId: number, value: any): void;
+        getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
+      };
     }
   }
 }
-
+type NII = Bun.telemetry.NativeInstrumentInternal;
+export type { NII as NativeInstrumentInternal };
 /**
  * Helper class for automatic cleanup of attached instruments using `using` statement.
  *
@@ -115,6 +135,21 @@ export class InstrumentRef implements Disposable {
     // Use the native Symbol.dispose from the returned object
     this.ref[Symbol.dispose]();
   }
+}
+
+export function getNativeHooks(): {
+  isEnabledFor(kind: number): boolean;
+  notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyError(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
+  getConfigurationProperty(propertyId: number): any;
+  setConfigurationProperty(propertyId: number, value: any): void;
+  getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
+} {
+  const hooks = Bun.telemetry.nativeHooks();
+  return hooks;
 }
 
 export {}; // ensure this file is a module so global augmentation applies

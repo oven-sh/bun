@@ -78,7 +78,7 @@ describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
 
     // Detach one, should still be true
-    Bun.telemetry.detach(instrument1.id);
+    Bun.telemetry.detach(instrument1);
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)).toBe(true);
   });
 
@@ -110,7 +110,7 @@ describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.SQL)).toBe(true);
 
     // Detach HTTP
-    Bun.telemetry.detach(httpInstrument.id);
+    Bun.telemetry.detach(httpInstrument);
 
     // Fetch and SQL should still be enabled
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.Fetch)).toBe(true);

@@ -1,5 +1,4 @@
-import { NativeInstrument } from "bun";
-
+import { NativeInstrumentInternal } from "./types";
 type CallbackRecord = {
   name: string;
   args: any[];
@@ -14,12 +13,12 @@ type MockedInstrument = {
   [Symbol.dispose](): void;
 };
 export function mockInstrument(
-  base: Pick<NativeInstrument, "name" | "type"> &
-    Partial<Omit<NativeInstrument, "name" | "type">> & {
+  base: Pick<NativeInstrumentInternal, "name" | "type"> &
+    Partial<Omit<NativeInstrumentInternal, "name" | "type">> & {
       log?: typeof console.log;
     },
   autoRegister: boolean = true,
-): MockedInstrument & NativeInstrument {
+): MockedInstrument & NativeInstrumentInternal {
   const payload = {
     name: base.name || "mock-instrument",
     type: base.type,

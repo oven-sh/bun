@@ -7,6 +7,8 @@
 const bun = @This();
 
 pub const Environment = @import("./env.zig");
+pub const env_var = @import("./env_var.zig");
+pub const feature_flag = env_var.feature_flag;
 
 pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
@@ -494,11 +496,10 @@ pub fn fastRandom() u64 {
                 // and we only need to do it once per process
                 var value = seed_value.load(.monotonic);
                 while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug or Environment.is_canary) outer: {
-                        if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
-                            value = std.fmt.parseInt(u64, env, 10) catch break :outer;
-                            seed_value.store(value, .monotonic);
-                            return value;
+                    if (comptime Environment.isDebug or Environment.is_canary) {
+                        if (bun.env_var.BUN_DEBUG_HASH_RANDOM_SEED.get()) |v| {
+                            seed_value.store(v, .monotonic);
+                            return v;
                         }
                     }
                     csprng(std.mem.asBytes(&value));
@@ -820,31 +821,11 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.stdDir();
 }
 
-pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
-    return struct {
-        const state = enum(u8) { idk, disabled, enabled };
-        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
-        pub fn get() bool {
-            // .monotonic is okay because there are no side effects we need to observe from a thread that has
-            // written to this variable. This variable is simply a cache, and if its value is not ready yet, we
-            // compute it below. There are no correctness issues if multiple threads perform this computation
-            // simultaneously, as they will all store the same value.
-            return switch (is_enabled.load(.monotonic)) {
-                .enabled => true,
-                .disabled => false,
-                .idk => {
-                    const enabled = if (getenvZ(@tagName(flag))) |val|
-                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
-                    else
-                        false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .monotonic);
-                    return enabled;
-                },
-            };
-        }
-    }.get();
-}
-
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
+/// This wrapper exists to avoid the call to sliceTo(0)
+/// Zig's sliceTo(0) is scalar
 pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     for (std.os.environ) |lineZ| {
         const line = sliceTo(lineZ, 0);
@@ -857,6 +838,9 @@ pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     return null;
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
@@ -872,6 +856,9 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     return sliceTo(pointer, 0);
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 pub fn getenvTruthy(key: [:0]const u8) bool {
     if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
     return false;
@@ -1330,7 +1317,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
 
         if (!ProcSelfWorkAroundForDebugging.has_checked) {
             ProcSelfWorkAroundForDebugging.has_checked = true;
-            needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
+            needs_proc_self_workaround = bun.env_var.BUN_NEEDS_PROC_SELF_WORKAROUND.get();
         }
     } else if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd.native(), buf);
@@ -1991,8 +1978,6 @@ pub const WTF = struct {
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
 const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
@@ -2223,7 +2208,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = try std.process.argsAlloc(allocator);
     }
 
-    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+    if (bun.env_var.BUN_OPTIONS.get()) |opts| {
         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;
@@ -2847,23 +2832,6 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
-}
-
-extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
-
-pub fn getUserName(output_buffer: []u8) ?[]const u8 {
-    if (Environment.isWindows) {
-        var size: u32 = @intCast(output_buffer.len);
-        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
-            return null;
-        }
-        return output_buffer[0..size];
-    }
-    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
-    const user = env.get("USER") orelse return null;
-    const size = @min(output_buffer.len, user.len);
-    copy(u8, output_buffer[0..size], user[0..size]);
-    return output_buffer[0..size];
 }
 
 pub inline fn resolveSourcePath(
@@ -3797,6 +3765,9 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     const Arguments = @import("./cli/Arguments.zig");
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
+
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

@@ -163,7 +163,7 @@ pub const Jest = struct {
     }
 
     pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
-        const module = JSValue.createEmptyObject(globalObject, 19);
+        const module = JSValue.createEmptyObject(globalObject, 20);
 
         const test_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, bun_test.ScopeFunctions.strings.@"test");
         module.put(globalObject, ZigString.static("test"), test_scope_functions);
@@ -183,6 +183,7 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, bun_test.js_fns.genericHook(.beforeAll).hookFn, false));
         module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, bun_test.js_fns.genericHook(.afterAll).hookFn, false));
         module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, bun_test.js_fns.genericHook(.afterEach).hookFn, false));
+        module.put(globalObject, ZigString.static("onTestFinished"), jsc.host_fn.NewFunction(globalObject, ZigString.static("onTestFinished"), 1, bun_test.js_fns.genericHook(.onTestFinished).hookFn, false));
         module.put(globalObject, ZigString.static("setDefaultTimeout"), jsc.host_fn.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false));
         module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
         module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
@@ -504,7 +505,6 @@ const ExpectTypeOf = expect.ExpectTypeOf;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 
@@ -512,5 +512,6 @@ const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+const RegularExpression = jsc.RegularExpression;
 const VirtualMachine = jsc.VirtualMachine;
 const ZigString = jsc.ZigString;

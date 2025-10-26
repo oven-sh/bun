@@ -176,7 +176,7 @@ pub fn sleep(this: *PackageManager) void {
 pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
     const log_level = this.options.log_level;
     if (log_level == .silent) return;
-    if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
+    if (bun.feature_flag.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING.get()) {
         return;
     }
 

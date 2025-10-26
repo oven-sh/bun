@@ -299,6 +299,7 @@ pub const AttributeKeys = struct {
 
         // Allocate new key - need to copy the string to allocator memory
         const name_copy = self.allocator.dupe(u8, name) catch return null;
+        errdefer self.allocator.free(name_copy);
 
         // Allocate the new attribute (allocateAttribute auto-detects HTTP headers)
         const new_key = self.allocateAttribute(name_copy) catch return null;

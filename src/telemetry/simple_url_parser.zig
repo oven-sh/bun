@@ -38,8 +38,20 @@ fn parseFullURL(url: []const u8, scheme_end: usize) URLParts {
     const host_and_port = remainder[0..path_start];
     const path_and_query = if (path_start < remainder.len) remainder[path_start..] else "/";
 
-    // Parse host and port
-    if (std.mem.lastIndexOf(u8, host_and_port, ":")) |port_colon| {
+    // Parse host and port (handle IPv6 bracketed forms)
+    if (host_and_port.len > 0 and host_and_port[0] == '[') {
+        const close_bracket = std.mem.indexOf(u8, host_and_port, "]") orelse {
+            // Malformed IPv6 host; treat as empty
+            parts.host = "";
+            parts.port = null;
+            return parts;
+        };
+        parts.host = host_and_port[1..close_bracket];
+        if (close_bracket + 1 < host_and_port.len and host_and_port[close_bracket + 1] == ':') {
+            const port_str = host_and_port[close_bracket + 2 ..];
+            parts.port = std.fmt.parseInt(u16, port_str, 10) catch null;
+        }
+    } else if (std.mem.lastIndexOf(u8, host_and_port, ":")) |port_colon| {
         parts.host = host_and_port[0..port_colon];
         const port_str = host_and_port[port_colon + 1 ..];
         parts.port = std.fmt.parseInt(u16, port_str, 10) catch null;
@@ -230,6 +242,24 @@ test "parseHostHeader: IPv6 without port" {
 
     try std.testing.expectEqualStrings("2001:db8::1", parts.host);
     try std.testing.expectEqual(@as(?u16, null), parts.port);
+}
+
+test "parseURL: IPv6 without port" {
+    const url = "http://[2001:db8::1]/api";
+    const parts = parseURL(url);
+    try std.testing.expectEqualStrings("http", parts.scheme);
+    try std.testing.expectEqualStrings("2001:db8::1", parts.host);
+    try std.testing.expectEqual(@as(u16, 80), parts.port.?);
+    try std.testing.expectEqualStrings("/api", parts.path);
+}
+
+test "parseURL: IPv6 with port" {
+    const url = "https://[::1]:8443/path";
+    const parts = parseURL(url);
+    try std.testing.expectEqualStrings("https", parts.scheme);
+    try std.testing.expectEqualStrings("::1", parts.host);
+    try std.testing.expectEqual(@as(u16, 8443), parts.port.?);
+    try std.testing.expectEqualStrings("/path", parts.path);
 }
 
 test "parseHostHeader: empty string" {

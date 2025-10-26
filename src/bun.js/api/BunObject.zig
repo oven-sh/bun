@@ -1088,6 +1088,8 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     }
                     if (config.websocket_js_context != .zero) {
                         ServerType.js.websocketServerContextSetCached(obj, globalObject, config.websocket_js_context);
+                        // Now that it's stored on the server, we can unprotect it
+                        config.websocket_js_context.unprotect();
                     }
                     server.js_value.setStrong(obj, globalObject);
 

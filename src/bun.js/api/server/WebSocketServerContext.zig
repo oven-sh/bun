@@ -252,6 +252,9 @@ pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!
         server.handler.flags.publish_to_self,
     );
 
+    // Protect the context from GC until it's stored on the server object
+    js_context.protect();
+
     return .{ .context = server, .js_context = js_context };
 }
 

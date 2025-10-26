@@ -111,6 +111,7 @@ public:
     }
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     // Getters for each callback
     JSValue onOpen() const { return Base::internalField(onOpenFieldIndex).get(); }
@@ -169,6 +170,16 @@ private:
 };
 
 const JSC::ClassInfo JSWebSocketServerContext::s_info = { "JSWebSocketServerContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocketServerContext) };
+
+template<typename Visitor>
+void JSWebSocketServerContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSWebSocketServerContext* thisObject = jsCast<JSWebSocketServerContext*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSWebSocketServerContext);
 
 extern "C" JSC::EncodedJSValue Bun__JSWebSocketServerContext__create(
     Zig::GlobalObject* globalObject,

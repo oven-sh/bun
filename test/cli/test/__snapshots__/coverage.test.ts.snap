@@ -35,20 +35,20 @@ exports[`cobertura coverage reporter: cobertura-coverage-reporter-output 1`] = `
         <source><dir></source>
     </sources>
     <packages>
-        <package name="src" line-rate="0.9524">
-            <class name="foo.test.ts" filename="src/foo.test.ts" line-rate="1.0000">
+        <package name="src" line-rate="0.9524" branch-rate="0" complexity="0">
+            <class name="foo.test.ts" filename="src/foo.test.ts" line-rate="1.0000" branch-rate="0.0" complexity="0.0">
                 <methods>
-                    <method name="(anonymous_0)" hits="1" signature="()V">
+                    <method name="(anonymous_0)" signature="()V" line-rate="1.0" branch-rate="0" complexity="0">
                         <lines>
                             <line number="6" hits="1"/>
                         </lines>
                     </method>
-                    <method name="(anonymous_1)" hits="1" signature="()V">
+                    <method name="(anonymous_1)" signature="()V" line-rate="1.0" branch-rate="0" complexity="0">
                         <lines>
                             <line number="5" hits="1"/>
                         </lines>
                     </method>
-                    <method name="(anonymous_2)" hits="1" signature="()V">
+                    <method name="(anonymous_2)" signature="()V" line-rate="1.0" branch-rate="0" complexity="0">
                         <lines>
                             <line number="12" hits="1"/>
                         </lines>
@@ -69,9 +69,9 @@ exports[`cobertura coverage reporter: cobertura-coverage-reporter-output 1`] = `
                     <line number="17" hits="2"/>
                 </lines>
             </class>
-            <class name="foo.ts" filename="src/foo.ts" line-rate="0.8889">
+            <class name="foo.ts" filename="src/foo.ts" line-rate="0.8889" branch-rate="0.0" complexity="0.0">
                 <methods>
-                    <method name="(anonymous_0)" hits="1" signature="()V">
+                    <method name="(anonymous_0)" signature="()V" line-rate="1.0" branch-rate="0" complexity="0">
                         <lines>
                             <line number="2" hits="1"/>
                         </lines>

@@ -285,17 +285,13 @@ pub const Report = struct {
                         last = i + 1;
                     },
                     0...0x1f => {
-                        // XML 1.0 allows only tab (0x09), LF (0x0A), CR (0x0D) in this range
-                        // All others are invalid even when escaped
+                        // XML 1.0: only TAB/LF/CR are allowed; others must not appear.
                         if (c == 0x09 or c == 0x0A or c == 0x0D) {
-                            // Pass through as-is
+                            // allowed: keep as-is
                         } else {
-                            // Illegal control character - escape it as numeric ref
-                            // (though technically invalid in XML 1.0)
-                            if (i > last) {
-                                try writer.writeAll(str[last..i]);
-                            }
-                            try writer.print("&#{d};", .{c});
+                            if (i > last) try writer.writeAll(str[last..i]);
+                            // Replace illegal control char with a space
+                            try writer.writeByte(' ');
                             last = i + 1;
                         }
                     },
@@ -381,12 +377,16 @@ pub const Report = struct {
                     const dir = bun.path.dirname(filename, .auto);
                     const package_name = if (dir.len > 0) dir else ".";
 
-                    const entry = try package_map.getOrPut(package_name);
+                    // Duplicate the key into heap-allocated memory BEFORE getOrPut
+                    const owned_key = try this.allocator.dupe(u8, package_name);
+                    errdefer this.allocator.free(owned_key);
+
+                    const entry = try package_map.getOrPut(owned_key);
                     if (!entry.found_existing) {
-                        // Duplicate the key into heap-allocated memory
-                        const owned_key = try this.allocator.dupe(u8, package_name);
-                        entry.key_ptr.* = owned_key;
                         entry.value_ptr.* = .{};
+                    } else {
+                        // Key already exists, free the duplicate
+                        this.allocator.free(owned_key);
                     }
                     try entry.value_ptr.append(this.allocator, report);
                 }
@@ -412,7 +412,7 @@ pub const Report = struct {
 
                     try writer.writeAll("        <package name=\"");
                     try escapeXml(package_name, writer);
-                    try writer.print("\" line-rate=\"{d:.4}\">\n", .{package_line_rate});
+                    try writer.print("\" line-rate=\"{d:.4}\" branch-rate=\"0\" complexity=\"0\">\n", .{package_line_rate});
 
                     // Write classes (files)
                     for (package_reports) |report| {
@@ -454,14 +454,15 @@ pub const Report = struct {
             try escapeXml(basename, writer);
             try writer.writeAll("\" filename=\"");
             try escapeXml(filename, writer);
-            try writer.print("\" line-rate=\"{d:.4}\">\n", .{line_rate});
+            try writer.print("\" line-rate=\"{d:.4}\" branch-rate=\"0.0\" complexity=\"0.0\">\n", .{line_rate});
 
             // Write methods (functions)
             try writer.writeAll("                <methods>\n");
 
             for (report.functions.items, 0..) |function, i| {
                 const hits: u32 = if (report.functions_which_have_executed.isSet(i)) 1 else 0;
-                try writer.print("                    <method name=\"(anonymous_{d})\" hits=\"{d}\" signature=\"()V\">\n", .{ i, hits });
+                const method_line_rate: f64 = if (hits > 0) 1.0 else 0.0;
+                try writer.print("                    <method name=\"(anonymous_{d})\" signature=\"()V\" line-rate=\"{d:.1}\" branch-rate=\"0\" complexity=\"0\">\n", .{ i, method_line_rate });
                 try writer.writeAll("                        <lines>\n");
                 try writer.print("                            <line number=\"{d}\" hits=\"{d}\"/>\n", .{ function.start_line + 1, hits });
                 try writer.writeAll("                        </lines>\n");

@@ -1110,6 +1110,7 @@ pub const CommandLineReporter = struct {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
                         const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        errdefer bun.default_allocator.destroy(ptr);
                         ptr.* = .{
                             .end = 0,
                             .unbuffered_writer = writer,
@@ -1128,6 +1129,7 @@ pub const CommandLineReporter = struct {
         };
         errdefer {
             if (comptime reporters.lcov) {
+                bun.default_allocator.destroy(lcov_buffered_writer);
                 lcov_file.close();
                 _ = bun.sys.unlink(
                     lcov_name,
@@ -1175,6 +1177,7 @@ pub const CommandLineReporter = struct {
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        errdefer bun.default_allocator.destroy(ptr);
                         ptr.* = .{
                             .end = 0,
                             .unbuffered_writer = writer,
@@ -1193,6 +1196,7 @@ pub const CommandLineReporter = struct {
         };
         errdefer {
             if (comptime reporters.cobertura) {
+                bun.default_allocator.destroy(cobertura_buffered_writer);
                 cobertura_file.close();
                 _ = bun.sys.unlink(
                     cobertura_name,
@@ -1261,6 +1265,33 @@ pub const CommandLineReporter = struct {
                 Output.err(err, "Failed to save cobertura.xml file", .{});
                 Global.exit(1);
             };
+
+            // Check for low coverage failure when only cobertura is enabled
+            if (comptime !reporters.text and !reporters.lcov) {
+                // Compute failing flag for --fail-on-low-coverage
+                const fraction_threshold = opts.fractions;
+                var has_low_coverage = false;
+
+                for (cobertura_reports.items) |*report| {
+                    // Check if this report fails the coverage thresholds
+                    const functions_pct = if (report.functions.items.len > 0)
+                        @as(f64, @floatFromInt(report.functions_which_have_executed.count())) / @as(f64, @floatFromInt(report.functions.items.len)) * 100.0
+                    else
+                        100.0;
+                    const lines_pct = if (report.executable_lines.count() > 0)
+                        @as(f64, @floatFromInt(report.lines_which_have_executed.count())) / @as(f64, @floatFromInt(report.executable_lines.count())) * 100.0
+                    else
+                        100.0;
+
+                    if (functions_pct < fraction_threshold.functions or lines_pct < fraction_threshold.lines) {
+                        has_low_coverage = true;
+                        break;
+                    }
+                }
+
+                opts.fractions.failing = has_low_coverage;
+                return; // Only cobertura was requested, we're done
+            }
         }
 
         // Continue with text/lcov reporters (support multi-reporter combinations)

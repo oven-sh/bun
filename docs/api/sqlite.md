@@ -182,7 +182,7 @@ SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) wh
 To enable WAL mode, run this pragma query at the beginning of your application:
 
 ```ts
-db.exec("PRAGMA journal_mode = WAL;");
+db.run("PRAGMA journal_mode = WAL;");
 ```
 
 {% details summary="What is WAL mode" %}

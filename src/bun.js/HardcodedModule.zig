@@ -1,12 +1,5 @@
 const string = []const u8;
 
-const ast = @import("../import_record.zig");
-const ImportRecord = ast.ImportRecord;
-const options = @import("../options.zig");
-
-const bun = @import("bun");
-const std = @import("std");
-
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
@@ -430,3 +423,10 @@ pub const HardcodedModule = enum {
         }
     };
 };
+
+const bun = @import("bun");
+const options = @import("../options.zig");
+const std = @import("std");
+
+const ast = @import("../import_record.zig");
+const ImportRecord = ast.ImportRecord;

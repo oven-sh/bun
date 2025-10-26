@@ -6,9 +6,6 @@ pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").Runti
 pub const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
 
 // Re-export helper functions from RuntimeTranspilerStore
-const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
-const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
-const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;
 
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
@@ -73,7 +70,6 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     }
     return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
 }
-
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {
     var jsc_vm = global.bunVM();
@@ -1295,7 +1291,6 @@ inline fn jsSyntheticModule(name: ResolvedSource.Tag, specifier: String) Resolve
 ///
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
-
 pub const FetchFlags = enum {
     transpile,
     print_source,
@@ -1305,7 +1300,6 @@ pub const FetchFlags = enum {
         return this != .transpile;
     }
 };
-
 
 /// Support embedded .node files
 export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String) bool {
@@ -1327,18 +1321,12 @@ const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 
-const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
+const ast = @import("../import_record.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");
 const panic = std.debug.panic;
-
-const ast = @import("../import_record.zig");
-const ImportRecord = ast.ImportRecord;
-
-const Install = @import("../install/install.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
 
 const options = @import("../options.zig");
 const ModuleType = options.ModuleType;
@@ -1346,8 +1334,11 @@ const ModuleType = options.ModuleType;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
+const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
+const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;
+const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
+
 const bun = @import("bun");
-const Async = bun.Async;
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;

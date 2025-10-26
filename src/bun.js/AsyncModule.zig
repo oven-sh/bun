@@ -2,34 +2,6 @@ const debug = Output.scoped(.AsyncModule, .hidden);
 
 const string = []const u8;
 
-const Dependency = @import("../install/dependency.zig");
-const Fs = @import("../fs.zig");
-const Install = @import("../install/install.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const options = @import("../options.zig");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-
-const bun = @import("bun");
-const Async = bun.Async;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const String = bun.String;
-const logger = bun.logger;
-const strings = bun.strings;
-const api = bun.schema.api;
-const std = @import("std");
-
-const jsc = bun.jsc;
-const JSGlobalObject = bun.jsc.JSGlobalObject;
-const JSValue = bun.jsc.JSValue;
-const ResolvedSource = bun.jsc.ResolvedSource;
-const VirtualMachine = bun.jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
-
-const ParseResult = bun.transpiler.ParseResult;
-const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
-
 pub const AsyncModule = struct {
     // This is all the state used by the printer to print the module
     parse_result: ParseResult,
@@ -768,3 +740,31 @@ pub const AsyncModule = struct {
         referrer: *bun.String,
     ) void;
 };
+
+const Dependency = @import("../install/dependency.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
+
+const Install = @import("../install/install.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const String = bun.String;
+const logger = bun.logger;
+const strings = bun.strings;
+const ParseResult = bun.transpiler.ParseResult;
+const api = bun.schema.api;
+
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+const ResolvedSource = bun.jsc.ResolvedSource;
+const VirtualMachine = bun.jsc.VirtualMachine;
+const ZigString = bun.jsc.ZigString;

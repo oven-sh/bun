@@ -2,35 +2,6 @@ const debug = Output.scoped(.RuntimeTranspilerStore, .hidden);
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
-const options = @import("../options.zig");
-const ModuleType = options.ModuleType;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-
-const bun = @import("bun");
-const Async = bun.Async;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const String = bun.String;
-const Transpiler = bun.Transpiler;
-const js_ast = bun.ast;
-const js_printer = bun.js_printer;
-const logger = bun.logger;
-const strings = bun.strings;
-const std = @import("std");
-
-const jsc = bun.jsc;
-const JSGlobalObject = bun.jsc.JSGlobalObject;
-const JSValue = bun.jsc.JSValue;
-const ResolvedSource = bun.jsc.ResolvedSource;
-const VirtualMachine = bun.jsc.VirtualMachine;
-
-const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
-const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
-const node_fallbacks = @import("../node_fallbacks.zig");
-
 pub fn dumpSource(vm: *VirtualMachine, specifier: string, printer: anytype) void {
     dumpSourceString(vm, specifier, printer.ctx.getWritten());
 }
@@ -610,3 +581,33 @@ pub const RuntimeTranspilerStore = struct {
         }
     };
 };
+
+const Fs = @import("../fs.zig");
+const node_fallbacks = @import("../node_fallbacks.zig");
+const std = @import("std");
+const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
+const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
+
+const options = @import("../options.zig");
+const ModuleType = options.ModuleType;
+
+const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const String = bun.String;
+const Transpiler = bun.Transpiler;
+const js_ast = bun.ast;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+const ResolvedSource = bun.jsc.ResolvedSource;
+const VirtualMachine = bun.jsc.VirtualMachine;

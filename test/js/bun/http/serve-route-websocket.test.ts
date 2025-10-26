@@ -582,9 +582,12 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
       conn.ws.send(`msg-${conn.id}`);
     }
 
+    // Wait for server to receive all messages
     await waitFor(() => messageCount.count === 5);
-
     expect(messageCount.count).toBe(5);
+
+    // Wait for all echo responses to arrive back at clients
+    await waitFor(() => connections.every(conn => conn.messages.length >= 2));
 
     // Each should get their echo back
     for (const conn of connections) {
@@ -728,7 +731,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     ws.send("trigger-error");
 
     // Wait for error handler to be called
-    await Bun.sleep(100);
+    await waitFor(() => errorCalled);
 
     expect(errorCalled).toBe(true);
 
@@ -763,8 +766,8 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     ws.close();
     await closePromise;
 
-    // Now stop server
-    server.stop();
+    // Now stop server and await completion
+    await server.stop();
 
     // Server should stop successfully even after WebSocket was used
     expect(server.port).toBe(0);

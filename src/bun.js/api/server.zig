@@ -562,12 +562,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
         /// Per-route WebSocket contexts. Index is (id - 2) where id comes from app.ws()
-        route_websocket_contexts: std.ArrayListUnmanaged(WebSocketServerContext) = .{},
+        /// Use Shared pointers to ensure stable addresses (ServerWebSocket stores raw pointers to handlers)
+        route_websocket_contexts: std.ArrayListUnmanaged(SharedWebSocketContext) = .{},
 
         on_clienterror: jsc.Strong.Optional = .empty,
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
 
+        pub const SharedWebSocketContext = bun.ptr.shared.WithOptions(*WebSocketServerContext, .{ .deinit = true });
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false);
@@ -1007,13 +1009,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             data_value.ensureStillAlive();
 
-            // Determine which WebSocket handler to use - route-specific or global
-            const ws_handler = if (upgrader.route_websocket_context_index) |ws_idx|
-                &this.route_websocket_contexts.items[ws_idx].handler
+            // Create ServerWebSocket with route-specific or global handler
+            const ws = if (upgrader.route_websocket_context_index) |ws_idx|
+                ServerWebSocket.initWithSharedContext(this.route_websocket_contexts.items[ws_idx], data_value, signal)
             else
-                &this.config.websocket.?.handler;
-
-            const ws = ServerWebSocket.init(ws_handler, data_value, signal);
+                ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
@@ -1634,8 +1634,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.user_routes.deinit(bun.default_allocator);
 
             // Clean up route-specific WebSocket contexts
-            for (this.route_websocket_contexts.items) |ws_ctx| {
-                ws_ctx.unprotect();
+            for (this.route_websocket_contexts.items) |*shared_ws| {
+                shared_ws.deinit(); // Decrements ref count, calls WebSocketServerContext.deinit() when count reaches 0
             }
             this.route_websocket_contexts.deinit(bun.default_allocator);
 
@@ -2521,12 +2521,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // Clean up old route-specific WebSocket contexts
                 var old_route_websocket_contexts = this.route_websocket_contexts;
                 defer {
-                    for (old_route_websocket_contexts.items) |ws| ws.unprotect();
+                    // Deinit Shared pointers - this decrements ref count.
+                    // When ref count reaches 0, WebSocketServerContext.deinit() will be called
+                    // automatically, which will unprotect the JSValues.
+                    for (old_route_websocket_contexts.items) |*shared_ws| {
+                        shared_ws.deinit();
+                    }
                     old_route_websocket_contexts.deinit(bun.default_allocator);
                 }
 
                 this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
-                this.route_websocket_contexts = std.ArrayListUnmanaged(WebSocketServerContext).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
+                this.route_websocket_contexts = std.ArrayListUnmanaged(SharedWebSocketContext).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
 
                 const paths_zig = bun.default_allocator.alloc(ZigString, user_routes_to_build_list.items.len) catch @panic("OOM");
                 defer bun.default_allocator.free(paths_zig);
@@ -2541,7 +2546,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     var ws_ctx_index: ?u32 = null;
                     if (builder.websocket) |ws| {
                         ws_ctx_index = @truncate(this.route_websocket_contexts.items.len);
-                        this.route_websocket_contexts.appendAssumeCapacity(ws);
+                        // Use Shared pointer to ensure stable memory address for raw pointers in ServerWebSocket
+                        // Shared will allocate the memory and return a pointer to it
+                        // We manually call unprotect() before deinit, so disable automatic deinit
+                        const shared_ws = SharedWebSocketContext.new(ws);
+                        shared_ws.get().protect();
+                        this.route_websocket_contexts.appendAssumeCapacity(shared_ws);
                         builder.websocket = null; // Mark as moved
                     }
 
@@ -2566,7 +2576,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             // Setup route-specific WebSocket contexts
-            for (this.route_websocket_contexts.items) |*websocket| {
+            for (this.route_websocket_contexts.items) |*shared_ws| {
+                const websocket = shared_ws.get();
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = app;
                 websocket.handler.flags.ssl = ssl_enabled;
@@ -2603,7 +2614,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (is_star_path) {
                                 has_any_ws_route_for_star_path = true;
                             }
-                            const ws_context = &this.route_websocket_contexts.items[ws_idx];
+                            const ws_context = this.route_websocket_contexts.items[ws_idx].get();
                             app.ws(
                                 user_route.route.path,
                                 user_route,
@@ -2634,7 +2645,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (method_val == .GET) {
                             if (user_route.websocket_context_index) |ws_idx| {
                                 // Route has its own WebSocket handler
-                                const ws_context = &this.route_websocket_contexts.items[ws_idx];
+                                const ws_context = this.route_websocket_contexts.items[ws_idx].get();
                                 app.ws(
                                     user_route.route.path,
                                     user_route,

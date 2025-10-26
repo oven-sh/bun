@@ -1,6 +1,9 @@
 const ServerWebSocket = @This();
 
 #handler: *WebSocketServer.Handler,
+/// Optional Shared pointer for route-specific WebSocket contexts.
+/// When set, this holds a reference to keep the context alive.
+#shared_context: ?bun.api.server.NewServer(.http, .debug).SharedWebSocketContext = null,
 #this_value: jsc.JSRef = .empty(),
 #flags: Flags = .{},
 #signal: ?*bun.webcore.AbortSignal = null,
@@ -42,6 +45,23 @@ pub fn init(handler: *WebSocketServer.Handler, data_value: jsc.JSValue, signal: 
     const globalObject = handler.globalObject;
     const this = ServerWebSocket.new(.{
         .#handler = handler,
+        .#signal = signal,
+    });
+    // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
+    const this_value = this.toJS(globalObject);
+    this.#this_value = .initStrong(this_value, globalObject);
+    js.dataSetCached(this_value, globalObject, data_value);
+    return this;
+}
+
+/// Initialize a ServerWebSocket with a route-specific shared context.
+/// This clones the shared context to hold a reference and keep it alive.
+pub fn initWithSharedContext(shared_ctx: bun.api.server.NewServer(.http, .debug).SharedWebSocketContext, data_value: jsc.JSValue, signal: ?*bun.webcore.AbortSignal) *ServerWebSocket {
+    const handler = shared_ctx.get();
+    const globalObject = handler.globalObject;
+    const this = ServerWebSocket.new(.{
+        .#handler = &handler.handler,
+        .#shared_context = shared_ctx.clone(), // Clone to increment ref count
         .#signal = signal,
     });
     // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
@@ -304,6 +324,13 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         if (this.#this_value.isNotEmpty()) {
             this.#this_value.downgrade();
+        }
+
+        // Release the shared context reference if we have one
+        // When the last reference is released, WebSocketServerContext.deinit()
+        // will be called automatically to unprotect JSValues
+        if (this.#shared_context) |*shared_ctx| {
+            shared_ctx.deinit();
         }
     }
 

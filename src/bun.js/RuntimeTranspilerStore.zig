@@ -100,11 +100,9 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
 
 pub fn setBreakPointOnFirstLine() bool {
     const s = struct {
-        var set_break_point: bool = true;
+        var set_break_point: std.atomic.Value(bool) = std.atomic.Value(bool).init(true);
     };
-    const ret = s.set_break_point;
-    s.set_break_point = false;
-    return ret;
+    return s.set_break_point.swap(false, .seq_cst);
 }
 
 pub const RuntimeTranspilerStore = struct {

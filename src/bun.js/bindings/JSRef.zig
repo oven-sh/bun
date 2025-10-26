@@ -120,6 +120,7 @@ pub const JSRef = union(enum) {
     pub fn update(this: *@This(), globalThis: *jsc.JSGlobalObject, value: JSValue) void {
         switch (this.*) {
             .weak => {
+                bun.debugAssert(!value.isEmptyOrUndefinedOrNull());
                 this.weak = value;
             },
             .strong => {

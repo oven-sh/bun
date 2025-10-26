@@ -811,13 +811,8 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
     this.clearAbortSignal();
 
-    if (this.ipc_data != null) {
-        this.disconnectIPC(false);
-    }
-
-    this.finalizeStreams();
-
     bun.assert(!this.computeHasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
+    this.finalizeStreams();
 
     this.process.detach();
     this.process.deref();
@@ -829,6 +824,10 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
     MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
     MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
+
+    if (this.ipc_data != null) {
+        this.disconnectIPC(false);
+    }
 
     this.flags.finalized = true;
     this.deref();

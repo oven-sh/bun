@@ -15,9 +15,9 @@ import {
   MeterProvider,
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
-import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunHttpInstrumentation } from "../src/instruments/BunHttpInstrumentation";
+import { TestSDK } from "./test-utils";
 
 // Helper to normalize histogram/counter data point values across OTEL versions
 function getDataPointValue(dp: any): number {
@@ -31,8 +31,7 @@ function getDataPointValue(dp: any): number {
 describe("BunHttpInstrumentation - Metrics", () => {
   let metricExporter: InMemoryMetricExporter;
   let meterProvider: MeterProvider;
-  let spanExporter: InMemorySpanExporter;
-  let tracerProvider: BasicTracerProvider;
+  let tsdk: TestSDK;
   let instrumentation: BunHttpInstrumentation;
   let server: ReturnType<typeof Bun.serve> | null = null;
   let serverUrl: string;
@@ -46,13 +45,12 @@ describe("BunHttpInstrumentation - Metrics", () => {
     });
     meterProvider = new MeterProvider({ readers: [metricReader] });
 
-    // Setup tracer provider (metrics can work with or without tracing)
-    spanExporter = new InMemorySpanExporter();
-    tracerProvider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spanExporter)] });
+    // Setup tracer provider using TestSDK (metrics can work with or without tracing)
+    tsdk = new TestSDK();
 
     // Create and enable instrumentation
     instrumentation = new BunHttpInstrumentation();
-    instrumentation.setTracerProvider(tracerProvider);
+    instrumentation.setTracerProvider(tsdk.getTracerProvider());
     instrumentation.setMeterProvider(meterProvider);
     instrumentation.enable();
 
@@ -99,7 +97,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
     server?.stop();
     server = null;
     await meterProvider.shutdown();
-    await tracerProvider.shutdown();
+    await tsdk[Symbol.asyncDispose]();
   });
 
   test("records http.server.request.duration histogram metric", async () => {

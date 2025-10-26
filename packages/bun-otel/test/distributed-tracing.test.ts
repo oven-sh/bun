@@ -1,8 +1,6 @@
 import { context, SpanKind, trace } from "@opentelemetry/api";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { BunSDK } from "../index";
-import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, TestSDK } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (Bun.serve) → fetch → echo server
@@ -15,14 +13,9 @@ describe("Distributed tracing with fetch propagation", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span synchronously in request handler", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "context-active-test",
     });
-
-    sdk.start();
 
     let capturedTraceId: string | undefined;
     let capturedSpanId: string | undefined;
@@ -47,11 +40,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await echoServer.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
 
     // Wait for the server span to be exported (scoped to our trace)
-    await waitForSpans(exporter, 1, 1000, { traceId: upstreamTraceId });
-
-    const spans = exporter
-      .getFinishedSpans()
-      .filter(s => s.kind === SpanKind.SERVER && s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -67,15 +56,10 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("propagates trace context from server A → fetch → server B", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "distributed-tracing-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -103,14 +87,12 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 2 spans: serverA (SERVER) + fetch to echoServer (CLIENT)
     // Note: Echo server runs in separate process, so we only see serverA's spans
-    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
-
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     // With fetch instrumentation: serverA (SERVER), fetchClient (CLIENT)
-    const serverASpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverASpan = spans.server()[0];
+    const fetchClientSpan = spans.client()[0];
 
     // CRITICAL ASSERTIONS for distributed tracing:
 
@@ -138,15 +120,10 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("propagates trace context across setTimeout boundary", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "settimeout-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -178,15 +155,11 @@ describe("Distributed tracing with fetch propagation", () => {
     const echoData = await response.json();
 
     // Wait for 2 spans with our specific trace ID
-    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
-
-    // Filter to only get spans from this test (by trace ID)
-    const allSpans = exporter.getFinishedSpans();
-    const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverSpan = spans.server()[0];
+    const fetchClientSpan = spans.client()[0];
 
     // Both spans should share the same trace ID
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
@@ -214,15 +187,10 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that AsyncLocalStorage context persists through setImmediate callbacks.
     // setImmediate schedules work after I/O events, similar to setTimeout(0) but
     // guaranteed to execute after the current I/O polling phase.
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "setimmediate-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -249,12 +217,11 @@ describe("Distributed tracing with fetch propagation", () => {
     });
     const echoData = await response.json();
 
-    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverSpan = spans.server()[0];
+    const fetchClientSpan = spans.client()[0];
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(serverSpan.parentSpanContext?.spanId).toBe(upstreamSpanId);
@@ -269,15 +236,10 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that context flows correctly through a chain of async function calls.
     // This verifies that each async function boundary maintains the parent context,
     // which is critical for real-world code that uses helper functions.
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "nested-async-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -308,12 +270,11 @@ describe("Distributed tracing with fetch propagation", () => {
     });
     const echoData = await response.json();
 
-    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverSpan = spans.server()[0];
+    const fetchClientSpan = spans.client()[0];
 
     expect(serverSpan.spanContext().traceId).toBe(upstreamTraceId);
     expect(fetchClientSpan.spanContext().traceId).toBe(upstreamTraceId);
@@ -326,15 +287,10 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that context is maintained across async generator yield points.
     // Each yield suspends execution and resumes later, so this verifies that
     // AsyncLocalStorage correctly restores context after each resume.
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "async-generator-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -370,8 +326,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const result = await response.json();
 
     // Wait for 1 SERVER + 3 CLIENT spans (scoped to our trace)
-    await waitForSpans(exporter, 4, 1500, { traceId: upstreamTraceId });
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(4, 1500, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(4);
 
     // All spans should share same trace ID
@@ -379,13 +334,13 @@ describe("Distributed tracing with fetch propagation", () => {
       expect(span.spanContext().traceId).toBe(upstreamTraceId);
     }
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-    const clientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    const serverSpan = spans.server()[0];
+    const clientSpans = spans.client();
     expect(clientSpans).toHaveLength(3);
 
     // All CLIENT spans created by generator should be children of SERVER span
     for (const clientSpan of clientSpans) {
-      expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan!.spanContext().spanId);
+      expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
     }
     // And each downstream response should include a traceparent with the same traceId
     for (const r of result.results) {
@@ -395,15 +350,10 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("fetch propagation works with parallel requests", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "parallel-fetch-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -435,23 +385,21 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 1 gateway (SERVER) + 3 fetch (CLIENT) = 4 spans
     // (Echo server is external, so no SERVER spans from it)
-    await waitForSpans(exporter, 4, 1000, { traceId });
-
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === traceId);
+    const spans = await tsdk.waitForSpans(4, 1000, s => s.withTraceId(traceId));
     expect(spans).toHaveLength(4);
 
     // All spans share the same trace ID by construction (filtered)
 
     // Find the gateway span (parent of the 3 fetch CLIENT spans)
-    const gatewaySpan = spans.find(s => s.name === "GET /gateway");
+    const gatewaySpan = spans.withName("GET /gateway")[0];
     expect(gatewaySpan).toBeDefined();
 
     // All 3 fetch CLIENT spans should be children of the gateway span
-    const fetchClientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    const fetchClientSpans = spans.client();
     expect(fetchClientSpans).toHaveLength(3);
 
     for (const fetchSpan of fetchClientSpans) {
-      expect(fetchSpan.parentSpanContext?.spanId).toBe(gatewaySpan!.spanContext().spanId);
+      expect(fetchSpan.parentSpanContext?.spanId).toBe(gatewaySpan.spanContext().spanId);
     }
 
     // Verify traceparent was injected in all 3 parallel requests

@@ -12,38 +12,19 @@
  * - HTTP status code handling (4xx vs 5xx)
  */
 
-import { propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { propagation, SpanStatusCode } from "@opentelemetry/api";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
-import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunHttpInstrumentation } from "../src/instruments/BunHttpInstrumentation";
-import { waitForSpans } from "./test-utils";
+import { TestSDK } from "./test-utils";
 
 describe("BunHttpInstrumentation", () => {
-  let exporter: InMemorySpanExporter;
-  let provider: BasicTracerProvider;
-  let instrumentation: BunHttpInstrumentation;
   let server: ReturnType<typeof Bun.serve> | null = null;
   let serverUrl: string;
 
   beforeAll(async () => {
     // Setup W3C trace context propagator (required for traceparent header extraction)
     propagation.setGlobalPropagator(new W3CTraceContextPropagator());
-
-    // Setup tracer provider with in-memory exporter
-    exporter = new InMemorySpanExporter();
-    provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-
-    // Create and enable instrumentation BEFORE starting server
-    instrumentation = new BunHttpInstrumentation({
-      captureAttributes: {
-        requestHeaders: ["user-agent", "x-request-id"],
-        responseHeaders: ["content-type", "x-trace-id"],
-      },
-    });
-
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
 
     // Start test server
     server = Bun.serve({
@@ -84,30 +65,44 @@ describe("BunHttpInstrumentation", () => {
   });
 
   afterAll(() => {
-    instrumentation.disable();
     server?.stop();
     server = null;
   });
 
   test("implements Instrumentation interface", () => {
-    expect(instrumentation.instrumentationName).toBe("@opentelemetry/instrumentation-bun-http");
-    expect(instrumentation.instrumentationVersion).toBe("0.1.0");
-    expect(typeof instrumentation.enable).toBe("function");
-    expect(typeof instrumentation.disable).toBe("function");
-    expect(typeof instrumentation.setTracerProvider).toBe("function");
-    expect(typeof instrumentation.setConfig).toBe("function");
-    expect(typeof instrumentation.getConfig).toBe("function");
+    const inst = new BunHttpInstrumentation();
+    expect(inst.instrumentationName).toBe("@opentelemetry/instrumentation-bun-http");
+    expect(inst.instrumentationVersion).toBe("0.1.0");
+    expect(typeof inst.enable).toBe("function");
+    expect(typeof inst.disable).toBe("function");
+    expect(typeof inst.setTracerProvider).toBe("function");
+    expect(typeof inst.setConfig).toBe("function");
+    expect(typeof inst.getConfig).toBe("function");
   });
 
   test("getConfig returns current configuration", () => {
-    const config = instrumentation.getConfig();
-    expect(config.enabled).toBe(true);
+    const inst = new BunHttpInstrumentation({
+      captureAttributes: {
+        requestHeaders: ["user-agent", "x-request-id"],
+        responseHeaders: ["content-type", "x-trace-id"],
+      },
+    });
+    const config = inst.getConfig();
     expect(config.captureAttributes?.requestHeaders).toEqual(["user-agent", "x-request-id"]);
     expect(config.captureAttributes?.responseHeaders).toEqual(["content-type", "x-trace-id"]);
   });
 
   test("creates SERVER span for incoming HTTP request", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [
+        new BunHttpInstrumentation({
+          captureAttributes: {
+            requestHeaders: ["user-agent", "x-request-id"],
+            responseHeaders: ["content-type", "x-trace-id"],
+          },
+        }),
+      ],
+    });
 
     const response = await fetch(`${serverUrl}/hello`, {
       headers: {
@@ -119,31 +114,32 @@ describe("BunHttpInstrumentation", () => {
     expect(response.ok).toBe(true);
     expect(await response.text()).toBe("Hello, World!");
 
-    // Wait for span to be exported
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    expect(spans.length).toBeGreaterThanOrEqual(1);
-
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-    expect(serverSpan).toBeDefined();
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
     // Verify span attributes follow OTel semantic conventions
-    expect(serverSpan?.attributes["http.request.method"]).toBe("GET");
-    expect(serverSpan?.attributes["url.path"]).toBe("/hello");
-    expect(serverSpan?.attributes["url.scheme"]).toBe("http");
-    expect(serverSpan?.attributes["server.address"]).toBe("127.0.0.1");
-    expect(serverSpan?.attributes["server.port"]).toBe(server!.port);
+    expect(serverSpan.attributes["http.request.method"]).toBe("GET");
+    expect(serverSpan.attributes["url.path"]).toBe("/hello");
+    expect(serverSpan.attributes["url.scheme"]).toBe("http");
+    expect(serverSpan.attributes["server.address"]).toBe("127.0.0.1");
+    expect(serverSpan.attributes["server.port"]).toBe(server!.port);
 
     // Verify response attributes
-    expect(serverSpan?.attributes["http.response.status_code"]).toBe(200);
+    expect(serverSpan.attributes["http.response.status_code"]).toBe(200);
 
     // Verify span status
-    expect(serverSpan?.status.code).toBe(SpanStatusCode.OK);
+    expect(serverSpan.status.code).toBe(SpanStatusCode.OK);
   });
 
   test("captures configured request headers as span attributes", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [
+        new BunHttpInstrumentation({
+          captureAttributes: {
+            requestHeaders: ["user-agent", "x-request-id"],
+          },
+        }),
+      ],
+    });
 
     await fetch(`${serverUrl}/hello`, {
       headers: {
@@ -153,32 +149,36 @@ describe("BunHttpInstrumentation", () => {
       },
     });
 
-    await waitForSpans(exporter, 1);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-
-    expect(serverSpan?.attributes["http.request.header.user-agent"]).toBe("custom-agent");
-    expect(serverSpan?.attributes["http.request.header.x-request-id"]).toBe("req-456");
-    expect(serverSpan?.attributes["http.request.header.x-uncaptured-header"]).toBeUndefined();
+    expect(serverSpan.attributes["http.request.header.user-agent"]).toBe("custom-agent");
+    expect(serverSpan.attributes["http.request.header.x-request-id"]).toBe("req-456");
+    expect(serverSpan.attributes["http.request.header.x-uncaptured-header"]).toBeUndefined();
   });
 
   test("captures configured response headers as span attributes", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [
+        new BunHttpInstrumentation({
+          captureAttributes: {
+            responseHeaders: ["content-type", "x-trace-id"],
+          },
+        }),
+      ],
+    });
 
     await fetch(`${serverUrl}/hello`);
 
-    await waitForSpans(exporter, 1);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-
-    expect(serverSpan?.attributes["http.response.header.content-type"]).toBe("text/plain");
-    expect(serverSpan?.attributes["http.response.header.x-trace-id"]).toBe("test-trace-123");
+    expect(serverSpan.attributes["http.response.header.content-type"]).toBe("text/plain");
+    expect(serverSpan.attributes["http.response.header.x-trace-id"]).toBe("test-trace-123");
   });
 
   test("extracts parent span context from traceparent header", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     // Send request with traceparent header
     const parentTraceId = "0af7651916cd43dd8448eb211c80319c";
@@ -191,68 +191,63 @@ describe("BunHttpInstrumentation", () => {
       },
     });
 
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-    expect(serverSpan).toBeDefined();
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(parentTraceId));
 
     // Verify span has correct parent context
-    expect(serverSpan?.spanContext().traceId).toBe(parentTraceId);
+    expect(serverSpan.spanContext().traceId).toBe(parentTraceId);
     // Parent span ID should be referenced (not the same as current span)
-    expect(serverSpan?.parentSpanContext?.spanId).toBe(parentSpanId);
+    expect(serverSpan.parentSpanContext?.spanId).toBe(parentSpanId);
   });
 
   test("span name follows 'METHOD path' pattern", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     await fetch(`${serverUrl}/api/users`, {
       method: "POST",
     });
 
-    await waitForSpans(exporter, 1);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-
-    expect(serverSpan?.name).toMatch(/^POST /);
-    expect(serverSpan?.name).toContain("/api/users");
+    expect(serverSpan.name).toMatch(/^POST /);
+    expect(serverSpan.name).toContain("/api/users");
   });
 
   test("4xx client errors do not set span status to ERROR", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     const response = await fetch(`${serverUrl}/not-found`);
     expect(response.status).toBe(404);
 
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
     // Per OTel spec, 4xx errors should NOT set span status to ERROR
-    expect(serverSpan?.status.code).toBe(SpanStatusCode.OK);
-    expect(serverSpan?.attributes["http.response.status_code"]).toBe(404);
+    expect(serverSpan.status.code).toBe(SpanStatusCode.OK);
+    expect(serverSpan.attributes["http.response.status_code"]).toBe(404);
   });
 
   test("5xx server errors set span status to ERROR", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     const response = await fetch(`${serverUrl}/error`);
     expect(response.status).toBe(500);
 
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
     // 5xx errors SHOULD set span status to ERROR
-    expect(serverSpan?.status.code).toBe(SpanStatusCode.ERROR);
-    expect(serverSpan?.attributes["http.response.status_code"]).toBe(500);
+    expect(serverSpan.status.code).toBe(SpanStatusCode.ERROR);
+    expect(serverSpan.attributes["http.response.status_code"]).toBe(500);
   });
 
   test("handles multiple concurrent requests", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     // Make 10 concurrent requests
     const promises = Array.from({ length: 10 }, (_, i) =>
@@ -264,10 +259,7 @@ describe("BunHttpInstrumentation", () => {
     const responses = await Promise.all(promises);
     expect(responses.every(r => r.ok)).toBe(true);
 
-    await waitForSpans(exporter, 10);
-
-    const spans = exporter.getFinishedSpans();
-    const serverSpans = spans.filter(s => s.kind === SpanKind.SERVER);
+    const serverSpans = await tsdk.waitForSpans(10, 1000, s => s.server());
 
     // Should have 10 SERVER spans
     expect(serverSpans.length).toBe(10);
@@ -278,17 +270,18 @@ describe("BunHttpInstrumentation", () => {
   });
 
   test("disable() detaches instrumentation", () => {
-    const newInst = new BunHttpInstrumentation();
-    newInst.setTracerProvider(provider);
-    newInst.enable();
+    const inst = new BunHttpInstrumentation();
+    using tsdk = new TestSDK({
+      instrumentations: [inst],
+    });
 
     // Should have an instrument ID after enable
-    expect((newInst as any)._instrumentId).toBeDefined();
+    expect((inst as any)._instrumentId).toBeDefined();
 
-    newInst.disable();
+    inst.disable();
 
     // Should clear instrument ID after disable
-    expect((newInst as any)._instrumentId).toBeUndefined();
+    expect((inst as any)._instrumentId).toBeUndefined();
   });
 
   test("setConfig updates configuration", () => {
@@ -336,21 +329,22 @@ describe("BunHttpInstrumentation", () => {
   // Instrumentations should gracefully degrade without requiring explicit TracerProvider
 
   test("captures query parameters in url.query attribute", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     await fetch(`${serverUrl}/hello?foo=bar&baz=qux`);
 
-    await waitForSpans(exporter, 1);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-
-    expect(serverSpan?.attributes["url.query"]).toBe("foo=bar&baz=qux");
-    expect(serverSpan?.attributes["url.path"]).toBe("/hello");
+    expect(serverSpan.attributes["url.query"]).toBe("foo=bar&baz=qux");
+    expect(serverSpan.attributes["url.path"]).toBe("/hello");
   });
 
   test("handles POST requests with body", async () => {
-    exporter.reset();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunHttpInstrumentation()],
+    });
 
     const response = await fetch(`${serverUrl}/json`, {
       method: "POST",
@@ -362,12 +356,9 @@ describe("BunHttpInstrumentation", () => {
 
     expect(response.ok).toBe(true);
 
-    await waitForSpans(exporter, 1);
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server());
 
-    const spans = exporter.getFinishedSpans();
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-
-    expect(serverSpan?.attributes["http.request.method"]).toBe("POST");
-    expect(serverSpan?.attributes["url.path"]).toBe("/json");
+    expect(serverSpan.attributes["http.request.method"]).toBe("POST");
+    expect(serverSpan.attributes["url.path"]).toBe("/json");
   });
 });

@@ -1,9 +1,7 @@
 import { context, SpanKind, trace } from "@opentelemetry/api";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
-import { BunSDK } from "../index";
-import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, TestSDK } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (http.createServer) → fetch → echo server
@@ -16,14 +14,9 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span synchronously in request handler", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-context-active-test",
     });
-
-    sdk.start();
 
     let capturedTraceId: string | undefined;
     let capturedSpanId: string | undefined;
@@ -58,9 +51,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
 
     // Wait for the server span to be exported
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(1);
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -75,15 +66,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context from Node.js server → fetch → echo server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-distributed-tracing-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -126,14 +112,12 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     // Wait for 2 spans: serverA (SERVER) + fetch to echoServer (CLIENT)
     // Note: Echo server runs in separate process, so we only see serverA's spans
-    await waitForSpans(exporter, 2);
-
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(2);
     expect(spans).toHaveLength(2);
 
     // With fetch instrumentation: serverA (SERVER), fetchClient (CLIENT)
-    const serverASpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const fetchClientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverASpan = spans.server()[0];
+    const fetchClientSpan = spans.client()[0];
 
     // CRITICAL ASSERTIONS for distributed tracing:
 
@@ -160,15 +144,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context across setTimeout boundary in Node.js server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-settimeout-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -215,11 +194,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     const echoData = await response.json();
 
     // Wait for 2 spans with our specific trace ID
-    await waitForSpans(exporter, 2, 500, { traceId: upstreamTraceId });
-
-    // Filter to only get spans from this test (by trace ID)
-    const allSpans = exporter.getFinishedSpans();
-    const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     // Sort spans by start time
@@ -253,15 +228,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context across setImmediate boundary in Node.js server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-setimmediate-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -300,8 +270,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
 
-    await waitForSpans(exporter, 2);
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(2);
     expect(spans).toHaveLength(2);
 
     spans.sort((a, b) => {
@@ -318,15 +287,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context through nested async functions in Node.js server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-nested-async-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -369,8 +333,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
 
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
 
-    await waitForSpans(exporter, 2);
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(2);
     expect(spans).toHaveLength(2);
 
     spans.sort((a, b) => {
@@ -387,15 +350,10 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context through async generator in Node.js server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-async-generator-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -443,8 +401,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
 
     // Wait for 1 SERVER + 3 CLIENT spans
-    await waitForSpans(exporter, 4);
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(4);
     expect(spans).toHaveLength(4);
 
     // All spans should share same trace ID
@@ -452,26 +409,21 @@ describe("Distributed tracing with Node.js HTTP server", () => {
       expect(span.spanContext().traceId).toBe(upstreamTraceId);
     }
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER);
-    const clientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    const serverSpan = spans.server()[0];
+    const clientSpans = spans.client();
     expect(clientSpans).toHaveLength(3);
 
     // All CLIENT spans created by generator should be children of SERVER span
     for (const clientSpan of clientSpans) {
-      expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan!.spanContext().spanId);
+      expect(clientSpan.parentSpanContext?.spanId).toBe(serverSpan.spanContext().spanId);
     }
   });
 
   test("fetch propagation works with parallel requests in Node.js server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-parallel-fetch-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using echoServer = await getEchoServer();
 
@@ -519,9 +471,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     const result = await response.json();
 
     // Wait for 1 gateway (SERVER) + 3 fetch (CLIENT) = 4 spans
-    await waitForSpans(exporter, 4);
-
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(4);
     expect(spans).toHaveLength(4);
 
     // All spans share the same trace ID
@@ -530,15 +480,15 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     }
 
     // Find the gateway span (parent of the 3 fetch CLIENT spans)
-    const gatewaySpan = spans.find(s => s.name === "GET /gateway");
+    const gatewaySpan = spans.withName("GET /gateway")[0];
     expect(gatewaySpan).toBeDefined();
 
     // All 3 fetch CLIENT spans should be children of the gateway span
-    const fetchClientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    const fetchClientSpans = spans.client();
     expect(fetchClientSpans).toHaveLength(3);
 
     for (const fetchSpan of fetchClientSpans) {
-      expect(fetchSpan.parentSpanContext?.spanId).toBe(gatewaySpan!.spanContext().spanId);
+      expect(fetchSpan.parentSpanContext?.spanId).toBe(gatewaySpan.spanContext().spanId);
     }
 
     // Verify traceparent was injected in all 3 parallel requests

@@ -1,9 +1,7 @@
 import { context, SpanKind, trace } from "@opentelemetry/api";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
-import { BunSDK } from "../index";
-import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, TestSDK } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (http.createServer) → http.request → echo server
@@ -18,15 +16,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span in http.createServer handler", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-context-active-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     let capturedTraceId: string | undefined;
     let capturedSpanId: string | undefined;
@@ -58,9 +51,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
 
     await using echoServer = await getEchoServer();
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
-    await waitForSpans(exporter, 1);
 
-    const spans = exporter.getFinishedSpans();
+    const spans = await tsdk.waitForSpans(1, 500, s => s.server().withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -72,15 +64,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context: http.createServer → http.request → echo server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-both-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     // UUT: http.createServer that makes http.request to echo server
     await using serverA = http.createServer(async (req, res) => {
@@ -139,13 +126,11 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const result = await response.json();
 
     // Wait for 2 spans: http.createServer (SERVER) + http.request (CLIENT)
-    await waitForSpans(exporter, 2);
+    const allSpans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
+    expect(allSpans).toHaveLength(2);
 
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(2);
-
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const clientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverSpan = allSpans.server()[0];
+    const clientSpan = allSpans.client()[0];
 
     // CRITICAL ASSERTIONS for distributed tracing:
     // 1. Both spans share the same trace ID (distributed trace)
@@ -171,15 +156,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context across setTimeout: http.createServer → http.request", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-settimeout-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using server = http.createServer(async (req, res) => {
       try {
@@ -238,14 +218,11 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     });
     const echoData = await response.json();
 
-    await waitForSpans(exporter, 2, 500, { traceId: upstreamTraceId });
-
-    const allSpans = exporter.getFinishedSpans();
-    const spans = allSpans.filter(s => s.spanContext().traceId === upstreamTraceId);
+    const spans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const clientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const serverSpan = spans.server()[0];
+    const clientSpan = spans.client()[0];
 
     // CRITICAL: CLIENT span created inside setTimeout should still be child of server span
     // This proves AsyncLocalStorage context propagates across async boundaries
@@ -260,15 +237,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context through parallel http.request calls in http.createServer", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using tsdk = new TestSDK({
       serviceName: "node-http-parallel-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     await using gateway = http.createServer(async (req, res) => {
       try {
@@ -330,15 +302,13 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const result = await response.json();
 
     // Wait for 1 gateway (SERVER) + 3 http.request (CLIENT) = 4 spans
-    await waitForSpans(exporter, 4);
+    const allSpans = await tsdk.waitForSpans(4, 500, s => s.withTraceId(traceId));
+    expect(allSpans).toHaveLength(4);
 
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(4);
-
-    const gatewaySpan = spans.find(s => s.name === "GET /gateway");
+    const gatewaySpan = allSpans.server().withName("GET /gateway")[0];
     expect(gatewaySpan).toBeDefined();
 
-    const clientSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
+    const clientSpans = allSpans.client();
     expect(clientSpans).toHaveLength(3);
 
     // All 3 http.request CLIENT spans should be children of the gateway span

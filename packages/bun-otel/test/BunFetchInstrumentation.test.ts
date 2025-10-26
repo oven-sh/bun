@@ -10,28 +10,19 @@
  * - Span lifecycle (start, end, error)
  */
 
-import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
-import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { SpanStatusCode } from "@opentelemetry/api";
+import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunFetchInstrumentation } from "../src/instruments/BunFetchInstrumentation";
-import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
+import { TestSDK, afterUsingEchoServer, beforeUsingEchoServer, getEchoServer } from "./test-utils";
 
 describe("BunFetchInstrumentation", () => {
-  let exporter: InMemorySpanExporter;
-  let provider: BasicTracerProvider;
-
   beforeAll(beforeUsingEchoServer);
   afterAll(afterUsingEchoServer);
 
-  beforeAll(() => {
-    // Setup tracer provider with in-memory exporter
-    exporter = new InMemorySpanExporter();
-    provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-  });
-
   test("implements Instrumentation interface", () => {
     using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
+    instrumentation.setTracerProvider(new BasicTracerProvider());
     instrumentation.enable();
 
     expect(instrumentation.instrumentationName).toBe("@opentelemetry/instrumentation-bun-fetch");
@@ -50,7 +41,7 @@ describe("BunFetchInstrumentation", () => {
         responseHeaders: ["content-type", "x-response-header"],
       },
     });
-    instrumentation.setTracerProvider(provider);
+    instrumentation.setTracerProvider(new BasicTracerProvider());
     instrumentation.enable();
 
     const config = instrumentation.getConfig();
@@ -60,13 +51,11 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("creates CLIENT span for successful fetch request", async () => {
-    using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
     await using echoServer = await getEchoServer();
-
-    exporter.reset();
 
     // Make a fetch request
     const response = await fetch(echoServer.echoUrlStr("/test"), {
@@ -81,7 +70,7 @@ describe("BunFetchInstrumentation", () => {
     expect(response.ok).toBe(true);
 
     // Wait for the CLIENT span to be exported (polling avoids flaky fixed sleeps)
-    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client());
+    const [fetchSpan] = await tsdk.waitForSpans(1, 1000, s => s.client());
     expect(fetchSpan).toBeDefined();
 
     // Verify span attributes follow OTel semantic conventions
@@ -99,16 +88,17 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("captures configured request headers as span attributes", async () => {
-    using instrumentation = new BunFetchInstrumentation({
-      captureAttributes: {
-        requestHeaders: ["content-type", "x-custom-header"],
-      },
+    await using tsdk = new TestSDK({
+      instrumentations: [
+        new BunFetchInstrumentation({
+          captureAttributes: {
+            requestHeaders: ["content-type", "x-custom-header"],
+          },
+        }),
+      ],
     });
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
 
     await using echoServer = await getEchoServer();
-    exporter.reset();
 
     await fetch(echoServer.echoUrlStr("/headers"), {
       headers: {
@@ -118,10 +108,7 @@ describe("BunFetchInstrumentation", () => {
       },
     });
 
-    await waitForSpans(exporter, 1);
-
-    const spans = exporter.getFinishedSpans();
-    const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
+    const [fetchSpan] = await tsdk.waitForSpans(1, 1000, s => s.client());
     expect(fetchSpan).toBeDefined();
 
     expect(fetchSpan?.attributes["http.request.header.content-type"]).toBe("application/json");
@@ -130,13 +117,11 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("injects traceparent header for distributed tracing", async () => {
-    using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
     await using echoServer = await getEchoServer();
-
-    exporter.reset();
 
     const response = await fetch(echoServer.echoUrlStr("/trace"));
     const body = await response.json();
@@ -151,19 +136,17 @@ describe("BunFetchInstrumentation", () => {
     const [, traceId, spanId] = traceparentMatch!;
 
     // Wait specifically for the span with matching IDs
-    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client().withTraceId(traceId).withSpanId(spanId));
+    const [fetchSpan] = await tsdk.waitForSpans(1, 1000, s => s.client().withTraceId(traceId).withSpanId(spanId));
     expect(fetchSpan.spanContext().traceId).toBe(traceId);
     expect(fetchSpan.spanContext().spanId).toBe(spanId);
   });
 
   test("sets span status to ERROR for HTTP error responses", async () => {
-    using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
     await using echoServer = await getEchoServer();
-
-    exporter.reset();
 
     // We'll need to use a real server that returns errors
     // For now, let's test with a non-existent endpoint
@@ -173,25 +156,23 @@ describe("BunFetchInstrumentation", () => {
       // Connection will fail, which is expected
     }
 
-    const [errorSpan] = await waitForSpans(exporter, 1, 1000, s => s.client().withStatusCode(SpanStatusCode.ERROR));
+    const [errorSpan] = await tsdk.waitForSpans(1, 1000, s => s.client().withStatusCode(SpanStatusCode.ERROR));
     expect(errorSpan).toBeDefined();
     expect(errorSpan.status.code).toBe(SpanStatusCode.ERROR);
   });
 
   test("span name is HTTP method only (OTel v1.23.0 spec)", async () => {
-    using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
     await using echoServer = await getEchoServer();
-
-    exporter.reset();
 
     await fetch(echoServer.echoUrlStr("/api/users"), {
       method: "GET",
     });
 
-    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client());
+    const [fetchSpan] = await tsdk.waitForSpans(1, 1000, s => s.client());
 
     // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
     // URL is captured in attributes instead to prevent cardinality explosions
@@ -199,9 +180,10 @@ describe("BunFetchInstrumentation", () => {
     expect(fetchSpan?.attributes["url.full"]).toContain("/api/users");
   });
 
-  test("disable() detaches instrumentation", () => {
+  test("disable() detaches instrumentation", async () => {
+    await using tsdk = new TestSDK({ instrumentations: [] });
     const newInst = new BunFetchInstrumentation();
-    newInst.setTracerProvider(provider);
+    newInst.setTracerProvider(tsdk.getTracerProvider());
     newInst.enable();
 
     // Should have an instrument ID after enable
@@ -254,13 +236,11 @@ describe("BunFetchInstrumentation", () => {
   });
 
   test("handles multiple concurrent fetch requests", async () => {
-    using instrumentation = new BunFetchInstrumentation();
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
+    await using tsdk = new TestSDK({
+      instrumentations: [new BunFetchInstrumentation()],
+    });
 
     await using echoServer = await getEchoServer();
-
-    exporter.reset();
 
     // Make 5 concurrent fetch requests
     const promises = Array.from({ length: 5 }, (_, i) =>
@@ -272,7 +252,7 @@ describe("BunFetchInstrumentation", () => {
     const responses = await Promise.all(promises);
     expect(responses.every(r => r.ok)).toBe(true);
 
-    const fetchSpans = await waitForSpans(exporter, 5, 1000, s => s.client());
+    const fetchSpans = await tsdk.waitForSpans(5, 1000, s => s.client());
     expect(fetchSpans.length).toBe(5); // Should have 5 CLIENT spans
     const paths = fetchSpans.map(s => s.attributes["url.full"]); // Each should have unique request
     expect(new Set(paths).size).toBe(5);

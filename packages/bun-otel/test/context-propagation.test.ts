@@ -1,7 +1,5 @@
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { BunSDK } from "../index";
-import { afterUsingEchoServer, beforeUsingEchoServer, makeUninstrumentedRequest, waitForSpans } from "./test-utils";
+import { TestSDK, afterUsingEchoServer, beforeUsingEchoServer, makeUninstrumentedRequest } from "./test-utils";
 
 describe("W3C trace context propagation", () => {
   beforeAll(beforeUsingEchoServer);
@@ -9,13 +7,7 @@ describe("W3C trace context propagation", () => {
 
   // Uses default W3C propagator installed by BunSDK.start()
   test("propagates trace context in Bun.serve", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-    });
-
-    sdk.start();
+    await using tsdk = new TestSDK();
 
     using server = Bun.serve({
       port: 0,
@@ -27,14 +19,14 @@ describe("W3C trace context propagation", () => {
     await makeUninstrumentedRequest(`http://localhost:${server.port}/`, {
       traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     });
-    await waitForSpans(exporter, 1, 1000, { traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
+    await tsdk.waitForSpans(1, 1000, { traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
     await fetch(`http://localhost:${server.port}/`, {
       headers: {
         traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
       },
     });
 
-    const spans = await waitForSpans(exporter, 1, 1000, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
+    const spans = await tsdk.waitForSpans(1, 1000, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
     expect(spans).toHaveLength(1);
     const span = spans[0];
     expect(span.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
@@ -43,13 +35,7 @@ describe("W3C trace context propagation", () => {
   });
 
   test("propagates trace context in Node.js http.createServer", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
-    });
-
-    sdk.start();
+    await using tsdk = new TestSDK();
 
     const http = await import("node:http");
     await using server = http.createServer((req, res) => {
@@ -71,7 +57,7 @@ describe("W3C trace context propagation", () => {
     await makeUninstrumentedRequest(`http://localhost:${port}/`, {
       traceparent: "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
     });
-    const spans = await waitForSpans(exporter, 1, 1000, { traceId: "abcdef1234567890abcdef1234567890" });
+    const spans = await tsdk.waitForSpans(1, 1000, { traceId: "abcdef1234567890abcdef1234567890" });
 
     expect(spans).toHaveLength(1);
 

@@ -577,6 +577,9 @@ pub const TelemetryContext = struct {
     /// @param id: OpId from generateId()
     /// @param attrs: *AttributeMap with operation attributes
     /// @return JSValue (.js_undefined except for inject which returns injection data)
+    /// Invoke operation hooks serially, passing attributes through each hook.
+    /// Each hook receives current attributes and can return modified attributes.
+    /// Returns final attributes (call-sites ignore return value if not needed).
     pub inline fn notifyOperation(
         self: *TelemetryContext,
         comptime op: OperationStep,
@@ -587,53 +590,18 @@ pub const TelemetryContext = struct {
         const hooks = self.getOnOperations(op, kind).items;
         if (hooks.len == 0) return .js_undefined;
 
-        const js_attrs = attrs.toJS();
-        if (op == .inject)
-            return self.notifyOperation2(op, kind, id, js_attrs);
+        // Start with attributes, let each hook modify them serially
+        var current_attrs = attrs.toJS();
 
-        // otherwise, inline invoke without collecting results
         for (hooks) |record| {
-            _ = record.invokeOn(self.globalObject, op, id, js_attrs);
-        }
-        return .js_undefined;
-    }
-
-    /// Notify TypeScript layer of an operation event that returns injection data
-    /// Returns a flat array of values from all instruments
-    inline fn notifyOperation2(
-        self: *TelemetryContext,
-        op: OperationStep,
-        kind: InstrumentKind,
-        id: OpId,
-        js_attrs: JSValue,
-    ) JSValue {
-        const hooks = self.getOnOperations(op, kind).items;
-        if (hooks.len == 0) return .js_undefined;
-
-        // Start with reasonable initial capacity (2 headers per instrument on average)
-        const initial_capacity = hooks.len * 2;
-        var result_array = JSValue.createEmptyArray(self.globalObject, @intCast(initial_capacity)) catch return .js_undefined;
-
-        // Flatten arrays from all instruments (linear concatenation)
-        var current_len: u32 = 0;
-        for (hooks) |record| {
-            const injected = record.invokeOn(self.globalObject, op, id, js_attrs);
-
-            // Each instrument returns an array of values matching its injectHeaders configuration
-            // We flatten all arrays into one: [inst1_val1, inst1_val2, inst2_val1, ...]
-            if (!injected.isUndefined() and injected.isArray()) {
-                const len = injected.getLength(self.globalObject) catch return .js_undefined;
-
-                // Append to flat result array
-                var i: u32 = 0;
-                while (i < len) : (i += 1) {
-                    const value = injected.getIndex(self.globalObject, i) catch return .js_undefined;
-                    result_array.putIndex(self.globalObject, @intCast(current_len), value) catch return .js_undefined;
-                    current_len += 1;
-                }
+            const result = record.invokeOn(self.globalObject, op, id, current_attrs);
+            // Hook can return modified attributes or undefined to keep current. Allow empty to clear.
+            if (!result.isUndefinedOrNull()) {
+                current_attrs = result;
             }
         }
-        return result_array;
+
+        return current_attrs;
     }
 
     /// Invoke onOperationStart for all instruments registered for this kind
@@ -684,7 +652,7 @@ pub const TelemetryContext = struct {
         id: OpId,
         attrs: *AttributeMap,
     ) JSValue {
-        return self.notifyOperation2(.inject, kind, id, attrs.toJS());
+        return self.notifyOperation(.inject, kind, id, attrs);
     }
 };
 

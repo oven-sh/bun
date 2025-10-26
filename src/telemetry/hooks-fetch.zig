@@ -291,14 +291,6 @@ pub fn notifyFetchStart(
 
 /// Inject propagation headers into fetch request headers
 /// Called internally by notifyFetchStart - no separate integration point needed
-///
-/// Contract: Two-stage pattern per telemetry-http.md
-/// 1. Get configured header names from config (array of strings)
-/// 2. Call hooks to get values (returns flat array of strings)
-/// 3. Zip arrays by index: names[i] = values[i]
-///
-/// Linear concatenation: If multiple hooks return values, they are
-/// concatenated in the flat array allowing duplicate headers.
 fn injectFetchHeaders(
     headers: *http.Headers,
     request_id: u64,
@@ -306,45 +298,36 @@ fn injectFetchHeaders(
 ) void {
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
 
-    // Get configured header names (array of strings)
+    // Get pre-computed HeaderNameList for fetch request propagation
     const config_property_id = @intFromEnum(telemetry.ConfigurationProperty.http_propagate_headers_fetch_request);
-    const header_names_js = telemetry_inst.getConfigurationProperty(config_property_id);
-    if (header_names_js.isUndefined() or !header_names_js.isArray()) return;
+    const header_list = telemetry_inst.config.getHeaderList(config_property_id) orelse return;
+    if (header_list.items.items.len == 0) return;
 
-    // Create empty attributes for injection context
+    // Call hooks to get attributes (serially processed, hooks can modify)
     var empty_attrs = telemetry_inst.createAttributeMap();
+    const attrs_result = telemetry_inst.notifyOperationInject(.fetch, request_id, &empty_attrs);
+    if (attrs_result.isEmptyOrUndefinedOrNull()) return;
 
-    // Call all instruments to get header values (returns flat array)
-    const injected_values = telemetry_inst.notifyOperationInject(.fetch, request_id, &empty_attrs);
-    if (injected_values.isUndefined() or !injected_values.isArray()) return;
+    // For each configured header, lookup attribute value and inject if present
+    for (header_list.items.items) |attribute_key| {
+        const header_name = attribute_key.http_header orelse continue;
 
-    const header_names_len = header_names_js.getLength(globalObject) catch return;
-    const injected_values_len = injected_values.getLength(globalObject) catch return;
-    if (header_names_len == 0 or injected_values_len == 0) return;
+        // Try semconv name first (e.g., "http.request.header.traceparent"), fall back to bare header name (e.g., "traceparent")
+        var value_js = attrs_result.get(globalObject, attribute_key.semconv_name) catch null;
+        if (value_js == null or value_js.?.isEmptyOrUndefinedOrNull()) {
+            value_js = attrs_result.get(globalObject, header_name) catch null;
+        }
+        if (value_js == null or value_js.?.isEmptyOrUndefinedOrNull()) continue;
 
-    // Zip header names and values by index
-    var i: u32 = 0;
-    while (i < @min(header_names_len, injected_values_len)) : (i += 1) {
-        const header_name_js = header_names_js.getIndex(globalObject, i) catch continue;
-        if (!header_name_js.isString()) continue;
+        const value = value_js.?;
+        if (!value.isString()) continue;
 
-        const header_value_js = injected_values.getIndex(globalObject, i) catch continue;
-        if (header_value_js.isUndefined() or header_value_js.isNull()) continue;
-        if (!header_value_js.isString()) continue;
+        var value_zig: ZigString = ZigString.Empty;
+        value.toZigString(&value_zig, globalObject) catch continue;
+        const value_slice = value_zig.toSlice(bun.default_allocator);
+        defer value_slice.deinit();
 
-        // Convert to Zig strings
-        var header_name_zig: ZigString = ZigString.Empty;
-        header_name_js.toZigString(&header_name_zig, globalObject) catch continue;
-        const header_name_slice = header_name_zig.toSlice(bun.default_allocator);
-        defer header_name_slice.deinit();
-
-        var header_value_zig: ZigString = ZigString.Empty;
-        header_value_js.toZigString(&header_value_zig, globalObject) catch continue;
-        const header_value_slice = header_value_zig.toSlice(bun.default_allocator);
-        defer header_value_slice.deinit();
-
-        // Append to headers
-        headers.append(header_name_slice.slice(), header_value_slice.slice()) catch {};
+        headers.append(header_name, value_slice.slice()) catch {};
     }
 }
 

@@ -1,10 +1,22 @@
 import { SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { makeUninstrumentedRequest, waitForSpans } from "./test-utils";
+import { EchoServer } from "./echo-server";
+import { waitForSpans } from "./test-utils";
 
 describe("BunSDK basic functionality", () => {
+  let echoServer: EchoServer;
+
+  beforeAll(async () => {
+    echoServer = new EchoServer();
+    await echoServer.start();
+  });
+
+  afterAll(async () => {
+    await echoServer.stop();
+  });
+
   test("creates spans for HTTP requests", async () => {
     const exporter = new InMemorySpanExporter();
 
@@ -21,9 +33,9 @@ describe("BunSDK basic functionality", () => {
       },
     });
 
-    // Use curl to avoid creating a CLIENT span from fetch instrumentation
-    const response = await makeUninstrumentedRequest(`http://localhost:${server.port}/`);
-    expect(response).toContain("test");
+    // Use remote control to avoid creating a CLIENT span from fetch instrumentation
+    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/`);
+    expect(await response.text()).toContain("test");
 
     await waitForSpans(exporter, 1);
 
@@ -52,9 +64,8 @@ describe("BunSDK basic functionality", () => {
       },
     });
 
-    // Use curl to avoid creating a CLIENT span from fetch instrumentation
-    // curl will succeed even with 500 status (it's not an HTTP error from curl's perspective)
-    await makeUninstrumentedRequest(`http://localhost:${server.port}/error`);
+    // Use remote control to avoid creating a CLIENT span from fetch instrumentation
+    await echoServer.remoteControl.fetch(`http://localhost:${server.port}/error`);
 
     await waitForSpans(exporter, 1);
 

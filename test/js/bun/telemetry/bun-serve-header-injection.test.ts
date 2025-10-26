@@ -14,11 +14,11 @@ test("Bun.serve injects headers from instruments", async () => {
     onOperationStart() {},
     onOperationInject(opId: number, data: any) {
       injectCalled = true;
-      // Return array of values matching injectHeaders.response order: ["traceparent", "x-custom-trace"]
-      return [
-        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", // traceparent
-        "bun-serve-test", // x-custom-trace
-      ];
+      // Return object with header name keys
+      return {
+        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "x-custom-trace": "bun-serve-test",
+      };
     },
   });
 
@@ -55,12 +55,13 @@ test("Bun.serve handles multiple instruments", async () => {
       response: ["traceparent", "x-trace-1"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent", "x-trace-1"]
-      return [
-        "00-trace1-span1-01", // traceparent
-        "value1", // x-trace-1
-      ];
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return {
+        ...data,
+        traceparent: "00-trace1-span1-01",
+        "x-trace-1": "value1",
+      };
     },
   });
 
@@ -72,12 +73,13 @@ test("Bun.serve handles multiple instruments", async () => {
       response: ["traceparent", "x-trace-2"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent", "x-trace-2"]
-      return [
-        "00-trace2-span2-01", // traceparent
-        "value2", // x-trace-2
-      ];
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return {
+        ...data,
+        traceparent: "00-trace2-span2-01",
+        "x-trace-2": "value2",
+      };
     },
   });
 
@@ -95,9 +97,9 @@ test("Bun.serve handles multiple instruments", async () => {
     expect(response.headers.get("x-trace-1")).toBe("value1");
     expect(response.headers.get("x-trace-2")).toBe("value2");
 
-    // Last instrument's traceparent wins (linear concatenation, last append wins)
+    // Last instrument's traceparent wins (serial processing, later hooks override)
     const traceparent = response.headers.get("traceparent");
-    expect(traceparent).toMatch(/00-trace[12]-span[12]-01/);
+    expect(traceparent).toBe("00-trace2-span2-01");
 
     await response.text();
   } finally {
@@ -116,8 +118,8 @@ test("Bun.serve skips injection when no headers configured", async () => {
     onOperationStart() {},
     onOperationInject() {
       injectCalled = true;
-      // Return array (but this shouldn't be called)
-      return ["should-not-appear"];
+      // Return object (but this shouldn't be called)
+      return { "should-not-appear": "value" };
     },
   });
 
@@ -151,12 +153,12 @@ test("Bun.serve only injects configured headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent"]
-      // Note: Extra values beyond configured headers should be ignored
-      return [
-        "00-configured-01", // traceparent (configured)
-        "should-not-appear", // x-not-configured (not configured, should be ignored)
-      ];
+      // Return object with header name keys
+      // Note: Extra properties beyond configured headers should be ignored
+      return {
+        traceparent: "00-configured-01", // configured
+        "x-not-configured": "should-not-appear", // not configured, should be ignored
+      };
     },
   });
 
@@ -190,8 +192,8 @@ test("Bun.serve works with Response objects that have existing headers", async (
     },
     onOperationStart() {},
     onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent"]
-      return ["00-injected-trace-01"]; // traceparent
+      // Return object with header name keys
+      return { traceparent: "00-injected-trace-01" };
     },
   });
 

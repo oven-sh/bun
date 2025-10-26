@@ -14,9 +14,9 @@ import {
 } from "@opentelemetry/api";
 import { LoggerProvider } from "@opentelemetry/api-logs";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
-import { ATTR_ERROR_TYPE, ATTR_ERROR_MESSAGE } from "../semconv";
 import { AsyncLocalStorage } from "async_hooks";
 import { InstrumentKind, InstrumentRef, NativeInstrument } from "bun";
+import { ATTR_ERROR_MESSAGE, ATTR_ERROR_TYPE } from "../semconv";
 export type BunInstrumentationConfig = InstrumentationConfig & {
   /**
    * Shared AsyncLocalStorage instance for context propagation.
@@ -231,17 +231,17 @@ export class BunAbstractInstrumentation<T extends BunInstrumentationConfig> impl
 
   /**
    * Generate W3C trace context headers for a given operation.
-   * Returns [traceparent, tracestate] tuple or undefined if span not found.
+   * Returns {traceparent, tracestate} object or undefined if span not found.
    */
-  protected generateTraceHeaders(id: number): [string, string] | undefined {
+  protected generateTraceHeaders(id: number): { traceparent: string; tracestate: string } | undefined {
     const span = this._activeSpans.get(id);
     if (!span) return undefined;
 
     const spanContext = span.spanContext();
-    const traceparent = `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`;
-    const tracestate = spanContext.traceState?.serialize() || "";
-
-    return [traceparent, tracestate];
+    return {
+      traceparent: `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`,
+      tracestate: spanContext.traceState?.serialize() || "",
+    };
   }
 
   /**

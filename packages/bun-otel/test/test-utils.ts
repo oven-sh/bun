@@ -222,9 +222,27 @@ export function fmtSpans(spans: ReadableSpan[]): string[] {
 // }
 
 /**
- * note this is slower than using curl for debug builds due to the debug bun overhead, but avoids curl dependency
+ * Make an uninstrumented HTTP request to avoid creating spans in tests.
+ *
+ * If an EchoServer instance is provided, uses fast socket-based fetch (~0.3ms).
+ * Otherwise falls back to spawning bun -e process (~130ms but avoids curl dependency).
+ *
+ * @param url - The URL to fetch
+ * @param headers - Optional headers to include
+ * @param echoServer - Optional EchoServer instance for fast path (recommended)
  */
-export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+export async function makeUninstrumentedRequest(
+  url: string,
+  headers: Record<string, string> = {},
+  echoServer?: { fetch(url: string, init?: RequestInit): Promise<Response> },
+): Promise<string> {
+  // Fast path: use EchoServer's socket-based fetch if available
+  if (echoServer) {
+    const response = await echoServer.fetch(url, { headers });
+    return await response.text();
+  }
+
+  // Fallback: spawn bun -e (slow but works without EchoServer)
   const js = `
     async function makeRequest() {
       const response = await fetch("${url}", {
@@ -234,7 +252,6 @@ export async function makeUninstrumentedRequest(url: string, headers: Record<str
     }
     console.log(await makeRequest());
   `;
-  // todo - use Bun.spawn to avoid overhead of starting new bun process
   await using proc = Bun.spawn([bunExe(), "-e", js], {
     env: bunEnv,
     stdout: "pipe",

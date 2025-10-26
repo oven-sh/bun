@@ -7,15 +7,31 @@ import {
 import { describe, expect, test } from "bun:test";
 import http from "node:http";
 import { makeUninstrumentedRequest, TestSDK } from "./test-utils";
+
+/**
+ * Wrap node:http Server in a Disposable for use with `await using`.
+ * node:http Server doesn't implement Symbol.asyncDispose natively.
+ */
+function toDisposableServer(server: http.Server) {
+  return {
+    server,
+    async [Symbol.asyncDispose]() {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
 describe("Node.js http.createServer integration", () => {
   test("creates spans for Node.js http server requests", async () => {
     await using tsdk = new TestSDK();
 
-    const http = await import("node:http");
-    await using server = http.createServer((req, res) => {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Node.js server");
-    });
+    await using srv = toDisposableServer(
+      http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("Node.js server");
+      }),
+    );
+    const server = srv.server;
 
     await new Promise<void>((resolve, reject) => {
       server.listen(0, () => resolve());

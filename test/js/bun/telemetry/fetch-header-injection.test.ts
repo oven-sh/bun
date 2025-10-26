@@ -24,11 +24,11 @@ test("fetch injects headers into outgoing requests", async () => {
     onOperationStart() {},
     onOperationInject(opId: number, data: any) {
       injectCalled = true;
-      // Return array of values matching injectHeaders.request order: ["traceparent", "x-custom-trace"]
-      return [
-        "00-fetch-trace-id-span-01", // traceparent
-        "fetch-client-test", // x-custom-trace
-      ];
+      // Return object with header name keys
+      return {
+        traceparent: "00-fetch-trace-id-span-01",
+        "x-custom-trace": "fetch-client-test",
+      };
     },
   });
 
@@ -66,12 +66,13 @@ test("fetch handles multiple instruments injecting headers", async () => {
       request: ["traceparent", "x-trace-1"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.request order: ["traceparent", "x-trace-1"]
-      return [
-        "00-trace1-span1-01", // traceparent
-        "value1", // x-trace-1
-      ];
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return {
+        ...data,
+        traceparent: "00-trace1-span1-01",
+        "x-trace-1": "value1",
+      };
     },
   });
 
@@ -83,12 +84,13 @@ test("fetch handles multiple instruments injecting headers", async () => {
       request: ["traceparent", "x-trace-2"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.request order: ["traceparent", "x-trace-2"]
-      return [
-        "00-trace2-span2-01", // traceparent
-        "value2", // x-trace-2
-      ];
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return {
+        ...data,
+        traceparent: "00-trace2-span2-01",
+        "x-trace-2": "value2",
+      };
     },
   });
 
@@ -100,8 +102,8 @@ test("fetch handles multiple instruments injecting headers", async () => {
     expect(receivedHeaders["x-trace-1"]).toBe("value1");
     expect(receivedHeaders["x-trace-2"]).toBe("value2");
 
-    // Last instrument's traceparent wins (linear concatenation)
-    expect(receivedHeaders["traceparent"]).toMatch(/00-trace[12]-span[12]-01/);
+    // Last instrument's traceparent wins (serial processing, later hooks override)
+    expect(receivedHeaders["traceparent"]).toBe("00-trace2-span2-01");
   } finally {
     testServer.stop();
   }
@@ -127,8 +129,8 @@ test("fetch skips injection when no headers configured", async () => {
     onOperationStart() {},
     onOperationInject() {
       injectCalled = true;
-      // Return array (but this shouldn't be called)
-      return ["should-not-appear"];
+      // Return object (but this shouldn't be called)
+      return { "should-not-appear": "value" };
     },
   });
 
@@ -164,12 +166,12 @@ test("fetch only injects configured headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      // Return array of values matching injectHeaders.request order: ["traceparent"]
-      // Note: Extra values beyond configured headers should be ignored
-      return [
-        "00-configured-01", // traceparent (configured)
-        "should-not-appear", // x-not-configured (not configured, should be ignored)
-      ];
+      // Return object with header name keys
+      // Note: Extra properties beyond configured headers should be ignored
+      return {
+        traceparent: "00-configured-01", // configured
+        "x-not-configured": "should-not-appear", // not configured, should be ignored
+      };
     },
   });
 
@@ -205,8 +207,8 @@ test("fetch preserves user-provided headers", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      // Return array of values matching injectHeaders.request order: ["traceparent"]
-      return ["00-injected-01"]; // traceparent
+      // Return object with header name keys
+      return { traceparent: "00-injected-01" };
     },
   });
 

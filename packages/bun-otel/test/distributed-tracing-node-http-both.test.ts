@@ -26,13 +26,6 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     await echoServer.stop();
   });
 
-  // Make HTTP request without instrumentation (uses curl)
-  async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
-    const { $ } = await import("bun");
-    const headerFlags = Object.entries(headers).flatMap(([key, value]) => ["-H", `${key}: ${value}`]);
-    return await $`curl -s ${headerFlags} ${url}`.text();
-  }
-
   test("context.active() returns the correct span in http.createServer handler", async () => {
     const exporter = new InMemorySpanExporter();
 
@@ -72,7 +65,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "fedcba0987654321";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await makeUninstrumentedRequest(`http://localhost:${port}/test`, { traceparent });
+    await echoServer.remoteControl.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
     await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
@@ -146,8 +139,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "00f067aa0ba902b7";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const output = await makeUninstrumentedRequest(`http://localhost:${port}/upstream`, { traceparent });
-    const result = JSON.parse(output);
+    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/upstream`, {
+      headers: { traceparent },
+    });
+    const result = await response.json();
 
     // Wait for 2 spans: http.createServer (SERVER) + http.request (CLIENT)
     await waitForSpans(exporter, 2);
@@ -242,8 +237,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "aabbccdd11223344";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const output = await makeUninstrumentedRequest(`http://localhost:${port}/test`, { traceparent });
-    const echoData = JSON.parse(output);
+    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/test`, {
+      headers: { traceparent },
+    });
+    const echoData = await response.json();
 
     await waitForSpans(exporter, 2, 500, { traceId: upstreamTraceId });
 
@@ -329,8 +326,10 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const traceId = "99aabbccddee0011223344556677ff88";
     const traceparent = `00-${traceId}-9988776655443322-01`;
 
-    const output = await makeUninstrumentedRequest(`http://localhost:${port}/gateway`, { traceparent });
-    const result = JSON.parse(output);
+    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/gateway`, {
+      headers: { traceparent },
+    });
+    const result = await response.json();
 
     // Wait for 1 gateway (SERVER) + 3 http.request (CLIENT) = 4 spans
     await waitForSpans(exporter, 4);

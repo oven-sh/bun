@@ -11,11 +11,11 @@ test("HTTP server injects headers from instruments", async () => {
     },
     onOperationStart() {},
     onOperationInject(reqId: number, data: any) {
-      // Return array of values matching injectHeaders.response order: ["traceparent", "x-custom-header"]
-      return [
-        "00-trace123-span456-01", // traceparent
-        "custom-value", // x-custom-header
-      ];
+      // Return object with header name keys
+      return {
+        traceparent: "00-trace123-span456-01",
+        "x-custom-header": "custom-value",
+      };
     },
   });
 
@@ -43,9 +43,9 @@ test("HTTP server merges headers from multiple instruments", async () => {
       response: ["traceparent"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent"]
-      return ["00-trace1-span1-01"]; // traceparent
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return { ...data, traceparent: "00-trace1-span1-01" };
     },
   });
 
@@ -57,9 +57,9 @@ test("HTTP server merges headers from multiple instruments", async () => {
       response: ["x-request-id"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["x-request-id"]
-      return ["req-123"]; // x-request-id
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return { ...data, "x-request-id": "req-123" };
     },
   });
 
@@ -87,9 +87,9 @@ test("HTTP server handles missing header values gracefully", async () => {
     },
     onOperationStart() {},
     onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["traceparent", "x-missing"]
+      // Return object with header name keys
       // Only provide value for first header (second will be missing/undefined)
-      return ["00-trace-span-01"]; // traceparent (x-missing not provided)
+      return { traceparent: "00-trace-span-01" }; // x-missing not provided
     },
   });
 
@@ -133,9 +133,9 @@ test("HTTP server allows duplicate header values (linear concatenation)", async 
       response: ["x-trace-id"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["x-trace-id"]
-      return ["trace1"]; // x-trace-id
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return { ...data, "x-trace-id": "trace1" };
     },
   });
 
@@ -147,9 +147,9 @@ test("HTTP server allows duplicate header values (linear concatenation)", async 
       response: ["x-trace-id"],
     },
     onOperationStart() {},
-    onOperationInject() {
-      // Return array of values matching injectHeaders.response order: ["x-trace-id"]
-      return ["trace2"]; // x-trace-id
+    onOperationInject(opId: number, data: any) {
+      // Return object with header name keys, merging with existing attributes
+      return { ...data, "x-trace-id": "trace2" };
     },
   });
 

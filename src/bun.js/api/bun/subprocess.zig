@@ -170,8 +170,10 @@ pub fn hasExited(this: *const Subprocess) bool {
 }
 
 pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
-    if (this.ipc_data != null) {
-        return true;
+    if (this.ipc_data) |*ipc_data| {
+        if (ipc_data.keep_alive.isActive()) {
+            return true;
+        }
     }
 
     if (this.hasPendingActivityStdio()) {
@@ -266,6 +268,9 @@ pub fn jsRef(this: *Subprocess) void {
         this.stderr.ref();
     }
 
+    // Note: IPC keepalive is managed independently and keeps the event loop alive
+    // as long as the socket is connected, per Node.js behavior
+
     this.updateHasPendingActivity();
 }
 
@@ -284,6 +289,10 @@ pub fn jsUnref(this: *Subprocess) void {
     if (!this.hasCalledGetter(.stderr)) {
         this.stderr.unref();
     }
+
+    // Note: IPC keepalive is NOT affected by unref(), per Node.js behavior:
+    // "unless there is an established IPC channel between the child and the parent"
+    // The IPC connection will keep the parent alive until it's closed
 
     this.updateHasPendingActivity();
 }

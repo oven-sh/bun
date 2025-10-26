@@ -3766,6 +3766,9 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
 
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
+
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");
 const std = @import("std");

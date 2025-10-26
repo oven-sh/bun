@@ -184,6 +184,7 @@ describe("Bun.telemetry.detach() validation", () => {
   });
 
   test("handles zero ID gracefully", () => {
+    // @ts-expect-error - testing error case with invalid ID
     const result = Bun.telemetry.detach(0);
     expect(result).toBe(false);
   });

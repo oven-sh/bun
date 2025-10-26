@@ -97,7 +97,7 @@ declare module "bun" {
      * Determines which operations will invoke this instrument's hooks.
      * For example, "http" instruments only receive HTTP server events.
      */
-    type: InstrumentKind | number; // TODO - this only needs to be exposed in packages/bun-otel/types.ts; public API accepts only strings
+    type: InstrumentKind;
 
     /**
      * Human-readable name for this instrumentation.

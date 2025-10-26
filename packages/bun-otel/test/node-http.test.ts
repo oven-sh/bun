@@ -77,7 +77,7 @@ describe("Node.js http.createServer integration", () => {
 
     // Manually attach a custom instrumentation to capture OpIds
     using instrument = Bun.telemetry.attach({
-      type: 6, // InstrumentKind.Node
+      type: "node",
       name: "test-opid-capture",
       version: "1.0.0",
       onOperationStart: (id: number, _attributes: Record<string, any>) => {

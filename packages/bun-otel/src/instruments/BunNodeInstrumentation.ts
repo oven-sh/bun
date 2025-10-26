@@ -94,11 +94,11 @@ export type BunNodeInstrumentationConfig = BunHttpInstrumentationConfig;
  * }).listen(3001);
  * ```
  */
-export class BunNodeInstrumentation extends BunAbstractInstrumentation<BunHttpInstrumentationConfig> {
+export class BunNodeInstrumentation extends BunAbstractInstrumentation<BunNodeInstrumentationConfig> {
   // Track start times for manual duration calculation (Node.js bypasses onOperationEnd)
   private _startTimes: Map<number, number> = new Map();
 
-  constructor(config: BunHttpInstrumentationConfig = {}) {
+  constructor(config: BunNodeInstrumentationConfig = {}) {
     // Marker for auto-generated config (survives structuredClone unlike Symbol)
     const MIGRATED_MARKER = "__bun_otel_migrated__";
 
@@ -114,7 +114,7 @@ export class BunNodeInstrumentation extends BunAbstractInstrumentation<BunHttpIn
     }
 
     // Create validator for security checks
-    const validate = (cfg: BunHttpInstrumentationConfig): BunHttpInstrumentationConfig => {
+    const validate = (cfg: BunNodeInstrumentationConfig): BunNodeInstrumentationConfig => {
       const headerConfig = cfg.headersToSpanAttributes?.server || cfg.captureAttributes;
       if (headerConfig) {
         validateCaptureAttributes(headerConfig);
@@ -123,7 +123,7 @@ export class BunNodeInstrumentation extends BunAbstractInstrumentation<BunHttpIn
     };
 
     super("@opentelemetry/instrumentation-bun-node", "0.1.0", "node", config, [
-      migrateToCaptureAttributes((cfg: BunHttpInstrumentationConfig) => cfg?.headersToSpanAttributes?.server),
+      migrateToCaptureAttributes((cfg: BunNodeInstrumentationConfig) => cfg?.headersToSpanAttributes?.server),
       validate,
     ]);
   }

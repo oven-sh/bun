@@ -391,7 +391,7 @@ const aws = {
       }
     } else if (os === "freebsd") {
       owner = "782442783595"; // upstream member of FreeBSD team, likely Colin Percival
-      name = `FreeBSD ${release}-STABLE-amd64-* UEFI-PREFERRED cloud-init UFS`;
+      name = `FreeBSD ${release}-STABLE-${{ "arm64": "arm64", "x64": "amd64" }[arch] ?? "amd64"}-* UEFI-PREFERRED cloud-init UFS`;
     }
 
     if (!name) {

@@ -374,6 +374,9 @@ pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
 }
 
 pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
+    if (this.options.insecure) {
+        return false;
+    }
     return this.env.getTLSRejectUnauthorized();
 }
 

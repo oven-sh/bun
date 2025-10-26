@@ -123,12 +123,16 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            
+            // When insecure mode is enabled, disable all certificate verification
+            const reject_unauthorized: i32 = if (init_opts.insecure) 0 else 1;
+            
             var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0 and !init_opts.insecure) @ptrCast(init_opts.ca) else null,
                 .ca_count = if (!init_opts.insecure) @intCast(init_opts.ca.len) else 0,
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0 and !init_opts.insecure) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
-                .reject_unauthorized = if (init_opts.insecure) 0 else 1,
+                .reject_unauthorized = reject_unauthorized,
             };
 
             try this.initWithOpts(&opts);

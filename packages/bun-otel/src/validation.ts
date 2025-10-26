@@ -13,6 +13,16 @@
  */
 
 /**
+ * Property name used to mark auto-generated config values.
+ * When instrumentations auto-generate headersToSpanAttributes from captureAttributes,
+ * they mark it with this property. If setConfig() is later called with new
+ * captureAttributes, the migration can detect and discard the stale auto-generated value.
+ * Using a string property instead of Symbol because structuredClone doesn't preserve symbols.
+ * @internal
+ */
+export const MIGRATED_MARKER = "__bun_otel_migrated__" as const;
+
+/**
  * Headers that are explicitly blocked from injection or capture.
  * These headers commonly contain authentication credentials or session tokens.
  */
@@ -77,6 +87,16 @@ export function validateHeaderName(headerName: string): void {
   }
 }
 
+export function validateOptionalHeaderList(headerList: string[] | undefined): number {
+  if (headerList) {
+    for (const header of headerList) {
+      validateHeaderName(header);
+    }
+    return headerList.length;
+  }
+  return 0;
+}
+
 /**
  * Validates injectHeaders configuration for security constraints.
  *
@@ -97,19 +117,14 @@ export function validateHeaderName(headerName: string): void {
  * });
  * ```
  */
-export function validateInjectHeaders(config: { request?: string[]; response?: string[] }): void {
-  if (config.request) {
-    for (const header of config.request) {
-      validateHeaderName(header);
-    }
-  }
-
-  if (config.response) {
-    for (const header of config.response) {
-      validateHeaderName(header);
-    }
-  }
+export function validateInjectHeaders(config: { request?: string[]; response?: string[] }): number {
+  return validateOptionalHeaderList(config.request) + validateOptionalHeaderList(config.response);
 }
+
+type CaptureAttributes = {
+  requestHeaders?: string[];
+  responseHeaders?: string[];
+};
 
 /**
  * Validates captureAttributes configuration for security constraints.
@@ -131,16 +146,76 @@ export function validateInjectHeaders(config: { request?: string[]; response?: s
  * });
  * ```
  */
-export function validateCaptureAttributes(config: { requestHeaders?: string[]; responseHeaders?: string[] }): void {
-  if (config.requestHeaders) {
-    for (const header of config.requestHeaders) {
-      validateHeaderName(header);
-    }
-  }
+export function validateCaptureAttributes(config?: { requestHeaders?: string[]; responseHeaders?: string[] }): number {
+  return validateOptionalHeaderList(config?.requestHeaders) + validateOptionalHeaderList(config?.responseHeaders);
+}
 
-  if (config.responseHeaders) {
-    for (const header of config.responseHeaders) {
-      validateHeaderName(header);
+type ConfigWithCaptureAttributes = {
+  captureAttributes?: CaptureAttributes;
+};
+function validateConfigCaptureAttributes(config: ConfigWithCaptureAttributes): number {
+  return validateCaptureAttributes(config.captureAttributes);
+}
+
+type ConfigWithHeadersToSpanAttributes = {
+  headersToSpanAttributes?: CaptureAttributes;
+};
+function validateConfigHeadersToSpanAttributes(config?: ConfigWithHeadersToSpanAttributes): number {
+  return validateCaptureAttributes(config?.headersToSpanAttributes);
+}
+/**
+ * Migrates header lists from e.g. headersToSpanAttributes.server or
+ * into a unified captureAttributes structure, removing duplicates, validating
+ * header names, and ensuring all relevant headers are captured as span attributes.
+ *
+ *
+ * @param config
+ * @returns
+ */
+export function migrateToCaptureAttributes<T extends ConfigWithCaptureAttributes>(
+  migrator: (t: T) => CaptureAttributes | undefined,
+  prefixer: (header: string) => string = (h: string) => h.toLowerCase().trim(),
+): (config: T) => T & { captureAttributes: { requestHeaders: string[]; responseHeaders: string[] } } {
+  return (config: T) => {
+    // If user provided new captureAttributes and config has auto-generated headersToSpanAttributes,
+    // delete the stale auto-generated value to prevent merging
+    const configAny = config as any;
+    if (config.captureAttributes && configAny.headersToSpanAttributes?.[MIGRATED_MARKER]) {
+      // User provided fresh captureAttributes, so discard stale auto-generated headersToSpanAttributes
+      const configCopy = { ...config } as any;
+      delete configCopy.headersToSpanAttributes;
+      // Re-run migration on clean config
+      return migrateToCaptureAttributes(migrator, prefixer)(configCopy);
     }
-  }
+
+    const requestHeaders = new Set<string>();
+    const responseHeaders = new Set<string>();
+    const migrated = migrator(config);
+
+    if (migrated) {
+      if (migrated.requestHeaders) {
+        migrated.requestHeaders.forEach(h => requestHeaders.add(h));
+      }
+      if (migrated.responseHeaders) {
+        migrated.responseHeaders.forEach(h => responseHeaders.add(h));
+      }
+    }
+    if ("captureAttributes" in config) {
+      validateConfigCaptureAttributes(config);
+      if (config.captureAttributes?.responseHeaders) {
+        config.captureAttributes.responseHeaders.forEach(h => responseHeaders.add(h));
+      }
+      if (config.captureAttributes?.requestHeaders) {
+        config.captureAttributes.requestHeaders.forEach(h => requestHeaders.add(h));
+      }
+    }
+
+    return {
+      ...config,
+      captureAttributes: {
+        requestHeaders: Array.from(requestHeaders).map(prefixer),
+        responseHeaders: Array.from(responseHeaders).map(prefixer),
+      },
+    };
+  };
 }

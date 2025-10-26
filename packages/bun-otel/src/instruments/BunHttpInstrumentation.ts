@@ -18,33 +18,29 @@ import {
   context,
   propagation,
   SpanKind,
-  SpanStatusCode,
   trace,
-  Tracer,
   ValueType,
-  type Counter,
-  type Histogram,
   type MeterProvider,
   type Span,
-  type TracerProvider,
 } from "@opentelemetry/api";
+import type { InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { AsyncLocalStorage } from "async_hooks";
+import { OpId } from "bun";
+import type { IncomingMessage, ServerResponse } from "http";
 import {
   ATTR_HTTP_REQUEST_HEADER,
   ATTR_HTTP_REQUEST_METHOD,
-  ATTR_HTTP_RESPONSE_HEADER,
-  ATTR_HTTP_RESPONSE_STATUS_CODE,
   ATTR_HTTP_ROUTE,
   ATTR_SERVER_ADDRESS,
   ATTR_SERVER_PORT,
   ATTR_URL_PATH,
   ATTR_URL_QUERY,
   ATTR_URL_SCHEME,
-} from "@opentelemetry/semantic-conventions";
-import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
-import { AsyncLocalStorage } from "async_hooks";
-import { InstrumentRef, OpId } from "bun";
-import type { IncomingMessage, ServerResponse } from "http";
-import { validateCaptureAttributes } from "../validation";
+  TRACEPARENT,
+  TRACESTATE,
+} from "../semconv";
+import { migrateToCaptureAttributes, validateCaptureAttributes } from "../validation";
+import { BunAbstractInstrumentation } from "./BunAbstractInstrumentation";
 
 /**
  * Hook function for ignoring incoming requests based on custom criteria.
@@ -231,77 +227,61 @@ export interface BunHttpInstrumentationConfig extends InstrumentationConfig {
  * instrumentation.enable();
  * ```
  */
-export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrumentationConfig> {
-  readonly instrumentationName = "@opentelemetry/instrumentation-bun-http";
-  readonly instrumentationVersion = "0.1.0";
-
-  private _config: BunHttpInstrumentationConfig;
-  private _tracer?: Tracer;
-  private _tracerProvider?: TracerProvider;
-  private _meterProvider?: MeterProvider;
-  private _instrumentId?: InstrumentRef;
-  private _activeSpans: Map<number, Span> = new Map();
-  private _activeMetricAttributes: Map<number, Record<string, any>> = new Map();
-  private _contextStorage?: AsyncLocalStorage<Context>;
-
-  // Metric instruments for tracking HTTP server duration and request count
-  private _oldHttpServerDurationHistogram?: Histogram;
-  private _stableHttpServerDurationHistogram?: Histogram;
-  private _httpServerRequestsCounter?: Counter;
-
+export class BunHttpInstrumentation extends BunAbstractInstrumentation<BunHttpInstrumentationConfig> {
   constructor(config: BunHttpInstrumentationConfig = {}) {
-    // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
-    // registerInstrumentations() will call enable() after setting TracerProvider
-    // This ensures we have a real tracer (not noop) when Bun.telemetry.attach() is called
-    this._config = { enabled: false, ...config };
-    this._contextStorage = config.contextStorage;
+    // Marker for auto-generated config (survives structuredClone unlike Symbol)
+    const MIGRATED_MARKER = "__bun_otel_migrated__";
 
-    // Normalize legacy captureAttributes to headersToSpanAttributes
-    if (this._config.captureAttributes && !this._config.headersToSpanAttributes) {
-      this._config.headersToSpanAttributes = {
+    // Normalize config BEFORE passing to super() to prevent migration from merging old+new headers
+    if (config.captureAttributes && !config.headersToSpanAttributes) {
+      config.headersToSpanAttributes = {
         server: {
-          requestHeaders: this._config.captureAttributes.requestHeaders,
-          responseHeaders: this._config.captureAttributes.responseHeaders,
+          requestHeaders: config.captureAttributes.requestHeaders,
+          responseHeaders: config.captureAttributes.responseHeaders,
         },
-      };
+        [MIGRATED_MARKER]: true, // Mark as auto-generated
+      } as any;
     }
 
-    // Validate configuration at construction time
-    const headerConfig = this._config.headersToSpanAttributes?.server || this._config.captureAttributes;
-    if (headerConfig) {
-      validateCaptureAttributes(headerConfig);
-    }
+    // Create validator for security checks
+    const validate = (cfg: BunHttpInstrumentationConfig): BunHttpInstrumentationConfig => {
+      const headerConfig = cfg.headersToSpanAttributes?.server || cfg.captureAttributes;
+      if (headerConfig) {
+        validateCaptureAttributes(headerConfig);
+      }
+      return cfg;
+    };
 
-    // Initialize tracer from global API (will be noop if no provider registered)
-    // This matches Node.js SDK behavior
-    this._tracer = trace.getTracer(this.instrumentationName, this.instrumentationVersion);
+    super("@opentelemetry/instrumentation-bun-http", "0.1.0", "http", config, [
+      migrateToCaptureAttributes((cfg: BunHttpInstrumentationConfig) => cfg?.headersToSpanAttributes?.server),
+      validate,
+    ]);
   }
 
   /**
-   * Enable instrumentation by attaching to Bun's native telemetry hooks.
-   * Creates SERVER spans for all incoming HTTP requests from Bun.serve.
-   *
-   * Per Node.js SDK: gracefully degrades if no provider is set (uses noop tracer).
+   * Override cleanup hook to also remove metric attributes on error.
+   */
+  protected onErrorCleanup(id: number): void {
+    this._activeMetricAttributes.delete(id);
+  }
+
+  /**
+   * Override enable to check for disableIncomingRequestInstrumentation.
    */
   enable(): void {
-    // Check if running in Bun environment
-    if (typeof Bun === "undefined" || !Bun.telemetry) {
-      throw new TypeError(
-        "Bun.telemetry is not available. This instrumentation requires Bun runtime. " + "Install from https://bun.sh",
-      );
-    }
-
     // Check if instrumentation is disabled
     if (this._config.disableIncomingRequestInstrumentation) {
       return;
     }
 
-    // Mark as enabled
-    this._config.enabled = true;
+    // Delegate to base class
+    super.enable();
+  }
 
-    // Get tracer (use explicit provider if set, otherwise use global API)
-    const tracer = this._tracer || trace.getTracer(this.instrumentationName, this.instrumentationVersion);
-
+  /**
+   * Customize the native instrument definition with HTTP server-specific hooks.
+   */
+  protected _customizeNativeInstrument(instrument: Bun.NativeInstrument): Bun.NativeInstrument {
     // Extract header configuration with defaults matching Zig config.zig defaults
     // Default request headers: content-type, user-agent, accept, content-length
     // Default response headers: content-type, content-length
@@ -309,9 +289,10 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       this._config.captureAttributes?.requestHeaders || ["content-type", "user-agent", "accept", "content-length"];
     const responseHeaders = this._config.headersToSpanAttributes?.server?.responseHeaders ||
       this._config.captureAttributes?.responseHeaders || ["content-type", "content-length"];
+    const tracer = this.getTracer();
 
-    // Attach to Bun's native HTTP server hooks
-    this._instrumentId = Bun.telemetry.attach({
+    return {
+      ...instrument,
       type: "http",
       name: this.instrumentationName,
       version: this.instrumentationVersion,
@@ -323,7 +304,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
             }
           : undefined,
       injectHeaders: {
-        response: ["traceparent", "tracestate"],
+        response: [TRACEPARENT, TRACESTATE],
       },
 
       onOperationStart: (id: OpId, attributes: Record<string, any>) => {
@@ -418,7 +399,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
           this._config.requestHook(span, mockRequest);
         }
 
-        // Store span for later retrieval
+        // Store span for later retrieval (use direct access since we created span with custom parent context)
         this._activeSpans.set(id, span);
 
         // Store metric attributes for later use (subset of span attributes for cardinality control)
@@ -452,7 +433,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       },
 
       onOperationProgress: (id: number, attributes: Record<string, any>) => {
-        const span = this._activeSpans.get(id);
+        const span = this._internalSpanGet(id);
         if (!span) {
           return;
         }
@@ -471,7 +452,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       },
 
       onOperationEnd: (id: number, attributes: Record<string, any>) => {
-        const span = this._activeSpans.get(id);
+        const span = this._internalSpanGet(id);
         if (!span) {
           return;
         }
@@ -505,118 +486,24 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
           this._config.applyCustomAttributesOnSpan(span, mockRequest, mockResponse);
         }
 
-        // Set span status based on HTTP status code
-        const statusCode = attributes["http.response.status_code"];
-        if (statusCode >= 500) {
-          // Server errors
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: `HTTP ${statusCode}`,
-          });
-        } else if (statusCode >= 400) {
-          // Client errors - not considered ERROR in server spans per OTel spec
-          span.setStatus({ code: SpanStatusCode.OK });
-        } else {
-          span.setStatus({ code: SpanStatusCode.OK });
-        }
+        // Set span status based on HTTP status code (for SERVER spans, >=500 is error)
+        this.setStatusCodeFromHttpStatus(attributes, span, statusCode => statusCode >= 500);
 
         // Record metrics if meter provider is configured
         // Zig provides operation.duration in nanoseconds
-        if (this._oldHttpServerDurationHistogram && attributes["operation.duration"] !== undefined) {
-          const durationNs = attributes["operation.duration"];
-          const durationMs = durationNs / 1_000_000; // Convert nanoseconds to milliseconds
-          const durationS = durationMs / 1000; // Convert milliseconds to seconds
-
-          // Retrieve metric attributes stored at request start
-          const metricAttributes = this._activeMetricAttributes.get(id);
-          if (metricAttributes) {
-            // Augment with response status code
-            metricAttributes["http.response.status_code"] = statusCode;
-
-            // Record to old histogram (milliseconds)
-            this._oldHttpServerDurationHistogram.record(durationMs, metricAttributes);
-
-            // Record to stable histogram (seconds)
-            if (this._stableHttpServerDurationHistogram) {
-              this._stableHttpServerDurationHistogram.record(durationS, metricAttributes);
-            }
-
-            // Increment request counter
-            if (this._httpServerRequestsCounter) {
-              this._httpServerRequestsCounter.add(1, metricAttributes);
-            }
-          }
+        if (attributes["operation.duration"] !== undefined) {
+          this.recordOperationMetrics(id, attributes["operation.duration"], attributes, ["http.response.status_code"]);
         }
 
-        span.end();
-        this._activeSpans.delete(id);
+        // End span and cleanup
+        this._internalSpanEnd(id, span);
         this._activeMetricAttributes.delete(id);
       },
 
-      onOperationError: (id: number, attributes: Record<string, any>) => {
-        const span = this._activeSpans.get(id);
-        if (!span) {
-          return;
-        }
+      onOperationError: (id: number, attributes: Record<string, any>) => this.handleOperationError(id, attributes),
 
-        // Record exception on span
-        span.recordException({
-          name: attributes["error.type"] || "Error",
-          message: attributes["error.message"] || "Unknown error",
-          stack: attributes["error.stack_trace"],
-        });
-
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: attributes["error.message"] || "Request failed",
-        });
-
-        span.end();
-        this._activeSpans.delete(id);
-        this._activeMetricAttributes.delete(id);
-      },
-
-      onOperationInject: (id: OpId, _data?: unknown) => {
-        const span = this._activeSpans.get(id);
-        if (!span) {
-          return undefined;
-        }
-
-        // Construct W3C traceparent header from span context
-        // Per contract: specs/001-opentelemetry-support/contracts/telemetry-http.md lines 131-138
-        const spanContext = span.spanContext();
-        const traceparent = `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`;
-
-        // Extract tracestate if present
-        const tracestate = spanContext.traceState?.serialize() || "";
-
-        // Return array matching injectHeaders.response order: ["traceparent", "tracestate"]
-        return [traceparent, tracestate];
-      },
-    });
-  }
-
-  /**
-   * Disable instrumentation by detaching from Bun's native hooks.
-   */
-  disable(): void {
-    if (this._instrumentId !== undefined) {
-      Bun.telemetry.detach(this._instrumentId);
-      this._instrumentId = undefined;
-    }
-
-    // Clean up any remaining spans and metric attributes
-    this._activeSpans.clear();
-    this._activeMetricAttributes.clear();
-  }
-
-  /**
-   * Set the TracerProvider to use for creating spans.
-   * Per Node.js SDK: optional, falls back to global API if not set.
-   */
-  setTracerProvider(tracerProvider: TracerProvider): void {
-    this._tracerProvider = tracerProvider;
-    this._tracer = tracerProvider.getTracer(this.instrumentationName, this.instrumentationVersion);
+      onOperationInject: (id: OpId) => this.generateTraceHeaders(id),
+    };
   }
 
   /**
@@ -625,7 +512,7 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
    * Per Node.js SDK: optional, metrics will be noop if not set.
    */
   setMeterProvider(meterProvider: MeterProvider): void {
-    this._meterProvider = meterProvider;
+    super.setMeterProvider(meterProvider);
     const meter = meterProvider.getMeter(this.instrumentationName, this.instrumentationVersion);
 
     // Old convention: http.server.duration (milliseconds)
@@ -650,50 +537,5 @@ export class BunHttpInstrumentation implements Instrumentation<BunHttpInstrument
       description: "Total number of HTTP requests received by the server.",
       unit: "1",
     });
-  }
-
-  /**
-   * Update instrumentation configuration.
-   * Per Node.js SDK: shallow copy with enabled: true default.
-   * Note: Changes require disable() + enable() to take effect.
-   */
-  setConfig(config: BunHttpInstrumentationConfig): void {
-    // Per Node.js SDK: shallow copy with enabled: true default
-    this._config = {
-      enabled: true,
-      ...config,
-    };
-
-    // Normalize legacy captureAttributes to headersToSpanAttributes
-    if (this._config.captureAttributes && !this._config.headersToSpanAttributes) {
-      this._config.headersToSpanAttributes = {
-        server: {
-          requestHeaders: this._config.captureAttributes.requestHeaders,
-          responseHeaders: this._config.captureAttributes.responseHeaders,
-        },
-      };
-    }
-
-    // Validate new configuration
-    const headerConfig = this._config.headersToSpanAttributes?.server || this._config.captureAttributes;
-    if (headerConfig) {
-      validateCaptureAttributes(headerConfig);
-    }
-  }
-
-  /**
-   * Get current instrumentation configuration.
-   * Per Node.js SDK: returns shallow copy of config.
-   */
-  getConfig(): BunHttpInstrumentationConfig {
-    return { ...this._config };
-  }
-
-  /**
-   * Implement Symbol.dispose for use with `using` declarations.
-   * Automatically calls disable() when the instrumentation goes out of scope.
-   */
-  [Symbol.dispose](): void {
-    this.disable();
   }
 }

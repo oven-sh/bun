@@ -8,21 +8,26 @@
  * @module bun-otel/instruments/BunFetchInstrumentation
  */
 
-import {
-  context,
-  SpanKind,
-  SpanStatusCode,
-  trace,
-  type MeterProvider,
-  type Context as OtelContext,
-  type Span,
-  type TracerProvider,
-} from "@opentelemetry/api";
-import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { SpanKind, type Context as OtelContext } from "@opentelemetry/api";
+import type { InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { ATTR_HTTP_RESPONSE_BODY_SIZE } from "@opentelemetry/semantic-conventions/incubating";
 import { AsyncLocalStorage } from "async_hooks";
-import { InstrumentRef } from "bun";
-import { InstrumentKind } from "../../types";
-import { validateCaptureAttributes } from "../validation";
+import { OpId } from "bun";
+import {
+  ATTR_URL_SCHEME,
+  ATTR_HTTP_REQUEST_HEADER,
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_HTTP_RESPONSE_HEADER,
+  ATTR_HTTP_RESPONSE_STATUS_CODE,
+  ATTR_SERVER_ADDRESS,
+  ATTR_SERVER_PORT,
+  ATTR_URL_FULL,
+  HTTP_REQUEST_METHOD_VALUE_GET,
+  TRACEPARENT,
+  TRACESTATE,
+} from "../semconv";
+import { migrateToCaptureAttributes } from "../validation";
+import { BunAbstractInstrumentation } from "./BunAbstractInstrumentation";
 
 /**
  * Configuration options for BunFetchInstrumentation.
@@ -36,6 +41,15 @@ export interface BunFetchInstrumentationConfig extends InstrumentationConfig {
     /** Request headers to capture (e.g., ["content-type", "accept"]) */
     requestHeaders?: string[];
     /** Response headers to capture (e.g., ["content-type", "cache-control"]) */
+    responseHeaders?: string[];
+  };
+
+  /**
+   * Map the following HTTP headers to span attributes.
+   * @see https://github.com/open-telemetry/opentelemetry-js-contrib/blob/main/packages/instrumentation-undici/src/types.ts#L83
+   */
+  headersToSpanAttributes?: {
+    requestHeaders?: string[];
     responseHeaders?: string[];
   };
 
@@ -76,97 +90,57 @@ export interface BunFetchInstrumentationConfig extends InstrumentationConfig {
  * instrumentation.enable();
  * ```
  */
-export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrumentationConfig> {
-  readonly instrumentationName = "@opentelemetry/instrumentation-bun-fetch";
-  readonly instrumentationVersion = "0.1.0";
-
-  private _config: BunFetchInstrumentationConfig;
-  private _tracerProvider?: TracerProvider;
-  private _instrumentId?: InstrumentRef;
-  private _activeSpans: Map<number, Span> = new Map();
+export class BunFetchInstrumentation extends BunAbstractInstrumentation<BunFetchInstrumentationConfig> {
+  // private _tracerProvider?: TracerProvider;
+  // private _instrumentId?: InstrumentRef;
 
   constructor(config: BunFetchInstrumentationConfig = {}) {
-    // Per OpenTelemetry spec: enabled defaults to FALSE in constructor
-    // registerInstrumentations() will call enable() after setting TracerProvider
-    this._config = { enabled: false, ...config };
-
-    // Validate configuration at construction time
-    if (this._config.captureAttributes) {
-      validateCaptureAttributes(this._config.captureAttributes);
-    }
+    super("@opentelemetry/instrumentation-bun-fetch", "0.1.0", "fetch", config, [
+      migrateToCaptureAttributes((cfg: BunFetchInstrumentationConfig) => cfg.headersToSpanAttributes),
+    ]);
   }
+  _customizeNativeInstrument(instrument: Bun.NativeInstrument): Bun.NativeInstrument {
+    // pre-map response header attributes to capture
+    const requestHeaderAttributesToCapture = (this._config.captureAttributes?.requestHeaders || []).map(
+      ATTR_HTTP_REQUEST_HEADER,
+    );
+    const responseHeaderAttributesToCapture = (this._config.captureAttributes?.responseHeaders || []).map(
+      ATTR_HTTP_RESPONSE_HEADER,
+    );
+    const tracer = this.getTracer();
 
-  /**
-   * Enable instrumentation by attaching to Bun's native telemetry hooks.
-   * Creates CLIENT spans for all outbound fetch requests.
-   */
-  enable(): void {
-    // Check if running in Bun environment
-    if (typeof Bun === "undefined" || !Bun.telemetry) {
-      throw new TypeError(
-        "Bun.telemetry is not available. This instrumentation requires Bun runtime. " + "Install from https://bun.sh",
-      );
-    }
-
-    // Mark as enabled
-    this._config.enabled = true;
-
-    // Get tracer (use explicit provider if set, otherwise use global API)
-    // Per Node.js SDK: gracefully degrades if no provider is set (uses noop tracer from global API)
-    const tracer =
-      this._tracerProvider?.getTracer(this.instrumentationName, this.instrumentationVersion) ||
-      trace.getTracer(this.instrumentationName, this.instrumentationVersion);
-
-    // Attach to Bun's native fetch hooks
-    this._instrumentId = Bun.telemetry.attach({
+    return {
+      ...instrument,
       type: "fetch",
       name: this.instrumentationName,
       version: this.instrumentationVersion,
-      captureAttributes: this._config.captureAttributes,
+      captureAttributes: this._config.captureAttributes, // pass through captureAttributes so zig knows what to send!
       injectHeaders: {
-        request: ["traceparent", "tracestate"],
+        request: [TRACEPARENT, TRACESTATE],
       },
-
-      onOperationStart: (id: number, attributes: Record<string, any>) => {
+      onOperationStart: (id: OpId, attributes: Record<string, any>) => {
         // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
         // Incorrect: "GET https://api.example.com" (high cardinality, causes metric explosions)
         // Correct: "GET" (low cardinality, URL captured in attributes)
-        const method = attributes["http.request.method"] || "GET";
-        const spanName = method;
-
-        // Get active context (may contain SERVER span from BunHttpInstrumentation)
-        const activeContext = context.active();
+        const method = attributes[ATTR_HTTP_REQUEST_METHOD] || HTTP_REQUEST_METHOD_VALUE_GET;
+        const spanName = method.split(" ")[0] || HTTP_REQUEST_METHOD_VALUE_GET; // in case method includes extra info
 
         // Create CLIENT span as child of active context
-        const span = tracer.startSpan(
-          spanName,
-          {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              // Map native attributes to OTel semantic conventions
-              "http.request.method": attributes["http.request.method"],
-              "url.full": attributes["url.full"],
-              "server.address": attributes["server.address"],
-              "server.port": attributes["server.port"],
-              "url.scheme": attributes["url.scheme"],
-              ...attributes,
-            },
-          },
-          activeContext,
+        const span = this._internalSpanStart(id, spanName, {
+          kind: SpanKind.CLIENT,
+          attributes: {},
+        });
+
+        this.maybeCopyAttributes(
+          attributes,
+          span,
+          ATTR_HTTP_REQUEST_METHOD,
+          ATTR_URL_FULL,
+          ATTR_URL_SCHEME,
+          ATTR_SERVER_ADDRESS,
+          ATTR_SERVER_PORT,
+          ...requestHeaderAttributesToCapture,
         );
-
-        // Add captured request headers if configured
-        // if (this._config.captureAttributes?.requestHeaders) {
-        //   for (const headerName of this._config.captureAttributes.requestHeaders) {
-        //     const attrKey = `http.request.header.${headerName}`;
-        //     if (attributes[attrKey] !== undefined) {
-        //       span.setAttribute(attrKey, attributes[attrKey]);
-        //     }
-        //   }
-        // }
-
-        // Store span for later retrieval
-        this._activeSpans.set(id, span);
 
         // NOTE: We do NOT call enterWith() for CLIENT spans because:
         // 1. The span is already created with the correct parent (activeContext)
@@ -175,141 +149,29 @@ export class BunFetchInstrumentation implements Instrumentation<BunFetchInstrume
         // The CLIENT span will still be exported correctly because it's stored in _activeSpans
       },
 
-      onOperationEnd: (id: number, attributes: Record<string, any>) => {
-        const span = this._activeSpans.get(id);
+      onOperationEnd: (id: OpId, attributes: Record<string, any>) => {
+        const span = this._internalSpanGet(id);
         if (!span) {
           return;
         }
+        // Set span status based on HTTP status code (for CLIENT spans, >=400 is error)
+        this.setStatusCodeFromHttpStatus(attributes, span, statusCode => statusCode >= 400);
 
-        // Update span with response attributes
-        span.setAttributes({
-          "http.response.status_code": attributes["http.response.status_code"],
-        });
+        this.maybeCopyAttributes(
+          attributes,
+          span,
+          ATTR_HTTP_RESPONSE_STATUS_CODE,
+          ATTR_HTTP_RESPONSE_BODY_SIZE,
+          ...responseHeaderAttributesToCapture,
+        );
 
-        // Add response body size if available
-        if (attributes["http.response.body.size"] !== undefined) {
-          span.setAttribute("http.response.body.size", attributes["http.response.body.size"]);
-        }
-
-        // Add captured response headers if configured
-        if (this._config.captureAttributes?.responseHeaders) {
-          for (const headerName of this._config.captureAttributes.responseHeaders) {
-            const attrKey = `http.response.header.${headerName}`;
-            if (attributes[attrKey] !== undefined) {
-              span.setAttribute(attrKey, attributes[attrKey]);
-            }
-          }
-        }
-
-        // Set span status based on HTTP status code
-        const statusCode = attributes["http.response.status_code"];
-        if (statusCode >= 400) {
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: `HTTP ${statusCode}`,
-          });
-        } else {
-          span.setStatus({ code: SpanStatusCode.OK });
-        }
-        span.setAttributes({ ...attributes });
-        span.end();
-        this._activeSpans.delete(id);
+        // end and delete
+        this._internalSpanEnd(id, span);
       },
 
-      onOperationError: (id: number, attributes: Record<string, any>) => {
-        const span = this._activeSpans.get(id);
-        if (!span) {
-          return;
-        }
+      onOperationError: (id: OpId, attributes: Record<string, any>) => this.handleOperationError(id, attributes),
 
-        // Record exception on span
-        span.recordException({
-          name: attributes["error.type"] || "Error",
-          message: attributes["error.message"] || "Unknown error",
-          stack: attributes["error.stack_trace"],
-        });
-
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: attributes["error.message"] || "Request failed",
-        });
-
-        span.end();
-        this._activeSpans.delete(id);
-      },
-
-      onOperationInject: (id: number, _data?: any) => {
-        const span = this._activeSpans.get(id);
-        if (!span) {
-          return undefined;
-        }
-
-        // Construct W3C traceparent header from span context
-        // Per contract: specs/001-opentelemetry-support/contracts/telemetry-http.md lines 131-138
-        const spanContext = span.spanContext();
-        const traceparent = `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags.toString(16).padStart(2, "0")}`;
-
-        // Extract tracestate if present
-        const tracestate = spanContext.traceState?.serialize() || "";
-
-        // Return array matching injectHeaders.request order: ["traceparent", "tracestate"]
-        return [traceparent, tracestate];
-      },
-    });
-  }
-
-  /**
-   * Disable instrumentation by detaching from Bun's native hooks.
-   */
-  disable(): void {
-    if (this._instrumentId !== undefined) {
-      Bun.telemetry.detach(this._instrumentId);
-      this._instrumentId = undefined;
-    }
-
-    // Clean up any remaining spans
-    this._activeSpans.clear();
-  }
-
-  /**
-   * Set the TracerProvider to use for creating spans.
-   */
-  setTracerProvider(tracerProvider: TracerProvider): void {
-    this._tracerProvider = tracerProvider;
-  }
-
-  /**
-   * Set the MeterProvider (not used for fetch instrumentation).
-   */
-  setMeterProvider(_meterProvider: MeterProvider): void {
-    // Metrics not currently collected for fetch operations
-  }
-
-  /**
-   * Update instrumentation configuration.
-   * Note: Changes require disable() + enable() to take effect.
-   */
-  setConfig(config: BunFetchInstrumentationConfig): void {
-    // Validate new configuration
-    if (config.captureAttributes) {
-      validateCaptureAttributes(config.captureAttributes);
-    }
-
-    this._config = { ...this._config, ...config };
-  }
-
-  /**
-   * Get current instrumentation configuration.
-   */
-  getConfig(): BunFetchInstrumentationConfig {
-    return { ...this._config };
-  }
-
-  /**
-   * Implement Symbol.dispose for use with `using` declarations.
-   * Automatically calls disable() when the instrumentation goes out of scope.
-   */
-  [Symbol.dispose](): void {
-    this.disable();
+      onOperationInject: (id: OpId) => this.generateTraceHeaders(id),
+    };
   }
 }

@@ -79,13 +79,8 @@ describe("BunFetchInstrumentation", () => {
 
     expect(response.ok).toBe(true);
 
-    // Wait for span to be exported
-    await Bun.sleep(100);
-
-    const spans = exporter.getFinishedSpans();
-    expect(spans.length).toBeGreaterThanOrEqual(1);
-
-    const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
+    // Wait for the CLIENT span to be exported (polling avoids flaky fixed sleeps)
+    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client());
     expect(fetchSpan).toBeDefined();
 
     // Verify span attributes follow OTel semantic conventions
@@ -151,21 +146,15 @@ describe("BunFetchInstrumentation", () => {
     expect(body.headers.traceparent).toBeDefined();
     expect(body.headers.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/);
 
-    await Bun.sleep(100);
-
-    const spans = exporter.getFinishedSpans();
-    const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
-    expect(fetchSpan).toBeDefined();
-
-    // Extract trace ID from traceparent header
+    // Extract trace & span IDs from traceparent header
     const traceparentMatch = body.headers.traceparent.match(/^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/);
     expect(traceparentMatch).toBeDefined();
-
     const [, traceId, spanId] = traceparentMatch!;
 
-    // Verify span trace ID matches injected traceparent
-    expect(fetchSpan?.spanContext().traceId).toBe(traceId);
-    expect(fetchSpan?.spanContext().spanId).toBe(spanId);
+    // Wait specifically for the span with matching IDs
+    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client().withTraceId(traceId).withSpanId(spanId));
+    expect(fetchSpan.spanContext().traceId).toBe(traceId);
+    expect(fetchSpan.spanContext().spanId).toBe(spanId);
   });
 
   test("sets span status to ERROR for HTTP error responses", async () => {
@@ -186,13 +175,9 @@ describe("BunFetchInstrumentation", () => {
       // Connection will fail, which is expected
     }
 
-    await Bun.sleep(100);
-
-    const spans = exporter.getFinishedSpans();
-    const errorSpan = spans.find(s => s.kind === SpanKind.CLIENT && s.status.code === SpanStatusCode.ERROR);
-
+    const [errorSpan] = await waitForSpans(exporter, 1, 1000, s => s.client().withStatusCode(SpanStatusCode.ERROR));
     expect(errorSpan).toBeDefined();
-    expect(errorSpan?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(errorSpan.status.code).toBe(SpanStatusCode.ERROR);
   });
 
   test("span name is HTTP method only (OTel v1.23.0 spec)", async () => {
@@ -209,10 +194,7 @@ describe("BunFetchInstrumentation", () => {
       method: "GET",
     });
 
-    await Bun.sleep(100);
-
-    const spans = exporter.getFinishedSpans();
-    const fetchSpan = spans.find(s => s.kind === SpanKind.CLIENT);
+    const [fetchSpan] = await waitForSpans(exporter, 1, 1000, s => s.client());
 
     // Per OTel v1.23.0: HTTP client span names should be just the method (low cardinality)
     // URL is captured in attributes instead to prevent cardinality explosions
@@ -294,16 +276,9 @@ describe("BunFetchInstrumentation", () => {
     const responses = await Promise.all(promises);
     expect(responses.every(r => r.ok)).toBe(true);
 
-    await Bun.sleep(100);
-
-    const spans = exporter.getFinishedSpans();
-    const fetchSpans = spans.filter(s => s.kind === SpanKind.CLIENT);
-
-    // Should have 5 CLIENT spans
-    expect(fetchSpans.length).toBe(5);
-
-    // Each should have unique request
-    const paths = fetchSpans.map(s => s.attributes["url.full"]);
+    const fetchSpans = await waitForSpans(exporter, 5, 1000, s => s.client());
+    expect(fetchSpans.length).toBe(5); // Should have 5 CLIENT spans
+    const paths = fetchSpans.map(s => s.attributes["url.full"]); // Each should have unique request
     expect(new Set(paths).size).toBe(5);
   });
 });

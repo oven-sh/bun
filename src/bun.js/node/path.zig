@@ -2999,6 +2999,20 @@ export fn Bun__findPackageJSON(input_path: *bun.String, result: *bun.String) voi
                 else
                     dirnamePosixT(u8, current_dir);
             }
+        } else {
+            // Heuristic: if path doesn't exist and doesn't end with a separator,
+            // treat it as a file path and start from its dirname.
+            if (current_dir.len > 0) {
+                const last = current_dir[current_dir.len - 1];
+                if ((Environment.isWindows and (last != CHAR_BACKWARD_SLASH and last != CHAR_FORWARD_SLASH)) or
+                    (!Environment.isWindows and last != CHAR_FORWARD_SLASH))
+                {
+                    current_dir = if (Environment.isWindows)
+                        dirnameWindowsT(u8, current_dir)
+                    else
+                        dirnamePosixT(u8, current_dir);
+                }
+            }
         }
     }
 
@@ -3009,13 +3023,23 @@ export fn Bun__findPackageJSON(input_path: *bun.String, result: *bun.String) voi
             joinPosixT(u8, &.{ current_dir, "package.json" }, &path_buf, &path_buf2);
 
         var pkg_path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+        if (pkg_path.len >= pkg_path_buf_z.len) {
+            // Path too long; treat as not found to avoid overflow
+            result.* = bun.String.empty;
+            return;
+        }
         @memcpy(pkg_path_buf_z[0..pkg_path.len], pkg_path);
         pkg_path_buf_z[pkg_path.len] = 0;
 
         const pkg_path_z = pkg_path_buf_z[0..pkg_path.len :0];
-        if (bun.sys.existsZ(pkg_path_z)) {
-            result.* = bun.String.cloneUTF8(pkg_path);
-            return;
+        const st = bun.sys.stat(pkg_path_z);
+        if (st == .result) {
+            const mode = st.result.mode;
+            const S = bun.S;
+            if ((mode & S.IFMT) == S.IFREG) {
+                result.* = bun.String.cloneUTF8(pkg_path);
+                return;
+            }
         }
 
         const parent = if (Environment.isWindows)

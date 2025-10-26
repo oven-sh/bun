@@ -69,10 +69,12 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.#flags.ssl = ws == .ssl;
 
     const ctx = this.#websocket_context;
+    bun.Output.printErrorln("DEBUG onOpen: ctx ptr={*}", .{ctx});
     const vm = ctx.getVM();
     ctx.incrementActiveConnections();
     const globalObject = vm.global;
     const onOpenHandler = ctx.getOnOpen();
+    bun.Output.printErrorln("DEBUG onOpen: isEmpty={}", .{onOpenHandler.isEmptyOrUndefinedOrNull()});
     if (vm.isShuttingDown()) {
         log("onOpen called after script execution", .{});
         ws.close();
@@ -82,6 +84,7 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.#flags.opened = false;
 
     if (onOpenHandler.isEmptyOrUndefinedOrNull()) {
+        bun.Output.printErrorln("DEBUG onOpen: EARLY RETURN - handler is null!", .{});
         return;
     }
 

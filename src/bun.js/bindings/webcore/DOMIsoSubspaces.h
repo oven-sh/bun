@@ -941,6 +941,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSHmac;
     std::unique_ptr<IsoSubspace> m_subspaceForJSHash;
     std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSWebSocketServerContext;
     std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForBakeResponse;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;

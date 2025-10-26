@@ -620,6 +620,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_ServerRouteListStructure)                             \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSWebSocketServerContextStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
                                                                                                              \

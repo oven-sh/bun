@@ -87,7 +87,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
-    values: ["routeList"],
+    values: ["routeList", "websocketServerContext"],
   });
 }
 export default [
@@ -320,7 +320,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
-    values: ["socket"],
+    values: ["socket", "websocketServerContext"],
   }),
 
   define({

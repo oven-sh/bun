@@ -4,6 +4,7 @@ const ctxLog = Output.scoped(.RequestContext, .visible);
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
 pub const HTMLBundle = @import("./server/HTMLBundle.zig");
+const JSWebSocketServerContext = @import("../bindings/JSWebSocketServerContext.zig").JSWebSocketServerContext;
 
 pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, status: u16) void {
     if (resp_ptr) |resp| {
@@ -989,7 +990,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
+            const ws_ctx: *JSWebSocketServerContext = @ptrFromInt(@intFromPtr(this.config.websocket.?.js_context.asObjectRef()));
+            const ws = ServerWebSocket.init(ws_ctx, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
@@ -1038,9 +1040,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (new_config.websocket) |*ws| {
                 ws.handler.flags.ssl = ssl_enabled;
                 if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
-                    if (this.config.websocket) |old_ws| {
-                        old_ws.unprotect();
-                    }
+                    // Update the existing JSWebSocketServerContext with new callbacks
+                    const ws_ctx: *JSWebSocketServerContext = @ptrFromInt(@intFromPtr(ws.js_context.asObjectRef()));
+                    ws_ctx.setSSL(ssl_enabled);
+                    ws_ctx.setOnOpen(globalThis, ws.handler.onOpen);
+                    ws_ctx.setOnMessage(globalThis, ws.handler.onMessage);
+                    ws_ctx.setOnClose(globalThis, ws.handler.onClose);
+                    ws_ctx.setOnDrain(globalThis, ws.handler.onDrain);
+                    ws_ctx.setOnError(globalThis, ws.handler.onError);
+                    ws_ctx.setOnPing(globalThis, ws.handler.onPing);
+                    ws_ctx.setOnPong(globalThis, ws.handler.onPong);
 
                     ws.globalObject = globalThis;
                     this.config.websocket = ws.*;

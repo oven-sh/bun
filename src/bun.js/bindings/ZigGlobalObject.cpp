@@ -194,6 +194,7 @@
 #include <mutex>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
+#include "JSWebSocketServerContext.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2045,6 +2046,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_ServerRouteListStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(Bun::createServerRouteListStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSWebSocketServerContextStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createJSWebSocketServerContextStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
         });
 
     m_JSBunRequestParamsPrototype.initLater(

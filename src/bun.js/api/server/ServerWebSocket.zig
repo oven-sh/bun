@@ -1,6 +1,6 @@
 const ServerWebSocket = @This();
 
-#handler: *WebSocketServer.Handler,
+#websocket_context: *JSWebSocketServerContext,
 #this_value: jsc.JSRef = .empty(),
 #flags: Flags = .{},
 #signal: ?*bun.webcore.AbortSignal = null,
@@ -36,12 +36,13 @@ pub const fromJSDirect = js.fromJSDirect;
 
 const new = bun.TrivialNew(ServerWebSocket);
 
-/// Initialize a ServerWebSocket with the given handler, data value, and signal.
+/// Initialize a ServerWebSocket with the given websocket context, data value, and signal.
 /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
-pub fn init(handler: *WebSocketServer.Handler, data_value: jsc.JSValue, signal: ?*bun.webcore.AbortSignal) *ServerWebSocket {
-    const globalObject = handler.globalObject;
+pub fn init(websocket_context: *JSWebSocketServerContext, data_value: jsc.JSValue, signal: ?*bun.webcore.AbortSignal) *ServerWebSocket {
+    const vm = websocket_context.getVM();
+    const globalObject = vm.global;
     const this = ServerWebSocket.new(.{
-        .#handler = handler,
+        .#websocket_context = websocket_context,
         .#signal = signal,
     });
     // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
@@ -67,11 +68,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.#flags.closed = false;
     this.#flags.ssl = ws == .ssl;
 
-    var handler = this.#handler;
-    const vm = this.#handler.vm;
-    handler.active_connections +|= 1;
-    const globalObject = handler.globalObject;
-    const onOpenHandler = handler.onOpen;
+    const ctx = this.#websocket_context;
+    const vm = ctx.getVM();
+    ctx.incrementActiveConnections();
+    const globalObject = vm.global;
+    const onOpenHandler = ctx.getOnOpen();
     if (vm.isShuttingDown()) {
         log("onOpen called after script execution", .{});
         ws.close();
@@ -108,11 +109,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
             // we don't want any event handlers to fire after this for anything other than error()
             // https://github.com/oven-sh/bun/issues/1480
             this.websocket().close();
-            handler.active_connections -|= 1;
+            ctx.decrementActiveConnections();
             this_value.unprotect();
         }
 
-        handler.runErrorCallback(vm, globalObject, err_value);
+        runErrorCallback(ctx, vm, globalObject, err_value);
     }
 }
 
@@ -126,11 +127,12 @@ pub fn onMessage(
         @intFromEnum(opcode),
         message,
     });
-    const onMessageHandler = this.#handler.onMessage;
+    const ctx = this.#websocket_context;
+    const onMessageHandler = ctx.getOnMessage();
     if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
-    var globalObject = this.#handler.globalObject;
+    const vm = ctx.getVM();
+    const globalObject = vm.global;
     // This is the start of a task.
-    const vm = this.#handler.vm;
     if (vm.isShuttingDown()) {
         log("onMessage called after script execution", .{});
         ws.close();
@@ -162,7 +164,7 @@ pub fn onMessage(
     if (result.isEmptyOrUndefinedOrNull()) return;
 
     if (result.toError()) |err_value| {
-        this.#handler.runErrorCallback(vm, globalObject, err_value);
+        runErrorCallback(ctx, vm, globalObject, err_value);
         return;
     }
 
@@ -185,18 +187,19 @@ pub inline fn isClosed(this: *const ServerWebSocket) bool {
 pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
     log("onDrain", .{});
 
-    const handler = this.#handler;
-    const vm = handler.vm;
+    const ctx = this.#websocket_context;
+    const vm = ctx.getVM();
     if (this.isClosed() or vm.isShuttingDown())
         return;
 
-    if (handler.onDrain != .zero) {
-        const globalObject = handler.globalObject;
+    const onDrainHandler = ctx.getOnDrain();
+    if (onDrainHandler != .zero) {
+        const globalObject = vm.global;
 
         var corker = Corker{
             .args = &[_]jsc.JSValue{this.#this_value.tryGet() orelse .js_undefined},
             .globalObject = globalObject,
-            .callback = handler.onDrain,
+            .callback = onDrainHandler,
         };
         const loop = vm.eventLoop();
         loop.enter();
@@ -205,7 +208,7 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
         const result = corker.result;
 
         if (result.toError()) |err_value| {
-            handler.runErrorCallback(vm, globalObject, err_value);
+            runErrorCallback(ctx, vm, globalObject, err_value);
         }
     }
 }
@@ -232,11 +235,11 @@ fn binaryToJS(this: *const ServerWebSocket, globalThis: *jsc.JSGlobalObject, dat
 pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
     log("onPing: {s}", .{data});
 
-    const handler = this.#handler;
-    var cb = handler.onPing;
-    const vm = handler.vm;
+    const ctx = this.#websocket_context;
+    const vm = ctx.getVM();
+    var cb = ctx.getOnPing();
     if (cb.isEmptyOrUndefinedOrNull() or vm.isShuttingDown()) return;
-    const globalThis = handler.globalObject;
+    const globalThis = vm.global;
 
     // This is the start of a task.
     const loop = vm.eventLoop();
@@ -250,19 +253,19 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPing error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        runErrorCallback(ctx, vm, globalThis, err);
     };
 }
 
 pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
     log("onPong: {s}", .{data});
 
-    const handler = this.#handler;
-    var cb = handler.onPong;
+    const ctx = this.#websocket_context;
+    const vm = ctx.getVM();
+    var cb = ctx.getOnPong();
     if (cb.isEmptyOrUndefinedOrNull()) return;
 
-    const globalThis = handler.globalObject;
-    const vm = handler.vm;
+    const globalThis = vm.global;
 
     if (vm.isShuttingDown()) return;
 
@@ -278,19 +281,19 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPong error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        runErrorCallback(ctx, vm, globalThis, err);
     };
 }
 
 pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
     log("onClose", .{});
     // TODO: Can this called inside finalize?
-    var handler = this.#handler;
+    const ctx = this.#websocket_context;
     const was_closed = this.isClosed();
     this.#flags.closed = true;
     defer {
         if (!was_closed) {
-            handler.active_connections -|= 1;
+            ctx.decrementActiveConnections();
         }
     }
     const signal = this.#signal;
@@ -307,13 +310,14 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         }
     }
 
-    const vm = handler.vm;
+    const vm = ctx.getVM();
     if (vm.isShuttingDown()) {
         return;
     }
 
-    if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
-        const globalObject = handler.globalObject;
+    const onCloseHandler = ctx.getOnClose();
+    if (!onCloseHandler.isEmptyOrUndefinedOrNull()) {
+        const globalObject = vm.global;
         const loop = vm.eventLoop();
 
         loop.enter();
@@ -321,31 +325,33 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         if (signal) |sig| {
             if (!sig.aborted()) {
-                sig.signal(handler.globalObject, .ConnectionClosed);
+                sig.signal(globalObject, .ConnectionClosed);
             }
         }
 
         const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error (message) {}", .{this.#this_value.isNotEmpty()});
-            handler.runErrorCallback(vm, globalObject, err);
+            runErrorCallback(ctx, vm, globalObject, err);
             return;
         };
 
-        _ = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| {
+        _ = onCloseHandler.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error {}", .{this.#this_value.isNotEmpty()});
-            handler.runErrorCallback(vm, globalObject, err);
+            runErrorCallback(ctx, vm, globalObject, err);
             return;
         };
     } else if (signal) |sig| {
-        const loop = vm.eventLoop();
+        const vm2 = ctx.getVM();
+        const globalObject = vm2.global;
+        const loop = vm2.eventLoop();
 
         loop.enter();
         defer loop.exit();
 
         if (!sig.aborted()) {
-            sig.signal(handler.globalObject, .ConnectionClosed);
+            sig.signal(globalObject, .ConnectionClosed);
         }
     }
 }
@@ -381,13 +387,13 @@ pub fn publish(
         return globalThis.throw("publish requires at least 1 argument", .{});
     }
 
-    const app = this.#handler.app orelse {
+    const ctx = this.#websocket_context;
+    const app = ctx.getApp() orelse {
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    const ssl = ctx.getSSL();
+    const publish_to_self = ctx.getPublishToSelf();
 
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
@@ -465,13 +471,13 @@ pub fn publishText(
         return globalThis.throw("publish requires at least 1 argument", .{});
     }
 
-    const app = this.#handler.app orelse {
+    const ctx = this.#websocket_context;
+    const app = ctx.getApp() orelse {
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    const ssl = ctx.getSSL();
+    const publish_to_self = ctx.getPublishToSelf();
 
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
@@ -528,13 +534,13 @@ pub fn publishBinary(
         return globalThis.throw("publishBinary requires at least 1 argument", .{});
     }
 
-    const app = this.#handler.app orelse {
+    const ctx = this.#websocket_context;
+    const app = ctx.getApp() orelse {
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    const ssl = ctx.getSSL();
+    const publish_to_self = ctx.getPublishToSelf();
     const topic_value = args.ptr[0];
     const message_value = args.ptr[1];
     const compress_value = args.ptr[2];
@@ -583,13 +589,13 @@ pub fn publishBinaryWithoutTypeChecks(
     topic_str: *jsc.JSString,
     array: *jsc.JSUint8Array,
 ) bun.JSError!jsc.JSValue {
-    const app = this.#handler.app orelse {
+    const ctx = this.#websocket_context;
+    const app = ctx.getApp() orelse {
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    const ssl = ctx.getSSL();
+    const publish_to_self = ctx.getPublishToSelf();
 
     var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
     defer topic_slice.deinit();
@@ -622,13 +628,13 @@ pub fn publishTextWithoutTypeChecks(
     topic_str: *jsc.JSString,
     str: *jsc.JSString,
 ) bun.JSError!jsc.JSValue {
-    const app = this.#handler.app orelse {
+    const ctx = this.#websocket_context;
+    const app = ctx.getApp() orelse {
         log("publish() closed", .{});
         return JSValue.jsNumber(0);
     };
-    const flags = this.#handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
+    const ssl = ctx.getSSL();
+    const publish_to_self = ctx.getPublishToSelf();
 
     var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
     defer topic_slice.deinit();
@@ -1254,6 +1260,17 @@ pub fn getRemoteAddress(
     return bun.String.createUTF8ForJS(globalThis, text);
 }
 
+fn runErrorCallback(ctx: *JSWebSocketServerContext, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) void {
+    const onError = ctx.getOnError();
+    if (!onError.isEmptyOrUndefinedOrNull()) {
+        _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err|
+            globalObject.reportActiveExceptionAsUnhandled(err);
+        return;
+    }
+
+    _ = vm.uncaughtException(globalObject, error_value, false);
+}
+
 const Corker = struct {
     args: []const JSValue = &.{},
     globalObject: *jsc.JSGlobalObject,
@@ -1284,3 +1301,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+const JSWebSocketServerContext = @import("../../bindings/JSWebSocketServerContext.zig").JSWebSocketServerContext;

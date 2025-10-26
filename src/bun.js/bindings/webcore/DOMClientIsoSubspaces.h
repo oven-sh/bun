@@ -946,6 +946,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPublicKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSWebSocketServerContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeResponse;
 

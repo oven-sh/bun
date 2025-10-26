@@ -719,7 +719,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     for (matching_packages.items) |pid| {
                         if (self.package_resolutions[pid].tag != .npm) {
                             if (!self.is_production or self.production_reachable_ids == null or
-                                self.production_reachable_ids.?.isSet(@intCast(pid)))
+                                self.production_reachable_ids.?.isSet(pid))
                             {
                                 matched_pkg_id = pid;
                                 break;

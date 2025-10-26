@@ -19,11 +19,12 @@ pub const InitCommand = struct {
                 const key_start = j + 1;
                 const key_end = key_start + key.len;
                 if (key_end <= line.len and std.mem.eql(u8, line[key_start..key_end], key)) {
-                    const after_key = if (key_end < line.len) line[key_end] else 0;
-                    const after_key2 = if (key_end + 1 < line.len) line[key_end + 1] else 0;
-                    // Match ": after key
-                    if (after_key == '"' and after_key2 == ':') {
-                        skip = true;
+                    if (key_end < line.len and line[key_end] == '"') {
+                        var p: usize = key_end + 1;
+                        while (p < line.len and (line[p] == ' ' or line[p] == '\t')) : (p += 1) {}
+                        if (p < line.len and line[p] == ':') {
+                            skip = true;
+                        }
                     }
                 }
             }

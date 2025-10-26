@@ -466,7 +466,7 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = bun.default_allocator,
                 }) catch {};
 
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.dump_source) {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 

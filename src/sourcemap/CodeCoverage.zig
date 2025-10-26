@@ -285,12 +285,19 @@ pub const Report = struct {
                         last = i + 1;
                     },
                     0...0x1f => {
-                        if (i > last) {
-                            try writer.writeAll(str[last..i]);
+                        // XML 1.0 allows only tab (0x09), LF (0x0A), CR (0x0D) in this range
+                        // All others are invalid even when escaped
+                        if (c == 0x09 or c == 0x0A or c == 0x0D) {
+                            // Pass through as-is
+                        } else {
+                            // Illegal control character - escape it as numeric ref
+                            // (though technically invalid in XML 1.0)
+                            if (i > last) {
+                                try writer.writeAll(str[last..i]);
+                            }
+                            try writer.print("&#{d};", .{c});
+                            last = i + 1;
                         }
-                        // Escape control characters
-                        try writer.print("&#{d};", .{c});
-                        last = i + 1;
                     },
                     else => {},
                 }
@@ -336,7 +343,7 @@ pub const Report = struct {
                 // Write XML header
                 try writer.writeAll("<?xml version=\"1.0\" ?>\n");
                 try writer.writeAll("<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n");
-                try writer.print("<coverage lines-valid=\"{d}\" lines-covered=\"{d}\" line-rate=\"{d:.4}\" timestamp=\"{d}\" complexity=\"0\" version=\"0.1\">\n", .{
+                try writer.print("<coverage lines-valid=\"{d}\" lines-covered=\"{d}\" line-rate=\"{d:.4}\" branches-valid=\"0\" branches-covered=\"0\" branch-rate=\"0\" timestamp=\"{d}\" complexity=\"0\" version=\"0.1\">\n", .{
                     total_lines_valid,
                     total_lines_covered,
                     line_rate,
@@ -359,6 +366,8 @@ pub const Report = struct {
                     var iter = package_map.iterator();
                     while (iter.next()) |entry| {
                         entry.value_ptr.deinit(this.allocator);
+                        // Free the heap-allocated key
+                        this.allocator.free(entry.key_ptr.*);
                     }
                     package_map.deinit();
                 }
@@ -371,8 +380,12 @@ pub const Report = struct {
 
                     const dir = bun.path.dirname(filename, .auto);
                     const package_name = if (dir.len > 0) dir else ".";
+
                     const entry = try package_map.getOrPut(package_name);
                     if (!entry.found_existing) {
+                        // Duplicate the key into heap-allocated memory
+                        const owned_key = try this.allocator.dupe(u8, package_name);
+                        entry.key_ptr.* = owned_key;
                         entry.value_ptr.* = .{};
                     }
                     try entry.value_ptr.append(this.allocator, report);

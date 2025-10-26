@@ -30,7 +30,7 @@ end_of_record"
 exports[`cobertura coverage reporter: cobertura-coverage-reporter-output 1`] = `
 "<?xml version="1.0" ?>
 <!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">
-<coverage lines-valid="21" lines-covered="20" line-rate="0.9524" timestamp="0" complexity="0" version="0.1">
+<coverage lines-valid="21" lines-covered="20" line-rate="0.9524" branches-valid="0" branches-covered="0" branch-rate="0" timestamp="0" complexity="0" version="0.1">
     <sources>
         <source><dir></source>
     </sources>

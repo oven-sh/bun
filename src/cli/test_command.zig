@@ -1244,6 +1244,7 @@ pub const CommandLineReporter = struct {
 
             try cobertura_state.writeFormat(cobertura_writer);
             try cobertura_buffered_writer.flush();
+            bun.default_allocator.destroy(cobertura_buffered_writer);
             cobertura_file.close();
 
             const cwd = bun.FD.cwd();
@@ -1260,8 +1261,11 @@ pub const CommandLineReporter = struct {
                 Output.err(err, "Failed to save cobertura.xml file", .{});
                 Global.exit(1);
             };
+        }
 
-            return; // Done with cobertura, skip the normal loop below
+        // Continue with text/lcov reporters (support multi-reporter combinations)
+        if (comptime !reporters.text and !reporters.lcov) {
+            return; // Only cobertura was requested, we're done
         }
 
         for (byte_ranges) |*entry| {
@@ -1353,6 +1357,7 @@ pub const CommandLineReporter = struct {
 
         if (comptime reporters.lcov) {
             try lcov_buffered_writer.flush();
+            bun.default_allocator.destroy(lcov_buffered_writer);
             lcov_file.close();
             const cwd = bun.FD.cwd();
             bun.sys.moveFileZ(

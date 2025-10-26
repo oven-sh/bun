@@ -365,7 +365,7 @@ pub fn onCreate(comptime ssl: bool, socket: uws.NewSocketHandler(ssl)) void {
     const this_socket = bun.new(Socket, .{
         .ref_count = .init(),
         .handlers = &listener.handlers,
-        .this_value = .zero,
+        .this_value = jsc.JSRef.empty(),
         .socket = socket,
         .protos = listener.protos,
         .flags = .{ .owned_protos = false },
@@ -758,7 +758,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 prev_maybe_tcp;
 
             const socket = if (maybe_previous) |prev| blk: {
-                bun.assert(prev.this_value != .zero);
+                bun.assert(prev.this_value.tryGet() != null);
                 if (prev.handlers) |prev_handlers| {
                     prev_handlers.deinit();
                     handlers.vm.allocator.destroy(prev_handlers);
@@ -773,7 +773,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             } else bun.new(SocketType, .{
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
-                .this_value = .zero,
+                .this_value = jsc.JSRef.empty(),
                 .socket = SocketType.Socket.detached,
                 .connection = connection,
                 .protos = if (ssl) |s| s.takeProtos() else null,

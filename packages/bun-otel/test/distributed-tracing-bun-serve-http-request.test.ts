@@ -3,8 +3,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-tr
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
 import { BunSDK } from "../index";
-import { EchoServer } from "./echo-server";
-import { waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, TestSDK, waitForSpans } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (Bun.serve) → http.request → echo server
@@ -15,27 +14,14 @@ import { waitForSpans } from "./test-utils";
  * 3. Trace context propagates correctly through the async boundary
  */
 describe("Distributed tracing: Bun.serve → http.request", () => {
-  let echoServer: EchoServer;
-
-  beforeAll(async () => {
-    echoServer = new EchoServer();
-    await echoServer.start();
-  });
-
-  afterAll(async () => {
-    await echoServer.stop();
-  });
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span in Bun.serve handler", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using echoServer = await getEchoServer();
+    await using tsdk = new TestSDK({
       serviceName: "bun-serve-context-active-test",
-      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
 
     let capturedTraceId: string | undefined;
     let capturedSpanId: string | undefined;
@@ -55,15 +41,8 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const upstreamSpanId = "fedcba0987654321";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
-    await waitForSpans(exporter, 1, 1000, { traceId: upstreamTraceId });
-
-    const spans = exporter
-      .getFinishedSpans()
-      .filter(s => s.kind === SpanKind.SERVER && s.spanContext().traceId === upstreamTraceId);
-    expect(spans).toHaveLength(1);
-
-    const serverSpan = spans[0];
+    await echoServer.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
 
     // Verify context.active() returned the correct span
     expect(capturedTraceId).toBe(upstreamTraceId);
@@ -72,21 +51,15 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
   });
 
   test("propagates trace context: Bun.serve → http.request → echo server", async () => {
-    const exporter = new InMemorySpanExporter();
-
-    await using sdk = new BunSDK({
-      spanProcessor: new SimpleSpanProcessor(exporter),
+    await using echoServer = await getEchoServer();
+    await using tsdk = new TestSDK({
       serviceName: "bun-serve-http-request-test",
-      // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
-
-    sdk.start();
-
     // UUT: Bun.serve that makes http.request to echo server
     using serverA = Bun.serve({
       port: 0,
       async fetch() {
-        const echoUrl = new URL(echoServer.getUrl("/downstream"));
+        const echoUrl = new URL(echoServer.echoUrlStr("/downstream"));
 
         // Make outgoing request using http.request
         const response = await new Promise<string>((resolve, reject) => {
@@ -116,19 +89,14 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const upstreamSpanId = "00f067aa0ba902b7";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${serverA.port}/upstream`, {
+    const response = await echoServer.fetch(`http://localhost:${serverA.port}/upstream`, {
       headers: { traceparent },
     });
     const result = await response.json();
 
     // Wait for 2 spans: Bun.serve (SERVER) + http.request (CLIENT)
-    await waitForSpans(exporter, 2, 1000, { traceId: upstreamTraceId });
-
-    const spans = exporter.getFinishedSpans().filter(s => s.spanContext().traceId === upstreamTraceId);
-    expect(spans).toHaveLength(2);
-
-    const serverSpan = spans.find(s => s.kind === SpanKind.SERVER)!;
-    const clientSpan = spans.find(s => s.kind === SpanKind.CLIENT)!;
+    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
+    const [clientSpan] = await tsdk.waitForSpans(1, 1000, s => s.client().withTraceId(upstreamTraceId));
 
     // CRITICAL ASSERTIONS for distributed tracing:
     // 1. Both spans share the same trace ID (distributed trace)
@@ -154,6 +122,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
   });
 
   test("propagates trace context across setTimeout: Bun.serve → http.request", async () => {
+    await using echoServer = await getEchoServer();
     const exporter = new InMemorySpanExporter();
 
     await using sdk = new BunSDK({
@@ -170,7 +139,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
         // Delay http.request with setTimeout
         const echoData = await new Promise<any>(resolve => {
           setTimeout(async () => {
-            const echoUrl = new URL(echoServer.getUrl("/delayed"));
+            const echoUrl = new URL(echoServer.echoUrlStr("/delayed"));
             const response = await new Promise<string>((res, rej) => {
               const req = http.request(
                 {
@@ -199,7 +168,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const upstreamSpanId = "aabbccdd11223344";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, {
+    const response = await echoServer.fetch(`http://localhost:${server.port}/test`, {
       headers: { traceparent },
     });
     const echoData = await response.json();
@@ -225,6 +194,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
   });
 
   test("propagates trace context through parallel http.request calls in Bun.serve", async () => {
+    await using echoServer = await getEchoServer();
     const exporter = new InMemorySpanExporter();
 
     await using sdk = new BunSDK({
@@ -241,7 +211,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
         // Make 3 parallel http.request calls
         const makeRequest = (path: string) =>
           new Promise<any>((resolve, reject) => {
-            const echoUrl = new URL(echoServer.getUrl(path));
+            const echoUrl = new URL(echoServer.echoUrlStr(path));
             const req = http.request(
               {
                 hostname: echoUrl.hostname,
@@ -272,7 +242,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const traceId = "99aabbccddee0011223344556677ff88";
     const traceparent = `00-${traceId}-9988776655443322-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${gateway.port}/gateway`, {
+    const response = await echoServer.fetch(`http://localhost:${gateway.port}/gateway`, {
       headers: { traceparent },
     });
     const result = await response.json();

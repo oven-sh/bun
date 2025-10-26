@@ -12,14 +12,16 @@
 
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunFetchInstrumentation } from "../src/instruments/BunFetchInstrumentation";
-import { EchoServer } from "./echo-server";
-import { waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
 
 describe("BunFetchInstrumentation", () => {
   let exporter: InMemorySpanExporter;
   let provider: BasicTracerProvider;
+
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
 
   beforeAll(() => {
     // Setup tracer provider with in-memory exporter
@@ -62,13 +64,12 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
 
     exporter.reset();
 
     // Make a fetch request
-    const response = await fetch(echoServer.getUrl("/test"), {
+    const response = await fetch(echoServer.echoUrlStr("/test"), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -85,9 +86,9 @@ describe("BunFetchInstrumentation", () => {
 
     // Verify span attributes follow OTel semantic conventions
     expect(fetchSpan?.attributes["http.request.method"]).toBe("POST");
-    expect(fetchSpan?.attributes["url.full"]).toBe(echoServer.getUrl("/test"));
+    expect(fetchSpan?.attributes["url.full"]).toBe(echoServer.echoUrlStr("/test"));
     expect(fetchSpan?.attributes["server.address"]).toBe("127.0.0.1");
-    expect(fetchSpan?.attributes["server.port"]).toBe(Number(new URL(echoServer.getUrl()).port));
+    expect(fetchSpan?.attributes["server.port"]).toBe(echoServer.port);
     expect(fetchSpan?.attributes["url.scheme"]).toBe("http");
 
     // Verify response attributes
@@ -106,11 +107,10 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
     exporter.reset();
 
-    await fetch(echoServer.getUrl("/headers"), {
+    await fetch(echoServer.echoUrlStr("/headers"), {
       headers: {
         "content-type": "application/json",
         "x-custom-header": "my-value",
@@ -134,12 +134,11 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
 
     exporter.reset();
 
-    const response = await fetch(echoServer.getUrl("/trace"));
+    const response = await fetch(echoServer.echoUrlStr("/trace"));
     const body = await response.json();
 
     // Verify traceparent header was injected
@@ -162,8 +161,7 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
 
     exporter.reset();
 
@@ -185,12 +183,11 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
 
     exporter.reset();
 
-    await fetch(echoServer.getUrl("/api/users"), {
+    await fetch(echoServer.echoUrlStr("/api/users"), {
       method: "GET",
     });
 
@@ -261,14 +258,13 @@ describe("BunFetchInstrumentation", () => {
     instrumentation.setTracerProvider(provider);
     instrumentation.enable();
 
-    await using echoServer = new EchoServer();
-    await echoServer.start();
+    await using echoServer = await getEchoServer();
 
     exporter.reset();
 
     // Make 5 concurrent fetch requests
     const promises = Array.from({ length: 5 }, (_, i) =>
-      fetch(echoServer.getUrl(`/concurrent-${i}`), {
+      fetch(echoServer.echoUrlStr(`/concurrent-${i}`), {
         headers: { "x-request-id": `req-${i}` },
       }),
     );

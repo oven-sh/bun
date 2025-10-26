@@ -4,9 +4,9 @@ import {
   ATTR_HTTP_RESPONSE_STATUS_CODE,
   ATTR_URL_PATH,
 } from "@opentelemetry/semantic-conventions";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import http from "node:http";
-import { makeUninstrumentedRequest, TestSDK } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, makeUninstrumentedRequest, TestSDK } from "./test-utils";
 
 /**
  * Wrap node:http Server in a Disposable for use with `await using`.
@@ -22,6 +22,9 @@ function toDisposableServer(server: http.Server) {
 }
 
 describe("Node.js http.createServer integration", () => {
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
+
   test("creates spans for Node.js http server requests", async () => {
     await using tsdk = new TestSDK();
 

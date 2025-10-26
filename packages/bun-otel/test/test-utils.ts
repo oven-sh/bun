@@ -4,9 +4,122 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, ReadableSpan, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "../../../test/harness";
 import { BunSDK, type BunSDKConfiguration } from "../src/BunSDK";
 import { NativeHooks } from "../types";
+import { EchoServer } from "./echo-server";
+
+/**
+ * Ref-counted EchoServer reference for tests.
+ * Provides fast uninstrumented fetch without spawning Bun processes.
+ */
+interface EchoServerRef extends Disposable {
+  fetch(url: string, init?: RequestInit): Promise<Response>;
+  echoUrlObj(path?: string): URL;
+  echoUrlStr(path?: string): string;
+  server: EchoServer;
+  port: number;
+}
+
+// Global shared EchoServer instance
+let globalEchoServer: EchoServer | null = null;
+let inFlight = 0;
+let zeroCrossingId = 0;
+let totalEchoServersCreated = 0;
+
+// Diagnostics: warn if too many servers created (indicates ref-counting failure)
+process.on("SIGTERM", () => {
+  if (totalEchoServersCreated > 5) {
+    console.warn(
+      `⚠️  Created ${totalEchoServersCreated} EchoServers during test run (expected 1-2). Check for missing 'await using' or ref-counting issues.`,
+    );
+  }
+});
+
+/**
+ * Make sure that your test can use an EchoServer for uninstrumented requests.
+ *
+ * @example
+ * ```ts
+ * describe("my suite", () => {
+ *   beforeAll( beforeUsingEchoServer );
+ *   afterAll( afterUsingEchoServer );
+ *   test("test1", async () => {
+ *     await makeUninstrumentedRequest("http://localhost:3000/test");
+ *   });
+ * });
+ * ```
+ */
+export const beforeUsingEchoServer = refCountUp;
+export const afterUsingEchoServer = refCountDown;
+/**
+ * Get a ref-counted EchoServer reference.
+ *
+ * The returned reference provides fast uninstrumented fetch via socket connection (~0.3ms)
+ * instead of spawning Bun processes (~130ms). The server is lazily started on first use
+ * and automatically shared across all tests.
+ *
+ * @example
+ * ```ts
+ * await using echoServer = await getEchoServer();
+ * const response = await echoServer.fetch("http://localhost:3000/test");
+ * // Auto-disposes at end of scope, triggering ref-count decrement
+ * ```
+ */
+export async function getEchoServer(): Promise<EchoServerRef> {
+  // Create or reuse global EchoServer (lazy start)
+  if (!globalEchoServer) {
+    globalEchoServer = new EchoServer();
+    await globalEchoServer.start();
+    totalEchoServersCreated++;
+  }
+
+  const server = globalEchoServer;
+  return {
+    server,
+    port: server.portNumber,
+    echoUrlStr(path: string = "/"): string {
+      return server.getUrl(path);
+    },
+    echoUrlObj(path: string = "/"): URL {
+      return new URL(server.getUrl(path));
+    },
+    fetch: (url: string, init?: RequestInit) => server.fetch(url, init),
+    ...refCountUp(),
+  };
+}
+
+function refCountUp(): Disposable {
+  inFlight++;
+  return {
+    [Symbol.dispose]() {
+      if (--inFlight === 0) {
+        const z = ++zeroCrossingId;
+        setTimeout(() => {
+          // Shutdown after 500ms of inactivity
+          if (z === zeroCrossingId && inFlight === 0 && globalEchoServer) {
+            globalEchoServer.fireAndForgetStop();
+            globalEchoServer = null;
+            zeroCrossingId = inFlight = 0;
+          }
+        }, 500);
+      }
+    },
+  };
+}
+
+function refCountDown(): void {
+  if (--inFlight === 0 && globalEchoServer) {
+    const z = ++zeroCrossingId;
+    setTimeout(() => {
+      // Shutdown after 500ms of inactivity
+      if (z === zeroCrossingId && inFlight === 0 && globalEchoServer) {
+        globalEchoServer.fireAndForgetStop();
+        globalEchoServer = null;
+        zeroCrossingId = inFlight = 0;
+      }
+    }, 500);
+  }
+}
 
 /**
  * TestSDK extends BunSDK with helper methods for tests
@@ -224,43 +337,26 @@ export function fmtSpans(spans: ReadableSpan[]): string[] {
 /**
  * Make an uninstrumented HTTP request to avoid creating spans in tests.
  *
- * If an EchoServer instance is provided, uses fast socket-based fetch (~0.3ms).
- * Otherwise falls back to spawning bun -e process (~130ms but avoids curl dependency).
+ * Uses fast socket-based fetch via ref-counted EchoServer (~0.3ms).
+ * Requires `using _ = maybeMakingUninstrumentedRequests();` at the top of describe() block.
  *
  * @param url - The URL to fetch
  * @param headers - Optional headers to include
- * @param echoServer - Optional EchoServer instance for fast path (recommended)
+ * @throws Error if maybeMakingUninstrumentedRequests() was not called
  */
-export async function makeUninstrumentedRequest(
-  url: string,
-  headers: Record<string, string> = {},
-  echoServer?: { fetch(url: string, init?: RequestInit): Promise<Response> },
-): Promise<string> {
-  // Fast path: use EchoServer's socket-based fetch if available
-  if (echoServer) {
-    const response = await echoServer.fetch(url, { headers });
-    return await response.text();
+export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+  // Check if maybeMakingUninstrumentedRequests() was called
+  if (inFlight === 0) {
+    throw new Error(
+      "makeUninstrumentedRequest() requires a ref count > 0. " +
+        "Place a `using _ = maybeMakingUninstrumentedRequests();` at the top of your describe() block.",
+    );
   }
 
-  // Fallback: spawn bun -e (slow but works without EchoServer)
-  const js = `
-    async function makeRequest() {
-      const response = await fetch("${url}", {
-        headers: ${JSON.stringify(headers)}
-      });
-      return await response.text();
-    }
-    console.log(await makeRequest());
-  `;
-  await using proc = Bun.spawn([bunExe(), "-e", js], {
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const output = await new Response(proc.stdout).text();
-  await proc.exited;
-  return output;
+  // Use fast socket-based fetch via ref-counted EchoServer
+  await using echo = await getEchoServer();
+  const response = await echo.fetch(url, { headers });
+  return await response.text();
 }
 
 // Ensure native hooks are installed by attaching a dummy instrumentation if needed

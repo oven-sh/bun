@@ -2,8 +2,7 @@ import { context, SpanKind, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { EchoServer } from "./echo-server";
-import { waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (Bun.serve) → fetch → echo server
@@ -12,19 +11,8 @@ import { waitForSpans } from "./test-utils";
  * creates a SERVER span, and propagates context to outgoing fetch CLIENT spans.
  */
 describe("Distributed tracing with fetch propagation", () => {
-  // Shared echo server for all tests - runs in separate process to avoid instrumentation
-  let echoServer: EchoServer;
-
-  // Start echo server once for all tests
-  beforeAll(async () => {
-    echoServer = new EchoServer();
-    await echoServer.start();
-  });
-
-  // Shutdown echo server after all tests
-  afterAll(async () => {
-    await echoServer.stop();
-  });
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span synchronously in request handler", async () => {
     const exporter = new InMemorySpanExporter();
@@ -54,8 +42,9 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "fedcba0987654321";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
+    await using echoServer = await getEchoServer();
     // Use remote control to avoid instrumenting the test's own fetch
-    await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
+    await echoServer.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
 
     // Wait for the server span to be exported (scoped to our trace)
     await waitForSpans(exporter, 1, 1000, { traceId: upstreamTraceId });
@@ -88,12 +77,14 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     // Server A - upstream service that makes fetch call to echo server
     using serverA = Bun.serve({
       port: 0,
       async fetch(req: Request) {
         // This fetch call should automatically inject traceparent from active span
-        const response = await fetch(echoServer.getUrl("/downstream"));
+        const response = await fetch(echoServer.echoUrlStr("/downstream"));
         const data = await response.json();
         return Response.json({ downstream: data });
       },
@@ -105,7 +96,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
     // Use remote control to avoid instrumenting the test's own fetch call
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${serverA.port}/upstream`, {
+    const response = await echoServer.fetch(`http://localhost:${serverA.port}/upstream`, {
       headers: { traceparent },
     });
     const result = await response.json();
@@ -157,6 +148,8 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     // Server that delays fetch with setTimeout
     using server = Bun.serve({
       port: 0,
@@ -165,7 +158,7 @@ describe("Distributed tracing with fetch propagation", () => {
         const echoData = await new Promise<any>(resolve => {
           setTimeout(async () => {
             // This fetch should still be in the request's context
-            const response = await fetch(echoServer.getUrl("/delayed"));
+            const response = await fetch(echoServer.echoUrlStr("/delayed"));
             const data = await response.json();
             resolve(data);
           }, 10); // Small delay to test async boundary
@@ -179,7 +172,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
     // Use remote control to avoid instrumenting the test request
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, {
+    const response = await echoServer.fetch(`http://localhost:${server.port}/test`, {
       headers: { traceparent },
     });
     const echoData = await response.json();
@@ -231,12 +224,14 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     using server = Bun.serve({
       port: 0,
       async fetch(req: Request) {
         const echoData = await new Promise<any>(resolve => {
           setImmediate(async () => {
-            const response = await fetch(echoServer.getUrl("/immediate"));
+            const response = await fetch(echoServer.echoUrlStr("/immediate"));
             const data = await response.json();
             resolve(data);
           });
@@ -249,7 +244,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "1122334455667788";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, {
+    const response = await echoServer.fetch(`http://localhost:${server.port}/test`, {
       headers: { traceparent },
     });
     const echoData = await response.json();
@@ -284,6 +279,8 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     using server = Bun.serve({
       port: 0,
       async fetch(req: Request) {
@@ -294,7 +291,7 @@ describe("Distributed tracing with fetch propagation", () => {
           return await level3();
         }
         async function level3() {
-          const response = await fetch(echoServer.getUrl("/nested"));
+          const response = await fetch(echoServer.echoUrlStr("/nested"));
           return await response.json();
         }
         const echoData = await level1();
@@ -306,7 +303,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "aabbccdd11223344";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, {
+    const response = await echoServer.fetch(`http://localhost:${server.port}/test`, {
       headers: { traceparent },
     });
     const echoData = await response.json();
@@ -339,17 +336,19 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     using server = Bun.serve({
       port: 0,
       async fetch(req: Request) {
         async function* fetchMultiple() {
-          const r1 = await fetch(echoServer.getUrl("/gen1"));
+          const r1 = await fetch(echoServer.echoUrlStr("/gen1"));
           yield await r1.json();
 
-          const r2 = await fetch(echoServer.getUrl("/gen2"));
+          const r2 = await fetch(echoServer.echoUrlStr("/gen2"));
           yield await r2.json();
 
-          const r3 = await fetch(echoServer.getUrl("/gen3"));
+          const r3 = await fetch(echoServer.echoUrlStr("/gen3"));
           yield await r3.json();
         }
 
@@ -365,7 +364,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const upstreamSpanId = "ffeeddccbbaa9988";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/test`, {
+    const response = await echoServer.fetch(`http://localhost:${server.port}/test`, {
       headers: { traceparent },
     });
     const result = await response.json();
@@ -406,15 +405,17 @@ describe("Distributed tracing with fetch propagation", () => {
 
     sdk.start();
 
+    await using echoServer = await getEchoServer();
+
     // Gateway that makes parallel fetch calls to external echo server
     using gateway = Bun.serve({
       port: 0,
       async fetch() {
         // Make 3 parallel fetch calls - all should get the same parent span context
         const [r1, r2, r3] = await Promise.all([
-          fetch(echoServer.getUrl("/service1")),
-          fetch(echoServer.getUrl("/service2")),
-          fetch(echoServer.getUrl("/service3")),
+          fetch(echoServer.echoUrlStr("/service1")),
+          fetch(echoServer.echoUrlStr("/service2")),
+          fetch(echoServer.echoUrlStr("/service3")),
         ]);
 
         return Response.json({
@@ -427,7 +428,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const traceparent = `00-${traceId}-9988776655443322-01`;
 
     // Use remote control to avoid instrumenting the test request
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${gateway.port}/gateway`, {
+    const response = await echoServer.fetch(`http://localhost:${gateway.port}/gateway`, {
       headers: { traceparent },
     });
     const result = await response.json();

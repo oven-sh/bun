@@ -2,22 +2,14 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { EchoServer } from "./echo-server";
-import { waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
 
 describe("BunSDK basic functionality", () => {
-  let echoServer: EchoServer;
-
-  beforeAll(async () => {
-    echoServer = new EchoServer();
-    await echoServer.start();
-  });
-
-  afterAll(async () => {
-    await echoServer.stop();
-  });
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
 
   test("creates spans for HTTP requests", async () => {
+    await using echoServer = await getEchoServer();
     const exporter = new InMemorySpanExporter();
 
     const sdk = new BunSDK({
@@ -34,7 +26,7 @@ describe("BunSDK basic functionality", () => {
     });
 
     // Use remote control to avoid creating a CLIENT span from fetch instrumentation
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${server.port}/`);
+    const response = await echoServer.fetch(`http://localhost:${server.port}/`);
     expect(await response.text()).toContain("test");
 
     await waitForSpans(exporter, 1);
@@ -49,6 +41,7 @@ describe("BunSDK basic functionality", () => {
   });
 
   test("ERROR status from 5xx is not overwritten by onRequestEnd", async () => {
+    await using echoServer = await getEchoServer();
     const exporter = new InMemorySpanExporter();
 
     const sdk = new BunSDK({
@@ -65,7 +58,7 @@ describe("BunSDK basic functionality", () => {
     });
 
     // Use remote control to avoid creating a CLIENT span from fetch instrumentation
-    await echoServer.remoteControl.fetch(`http://localhost:${server.port}/error`);
+    await echoServer.fetch(`http://localhost:${server.port}/error`);
 
     await waitForSpans(exporter, 1);
 

@@ -3,8 +3,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-tr
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as http from "node:http";
 import { BunSDK } from "../index";
-import { EchoServer } from "./echo-server";
-import { waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, getEchoServer, waitForSpans } from "./test-utils";
 
 /**
  * Tests trace propagation: uninstrumented client → UUT (http.createServer) → http.request → echo server
@@ -15,16 +14,8 @@ import { waitForSpans } from "./test-utils";
  * 3. Trace context propagates correctly through Node.js AsyncLocalStorage
  */
 describe("Distributed tracing: http.createServer → http.request", () => {
-  let echoServer: EchoServer;
-
-  beforeAll(async () => {
-    echoServer = new EchoServer();
-    await echoServer.start();
-  });
-
-  afterAll(async () => {
-    await echoServer.stop();
-  });
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span in http.createServer handler", async () => {
     const exporter = new InMemorySpanExporter();
@@ -65,7 +56,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "fedcba0987654321";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    await echoServer.remoteControl.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
+    await using echoServer = await getEchoServer();
+    await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
     await waitForSpans(exporter, 1);
 
     const spans = exporter.getFinishedSpans();
@@ -93,7 +85,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     // UUT: http.createServer that makes http.request to echo server
     await using serverA = http.createServer(async (req, res) => {
       try {
-        const echoUrl = new URL(echoServer.getUrl("/downstream"));
+        await using echoServer = await getEchoServer();
+        const echoUrl = new URL(echoServer.echoUrlStr("/downstream"));
 
         // Make outgoing request using http.request
         const response = await new Promise<string>((resolve, reject) => {
@@ -139,7 +132,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "00f067aa0ba902b7";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/upstream`, {
+    await using echoServer = await getEchoServer();
+    const response = await echoServer.fetch(`http://localhost:${port}/upstream`, {
       headers: { traceparent },
     });
     const result = await response.json();
@@ -192,7 +186,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
         // Delay http.request with setTimeout
         const echoData = await new Promise<any>(resolve => {
           setTimeout(async () => {
-            const echoUrl = new URL(echoServer.getUrl("/delayed"));
+            await using echoServer = await getEchoServer();
+            const echoUrl = new URL(echoServer.echoUrlStr("/delayed"));
             const response = await new Promise<string>((res, rej) => {
               const clientReq = http.request(
                 {
@@ -237,7 +232,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const upstreamSpanId = "aabbccdd11223344";
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/test`, {
+    await using echoServer2 = await getEchoServer();
+    const response = await echoServer2.fetch(`http://localhost:${port}/test`, {
       headers: { traceparent },
     });
     const echoData = await response.json();
@@ -276,10 +272,11 @@ describe("Distributed tracing: http.createServer → http.request", () => {
 
     await using gateway = http.createServer(async (req, res) => {
       try {
+        await using echoServer = await getEchoServer();
         // Make 3 parallel http.request calls
         const makeRequest = (path: string) =>
           new Promise<any>((resolve, reject) => {
-            const echoUrl = new URL(echoServer.getUrl(path));
+            const echoUrl = new URL(echoServer.echoUrlStr(path));
             const clientReq = http.request(
               {
                 hostname: echoUrl.hostname,
@@ -326,7 +323,8 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const traceId = "99aabbccddee0011223344556677ff88";
     const traceparent = `00-${traceId}-9988776655443322-01`;
 
-    const response = await echoServer.remoteControl.fetch(`http://localhost:${port}/gateway`, {
+    await using echoServer2 = await getEchoServer();
+    const response = await echoServer2.fetch(`http://localhost:${port}/gateway`, {
       headers: { traceparent },
     });
     const result = await response.json();

@@ -1,10 +1,13 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { makeUninstrumentedRequest, waitForSpans } from "./test-utils";
+import { afterUsingEchoServer, beforeUsingEchoServer, makeUninstrumentedRequest, waitForSpans } from "./test-utils";
 
 describe("Custom span matchers", () => {
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
+
   test("toHaveAttributes - should match all attributes", async () => {
     const exporter = new InMemorySpanExporter();
     const sdk = new BunSDK({

@@ -139,7 +139,12 @@ export class EchoServer {
   private pendingRequests = new Map<string, { resolve: Function; reject: Function }>();
   private requestCounter = 0;
   private lineBuffer = "";
-
+  get portNumber(): number {
+    if (this.port === null) {
+      throw new Error("Echo server not started");
+    }
+    return this.port;
+  }
   async start(): Promise<void> {
     this.proc = Bun.spawn([bunExe(), "packages/bun-otel/test/echo-server.ts"], {
       env: { ...bunEnv, PORT: "0" }, // ensure ephemeral port regardless of CI env
@@ -306,6 +311,16 @@ export class EchoServer {
     this.port = null;
     this.socketPort = null;
     this.pendingRequests.clear();
+  }
+
+  /**
+   * Fire-and-forget shutdown for automatic cleanup.
+   * Logs errors but doesn't throw or return a promise to wait on.
+   */
+  fireAndForgetStop(): void {
+    this.stop().catch(err => {
+      console.error("EchoServer fire-and-forget shutdown failed:", err);
+    });
   }
 
   getUrl(path: string = "/"): string {

@@ -1,10 +1,12 @@
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BunSDK } from "../index";
-import { makeUninstrumentedRequest, waitForSpans } from "./test-utils";
-import { trace } from "node:console";
+import { afterUsingEchoServer, beforeUsingEchoServer, makeUninstrumentedRequest, waitForSpans } from "./test-utils";
 
 describe("W3C trace context propagation", () => {
+  beforeAll(beforeUsingEchoServer);
+  afterAll(afterUsingEchoServer);
+
   // Uses default W3C propagator installed by BunSDK.start()
   test("propagates trace context in Bun.serve", async () => {
     const exporter = new InMemorySpanExporter();

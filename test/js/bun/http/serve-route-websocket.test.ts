@@ -1,5 +1,21 @@
 import { describe, expect, test } from "bun:test";
 
+/**
+ * Wait for a condition to become true, polling at intervals
+ * @param predicate Function that returns true when condition is met
+ * @param timeout Maximum time to wait in ms (default 5000)
+ * @param interval Polling interval in ms (default 10)
+ */
+async function waitFor(predicate: () => boolean, timeout = 5000, interval = 10): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeout) {
+      throw new Error(`waitFor timeout after ${timeout}ms`);
+    }
+    await Bun.sleep(interval);
+  }
+}
+
 describe("Bun.serve() route-specific WebSocket handlers", () => {
   test("route-specific websocket handlers work independently", async () => {
     using server = Bun.serve({
@@ -43,7 +59,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     expect(chatMessages[0]).toBe("chat:welcome");
 
     chatWs.send("hello");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => chatMessages.length > 1);
     expect(chatMessages[1]).toBe("chat:hello");
 
     chatWs.close();
@@ -57,7 +73,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     expect(notifMessages[0]).toBe("notif:connected");
 
     notifWs.send("test");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => notifMessages.length > 1);
     expect(notifMessages[1]).toBe("notif:test");
 
     notifWs.close();
@@ -117,10 +133,9 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     const ws = new WebSocket(`ws://localhost:${server.port}/ws`);
     await new Promise(resolve => (ws.onopen = resolve));
-    await new Promise(resolve => setTimeout(resolve, 100));
     ws.close(1000);
 
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await waitFor(() => closeCalled);
     expect(closeCalled).toBe(true);
     expect(closeCode).toBe(1000);
   });
@@ -153,7 +168,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     expect(messages[0]).toBe("global:welcome");
 
     ws.send("test");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => messages.length > 1);
     expect(messages[1]).toBe("global:test");
 
     ws.close();
@@ -200,7 +215,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     expect(specificMessages[0]).toBe("specific:open");
     specificWs.send("hello");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => specificMessages.length > 1);
     expect(specificMessages[1]).toBe("specific:hello");
     specificWs.close();
 
@@ -212,7 +227,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     expect(globalMessages[0]).toBe("global:open");
     globalWs.send("world");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => globalMessages.length > 1);
     expect(globalMessages[1]).toBe("global:world");
     globalWs.close();
   });
@@ -262,7 +277,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     expect(messages[0]).toBe("ws:ready");
     ws.send("test-message");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => messages.length > 1);
     expect(messages[1]).toBe("ws:received");
     expect(wsMessageReceived).toBe("test-message");
     ws.close();
@@ -343,7 +358,6 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Trigger reload
     await fetch(`http://localhost:${server.port}/reload`);
     await promise;
-    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Connect after reload
     const ws2 = new WebSocket(`ws://localhost:${server.port}/ws`);
@@ -390,8 +404,6 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
       },
     });
 
-    await new Promise(resolve => setTimeout(resolve, 100));
-
     // Regular GET should work
     const resp = await fetch(`http://localhost:${server.port}/ws`);
     expect(await resp.text()).toBe("no websocket");
@@ -402,7 +414,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     ws2.onerror = () => {
       errorOccurred = true;
     };
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await waitFor(() => errorOccurred);
     expect(errorOccurred).toBe(true);
   });
 
@@ -440,8 +452,6 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
         },
       },
     });
-
-    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Regular GET should still work
     const resp2 = await fetch(`http://localhost:${server.port}/ws`);
@@ -505,11 +515,9 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
       },
     });
 
-    await new Promise(resolve => setTimeout(resolve, 100));
-
     // Existing connection should still use old handlers
     ws.send("test");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => messages.length > 1);
     expect(messages[1]).toBe("v1:echo");
     expect(messageReceived).toBe("test");
     ws.close();
@@ -521,7 +529,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     await new Promise(resolve => (ws2.onopen = resolve));
     expect(messages2[0]).toBe("v2");
     ws2.send("test2");
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => messages2.length > 1);
     expect(messages2[1]).toBe("v2:echo");
     ws2.close();
   });
@@ -574,7 +582,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
       conn.ws.send(`msg-${conn.id}`);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await waitFor(() => messageCount.count === 5);
 
     expect(messageCount.count).toBe(5);
 
@@ -683,11 +691,9 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     // Should be able to send messages even without handler
     ws.send("test");
-    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Should be able to close
     ws.close();
-    await new Promise(resolve => setTimeout(resolve, 100));
   });
 
   test("websocket error handler is called on server-side exceptions", async () => {

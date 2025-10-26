@@ -2525,12 +2525,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // Clean up old route-specific WebSocket contexts
                 var old_route_websocket_contexts = this.route_websocket_contexts;
                 defer {
-                    // Deinit Shared pointers - this decrements ref count.
-                    // When ref count reaches 0, WebSocketServerContext.deinit() will be called
-                    // automatically, which will unprotect the JSValues.
+                    // Deinit Shared pointers - this loop decrements ref counts.
+                    // With .deinit = true, when ref count reaches 0, WebSocketServerContext.deinit()
+                    // is called automatically to unprotect JSValues.
                     for (old_route_websocket_contexts.items) |*shared_ws| {
                         shared_ws.deinit();
                     }
+                    // Free the slice container using bun.default_allocator
                     old_route_websocket_contexts.deinit(bun.default_allocator);
                 }
 
@@ -2551,8 +2552,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (builder.websocket) |ws| {
                         ws_ctx_index = @truncate(this.route_websocket_contexts.items.len);
                         // Use Shared pointer to ensure stable memory address for raw pointers in ServerWebSocket
-                        // Shared will allocate the memory and return a pointer to it
-                        // We manually call unprotect() before deinit, so disable automatic deinit
+                        // .deinit = true enables automatic cleanup: when ref count reaches 0,
+                        // WebSocketServerContext.deinit() is called automatically to unprotect JSValues
                         const shared_ws = SharedWebSocketContext.new(ws);
                         shared_ws.get().protect();
                         this.route_websocket_contexts.appendAssumeCapacity(shared_ws);

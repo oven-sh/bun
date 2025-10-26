@@ -262,7 +262,6 @@ pub const Interpreter = struct {
     root_shell: ShellExecEnv,
     root_io: IO,
 
-    has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
@@ -278,7 +277,7 @@ pub const Interpreter = struct {
         __unused: u6 = 0,
     } = .{},
     exit_code: ?ExitCode = 0,
-    this_jsvalue: JSValue = .zero,
+    this_value: jsc.JSRef = jsc.JSRef.empty(),
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
@@ -764,7 +763,7 @@ pub const Interpreter = struct {
             resolve,
             reject,
         );
-        interpreter.this_jsvalue = js_value;
+        interpreter.this_value.setWeak(js_value);
         interpreter.keep_alive.ref(globalThis.bunVM());
         bun.analytics.Features.shell += 1;
         return js_value;
@@ -1150,10 +1149,10 @@ pub const Interpreter = struct {
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
-        incrPendingActivityFlag(&this.has_pending_activity);
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
+        this.updateHasPendingActivity();
         root.start().run();
         if (globalThis.hasException()) return error.JSError;
 
@@ -1192,17 +1191,18 @@ pub const Interpreter = struct {
 
     pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) Yield {
         log("Interpreter(0x{x}) finish {d}", .{ @intFromPtr(this), exit_code });
-        defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            const this_jsvalue = this.this_jsvalue;
+            this.flags.done = true;
+            this.updateHasPendingActivity();
+            const this_jsvalue = this.this_value.tryGet() orelse .zero;
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
                     const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
+                    this.this_value.deinit();
                     this.keep_alive.disable();
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
@@ -1228,7 +1228,7 @@ pub const Interpreter = struct {
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
-        this.this_jsvalue = .zero;
+        this.this_value.deinit();
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
@@ -1238,7 +1238,7 @@ pub const Interpreter = struct {
         if (this.root_shell._buffered_stdout == .owned) {
             this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
-        this.this_jsvalue = .zero;
+        this.this_value.finalize();
         this.args.deinit();
         this.allocator.destroy(this);
     }
@@ -1251,7 +1251,7 @@ pub const Interpreter = struct {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
-        this.this_jsvalue = .zero;
+        this.this_value.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1313,7 +1313,7 @@ pub const Interpreter = struct {
     }
 
     pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        return jsc.JSValue.jsBoolean(this.hasPendingActivity());
+        return jsc.JSValue.jsBoolean(this.computeHasPendingActivity());
     }
 
     pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1336,18 +1336,23 @@ pub const Interpreter = struct {
         this.deinitFromFinalizer();
     }
 
-    pub fn hasPendingActivity(this: *ThisInterpreter) bool {
-        return this.has_pending_activity.load(.seq_cst) > 0;
+    pub fn computeHasPendingActivity(this: *const ThisInterpreter) bool {
+        // Shell has pending activity if it has started but not finished
+        return this.started.load(.seq_cst) and !this.flags.done;
     }
 
-    fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        _ = has_pending_activity.fetchAdd(1, .seq_cst);
-        log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
-    }
+    pub fn updateHasPendingActivity(this: *ThisInterpreter) void {
+        const has_pending = this.computeHasPendingActivity();
+        if (comptime bun.Environment.isDebug) {
+            log("updateHasPendingActivity() -> {any}", .{has_pending});
+        }
 
-    fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        _ = has_pending_activity.fetchSub(1, .seq_cst);
-        log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
+        // Upgrade or downgrade the reference based on pending activity
+        if (has_pending) {
+            this.this_value.upgrade(this.globalThis);
+        } else {
+            this.this_value.downgrade();
+        }
     }
 
     pub fn rootIO(this: *const Interpreter) *const IO {

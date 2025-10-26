@@ -6,7 +6,7 @@ Use `crypto.randomUUID()` to generate a UUID v4. This API works in Bun, Node.js,
 
 ```ts
 crypto.randomUUID();
-// => "123e4567-e89b-12d3-a456-426614174000"
+// => "123e4567-e89b-42d3-a456-426614174000"
 ```
 
 ---

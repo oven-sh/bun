@@ -1,21 +1,5 @@
 import { describe, expect, test } from "bun:test";
 
-/**
- * Wait for a condition to become true, polling at intervals
- * @param predicate Function that returns true when condition is met
- * @param timeout Maximum time to wait in ms (default 5000)
- * @param interval Polling interval in ms (default 10)
- */
-async function waitFor(predicate: () => boolean, timeout = 5000, interval = 10): Promise<void> {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > timeout) {
-      throw new Error(`waitFor timeout after ${timeout}ms`);
-    }
-    await Bun.sleep(interval);
-  }
-}
-
 describe("Bun.serve() route-specific WebSocket handlers", () => {
   test("route-specific websocket handlers work independently", async () => {
     using server = Bun.serve({
@@ -53,13 +37,20 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Test chat WebSocket
     const chatWs = new WebSocket(`ws://localhost:${server.port}/api/v1/chat`);
     const chatMessages: string[] = [];
-    chatWs.onmessage = e => chatMessages.push(e.data);
-    await new Promise(resolve => (chatWs.onopen = resolve));
 
+    const { promise: chatResponse, resolve: resolveChatResponse } = Promise.withResolvers<void>();
+    let chatResponseCount = 0;
+    chatWs.onmessage = e => {
+      chatMessages.push(e.data);
+      chatResponseCount++;
+      if (chatResponseCount === 2) resolveChatResponse();
+    };
+
+    await new Promise(resolve => (chatWs.onopen = resolve));
     expect(chatMessages[0]).toBe("chat:welcome");
 
     chatWs.send("hello");
-    await waitFor(() => chatMessages.length > 1);
+    await chatResponse;
     expect(chatMessages[1]).toBe("chat:hello");
 
     chatWs.close();
@@ -67,13 +58,20 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Test notifications WebSocket
     const notifWs = new WebSocket(`ws://localhost:${server.port}/api/v2/notifications`);
     const notifMessages: string[] = [];
-    notifWs.onmessage = e => notifMessages.push(e.data);
-    await new Promise(resolve => (notifWs.onopen = resolve));
 
+    const { promise: notifResponse, resolve: resolveNotifResponse } = Promise.withResolvers<void>();
+    let notifResponseCount = 0;
+    notifWs.onmessage = e => {
+      notifMessages.push(e.data);
+      notifResponseCount++;
+      if (notifResponseCount === 2) resolveNotifResponse();
+    };
+
+    await new Promise(resolve => (notifWs.onopen = resolve));
     expect(notifMessages[0]).toBe("notif:connected");
 
     notifWs.send("test");
-    await waitFor(() => notifMessages.length > 1);
+    await notifResponse;
     expect(notifMessages[1]).toBe("notif:test");
 
     notifWs.close();
@@ -108,8 +106,9 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
   });
 
   test("route-specific websocket with close handler", async () => {
-    let closeCalled = false;
     let closeCode = 0;
+
+    const { promise: closeHandlerCalled, resolve: resolveCloseHandler } = Promise.withResolvers<void>();
 
     using server = Bun.serve({
       port: 0,
@@ -120,8 +119,8 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
               ws.send("ready");
             },
             close(ws, code) {
-              closeCalled = true;
               closeCode = code;
+              resolveCloseHandler();
             },
           },
           upgrade(req, server) {
@@ -135,8 +134,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     await new Promise(resolve => (ws.onopen = resolve));
     ws.close(1000);
 
-    await waitFor(() => closeCalled);
-    expect(closeCalled).toBe(true);
+    await closeHandlerCalled;
     expect(closeCode).toBe(1000);
   });
 
@@ -162,13 +160,19 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     const ws = new WebSocket(`ws://localhost:${server.port}/api/test`);
     const messages: string[] = [];
-    ws.onmessage = e => messages.push(e.data);
+
+    const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers<void>();
+    ws.onmessage = e => {
+      messages.push(e.data);
+      if (messages.length > 1) resolveMessageReceived();
+    };
+
     await new Promise(resolve => (ws.onopen = resolve));
 
     expect(messages[0]).toBe("global:welcome");
 
     ws.send("test");
-    await waitFor(() => messages.length > 1);
+    await messageReceived;
     expect(messages[1]).toBe("global:test");
 
     ws.close();
@@ -210,30 +214,44 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Test route-specific handler
     const specificWs = new WebSocket(`ws://localhost:${server.port}/specific`);
     const specificMessages: string[] = [];
-    specificWs.onmessage = e => specificMessages.push(e.data);
+
+    const { promise: specificMessageReceived, resolve: resolveSpecificMessage } = Promise.withResolvers<void>();
+    specificWs.onmessage = e => {
+      specificMessages.push(e.data);
+      if (specificMessages.length > 1) resolveSpecificMessage();
+    };
+
     await new Promise(resolve => (specificWs.onopen = resolve));
 
     expect(specificMessages[0]).toBe("specific:open");
     specificWs.send("hello");
-    await waitFor(() => specificMessages.length > 1);
+    await specificMessageReceived;
     expect(specificMessages[1]).toBe("specific:hello");
     specificWs.close();
 
     // Test global handler
     const globalWs = new WebSocket(`ws://localhost:${server.port}/global`);
     const globalMessages: string[] = [];
-    globalWs.onmessage = e => globalMessages.push(e.data);
+
+    const { promise: globalMessageReceived, resolve: resolveGlobalMessage } = Promise.withResolvers<void>();
+    globalWs.onmessage = e => {
+      globalMessages.push(e.data);
+      if (globalMessages.length > 1) resolveGlobalMessage();
+    };
+
     await new Promise(resolve => (globalWs.onopen = resolve));
 
     expect(globalMessages[0]).toBe("global:open");
     globalWs.send("world");
-    await waitFor(() => globalMessages.length > 1);
+    await globalMessageReceived;
     expect(globalMessages[1]).toBe("global:world");
     globalWs.close();
   });
 
   test("route-specific websocket with multiple HTTP methods", async () => {
     let wsMessageReceived = "";
+
+    const { promise: messageProcessed, resolve: resolveMessageProcessed } = Promise.withResolvers<void>();
 
     using server = Bun.serve({
       port: 0,
@@ -252,6 +270,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
             message(ws, data) {
               wsMessageReceived = data.toString();
               ws.send("ws:received");
+              resolveMessageProcessed();
             },
           },
           upgrade(req, server) {
@@ -272,12 +291,18 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Test WebSocket (which uses GET under the hood)
     const ws = new WebSocket(`ws://localhost:${server.port}/api/resource`);
     const messages: string[] = [];
-    ws.onmessage = e => messages.push(e.data);
+
+    const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers<void>();
+    ws.onmessage = e => {
+      messages.push(e.data);
+      if (messages.length > 1) resolveMessageReceived();
+    };
+
     await new Promise(resolve => (ws.onopen = resolve));
 
     expect(messages[0]).toBe("ws:ready");
     ws.send("test-message");
-    await waitFor(() => messages.length > 1);
+    await Promise.all([messageReceived, messageProcessed]);
     expect(messages[1]).toBe("ws:received");
     expect(wsMessageReceived).toBe("test-message");
     ws.close();
@@ -410,12 +435,11 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     // WebSocket should fail
     const ws2 = new WebSocket(`ws://localhost:${server.port}/ws`);
-    let errorOccurred = false;
+    const { promise: errorOccurred, resolve: resolveError } = Promise.withResolvers<void>();
     ws2.onerror = () => {
-      errorOccurred = true;
+      resolveError();
     };
-    await waitFor(() => errorOccurred);
-    expect(errorOccurred).toBe(true);
+    await errorOccurred;
   });
 
   test("server.reload() adds websocket handler to existing route", async () => {
@@ -469,6 +493,8 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
   test("server.reload() with active websocket connections", async () => {
     let messageReceived = "";
 
+    const { promise: messageProcessed, resolve: resolveMessageProcessed } = Promise.withResolvers<void>();
+
     using server = Bun.serve({
       port: 0,
       routes: {
@@ -480,6 +506,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
             message(ws, data) {
               messageReceived = data.toString();
               ws.send("v1:echo");
+              resolveMessageProcessed();
             },
           },
           upgrade(req, server) {
@@ -492,7 +519,13 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // Create active connection
     const ws = new WebSocket(`ws://localhost:${server.port}/ws`);
     const messages: string[] = [];
-    ws.onmessage = e => messages.push(e.data);
+
+    const { promise: messageReceived1, resolve: resolveMessageReceived1 } = Promise.withResolvers<void>();
+    ws.onmessage = e => {
+      messages.push(e.data);
+      if (messages.length > 1) resolveMessageReceived1();
+    };
+
     await new Promise(resolve => (ws.onopen = resolve));
     expect(messages[0]).toBe("v1");
 
@@ -517,7 +550,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
 
     // Existing connection should still use old handlers
     ws.send("test");
-    await waitFor(() => messages.length > 1);
+    await Promise.all([messageReceived1, messageProcessed]);
     expect(messages[1]).toBe("v1:echo");
     expect(messageReceived).toBe("test");
     ws.close();
@@ -525,11 +558,17 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     // New connection should use new handlers
     const ws2 = new WebSocket(`ws://localhost:${server.port}/ws`);
     const messages2: string[] = [];
-    ws2.onmessage = e => messages2.push(e.data);
+
+    const { promise: messageReceived2, resolve: resolveMessageReceived2 } = Promise.withResolvers<void>();
+    ws2.onmessage = e => {
+      messages2.push(e.data);
+      if (messages2.length > 1) resolveMessageReceived2();
+    };
+
     await new Promise(resolve => (ws2.onopen = resolve));
     expect(messages2[0]).toBe("v2");
     ws2.send("test2");
-    await waitFor(() => messages2.length > 1);
+    await messageReceived2;
     expect(messages2[1]).toBe("v2:echo");
     ws2.close();
   });
@@ -537,6 +576,8 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
   test("multiple concurrent websocket connections to same route", async () => {
     const openCount = { count: 0 };
     const messageCount = { count: 0 };
+
+    const { promise: allMessagesReceived, resolve: resolveAllMessagesReceived } = Promise.withResolvers<void>();
 
     using server = Bun.serve({
       port: 0,
@@ -550,6 +591,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
             message(ws, data) {
               messageCount.count++;
               ws.send(`echo-${data}`);
+              if (messageCount.count === 5) resolveAllMessagesReceived();
             },
           },
           upgrade(req, server) {
@@ -559,14 +601,22 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
       },
     });
 
-    // Create 5 concurrent connections
+    // Create 5 concurrent connections with promise resolvers for each
+    const connectionPromises = Array.from({ length: 5 }, (_, i) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      return { promise, resolve, id: i };
+    });
+
     const connections = await Promise.all(
-      Array.from({ length: 5 }, async (_, i) => {
+      connectionPromises.map(async ({ promise, resolve, id }) => {
         const ws = new WebSocket(`ws://localhost:${server.port}/ws`);
         const messages: string[] = [];
-        ws.onmessage = e => messages.push(e.data);
-        await new Promise(resolve => (ws.onopen = resolve));
-        return { ws, messages, id: i };
+        ws.onmessage = e => {
+          messages.push(e.data);
+          if (messages.length >= 2) resolve();
+        };
+        await new Promise(resolveOpen => (ws.onopen = resolveOpen));
+        return { ws, messages, id, promise };
       }),
     );
 
@@ -583,11 +633,11 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     }
 
     // Wait for server to receive all messages
-    await waitFor(() => messageCount.count === 5);
+    await allMessagesReceived;
     expect(messageCount.count).toBe(5);
 
     // Wait for all echo responses to arrive back at clients
-    await waitFor(() => connections.every(conn => conn.messages.length >= 2));
+    await Promise.all(connections.map(conn => conn.promise));
 
     // Each should get their echo back
     for (const conn of connections) {
@@ -700,7 +750,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
   });
 
   test("websocket error handler is called on server-side exceptions", async () => {
-    let errorCalled = false;
+    const { promise: errorHandlerCalled, resolve: resolveErrorHandler } = Promise.withResolvers<void>();
 
     using server = Bun.serve({
       port: 0,
@@ -714,7 +764,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
               }
             },
             error(ws, error) {
-              errorCalled = true;
+              resolveErrorHandler();
             },
           },
           upgrade(req, server) {
@@ -731,9 +781,7 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     ws.send("trigger-error");
 
     // Wait for error handler to be called
-    await waitFor(() => errorCalled);
-
-    expect(errorCalled).toBe(true);
+    await errorHandlerCalled;
 
     ws.close();
   });

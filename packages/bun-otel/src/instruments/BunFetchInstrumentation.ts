@@ -8,13 +8,10 @@
  * @module bun-otel/instruments/BunFetchInstrumentation
  */
 
-import { SpanKind, type Context as OtelContext } from "@opentelemetry/api";
-import type { InstrumentationConfig } from "@opentelemetry/instrumentation";
+import { SpanKind } from "@opentelemetry/api";
 import { ATTR_HTTP_RESPONSE_BODY_SIZE } from "@opentelemetry/semantic-conventions/incubating";
-import { AsyncLocalStorage } from "async_hooks";
 import { OpId } from "bun";
 import {
-  ATTR_URL_SCHEME,
   ATTR_HTTP_REQUEST_HEADER,
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_RESPONSE_HEADER,
@@ -22,44 +19,20 @@ import {
   ATTR_SERVER_ADDRESS,
   ATTR_SERVER_PORT,
   ATTR_URL_FULL,
+  ATTR_URL_SCHEME,
   HTTP_REQUEST_METHOD_VALUE_GET,
   TRACEPARENT,
   TRACESTATE,
 } from "../semconv";
 import { migrateToCaptureAttributes } from "../validation";
 import { BunAbstractInstrumentation } from "./BunAbstractInstrumentation";
+import { BunInstrumentationConfig } from "./config";
 
 /**
  * Configuration options for BunFetchInstrumentation.
+ * Re-export of shared config for backwards compatibility.
  */
-export interface BunFetchInstrumentationConfig extends InstrumentationConfig {
-  /**
-   * HTTP headers to capture as span attributes.
-   * Sensitive headers (authorization, cookie, etc.) are always blocked.
-   */
-  captureAttributes?: {
-    /** Request headers to capture (e.g., ["content-type", "accept"]) */
-    requestHeaders?: string[];
-    /** Response headers to capture (e.g., ["content-type", "cache-control"]) */
-    responseHeaders?: string[];
-  };
-
-  /**
-   * Map the following HTTP headers to span attributes.
-   * @see https://github.com/open-telemetry/opentelemetry-js-contrib/blob/main/packages/instrumentation-undici/src/types.ts#L83
-   */
-  headersToSpanAttributes?: {
-    requestHeaders?: string[];
-    responseHeaders?: string[];
-  };
-
-  /**
-   * Shared AsyncLocalStorage instance for context propagation.
-   * Provided by BunSDK to enable trace context sharing between instrumentations.
-   * @internal
-   */
-  contextStorage?: AsyncLocalStorage<OtelContext>;
-}
+export type BunFetchInstrumentationConfig = BunInstrumentationConfig;
 
 /**
  * OpenTelemetry instrumentation for Bun's native fetch() API.

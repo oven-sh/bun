@@ -12,19 +12,7 @@
  * @module bun-otel/instruments/BunHttpInstrumentation
  */
 
-import {
-  Attributes,
-  Context,
-  context,
-  propagation,
-  SpanKind,
-  trace,
-  ValueType,
-  type MeterProvider,
-  type Span,
-} from "@opentelemetry/api";
-import type { InstrumentationConfig } from "@opentelemetry/instrumentation";
-import { AsyncLocalStorage } from "async_hooks";
+import { context, propagation, SpanKind, trace, ValueType, type MeterProvider } from "@opentelemetry/api";
 import { OpId } from "bun";
 import type { IncomingMessage, ServerResponse } from "http";
 import {
@@ -41,145 +29,24 @@ import {
 } from "../semconv";
 import { migrateToCaptureAttributes, validateCaptureAttributes } from "../validation";
 import { BunAbstractInstrumentation } from "./BunAbstractInstrumentation";
+import {
+  BunHttpInstrumentationConfig,
+  HttpCustomAttributeFunction,
+  HttpRequestCustomAttributeFunction,
+  HttpResponseCustomAttributeFunction,
+  IgnoreIncomingRequestFunction,
+  StartIncomingSpanCustomAttributeFunction,
+} from "./config";
 
-/**
- * Hook function for ignoring incoming requests based on custom criteria.
- */
-export interface IgnoreIncomingRequestFunction {
-  (request: IncomingMessage): boolean;
-}
-
-/**
- * Hook function for adding custom attributes to spans.
- */
-export interface HttpCustomAttributeFunction {
-  (span: Span, request: IncomingMessage, response: ServerResponse): void;
-}
-
-/**
- * Hook function for adding custom attributes during request processing.
- */
-export interface HttpRequestCustomAttributeFunction {
-  (span: Span, request: IncomingMessage): void;
-}
-
-/**
- * Hook function for adding custom attributes during response processing.
- */
-export interface HttpResponseCustomAttributeFunction {
-  (span: Span, response: ServerResponse): void;
-}
-
-/**
- * Hook function for adding custom attributes before a span is started.
- */
-export interface StartIncomingSpanCustomAttributeFunction {
-  (request: IncomingMessage): Attributes;
-}
-
-/**
- * Configuration options for BunHttpInstrumentation.
- * Compatible with @opentelemetry/instrumentation-http HttpInstrumentationConfig.
- *
- * All options are optional to match Node.js SDK behavior.
- */
-export interface BunHttpInstrumentationConfig extends InstrumentationConfig {
-  /**
-   * Function to determine if incoming request should be ignored.
-   * @example
-   * ```typescript
-   * ignoreIncomingRequestHook: (req) => req.url?.includes('/health')
-   * ```
-   */
-  ignoreIncomingRequestHook?: IgnoreIncomingRequestFunction;
-
-  /**
-   * If set to true, incoming requests will not be instrumented at all.
-   * @default false
-   */
-  disableIncomingRequestInstrumentation?: boolean;
-
-  /**
-   * Function for adding custom attributes after response is handled.
-   * Called with final span, request, and response.
-   */
-  applyCustomAttributesOnSpan?: HttpCustomAttributeFunction;
-
-  /**
-   * Function for adding custom attributes before request is handled.
-   * Called early in span lifecycle with request only.
-   */
-  requestHook?: HttpRequestCustomAttributeFunction;
-
-  /**
-   * Function for adding custom attributes before response is handled.
-   * Called with span and response when response starts.
-   */
-  responseHook?: HttpResponseCustomAttributeFunction;
-
-  /**
-   * Function for adding custom attributes before a span is started in incoming request.
-   * Returned attributes are added to span at creation time.
-   */
-  startIncomingSpanHook?: StartIncomingSpanCustomAttributeFunction;
-
-  /**
-   * The primary server name of the matched virtual host.
-   * Sets server.address attribute if provided.
-   */
-  serverName?: string;
-
-  /**
-   * Require parent span to create span for incoming requests.
-   * If true and no parent context, span will not be created.
-   * @default false
-   */
-  requireParentforIncomingSpans?: boolean;
-
-  /**
-   * Map HTTP headers to span attributes.
-   * Compatible with Node.js SDK format.
-   * @example
-   * ```typescript
-   * headersToSpanAttributes: {
-   *   server: {
-   *     requestHeaders: ['user-agent', 'content-type'],
-   *     responseHeaders: ['content-type', 'x-trace-id']
-   *   }
-   * }
-   * ```
-   */
-  headersToSpanAttributes?: {
-    server?: {
-      requestHeaders?: string[];
-      responseHeaders?: string[];
-    };
-  };
-
-  /**
-   * @deprecated Use headersToSpanAttributes instead.
-   * Legacy format for backward compatibility.
-   * HTTP headers to capture as span attributes.
-   */
-  captureAttributes?: {
-    requestHeaders?: string[];
-    responseHeaders?: string[];
-  };
-
-  /**
-   * Enable automatic population of synthetic source type based on user-agent header.
-   * @experimental
-   * @default false
-   */
-  enableSyntheticSourceDetection?: boolean;
-
-  /**
-   * Shared AsyncLocalStorage instance for context propagation.
-   * Provided by BunSDK to enable trace context sharing between instrumentations.
-   * @internal
-   */
-  contextStorage?: AsyncLocalStorage<Context>;
-}
+// Re-export config types for backwards compatibility
+export type {
+  BunHttpInstrumentationConfig,
+  HttpCustomAttributeFunction,
+  HttpRequestCustomAttributeFunction,
+  HttpResponseCustomAttributeFunction,
+  IgnoreIncomingRequestFunction,
+  StartIncomingSpanCustomAttributeFunction,
+};
 
 /**
  * OpenTelemetry instrumentation for Bun's native HTTP server (Bun.serve).

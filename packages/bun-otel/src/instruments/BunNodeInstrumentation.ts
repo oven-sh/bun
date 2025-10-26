@@ -23,11 +23,8 @@ import {
   trace,
   ValueType,
   type MeterProvider,
-  type Context as OtelContext,
   type Span,
 } from "@opentelemetry/api";
-import type { InstrumentationConfig } from "@opentelemetry/instrumentation";
-import { AsyncLocalStorage } from "async_hooks";
 import { OpId } from "bun";
 import {
   ATTR_HTTP_REQUEST_HEADER,
@@ -42,36 +39,19 @@ import { IncomingMessage, ServerResponse } from "http";
 import { parseUrlAndHost } from "../url-utils";
 import { migrateToCaptureAttributes, validateCaptureAttributes } from "../validation";
 import { BunAbstractInstrumentation } from "./BunAbstractInstrumentation";
-import { BunHttpInstrumentationConfig } from "./BunHttpInstrumentation";
+import { BunHttpInstrumentationConfig } from "./config";
 
 // Symbols for Node.js http span tracking
 const kSpan = Symbol("kOtelSpan");
 
 /**
  * Configuration options for BunNodeInstrumentation.
+ * Re-export of shared HTTP config for backwards compatibility.
  *
  * Note: This instrumentation is SERVER-only. CLIENT spans for http.request()
  * are handled by BunFetchInstrumentation since Bun's http.request() uses fetch() internally.
  */
-export interface BunNodeInstrumentationConfig extends InstrumentationConfig {
-  /**
-   * HTTP headers to capture as span attributes.
-   * Sensitive headers (authorization, cookie, etc.) are always blocked.
-   */
-  captureAttributes?: {
-    /** Request headers to capture (e.g., ["user-agent", "content-type"]) */
-    requestHeaders?: string[];
-    /** Response headers to capture (e.g., ["content-type", "x-trace-id"]) */
-    responseHeaders?: string[];
-  };
-
-  /**
-   * Shared AsyncLocalStorage instance for context propagation.
-   * Provided by BunSDK to enable trace context sharing between instrumentations.
-   * @internal
-   */
-  contextStorage?: AsyncLocalStorage<OtelContext>;
-}
+export type BunNodeInstrumentationConfig = BunHttpInstrumentationConfig;
 
 /**
  * OpenTelemetry instrumentation for Node.js HTTP server (http.createServer).

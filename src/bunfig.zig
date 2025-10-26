@@ -754,6 +754,162 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (json.get("build")) |build_obj| {
+                if (comptime cmd == .BuildCommand) {
+                    if (build_obj.get("entrypoints")) |entrypoints| {
+                        if (entrypoints.data == .e_string) {
+                            // Single entrypoint as string
+                            var names = try this.allocator.alloc(string, 1);
+                            names[0] = try entrypoints.data.e_string.string(allocator);
+                            this.bunfig.entry_points = names;
+                        } else {
+                            // Multiple entrypoints as array
+                            try this.expect(entrypoints, .e_array);
+                            const items = entrypoints.data.e_array.items.slice();
+                            var names = try this.allocator.alloc(string, items.len);
+                            for (items, 0..) |item, i| {
+                                try this.expectString(item);
+                                names[i] = try item.data.e_string.string(allocator);
+                            }
+                            this.bunfig.entry_points = names;
+                        }
+                    }
+
+                    if (build_obj.get("outdir")) |dir| {
+                        try this.expectString(dir);
+                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("watch")) |watch| {
+                        if (watch.asBool()) |value| {
+                            if (value) {
+                                this.ctx.debug.hot_reload = .watch;
+                            }
+                        }
+                    }
+
+                    if (build_obj.get("minify")) |minify| {
+                        if (minify.asBool()) |value| {
+                            this.ctx.bundler_options.minify_syntax = value;
+                            this.ctx.bundler_options.minify_whitespace = value;
+                            this.ctx.bundler_options.minify_identifiers = value;
+                        } else if (minify.isObject()) {
+                            if (minify.get("syntax")) |syntax| {
+                                this.ctx.bundler_options.minify_syntax = syntax.asBool() orelse false;
+                            }
+                            if (minify.get("whitespace")) |whitespace| {
+                                this.ctx.bundler_options.minify_whitespace = whitespace.asBool() orelse false;
+                            }
+                            if (minify.get("identifiers")) |identifiers| {
+                                this.ctx.bundler_options.minify_identifiers = identifiers.asBool() orelse false;
+                            }
+                        } else {
+                            try this.addError(minify.loc, "Expected minify to be boolean or object");
+                        }
+                    }
+
+                    if (build_obj.get("external")) |expr| {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                var externals = try allocator.alloc(string, 1);
+                                externals[0] = try str.string(allocator);
+                                this.bunfig.external = externals;
+                            },
+                            .e_array => |array| {
+                                var externals = try allocator.alloc(string, array.items.len);
+
+                                for (array.items.slice(), 0..) |item, i| {
+                                    try this.expectString(item);
+                                    externals[i] = try item.data.e_string.string(allocator);
+                                }
+
+                                this.bunfig.external = externals;
+                            },
+                            else => try this.addError(expr.loc, "Expected string or array"),
+                        }
+                    }
+
+                    if (build_obj.get("target")) |target| {
+                        try this.expectString(target);
+                        const target_str = target.asString(allocator) orelse "";
+                        if (strings.eqlComptime(target_str, "browser")) {
+                            this.bunfig.target = .browser;
+                        } else if (strings.eqlComptime(target_str, "bun")) {
+                            this.bunfig.target = .bun;
+                        } else if (strings.eqlComptime(target_str, "node")) {
+                            this.bunfig.target = .node;
+                        } else {
+                            try this.addError(target.loc, "Invalid target, must be \"browser\", \"bun\", or \"node\"");
+                        }
+                    }
+
+                    if (build_obj.get("sourcemap")) |sourcemap| {
+                        try this.expectString(sourcemap);
+                        const sourcemap_str = sourcemap.asString(allocator) orelse "";
+                        if (strings.eqlComptime(sourcemap_str, "linked")) {
+                            this.bunfig.source_map = .linked;
+                        } else if (strings.eqlComptime(sourcemap_str, "inline")) {
+                            this.bunfig.source_map = .@"inline";
+                        } else if (strings.eqlComptime(sourcemap_str, "external")) {
+                            this.bunfig.source_map = .external;
+                        } else if (strings.eqlComptime(sourcemap_str, "none")) {
+                            this.bunfig.source_map = .none;
+                        } else {
+                            try this.addError(sourcemap.loc, "Invalid sourcemap option, must be \"linked\", \"inline\", \"external\", or \"none\"");
+                        }
+                    }
+
+                    if (build_obj.get("splitting")) |splitting| {
+                        if (splitting.asBool()) |value| {
+                            this.ctx.bundler_options.code_splitting = value;
+                        }
+                    }
+
+                    if (build_obj.get("publicPath")) |public_path| {
+                        try this.expectString(public_path);
+                        this.ctx.bundler_options.public_path = try public_path.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("format")) |format| {
+                        try this.expectString(format);
+                        const format_str = format.asString(allocator) orelse "";
+                        if (strings.eqlComptime(format_str, "esm")) {
+                            this.ctx.bundler_options.output_format = .esm;
+                        } else if (strings.eqlComptime(format_str, "cjs") or strings.eqlComptime(format_str, "commonjs")) {
+                            this.ctx.bundler_options.output_format = .cjs;
+                        } else if (strings.eqlComptime(format_str, "iife")) {
+                            this.ctx.bundler_options.output_format = .iife;
+                        } else {
+                            try this.addError(format.loc, "Invalid format, must be \"esm\", \"cjs\", or \"iife\"");
+                        }
+                    }
+
+                    if (build_obj.get("root")) |root| {
+                        try this.expectString(root);
+                        this.ctx.bundler_options.root_dir = try root.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("entryNaming")) |entry_naming| {
+                        try this.expectString(entry_naming);
+                        this.ctx.bundler_options.entry_naming = try entry_naming.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("chunkNaming")) |chunk_naming| {
+                        try this.expectString(chunk_naming);
+                        this.ctx.bundler_options.chunk_naming = try chunk_naming.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("assetNaming")) |asset_naming| {
+                        try this.expectString(asset_naming);
+                        this.ctx.bundler_options.asset_naming = try asset_naming.data.e_string.string(allocator);
+                    }
+
+                    if (build_obj.get("logLevel")) |expr2| {
+                        try this.loadLogLevel(expr2);
+                    }
+                }
+            }
+
             if (json.get("bundle")) |_bun| {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {

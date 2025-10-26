@@ -1,0 +1,6 @@
+[build]
+entrypoints = "./index.ts"
+outdir = "dist"
+watch = true
+minify = true
+external = ["react", "react-dom"]

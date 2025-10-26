@@ -272,3 +272,46 @@ test("log case 2", () => {
     "
   `);
 });
+
+test("build config in bunfig.toml - issue #18290", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "index.ts");
+  const configFile = path.join(tmpdir, "bunfig.toml");
+  const outdir = path.join(tmpdir, "dist");
+
+  // Create test input file
+  writeFileSync(inputFile, 'console.log("Hello from bunfig.toml build config!");');
+
+  // Create bunfig.toml with build configuration
+  writeFileSync(
+    configFile,
+    `[build]
+entrypoints = "./index.ts"
+outdir = "dist"
+minify = true
+external = ["react", "react-dom"]
+`,
+  );
+
+  // Run bun build without any arguments (should use bunfig.toml)
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "build"],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(exitCode).toBe(0);
+
+  // Verify output directory was created
+  expect(fs.existsSync(outdir)).toBe(true);
+
+  // Verify output file exists
+  const outFile = path.join(outdir, "index.js");
+  expect(fs.existsSync(outFile)).toBe(true);
+
+  // Verify minification occurred (output should be shorter than unminified)
+  const outputContent = fs.readFileSync(outFile, "utf8");
+  expect(outputContent.length).toBeLessThan(200); // Minified should be quite small
+  expect(outputContent).toContain("Hello from bunfig.toml build config!");
+});

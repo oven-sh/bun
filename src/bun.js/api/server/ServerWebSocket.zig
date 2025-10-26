@@ -308,11 +308,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
     var handler = this.#handler;
     const was_closed = this.isClosed();
     this.#flags.closed = true;
-    defer {
-        if (!was_closed) {
-            handler.active_connections -|= 1;
-        }
-    }
+
     const signal = this.#signal;
     this.#signal = null;
 
@@ -324,6 +320,12 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         if (this.#this_value.isNotEmpty()) {
             this.#this_value.downgrade();
+        }
+
+        // Decrement active connections BEFORE releasing shared context
+        // to avoid use-after-free (handler pointer may be inside the context)
+        if (!was_closed) {
+            handler.active_connections -|= 1;
         }
 
         // Release the shared context reference if we have one

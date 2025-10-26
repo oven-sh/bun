@@ -52,7 +52,7 @@ registry = "https://localhost:${server.port}/"
     });
 
     // First, try without --insecure - should fail with certificate error
-    const { stderr: stderr1, exited: exited1 } = spawn({
+    const { stdout: stdout1, stderr: stderr1, exited: exited1 } = spawn({
       cmd: [bunExe(), "install"],
       cwd: testDir,
       env: bunEnv,
@@ -60,15 +60,16 @@ registry = "https://localhost:${server.port}/"
       stderr: "pipe",
     });
 
-    const exitCode1 = await exited1;
+    const stdoutText1 = await stdout1.text();
     const stderrText1 = await stderr1.text();
+    const exitCode1 = await exited1;
 
     expect(exitCode1).toBe(1);
     expect(stderrText1).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
 
     // Now try with --insecure - should succeed and show warning
     // Run in a fresh process to ensure HTTP thread is initialized with --insecure
-    const { stdout: stdout2, stderr: stderr2, exited: exited2 } = spawn({
+    await using proc2 = spawn({
       cmd: [bunExe(), "install", "--insecure"],
       cwd: testDir,
       env: bunEnv,
@@ -76,8 +77,9 @@ registry = "https://localhost:${server.port}/"
       stderr: "pipe",
     });
 
-    const exitCode2 = await exited2;
-    const stderrText2 = await stderr2.text();
+    const stdoutText2 = await proc2.stdout.text();
+    const stderrText2 = await proc2.stderr.text();
+    const exitCode2 = await proc2.exited;
 
     expect(exitCode2).toBe(0);
     expect(stderrText2).toContain("--insecure");

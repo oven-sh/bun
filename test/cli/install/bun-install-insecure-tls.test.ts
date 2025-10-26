@@ -64,8 +64,8 @@ registry = "https://localhost:${server.port}/"
     const stderrText1 = await stderr1.text();
     const exitCode1 = await exited1;
 
-    expect(exitCode1).toBe(1);
     expect(stderrText1).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(exitCode1).toBe(1);
 
     // Now try with --insecure - should succeed and show warning
     // Run in a fresh process to ensure HTTP thread is initialized with --insecure
@@ -81,10 +81,10 @@ registry = "https://localhost:${server.port}/"
     const stderrText2 = await proc2.stderr.text();
     const exitCode2 = await proc2.exited;
 
-    expect(exitCode2).toBe(0);
     expect(stderrText2).toContain("--insecure");
     expect(stderrText2).toContain("TLS/SSL certificate verification is disabled");
     expect(stderrText2).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(exitCode2).toBe(0);
 
     // Verify package was installed
     const installed = await readdirSorted(join(testDir, "node_modules"));

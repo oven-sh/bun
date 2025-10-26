@@ -51,13 +51,13 @@ describe("bun install --insecure flag", () => {
     const exitCode = await exited;
     const stderrText = await stderr.text();
 
-    // Should succeed
-    expect(exitCode).toBe(0);
-
     // Should display warning about insecure flag
     expect(stderrText).toContain("--insecure");
     expect(stderrText).toContain("TLS/SSL certificate verification is disabled");
     expect(stderrText).toContain("dangerous");
+
+    // Should succeed
+    expect(exitCode).toBe(0);
 
     // Package should still be installed
     const installed = await readdirSorted(join(package_dir, "node_modules"));
@@ -99,8 +99,8 @@ describe("bun install --insecure flag", () => {
     const exitCode = await exited;
     const stderrText = await stderr.text();
 
-    expect(exitCode).toBe(0);
     expect(stderrText).toContain("--insecure");
+    expect(exitCode).toBe(0);
 
     // Should install production dependencies only
     const installed = await readdirSorted(join(package_dir, "node_modules"));
@@ -136,8 +136,8 @@ describe("bun install --insecure flag", () => {
     const exitCode = await exited;
     const stderrText = await stderr.text();
 
-    expect(exitCode).toBe(0);
     expect(stderrText).toContain("--insecure");
+    expect(exitCode).toBe(0);
 
     // Package should be added
     const installed = await readdirSorted(join(package_dir, "node_modules"));
@@ -174,11 +174,10 @@ describe("bun install --insecure flag", () => {
     const exitCode = await exited;
     const stderrText = await stderr.text();
 
-    expect(exitCode).toBe(0);
-
     // Should NOT display insecure warning in normal mode
     expect(stderrText).not.toContain("--insecure");
     expect(stderrText).not.toContain("TLS/SSL certificate verification is disabled");
+    expect(exitCode).toBe(0);
 
     // Package should still be installed
     const installed = await readdirSorted(join(package_dir, "node_modules"));

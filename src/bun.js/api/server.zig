@@ -561,6 +561,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
+        /// Per-route WebSocket contexts. Index is (id - 2) where id comes from app.ws()
+        route_websocket_contexts: std.ArrayListUnmanaged(WebSocketServerContext) = .{},
+
         on_clienterror: jsc.Strong.Optional = .empty,
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
@@ -578,6 +581,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             id: u32,
             server: *ThisServer,
             route: ServerConfig.RouteDeclaration,
+            /// Index into route_websocket_contexts, or null if no route-specific websocket
+            websocket_context_index: ?u32 = null,
 
             pub fn deinit(this: *UserRoute) void {
                 this.route.deinit();
@@ -737,8 +742,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onUpgrade(this: *ThisServer, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, optional: ?JSValue) bun.JSError!JSValue {
-            if (this.config.websocket == null) {
-                return globalThis.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{});
+            // Check if we have either a global websocket or route-specific websockets
+            const has_websocket = this.config.websocket != null or this.route_websocket_contexts.items.len > 0;
+            if (!has_websocket) {
+                return globalThis.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({}) or in a route", .{});
             }
 
             if (this.flags.terminated) {
@@ -963,6 +970,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // Verify we have a WebSocket handler for this upgrade
+            // Either route-specific or global
+            if (upgrader.route_websocket_context_index) |ws_idx| {
+                if (ws_idx >= this.route_websocket_contexts.items.len) {
+                    return globalThis.throwInvalidArguments("Invalid WebSocket context index for this route", .{});
+                }
+            } else if (this.config.websocket == null) {
+                return globalThis.throwInvalidArguments("No WebSocket handler available for this route", .{});
+            }
+
             // Write status, custom headers, and cookies in one place
             if (fetch_headers_to_use != null or cookies_to_write != null) {
                 // we must write the status first so that 200 OK isn't written
@@ -989,7 +1006,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
+
+            // Determine which WebSocket handler to use - route-specific or global
+            const ws_handler = if (upgrader.route_websocket_context_index) |ws_idx|
+                &this.route_websocket_contexts.items[ws_idx].handler
+            else
+                &this.config.websocket.?.handler;
+
+            const ws = ServerWebSocket.init(ws_handler, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
@@ -1608,6 +1632,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 user_route.deinit();
             }
             this.user_routes.deinit(bun.default_allocator);
+
+            // Clean up route-specific WebSocket contexts
+            for (this.route_websocket_contexts.items) |ws_ctx| {
+                ws_ctx.unprotect();
+            }
+            this.route_websocket_contexts.deinit(bun.default_allocator);
 
             this.config.deinit();
 
@@ -2306,6 +2336,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
+
+            // Store route-specific WebSocket context index if present
+            prepared.ctx.route_websocket_context_index = this.websocket_context_index;
+
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
@@ -2314,8 +2348,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
             jsc.markBinding(@src());
-            if (id == 1) {
-                // This is actually a UserRoute if id is 1 so it's safe to cast
+            if (id >= 1) {
+                // This is actually a UserRoute if id >= 1 so it's safe to cast
+                // id == 1: global websocket
+                // id >= 2: route-specific websocket (context index stored in UserRoute)
                 upgradeWebSocketUserRoute(@ptrCast(this), resp, req, upgrade_ctx, null);
                 return;
             }
@@ -2481,7 +2517,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     for (old_user_routes.items) |*r| r.route.deinit();
                     old_user_routes.deinit(bun.default_allocator);
                 }
+
+                // Clean up old route-specific WebSocket contexts
+                var old_route_websocket_contexts = this.route_websocket_contexts;
+                defer {
+                    for (old_route_websocket_contexts.items) |ws| ws.unprotect();
+                    old_route_websocket_contexts.deinit(bun.default_allocator);
+                }
+
                 this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
+                this.route_websocket_contexts = std.ArrayListUnmanaged(WebSocketServerContext).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
+
                 const paths_zig = bun.default_allocator.alloc(ZigString, user_routes_to_build_list.items.len) catch @panic("OOM");
                 defer bun.default_allocator.free(paths_zig);
                 const callbacks_js = bun.default_allocator.alloc(jsc.JSValue, user_routes_to_build_list.items.len) catch @panic("OOM");
@@ -2490,10 +2536,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 for (user_routes_to_build_list.items, paths_zig, callbacks_js, 0..) |*builder, *p_zig, *cb_js, i| {
                     p_zig.* = ZigString.init(builder.route.path);
                     cb_js.* = builder.callback.get().?;
+
+                    // Store route-specific WebSocket context if present
+                    var ws_ctx_index: ?u32 = null;
+                    if (builder.websocket) |ws| {
+                        ws_ctx_index = @truncate(this.route_websocket_contexts.items.len);
+                        this.route_websocket_contexts.appendAssumeCapacity(ws);
+                        builder.websocket = null; // Mark as moved
+                    }
+
                     this.user_routes.appendAssumeCapacity(.{
                         .id = @truncate(i),
                         .server = this,
                         .route = builder.route,
+                        .websocket_context_index = ws_ctx_index,
                     });
                     builder.route = .{}; // Mark as moved
                 }
@@ -2504,6 +2560,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // --- 2. Setup WebSocket handler's app reference ---
             if (this.config.websocket) |*websocket| {
+                websocket.globalObject = this.globalThis;
+                websocket.handler.app = app;
+                websocket.handler.flags.ssl = ssl_enabled;
+            }
+
+            // Setup route-specific WebSocket contexts
+            for (this.route_websocket_contexts.items) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = app;
                 websocket.handler.flags.ssl = ssl_enabled;
@@ -2534,14 +2597,28 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             star_methods_covered_by_user = .initFull();
                         }
 
-                        if (this.config.websocket) |*websocket| {
+                        // Register WebSocket route - prefer route-specific context over global
+                        if (user_route.websocket_context_index) |ws_idx| {
+                            // Route has its own WebSocket handler
+                            if (is_star_path) {
+                                has_any_ws_route_for_star_path = true;
+                            }
+                            const ws_context = &this.route_websocket_contexts.items[ws_idx];
+                            app.ws(
+                                user_route.route.path,
+                                user_route,
+                                2 + ws_idx, // id = 2 + index for route-specific handlers
+                                ServerWebSocket.behavior(ThisServer, ssl_enabled, ws_context.toBehavior()),
+                            );
+                        } else if (this.config.websocket) |*websocket| {
+                            // Use global WebSocket handler
                             if (is_star_path) {
                                 has_any_ws_route_for_star_path = true;
                             }
                             app.ws(
                                 user_route.route.path,
                                 user_route,
-                                1, // id 1 means is a user route
+                                1, // id 1 means is a user route with global websocket
                                 ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
                             );
                         }
@@ -2553,13 +2630,23 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
 
                         // Setup user websocket in the route if needed.
-                        if (this.config.websocket) |*websocket| {
-                            // Websocket upgrade is a GET request
-                            if (method_val == .GET) {
+                        // WebSocket upgrade is a GET request, so only register for GET or ANY methods
+                        if (method_val == .GET) {
+                            if (user_route.websocket_context_index) |ws_idx| {
+                                // Route has its own WebSocket handler
+                                const ws_context = &this.route_websocket_contexts.items[ws_idx];
                                 app.ws(
                                     user_route.route.path,
                                     user_route,
-                                    1, // id 1 means is a user route
+                                    2 + ws_idx, // id = 2 + index for route-specific handlers
+                                    ServerWebSocket.behavior(ThisServer, ssl_enabled, ws_context.toBehavior()),
+                                );
+                            } else if (this.config.websocket) |*websocket| {
+                                // Use global WebSocket handler
+                                app.ws(
+                                    user_route.route.path,
+                                    user_route,
+                                    1, // id 1 means is a user route with global websocket
                                     ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
                                 );
                             }

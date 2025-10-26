@@ -28,7 +28,6 @@ observable_getters: std.enums.EnumSet(enum {
     stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
-has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 this_value: jsc.JSRef = jsc.JSRef.empty(),
 
 /// `null` indicates all of the IPC data is uninitialized.
@@ -186,16 +185,12 @@ pub fn computeHasPendingActivity(this: *const Subprocess) bool {
 }
 
 pub fn updateHasPendingActivity(this: *Subprocess) void {
+    if (this.flags.is_sync) return;
+
     const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() {any} -> {any}", .{
-            this.has_pending_activity.raw,
-            has_pending,
-        });
+        log("updateHasPendingActivity() -> {any}", .{has_pending});
     }
-
-    // Update the atomic flag
-    this.has_pending_activity.store(has_pending, .monotonic);
 
     // Upgrade or downgrade the reference based on pending activity
     if (has_pending) {
@@ -816,7 +811,6 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
     this.clearAbortSignal();
 
-    // Clean up IPC before checking pending activity
     if (this.ipc_data != null) {
         this.disconnectIPC(false);
     }

@@ -46,7 +46,6 @@ export default [
     construct: true,
     noConstructor: true,
     finalize: true,
-    hasPendingActivity: false,
     configurable: false,
     memoryCost: true,
     klass: {},

@@ -1,27 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
-
-const Environment = bun.Environment;
-const Global = bun.Global;
-const JSON = bun.json;
-const JSPrinter = bun.js_printer;
-const MutableString = bun.MutableString;
-const Output = bun.Output;
-const default_allocator = bun.default_allocator;
-const js_ast = bun.ast;
-const logger = bun.logger;
-const strings = bun.strings;
-
-const exists = bun.sys.exists;
-const existsZ = bun.sys.existsZ;
-
-const string = []const u8;
-const stringZ = [:0]const u8;
-
 pub const InitCommand = struct {
     fn removeJsonPropertyLine(alloc: std.mem.Allocator, content: []const u8, key: []const u8) ![]u8 {
         var out = std.ArrayList(u8).init(alloc);
@@ -1311,6 +1287,30 @@ const Template = enum {
         Output.flush();
     }
 };
+
+const std = @import("std");
+const bun = @import("bun");
+const CLI = @import("../cli.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const initializeStore = @import("./create_command.zig").initializeStore;
+
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 test "removeJsonPropertyLine removes jsx property line and preserves others" {
     const alloc = std.testing.allocator;

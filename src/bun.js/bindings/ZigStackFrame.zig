@@ -93,17 +93,13 @@ pub const ZigStackFrame = extern struct {
 
             if (source_slice.len > 0 and (this.position.line.isValid() or this.position.column.isValid())) {
                 if (this.enable_color) {
-                    try writer.writeAll(comptime Output.prettyFmt("<r><d>:", true));
+                    try writer.writeAll(comptime Output.prettyFmt("<r><d>:<r>", true));
                 } else {
                     try writer.writeAll(":");
                 }
-            }
-
-            if (this.enable_color) {
-                if (this.position.line.isValid() or this.position.column.isValid()) {
-                    try writer.writeAll(comptime Output.prettyFmt("<r>", true));
-                } else {
-                    try writer.writeAll(comptime Output.prettyFmt("<r>", true));
+            } else if (source_slice.len == 0) {
+                if (this.enable_color) {
+                    try writer.writeAll(comptime Output.prettyFmt("<d>", true));
                 }
             }
 
@@ -145,20 +141,38 @@ pub const ZigStackFrame = extern struct {
         code_type: ZigStackFrameCode,
         enable_color: bool,
         is_async: bool,
+        root_path: string,
+        source_url: String,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const name = this.function_name;
 
+            const no_src_url = this.source_url.isEmpty();
+            const same_cwd = if (no_src_url) false else if (this.enable_color) brk: {
+                var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+                const source_slice = source_slice_.slice();
+                defer source_slice_.deinit();
+
+                break :brk strings.startsWith(source_slice, this.root_path);
+            } else false;
+
             switch (this.code_type) {
                 .Eval => {
                     if (this.enable_color) {
-                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                        try writer.writeAll(comptime Output.prettyFmt("<r><d>eval<r>", true));
                     } else {
                         try writer.writeAll("eval");
                     }
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                            try writer.writeAll(comptime Output.prettyFmt(" <r><i>", true));
+                            if (!same_cwd) {
+                                try writer.writeAll(comptime Output.prettyFmt("<d>", true));
+                            }
+                            if (!no_src_url) {
+                                try writer.writeAll(comptime Output.prettyFmt("<b>", true));
+                            }
+                            try std.fmt.format(writer, comptime Output.prettyFmt("{}<r>", true), .{name});
                         } else {
                             try std.fmt.format(writer, " {}", .{name});
                         }
@@ -167,11 +181,17 @@ pub const ZigStackFrame = extern struct {
                 .Function => {
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            if (this.is_async) {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>async {}<r>", true), .{name});
-                            } else {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
+                            try writer.writeAll(comptime Output.prettyFmt("<r><i>", true));
+                            if (!same_cwd) {
+                                try writer.writeAll(comptime Output.prettyFmt("<d>", true));
                             }
+                            if (!no_src_url) {
+                                try writer.writeAll(comptime Output.prettyFmt("<b>", true));
+                            }
+                            if (this.is_async) {
+                                try writer.writeAll("async ");
+                            }
+                            try std.fmt.format(writer, comptime Output.prettyFmt("{}<r>", true), .{name});
                         } else {
                             if (this.is_async) {
                                 try std.fmt.format(writer, "async {}", .{name});
@@ -182,9 +202,9 @@ pub const ZigStackFrame = extern struct {
                     } else {
                         if (this.enable_color) {
                             if (this.is_async) {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "async <anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                                try writer.writeAll(comptime Output.prettyFmt("<r><d>async \\<anonymous\\><r>", true));
                             } else {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                                try writer.writeAll(comptime Output.prettyFmt("<r><d>\\<anonymous\\><r>", true));
                             }
                         } else {
                             if (this.is_async) {
@@ -203,7 +223,11 @@ pub const ZigStackFrame = extern struct {
                     }
                 },
                 .Constructor => {
-                    try std.fmt.format(writer, "new {}", .{name});
+                    if (this.enable_color and !same_cwd) {
+                        try std.fmt.format(writer, comptime Output.prettyFmt("<d>new {}<r>", true), .{name});
+                    } else {
+                        try std.fmt.format(writer, "new {}", .{name});
+                    }
                 },
                 else => {
                     if (!name.isEmpty()) {
@@ -223,8 +247,15 @@ pub const ZigStackFrame = extern struct {
         .jsc_stack_frame_index = -1,
     };
 
-    pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {
-        return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color, .is_async = this.is_async };
+    pub fn nameFormatter(this: *const ZigStackFrame, root_path: string, comptime enable_color: bool) NameFormatter {
+        return NameFormatter{
+            .function_name = this.function_name,
+            .code_type = this.code_type,
+            .enable_color = enable_color,
+            .is_async = this.is_async,
+            .root_path = root_path,
+            .source_url = this.source_url,
+        };
     }
 
     pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, exclude_line_column: bool, comptime enable_color: bool) SourceURLFormatter {

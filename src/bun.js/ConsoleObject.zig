@@ -143,7 +143,7 @@ fn messageWithTypeAndLevel_(
     else
         Output.enable_ansi_colors_stdout;
 
-    var buffered_writer = if (level == .Warning or level == .Error)
+    var buffered_writer = if (level == .Warning or level == .Error or message_type == .Trace)
         &console.error_writer
     else
         &console.writer;
@@ -210,7 +210,10 @@ fn messageWithTypeAndLevel_(
         }
     }
 
-    if (print_length > 0)
+    if (print_length > 0) {
+        if (message_type == .Trace) {
+            writer.writeAll("Trace: ") catch {};
+        }
         try format2(
             level,
             global,
@@ -220,8 +223,8 @@ fn messageWithTypeAndLevel_(
             Writer,
             writer,
             print_options,
-        )
-    else if (message_type == .Log) {
+        );
+    } else if (message_type == .Log) {
         _ = console.writer.write("\n") catch 0;
         console.writer.flush() catch {};
     } else if (message_type != .Trace)

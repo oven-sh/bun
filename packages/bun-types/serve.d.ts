@@ -538,19 +538,22 @@ declare module "bun" {
     /**
      * Route configuration with optional WebSocket handler.
      * When `websocket` is specified, an `upgrade` handler must also be provided.
+     * @template WebSocketData - Type of data attached to WebSocket connections
+     * @template Path - Route path for typed route parameters (e.g., "/user/:id")
+     * @template HTTPResponse - HTTP handler return type (Response or Response | undefined | void)
      */
-    type RouteWithWebSocket<WebSocketData> =
-      | (Partial<Record<HTTPMethod, Handler<Request, Server<WebSocketData>, Response>>> & {
+    type RouteWithWebSocket<WebSocketData, Path extends string = string, HTTPResponse = Response> =
+      | (Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, HTTPResponse>>> & {
           websocket: WebSocketHandler<WebSocketData>;
           /**
            * Upgrade handler for WebSocket connections.
            * Required when `websocket` is specified.
            */
-          upgrade: Handler<Request, Server<WebSocketData>, Response | undefined | void>;
+          upgrade: Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>;
         })
-      | (Partial<Record<HTTPMethod, Handler<Request, Server<WebSocketData>, Response>>> & {
+      | (Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, HTTPResponse>>> & {
           websocket?: never;
-          upgrade?: Handler<Request, Server<WebSocketData>, Response | undefined | void>;
+          upgrade?: Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>;
         });
 
     type Routes<WebSocketData, R extends string> = {
@@ -558,7 +561,7 @@ declare module "bun" {
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
         | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response>>>
-        | RouteWithWebSocket<WebSocketData>;
+        | RouteWithWebSocket<WebSocketData, Path, Response>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
@@ -566,7 +569,7 @@ declare module "bun" {
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
         | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>>>
-        | RouteWithWebSocket<WebSocketData>;
+        | RouteWithWebSocket<WebSocketData, Path, Response | undefined | void>;
     };
 
     type FetchOrRoutes<WebSocketData, R extends string> =

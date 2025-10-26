@@ -467,7 +467,7 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = bun.default_allocator,
                 }) catch {};
 
-                if (comptime Environment.dump_source) {
+                if (comptime Environment.allow_assert) {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
@@ -507,7 +507,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target, .{ .rewrite_jest_for_tests = transpiler.options.rewrite_jest_for_tests })) |replacement| {
+                if (HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target, .{ .rewrite_jest_for_tests = transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.is_external_without_side_effects = true;

@@ -306,6 +306,15 @@ pub const AsyncModule = struct {
         pub fn vm(this: *Queue) *VirtualMachine {
             return @alignCast(@fieldParentPtr("modules", this));
         }
+
+        comptime {
+            // Ensure VirtualMachine has a field named "modules" of the correct type
+            // If this fails, the @fieldParentPtr in vm() above needs to be updated
+            const VM = @import("./VirtualMachine.zig");
+            if (!@hasField(VM, "modules")) {
+                @compileError("VirtualMachine must have a 'modules' field for AsyncModule.Queue.vm() to work");
+            }
+        }
     };
 
     pub fn init(opts: anytype, globalObject: *JSGlobalObject) !AsyncModule {
@@ -512,6 +521,7 @@ pub const AsyncModule = struct {
                 .{ bun.asByteSlice(@errorName(err)), result.name, result.url },
             ),
         };
+        defer bun.default_allocator.free(msg);
 
         const name: []const u8 = switch (result.err) {
             error.NoMatchingVersion => "PackageVersionNotFound",
@@ -604,6 +614,7 @@ pub const AsyncModule = struct {
                 },
             ),
         };
+        defer bun.default_allocator.free(msg);
 
         const name: []const u8 = switch (result.err) {
             error.TarballFailedToExtract => "PackageExtractionError",

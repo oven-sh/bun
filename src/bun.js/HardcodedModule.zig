@@ -133,7 +133,6 @@ pub const HardcodedModule = enum {
         .{ "node:process", .@"node:process" },
         .{ "node:punycode", .@"node:punycode" },
         .{ "node:querystring", .@"node:querystring" },
-        .{ "node:readline", .@"node:readline" },
         .{ "node:readline/promises", .@"node:readline/promises" },
         .{ "node:repl", .@"node:repl" },
         .{ "node:stream", .@"node:stream" },
@@ -185,7 +184,7 @@ pub const HardcodedModule = enum {
         node_builtin: bool = false,
         node_only_prefix: bool = false,
 
-        fn nodeEntry(path: [:0]const u8) struct { string, Alias } {
+        fn nodeEntry(comptime path: [:0]const u8) struct { string, Alias } {
             return .{
                 path,
                 .{
@@ -194,7 +193,7 @@ pub const HardcodedModule = enum {
                 },
             };
         }
-        fn nodeEntryOnlyPrefix(path: [:0]const u8) struct { string, Alias } {
+        fn nodeEntryOnlyPrefix(comptime path: [:0]const u8) struct { string, Alias } {
             return .{
                 path,
                 .{

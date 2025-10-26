@@ -5,8 +5,6 @@ pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
 pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").RuntimeTranspilerStore;
 pub const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
 
-// Re-export helper functions from RuntimeTranspilerStore
-
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
 

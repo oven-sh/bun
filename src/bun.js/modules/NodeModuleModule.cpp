@@ -33,6 +33,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
@@ -286,6 +287,60 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
+}
+
+extern "C" void Bun__findPackageJSON(BunString* path, BunString* result);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        return Bun::throwError(globalObject, scope,
+            Bun::ErrorCode::ERR_MISSING_ARGS,
+            "findPackageJSON() requires at least one argument"_s);
+    }
+
+    auto argument = callFrame->uncheckedArgument(0);
+    auto val = argument.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Convert file:// URL to path if needed
+    if (!isAbsolutePath(val)) {
+        WTF::URL url(val);
+        if (!url.isValid()) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "path"_s, argument,
+                "must be a file URL or absolute path"_s);
+            RELEASE_AND_RETURN(scope, {});
+        }
+        if (!url.protocolIsFile()) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "path"_s, argument,
+                "must be a file URL"_s);
+            RELEASE_AND_RETURN(scope, {});
+        }
+        val = url.fileSystemPath();
+    }
+
+    BunString input = Bun::toString(val);
+    BunString result;
+    Bun__findPackageJSON(&input, &result);
+
+    if (result.tag == BunStringTag::Empty) {
+        return JSValue::encode(jsNull());
+    }
+
+    auto resultStr = result.toWTFString();
+    if (!resultStr.isNull()) {
+        ASSERT(resultStr.impl()->refCount() == 2);
+        resultStr.impl()->deref();
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, resultStr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
@@ -834,6 +889,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
+findPackageJSON         jsFunctionFindPackageJSON         Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

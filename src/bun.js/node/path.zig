@@ -2969,3 +2969,66 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 
 const strings = bun.strings;
 const L = strings.literal;
+
+/// Find the nearest package.json file starting from a given path
+/// Returns the absolute path to the package.json, or an empty string if not found
+export fn Bun__findPackageJSON(input_path: *bun.String, result: *bun.String) void {
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var slice = input_path.toUTF8(bun.default_allocator);
+    defer slice.deinit();
+
+    var current_dir = slice.slice();
+
+    // If the input is a file, start from its directory
+    // We need to make a null-terminated copy for stat
+    var path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+    if (current_dir.len < path_buf_z.len) {
+        @memcpy(path_buf_z[0..current_dir.len], current_dir);
+        path_buf_z[current_dir.len] = 0;
+        const current_dir_z = path_buf_z[0..current_dir.len :0];
+
+        const stat_result = bun.sys.stat(current_dir_z);
+        if (stat_result == .result) {
+            const mode = stat_result.result.mode;
+            const S = bun.S;
+            // Check if it's a regular file (not a directory)
+            if ((mode & S.IFMT) == S.IFREG) {
+                current_dir = if (Environment.isWindows)
+                    dirnameWindowsT(u8, current_dir)
+                else
+                    dirnamePosixT(u8, current_dir);
+            }
+        }
+    }
+
+    while (true) {
+        const pkg_path = if (Environment.isWindows)
+            joinWindowsT(u8, &.{ current_dir, "package.json" }, &path_buf, &path_buf2)
+        else
+            joinPosixT(u8, &.{ current_dir, "package.json" }, &path_buf, &path_buf2);
+
+        var pkg_path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+        @memcpy(pkg_path_buf_z[0..pkg_path.len], pkg_path);
+        pkg_path_buf_z[pkg_path.len] = 0;
+
+        const pkg_path_z = pkg_path_buf_z[0..pkg_path.len :0];
+        if (bun.sys.existsZ(pkg_path_z)) {
+            result.* = bun.String.cloneUTF8(pkg_path);
+            return;
+        }
+
+        const parent = if (Environment.isWindows)
+            dirnameWindowsT(u8, current_dir)
+        else
+            dirnamePosixT(u8, current_dir);
+
+        if (strings.eql(parent, current_dir)) {
+            break;
+        }
+        current_dir = parent;
+    }
+
+    // Not found
+    result.* = bun.String.empty;
+}

@@ -48,8 +48,9 @@ describe("bun install --insecure flag", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await exited;
     const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+    const exitCode = await exited;
 
     // Should display warning about insecure flag
     expect(stderrText).toContain("--insecure");
@@ -88,7 +89,7 @@ describe("bun install --insecure flag", () => {
     );
 
     // Test --insecure with --production
-    const { exited, stderr } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--insecure", "--production"],
       cwd: package_dir,
       env: bunEnv,
@@ -96,8 +97,9 @@ describe("bun install --insecure flag", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await exited;
     const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+    const exitCode = await exited;
 
     expect(stderrText).toContain("--insecure");
     expect(exitCode).toBe(0);
@@ -125,7 +127,7 @@ describe("bun install --insecure flag", () => {
       }),
     );
 
-    const { exited, stderr } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "boba@0.0.2", "--insecure"],
       cwd: package_dir,
       env: bunEnv,
@@ -133,8 +135,9 @@ describe("bun install --insecure flag", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await exited;
     const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+    const exitCode = await exited;
 
     expect(stderrText).toContain("--insecure");
     expect(exitCode).toBe(0);
@@ -163,7 +166,7 @@ describe("bun install --insecure flag", () => {
       }),
     );
 
-    const { exited, stderr } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
       env: bunEnv,
@@ -171,8 +174,9 @@ describe("bun install --insecure flag", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await exited;
     const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+    const exitCode = await exited;
 
     // Should NOT display insecure warning in normal mode
     expect(stderrText).not.toContain("--insecure");

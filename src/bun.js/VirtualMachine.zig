@@ -656,9 +656,12 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     }
 
     if (this.is_handling_uncaught_exception) {
+        // Nested exception while handling an uncaught exception
+        // Log it and exit without panicking
         this.runErrorHandler(err, null);
-        bun.api.node.process.exit(globalObject, 7);
-        @panic("Uncaught exception while handling uncaught exception");
+        this.exit_handler.exit_code = 7;
+        this.onExit();
+        this.globalExit();
     }
     if (this.exit_on_uncaught_exception) {
         this.runErrorHandler(err, null);
@@ -675,6 +678,10 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
         this.onUnhandledRejection(this, globalObject, err);
     }
     return handled;
+}
+
+pub export fn Bun__VM__isHandlingUncaughtException(vm: *jsc.VirtualMachine) callconv(.C) bool {
+    return vm.is_handling_uncaught_exception;
 }
 
 pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {

@@ -14,6 +14,12 @@
 #include <wtf/Vector.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#include "ZigGlobalObject.h"
+
+extern "C" bool Bun__VM__isHandlingUncaughtException(void* vm);
+extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+extern "C" void Bun__Process__exit(JSC::JSGlobalObject* globalObject, uint8_t exitCode);
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EventEmitter);
@@ -257,6 +263,19 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
+                // However, if we're already handling an uncaught exception, don't report it again
+                // to avoid infinite recursion and panic. Instead, log and exit.
+                if (lexicalGlobalObject->inherits(Zig::GlobalObject::info())) {
+                    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+                    auto bunVM = globalObject->bunVM();
+                    if (bunVM && Bun__VM__isHandlingUncaughtException(bunVM)) {
+                        // Already handling an uncaught exception - log this nested exception and exit
+                        // This matches Node.js behavior
+                        Bun__logUnhandledException(JSValue::encode(JSValue(exception)));
+                        Bun__Process__exit(lexicalGlobalObject, 7);
+                        return fired;
+                    }
+                }
                 Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;

@@ -268,33 +268,26 @@ describe("Bun.serve() route-specific WebSocket handlers", () => {
     ws.close();
   });
 
-  test("route-specific websocket without upgrade handler errors appropriately", async () => {
-    using server = Bun.serve({
-      port: 0,
-      routes: {
-        "/ws": {
-          websocket: {
-            open(ws) {
-              ws.send("should not reach here");
+  test("route-specific websocket without upgrade handler errors appropriately", () => {
+    // Should throw an error because websocket requires upgrade handler
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        routes: {
+          "/ws": {
+            websocket: {
+              open(ws) {
+                ws.send("should not reach here");
+              },
+            },
+            // Note: no upgrade handler
+            GET() {
+              return new Response("This is not a WebSocket endpoint");
             },
           },
-          // Note: no upgrade handler
-          GET() {
-            return new Response("This is not a WebSocket endpoint");
-          },
         },
-      },
-    });
-
-    // This should fail to upgrade since there's no upgrade() handler
-    const ws = new WebSocket(`ws://localhost:${server.port}/ws`);
-    let errorOccurred = false;
-    ws.onerror = () => {
-      errorOccurred = true;
-    };
-
-    await new Promise(resolve => setTimeout(resolve, 500));
-    expect(errorOccurred).toBe(true);
+      });
+    }).toThrow("Route has 'websocket' but missing 'upgrade' handler");
   });
 
   test("server.reload() preserves route-specific websocket handlers", async () => {

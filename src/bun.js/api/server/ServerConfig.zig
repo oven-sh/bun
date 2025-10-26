@@ -583,7 +583,6 @@ pub fn fromJS(
                     var found = false;
                     var websocket_ctx: ?WebSocketServerContext = null;
                     var upgrade_callback: jsc.Strong.Optional = .empty;
-                    var has_get_method = false;
 
                     // Check for websocket and upgrade fields
                     if (try value.getOwn(global, "websocket")) |ws_value| {
@@ -598,25 +597,48 @@ pub fn fromJS(
                         }
                     }
 
+                    // Validate: if route has websocket, it must have upgrade
+                    if (websocket_ctx != null and upgrade_callback.impl == null) {
+                        return global.throwInvalidArguments("Route has 'websocket' but missing 'upgrade' handler. Both must be specified together.", .{});
+                    }
+
+                    // If we have an upgrade handler, add it FIRST (before other method handlers)
+                    // This ensures app.ws() is registered before app.method(.GET), so WebSocket
+                    // upgrade requests are handled by app.ws(), and regular GET requests yield
+                    // and fall through to the GET handler
+                    if (upgrade_callback.impl != null) {
+                        if (!found) {
+                            try validateRouteName(global, path);
+                        }
+                        args.user_routes_to_build.append(.{
+                            .route = .{
+                                .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
+                                .method = .{ .specific = .GET },
+                            },
+                            .callback = upgrade_callback,
+                            .websocket = websocket_ctx, // May be null (uses global)
+                        }) catch |err| bun.handleOom(err);
+                        found = true;
+                    }
+
+                    // Process HTTP method handlers (registered after upgrade handler)
                     inline for (methods) |method| {
                         if (try value.getOwn(global, @tagName(method))) |function| {
                             if (!found) {
                                 try validateRouteName(global, path);
                             }
                             found = true;
-                            if (method == .GET) has_get_method = true;
 
                             if (function.isCallable()) {
-                                // Only attach websocket to GET method (WebSocket upgrades use GET)
-                                const ws_for_this_method = if (method == .GET) websocket_ctx else null;
-
+                                // Never attach websocket to method handlers
+                                // WebSocket is handled separately via the upgrade callback
                                 args.user_routes_to_build.append(.{
                                     .route = .{
                                         .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
                                         .method = .{ .specific = method },
                                     },
                                     .callback = .create(function.withAsyncContextIfNeeded(global), global),
-                                    .websocket = ws_for_this_method,
+                                    .websocket = null,
                                 }) catch |err| bun.handleOom(err);
                             } else if (try AnyRoute.fromJS(global, path, function, init_ctx)) |html_route| {
                                 var method_set = bun.http.Method.Set.initEmpty();
@@ -629,33 +651,6 @@ pub fn fromJS(
                                 }) catch |err| bun.handleOom(err);
                             }
                         }
-                    }
-
-                    // If we have websocket/upgrade but no GET handler, create one
-                    // WebSocket upgrades require GET method
-                    if (found and !has_get_method and (websocket_ctx != null or upgrade_callback.impl != null)) {
-                        args.user_routes_to_build.append(.{
-                            .route = .{
-                                .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
-                                .method = .{ .specific = .GET },
-                            },
-                            .callback = upgrade_callback,
-                            .websocket = websocket_ctx,
-                        }) catch |err| bun.handleOom(err);
-                    }
-
-                    // If we have websocket/upgrade but no method handlers at all, create a route for them
-                    if (!found and (websocket_ctx != null or upgrade_callback.impl != null)) {
-                        try validateRouteName(global, path);
-                        args.user_routes_to_build.append(.{
-                            .route = .{
-                                .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
-                                .method = .any,
-                            },
-                            .callback = upgrade_callback,
-                            .websocket = websocket_ctx,
-                        }) catch |err| bun.handleOom(err);
-                        found = true;
                     }
 
                     if (found) {

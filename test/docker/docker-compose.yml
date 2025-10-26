@@ -80,6 +80,43 @@ services:
     image: mysql:8.4
     environment:
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()"
+      MYSQL_DATABASE: bun_sql_test
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  mysql_plain_9:
+    image: mysql:9
+    environment:
+      MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()"
+      MYSQL_DATABASE: bun_sql_test
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  mysql_plain_empty_password:
+    image: mysql:8.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
       MYSQL_DATABASE: bun_sql_test
     ports:
       - target: 3306
@@ -97,7 +134,7 @@ services:
   mysql_native_password:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: bun
+      MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()"
       MYSQL_DATABASE: bun_sql_test
       MYSQL_ROOT_HOST: "%"
     command: --default-authentication-plugin=mysql_native_password
@@ -122,7 +159,7 @@ services:
         MYSQL_VERSION: 8.4
     image: bun-mysql-tls:local
     environment:
-      MYSQL_ROOT_PASSWORD: bun
+      MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()"
       MYSQL_DATABASE: bun_sql_test
     ports:
       - target: 3306

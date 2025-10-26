@@ -404,6 +404,8 @@ pub fn kill(
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    // Safe: this method can only be called while the object is alive (reachable from JS)
+    // The finalizer only runs when the object becomes unreachable
     this.this_value.update(globalThis, callframe.this());
 
     const arguments = callframe.arguments_old(1);

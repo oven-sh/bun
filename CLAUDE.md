@@ -76,7 +76,8 @@ test("my feature", async () => {
 - Use `normalizeBunSnapshot` to normalize snapshot output of the test.
 - NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
-- When spawning processes, tests should assert the output BEFORE asserting the exit code. This gives you a more useful error message on test failure.
+- When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
+- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.
 - **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 
 ## Code Architecture

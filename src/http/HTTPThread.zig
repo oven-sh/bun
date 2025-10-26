@@ -170,10 +170,12 @@ fn initOnce(opts: *const InitOpts) void {
         .http_context = .{
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
+            .insecure = false,
         },
         .https_context = .{
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
+            .insecure = false,
         },
         .timer = std.time.Timer.start() catch unreachable,
     };

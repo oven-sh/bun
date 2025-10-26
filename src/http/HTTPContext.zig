@@ -49,6 +49,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
+        /// When true, TLS certificate verification is disabled (--insecure flag)
+        insecure: bool = false,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -87,6 +89,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            // Custom contexts don't use the global insecure flag; client controls reject_unauthorized
+            this.insecure = false;
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -123,6 +127,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            
+            // Store insecure flag for later use when creating HTTPClient instances
+            this.insecure = init_opts.insecure;
             
             // When insecure mode is enabled, disable all certificate verification
             const reject_unauthorized: i32 = if (init_opts.insecure) 0 else 1;
@@ -457,6 +464,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
+            
+            // Apply insecure flag from context to client
+            if (comptime ssl) {
+                if (this.insecure) {
+                    client.flags.reject_unauthorized = false;
+                }
+            }
 
             if (client.isKeepAlivePossible()) {
                 if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {

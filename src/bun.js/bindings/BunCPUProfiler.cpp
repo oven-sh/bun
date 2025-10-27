@@ -8,7 +8,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <JavaScriptCore/HeapIterationScope.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
@@ -64,16 +63,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     auto& lock = profiler->getLock();
     WTF::Locker profilerLocker { lock };
 
-    // Process stack traces within a heap iteration scope to safely access JSCells
-    // NOTE: This may produce benign UBSAN warnings from JSC's SamplingProfiler.cpp
-    // where HeapUtil::isValueGCObject is called with null pointers. JSC handles
-    // this safely but doesn't null-check before calling isPreciseAllocation().
-    // See: SamplingProfiler.cpp line ~564 in processUnverifiedStackTraces()
-    {
-        JSC::HeapIterationScope heapIterationScope(vm.heap);
-        profiler->processUnverifiedStackTraces();
-    }
-
+    // releaseStackTraces() calls processUnverifiedStackTraces() internally
     auto stackTraces = profiler->releaseStackTraces();
 
     if (stackTraces.isEmpty())

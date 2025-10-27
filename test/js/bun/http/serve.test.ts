@@ -2193,10 +2193,12 @@ it.concurrent("#20283", async () => {
 it("#20676 204 responses should not have Content-Length", async () => {
   using server = Bun.serve({
     routes: {
-      "/": async req => { return Response(undefined, { status: 204 }) }
-    }
+      "/": async req => {
+        return Response(undefined, { status: 204 });
+      },
+    },
   });
 
   const response = await fetch(server.url);
-  expect(response.headers.get('Content-Length')).toBeNull();
+  expect(response.headers.get("Content-Length")).toBeNull();
 });

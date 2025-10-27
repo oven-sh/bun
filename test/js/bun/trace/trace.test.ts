@@ -295,4 +295,181 @@ describe("--trace flag", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain("Failed to open trace file");
   });
+
+  test("trace high-level readFile/writeFile", async () => {
+    using dir = tempDir("trace-highlevel-rw", {
+      "test.js": `
+        import { readFileSync, writeFileSync } from "fs";
+        writeFileSync("test.txt", "hello world");
+        const content = readFileSync("test.txt", "utf8");
+        console.log("content:", content);
+      `,
+    });
+
+    const traceFile = join(String(dir), "trace.jsonl");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--trace", traceFile, "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("hello world");
+
+    const traceContent = readFileSync(traceFile, "utf8");
+    const traces = traceContent
+      .trim()
+      .split("\n")
+      .filter(l => l.length > 0)
+      .map(l => JSON.parse(l));
+
+    const fsTraces = traces.filter(t => t.ns === "fs");
+    expect(fsTraces.length).toBeGreaterThan(0);
+
+    // Check for writeFile
+    const writeCalls = fsTraces.filter(t => t.data.call === "writeFile");
+    expect(writeCalls.length).toBeGreaterThan(0);
+    expect(writeCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+
+    // Check for readFile
+    const readCalls = fsTraces.filter(t => t.data.call === "readFile");
+    expect(readCalls.length).toBeGreaterThan(0);
+    expect(readCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+  });
+
+  test("trace stat operations", async () => {
+    using dir = tempDir("trace-stat", {
+      "test.js": `
+        import { writeFileSync, statSync } from "fs";
+        writeFileSync("test.txt", "data");
+        const stats = statSync("test.txt");
+        console.log("size:", stats.size);
+      `,
+    });
+
+    const traceFile = join(String(dir), "trace.jsonl");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--trace", traceFile, "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+
+    const traceContent = readFileSync(traceFile, "utf8");
+    const traces = traceContent
+      .trim()
+      .split("\n")
+      .filter(l => l.length > 0)
+      .map(l => JSON.parse(l));
+
+    const fsTraces = traces.filter(t => t.ns === "fs");
+
+    // Check for stat
+    const statCalls = fsTraces.filter(t => t.data.call === "stat");
+    expect(statCalls.length).toBeGreaterThan(0);
+    expect(statCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+  });
+
+  test("trace directory operations", async () => {
+    using dir = tempDir("trace-dir-ops", {
+      "test.js": `
+        import { mkdirSync, rmdirSync, readdirSync, writeFileSync, unlinkSync } from "fs";
+        mkdirSync("testdir");
+        writeFileSync("testdir/file.txt", "data");
+        const files = readdirSync("testdir");
+        console.log("files:", files);
+        unlinkSync("testdir/file.txt");
+        rmdirSync("testdir");
+      `,
+    });
+
+    const traceFile = join(String(dir), "trace.jsonl");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--trace", traceFile, "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+
+    const traceContent = readFileSync(traceFile, "utf8");
+    const traces = traceContent
+      .trim()
+      .split("\n")
+      .filter(l => l.length > 0)
+      .map(l => JSON.parse(l));
+
+    const fsTraces = traces.filter(t => t.ns === "fs");
+
+    // Check for mkdir
+    const mkdirCalls = fsTraces.filter(t => t.data.call === "mkdir");
+    expect(mkdirCalls.length).toBeGreaterThan(0);
+
+    // Check for readdir
+    const readdirCalls = fsTraces.filter(t => t.data.call === "readdir");
+    expect(readdirCalls.length).toBeGreaterThan(0);
+
+    // Check for unlink
+    const unlinkCalls = fsTraces.filter(t => t.data.call === "unlink");
+    expect(unlinkCalls.length).toBeGreaterThan(0);
+
+    // Check for rmdir
+    const rmdirCalls = fsTraces.filter(t => t.data.call === "rmdir");
+    expect(rmdirCalls.length).toBeGreaterThan(0);
+  });
+
+  test("trace rename operations", async () => {
+    using dir = tempDir("trace-rename", {
+      "test.js": `
+        import { writeFileSync, renameSync, unlinkSync } from "fs";
+        writeFileSync("old.txt", "data");
+        renameSync("old.txt", "new.txt");
+        unlinkSync("new.txt");
+        console.log("done");
+      `,
+    });
+
+    const traceFile = join(String(dir), "trace.jsonl");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--trace", traceFile, "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+
+    const traceContent = readFileSync(traceFile, "utf8");
+    const traces = traceContent
+      .trim()
+      .split("\n")
+      .filter(l => l.length > 0)
+      .map(l => JSON.parse(l));
+
+    const fsTraces = traces.filter(t => t.ns === "fs");
+
+    // Check for rename
+    const renameCalls = fsTraces.filter(t => t.data.call === "rename");
+    expect(renameCalls.length).toBeGreaterThan(0);
+  });
 });

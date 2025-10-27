@@ -31,8 +31,19 @@ const ignore = [
   "ErrorCode.zig",
 ];
 
+let skipNext = false;
 rl.on("line", line => {
-  if (ignore.some(q => line.includes(q))) {
+  if (skipNext) {
+    skipNext = false;
+    return;
+  }
+  if (line.includes(": error: ")) {
+    console.log("\x1b[31m" + line.replace(/^vendor\/zig\/lib\/std\/Io\/Writer\.zig:\d+:\d+: /, "") + "\x1b[0m");
+  } else if (line.includes(": note: ")) {
+    console.log("\x1b[36m" + line + "\x1b[0m");
+  } else if (line.includes('@compileError("')) {
+    skipNext = true;
+  } else if (ignore.some(q => line.includes(q))) {
     console.log("\x1b[2m" + line + "\x1b[0m");
   } else {
     console.log(line);

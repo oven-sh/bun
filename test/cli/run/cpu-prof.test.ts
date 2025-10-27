@@ -17,19 +17,22 @@ describe("--cpu-prof", () => {
       `,
     });
 
-    const exitCode = await Bun.spawn({
+    const proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    }).exited;
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Check that a .cpuprofile file was created
     const files = readdirSync(String(dir));
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));
+
+    expect(profileFiles.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
 
     expect(profileFiles.length).toBeGreaterThan(0);
 
@@ -86,41 +89,42 @@ describe("--cpu-prof", () => {
 
     const customName = "my-profile.cpuprofile";
 
-    const exitCode = await Bun.spawn({
+    const proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    }).exited;
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-    expect(exitCode).toBe(0);
+    const exitCode = await proc.exited;
 
     const files = readdirSync(String(dir));
     expect(files).toContain(customName);
+    expect(exitCode).toBe(0);
   });
 
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `console.log("test");`,
-      "profiles": {},
     });
 
-    const exitCode = await Bun.spawn({
+    const proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "profiles", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    }).exited;
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-    expect(exitCode).toBe(0);
+    const exitCode = await proc.exited;
 
     const profilesDir = join(String(dir), "profiles");
     const files = readdirSync(profilesDir);
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));
 
     expect(profileFiles.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
   });
 
   test("profile captures function names", async () => {
@@ -138,23 +142,26 @@ describe("--cpu-prof", () => {
       `,
     });
 
-    const exitCode = await Bun.spawn({
+    const proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    }).exited;
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-    expect(exitCode).toBe(0);
+    const exitCode = await proc.exited;
 
     const files = readdirSync(String(dir));
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));
+    expect(profileFiles.length).toBeGreaterThan(0);
+
     const profilePath = join(String(dir), profileFiles[0]);
     const profile = JSON.parse(readFileSync(profilePath, "utf-8"));
 
     // Check that we captured some meaningful function names
     const functionNames = profile.nodes.map((n: any) => n.callFrame.functionName);
     expect(functionNames.some((name: string) => name !== "(root)" && name !== "(program)")).toBe(true);
+    expect(exitCode).toBe(0);
   });
 });

@@ -40,8 +40,15 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
     var path_buf: bun.PathBuffer = undefined;
     const output_path = try getOutputPath(&path_buf, config);
 
+    // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
+    var path_buf_os: bun.OSPathBuffer = undefined;
+    const output_path_os: bun.OSPathSliceZ = if (bun.Environment.isWindows) blk: {
+        const utf16_len = bun.strings.convertUTF8toUTF16InBufferZ(&path_buf_os, output_path);
+        break :blk path_buf_os[0..utf16_len :0];
+    } else output_path;
+
     // Write the profile to disk using bun.sys.File.writeFile
-    const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path, json_slice.slice());
+    const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
     if (result.asErr()) |err| {
         // If we got ENOENT, try creating the directory and retry
         const errno = err.getErrno();
@@ -50,7 +57,7 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
             if (dir_str.len > 0) {
                 bun.makePath(std.fs.cwd(), dir_str) catch {};
                 // Retry write
-                const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path, json_slice.slice());
+                const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
                 if (retry_result.asErr()) |_| {
                     return error.WriteFailed;
                 }
@@ -61,10 +68,6 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
             return error.WriteFailed;
         }
     }
-
-    // Print confirmation message
-    bun.Output.prettyErrorln("Wrote CPU profile to: {s}", .{output_path});
-    bun.Output.flush();
 }
 
 fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 {
@@ -91,23 +94,26 @@ fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 
     }
 }
 
+// Cross-platform way to get process ID
+extern "c" fn getpid() c_int;
+
 fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
     // Generate filename like: CPU.20240101.120000.1234.0.001.cpuprofile
-    const timestamp = std.time.timestamp();
-    const pid = std.os.linux.getpid();
+    const timespec = bun.timespec.now();
+    const pid = getpid();
 
-    // Convert timestamp to date/time
-    const epoch_seconds = @as(u64, @intCast(timestamp));
+    // Convert timestamp to date/time using wrapping arithmetic
+    const epoch_seconds: u64 = @intCast(timespec.sec);
     const days_since_epoch = epoch_seconds / 86400;
     const seconds_today = epoch_seconds % 86400;
 
-    const year = @as(u32, @intCast(1970 + (days_since_epoch / 365))); // Approximate
-    const month = 1; // Simplified for now
-    const day = @as(u32, @intCast((days_since_epoch % 365) + 1));
+    const year: u32 = @intCast(1970 +% (days_since_epoch / 365)); // Approximate, wrapping add
+    const month: u32 = 1; // Simplified for now
+    const day: u32 = @intCast((days_since_epoch % 365) +% 1); // Wrapping add
 
-    const hours = @as(u32, @intCast(seconds_today / 3600));
-    const minutes = @as(u32, @intCast((seconds_today % 3600) / 60));
-    const seconds = @as(u32, @intCast(seconds_today % 60));
+    const hours: u32 = @intCast(seconds_today / 3600);
+    const minutes: u32 = @intCast((seconds_today % 3600) / 60);
+    const seconds: u32 = @intCast(seconds_today % 60);
 
     return try std.fmt.bufPrint(buf, "CPU.{d:0>4}{d:0>2}{d:0>2}.{d:0>2}{d:0>2}{d:0>2}.{d}.0.001.cpuprofile", .{
         year,

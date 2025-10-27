@@ -152,21 +152,18 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 }
 
                 if (frame.hasExpressionInfo()) {
-                    lineNumber = frame.lineNumber();
-                    columnNumber = frame.columnNumber();
-
                     // Apply sourcemap if available
+                    JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
                     if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                         auto& fn = vm.computeLineColumnWithSourcemap();
                         if (fn) {
-                            JSC::LineColumn sourceMappedLineColumn { static_cast<unsigned>(lineNumber), static_cast<unsigned>(columnNumber) };
                             fn(vm, provider, sourceMappedLineColumn);
-                            lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                            columnNumber = static_cast<int>(sourceMappedLineColumn.column);
                         }
 #endif
                     }
+                    lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                    columnNumber = static_cast<int>(sourceMappedLineColumn.column);
                 }
             }
 

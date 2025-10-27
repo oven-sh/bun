@@ -25,7 +25,8 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Drain pipes to prevent deadlock
+    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
     // Check that a .cpuprofile file was created
     const files = readdirSync(String(dir));

@@ -111,7 +111,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             samples.append(1); // Root node
             // Convert stopwatch time to wall clock time
             double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
-            timeDeltas.append(static_cast<long long>(currentTime - lastTime));
+            double delta = std::max(0.0, currentTime - lastTime);
+            timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
             continue;
         }
@@ -198,7 +199,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         // Add time delta
         // Convert stopwatch time to wall clock time
         double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
-        timeDeltas.append(static_cast<long long>(currentTime - lastTime));
+        double delta = std::max(0.0, currentTime - lastTime);
+        timeDeltas.append(static_cast<long long>(delta));
         lastTime = currentTime;
     }
 
@@ -227,8 +229,11 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
         if (!node.children.isEmpty()) {
             auto childrenArray = JSON::Array::create();
+            WTF::HashSet<int> seenChildren;
             for (int childId : node.children) {
-                childrenArray->pushInteger(childId);
+                if (seenChildren.add(childId).isNewEntry) {
+                    childrenArray->pushInteger(childId);
+                }
             }
             nodeObj->setValue("children"_s, childrenArray);
         }

@@ -95,7 +95,8 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await proc.exited;
+    // Drain pipes to prevent deadlock
+    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
     const files = readdirSync(String(dir));
     expect(files).toContain(customName);
@@ -115,7 +116,8 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await proc.exited;
+    // Drain pipes to prevent deadlock
+    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
     // The directory should be created automatically
     const profilesDir = join(String(dir), "profiles");
@@ -149,7 +151,8 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const exitCode = await proc.exited;
+    // Drain pipes to prevent deadlock
+    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
     const files = readdirSync(String(dir));
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));

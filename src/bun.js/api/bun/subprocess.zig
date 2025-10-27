@@ -606,6 +606,27 @@ fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalO
 
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
+
+    // Trace subprocess exit
+    switch (status) {
+        .exited => |exit| traceSubprocess(.{
+            .call = "exit",
+            .pid = process.pid,
+            .exit_code = exit.code,
+        }),
+        .signaled => |sig| traceSubprocess(.{
+            .call = "exit",
+            .pid = process.pid,
+            .signal = @intFromEnum(sig),
+        }),
+        .err => |err| traceSubprocess(.{
+            .call = "exit",
+            .pid = process.pid,
+            .errno = err.errno,
+        }),
+        .running => {}, // Process still running, shouldn't happen in onProcessExit but handle it
+    }
+
     const this_jsvalue = this.this_jsvalue;
     const globalThis = this.globalThis;
     const jsc_vm = globalThis.bunVM();
@@ -1425,6 +1446,16 @@ pub fn spawnMaybeSync(
 
     const process = spawned.toProcess(loop, is_sync);
 
+    // Trace subprocess spawn
+    traceSubprocess(.{
+        .call = "spawn",
+        .cmd = if (argv.items.len > 0 and argv.items[0] != null) bun.span(argv.items[0].?) else "",
+        .args = argv.items.len,
+        .cwd = cwd,
+        .env_count = env_array.items.len,
+        .pid = process.pid,
+    });
+
     var subprocess = bun.new(Subprocess, .{
         .ref_count = .init(),
         .globalThis = globalThis,
@@ -1825,6 +1856,13 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
 }
 
 const IPClog = Output.scoped(.IPC, .visible);
+
+inline fn traceSubprocess(args: anytype) void {
+    if (Output.trace_enabled) {
+        const tracer = Output.tracer("subprocess");
+        tracer.trace(args);
+    }
+}
 
 pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 pub const Writable = @import("./subprocess/Writable.zig").Writable;

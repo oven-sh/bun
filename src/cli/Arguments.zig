@@ -113,6 +113,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--trace <PATH>                    Write structured trace logs to the specified file (JSON lines format)") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -691,6 +692,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--user-agent")) |user_agent| {
             bun.http.overridden_default_user_agent = user_agent;
+        }
+
+        if (args.option("--trace")) |trace_path| {
+            Output.initTrace(trace_path) catch |err| {
+                Output.errGeneric("Failed to open trace file \"{s}\": {s}\n", .{ trace_path, @errorName(err) });
+                Global.exit(1);
+            };
+            Global.addExitCallback(Output.closeTraceCallback);
         }
 
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))

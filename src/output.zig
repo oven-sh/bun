@@ -1319,6 +1319,118 @@ pub const Synchronized = struct {
     }
 };
 
+/// Structured tracer for logging events to a JSON file
+/// Used by agents like Claude to receive logs about what applications are doing
+/// without having to manually add console.log everywhere.
+///
+/// Usage:
+///   const tracer = Output.tracer("fs");
+///   tracer.trace(.{ .call = "open", .path = path, .rc = errno });
+///
+/// Enable with: --trace=file.json
+///
+pub fn tracer(comptime namespace: []const u8) type {
+    return Tracer(namespace);
+}
+
+fn Tracer(comptime ns: []const u8) type {
+    return struct {
+        pub fn trace(args: anytype) void {
+            if (!trace_enabled) return;
+
+            const file = trace_file orelse return;
+
+            trace_lock.lock();
+            defer trace_lock.unlock();
+
+            // Get timestamp
+            const timestamp = std.time.milliTimestamp();
+
+            // Extract the "call" field from args to use as operation name
+            const ArgsType = @TypeOf(args);
+            const args_info = @typeInfo(ArgsType);
+
+            // Write array format: [namespace, timestamp, operation, data]
+            var buffered = std.io.bufferedWriter(file.writer());
+            const w = buffered.writer();
+
+            w.writeAll("[\"") catch return;
+            w.writeAll(ns) catch return;
+            w.writeAll("\",") catch return;
+            w.print("{d}", .{timestamp}) catch return;
+            w.writeAll(",\"") catch return;
+
+            // Write the operation name from the "call" field
+            if (args_info == .@"struct") {
+                inline for (args_info.@"struct".fields) |field| {
+                    if (comptime std.mem.eql(u8, field.name, "call")) {
+                        const call_value = @field(args, "call");
+                        w.writeAll(call_value) catch return;
+                        break;
+                    }
+                }
+            }
+
+            w.writeAll("\",") catch return;
+
+            // Write the data (args minus the "call" field)
+            w.writeAll("{") catch return;
+            if (args_info == .@"struct") {
+                var first = true;
+                inline for (args_info.@"struct".fields) |field| {
+                    if (comptime !std.mem.eql(u8, field.name, "call")) {
+                        if (!first) {
+                            w.writeAll(",") catch return;
+                        }
+                        first = false;
+                        w.writeAll("\"") catch return;
+                        w.writeAll(field.name) catch return;
+                        w.writeAll("\":") catch return;
+                        std.json.stringify(@field(args, field.name), .{}, w) catch return;
+                    }
+                }
+            }
+            w.writeAll("}]\n") catch return;
+            buffered.flush() catch return;
+        }
+    };
+}
+
+var trace_file: ?bun.sys.File = null;
+pub var trace_enabled: bool = false;
+var trace_lock = bun.Mutex{};
+
+/// Initialize trace file from CLI argument
+pub fn initTrace(path: []const u8) !void {
+    if (trace_file != null) return;
+
+    const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
+    const mode = 0o644;
+    switch (bun.sys.openA(path, flags, mode)) {
+        .result => |fd| {
+            trace_file = bun.sys.File{ .handle = fd };
+            trace_enabled = true;
+        },
+        .err => {
+            return error.FailedToOpenTraceFile;
+        },
+    }
+}
+
+/// Close trace file on exit
+pub fn closeTrace() void {
+    if (trace_file) |file| {
+        _ = file.close();
+        trace_file = null;
+        trace_enabled = false;
+    }
+}
+
+/// Callback for Global.addExitCallback
+pub fn closeTraceCallback() callconv(.C) void {
+    closeTrace();
+}
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");

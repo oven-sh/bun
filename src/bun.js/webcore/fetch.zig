@@ -1316,6 +1316,18 @@ pub const FetchTasklet = struct {
             promise,
         );
 
+        // Trace request initiation
+        if (Output.trace_enabled) {
+            const tracer = Output.tracer("fetch");
+            const url = node.http.?.url.href;
+            const method = @tagName(node.http.?.method);
+            tracer.trace(.{
+                .call = "request",
+                .url = url,
+                .method = method,
+            });
+        }
+
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);
         node.poll_ref.ref(global.bunVM());
@@ -1342,6 +1354,27 @@ pub const FetchTasklet = struct {
         task.http.?.response_buffer = async_http.response_buffer;
 
         log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+
+        if (Output.trace_enabled) {
+            const trace = Output.tracer("fetch");
+            if (result.metadata) |metadata| {
+                const url = async_http.url.href;
+                trace.trace(.{
+                    .call = "response",
+                    .url = url,
+                    .status = metadata.response.status,
+                    .has_more = result.has_more,
+                    .body_size = if (result.body) |body| body.list.items.len else 0,
+                });
+            } else if (result.fail) |fail| {
+                const url = async_http.url.href;
+                trace.trace(.{
+                    .call = "response",
+                    .url = url,
+                    .err = @errorName(fail),
+                });
+            }
+        }
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;

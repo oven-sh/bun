@@ -1,3 +1,4 @@
+#include "root.h"
 #include "BunCPUProfiler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"

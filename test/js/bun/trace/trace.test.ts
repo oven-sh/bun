@@ -86,11 +86,11 @@ describe("--trace flag", () => {
     const traces = traceLines.map(line => JSON.parse(line));
 
     // Should have fs namespace entries
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
     expect(fsTraces.length).toBeGreaterThan(0);
 
     // Check for open/read/write operations
-    const calls = fsTraces.map(t => t.data.call);
+    const calls = fsTraces.map(t => t[2]);
     expect(calls).toContain("open");
   });
 
@@ -129,11 +129,11 @@ describe("--trace flag", () => {
     const traces = traceLines.map(line => JSON.parse(line));
 
     // Should have fs namespace entries
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
     expect(fsTraces.length).toBeGreaterThan(0);
 
     // Check that we logged open and close operations
-    const calls = fsTraces.map(t => t.data.call);
+    const calls = fsTraces.map(t => t[2]);
     expect(calls).toContain("open");
     expect(calls).toContain("close");
   });
@@ -172,15 +172,15 @@ describe("--trace flag", () => {
     const traces = traceLines.map(line => JSON.parse(line));
 
     // Should have fetch namespace entries
-    const fetchTraces = traces.filter(t => t.ns === "fetch");
+    const fetchTraces = traces.filter(t => t[0] === "fetch");
     expect(fetchTraces.length).toBeGreaterThan(0);
 
     // Check for response
-    const responseCalls = fetchTraces.filter(t => t.data.call === "response");
+    const responseCalls = fetchTraces.filter(t => t[2] === "response");
     expect(responseCalls.length).toBeGreaterThan(0);
 
     // Should have URL
-    expect(responseCalls[0].data.url).toContain("example.com");
+    expect(responseCalls[0][3].url).toContain("example.com");
   });
 
   test("trace response body operations", async () => {
@@ -217,11 +217,11 @@ describe("--trace flag", () => {
     const traces = traceLines.map(line => JSON.parse(line));
 
     // Should have response_body namespace entries
-    const bodyTraces = traces.filter(t => t.ns === "response_body");
+    const bodyTraces = traces.filter(t => t[0] === "response_body");
     expect(bodyTraces.length).toBeGreaterThan(0);
 
     // Check for text call
-    const textCalls = bodyTraces.filter(t => t.data.call === "text");
+    const textCalls = bodyTraces.filter(t => t[2] === "text");
     expect(textCalls.length).toBeGreaterThan(0);
   });
 
@@ -259,18 +259,18 @@ describe("--trace flag", () => {
       const trace = JSON.parse(line);
 
       // Should have required fields
-      expect(trace).toHaveProperty("ns");
-      expect(trace).toHaveProperty("ts");
-      expect(trace).toHaveProperty("data");
+      expect(trace[0]).toBeDefined();
+      expect(trace[1]).toBeDefined();
+      expect(trace[3]).toBeDefined();
 
       // ns should be a string
-      expect(typeof trace.ns).toBe("string");
+      expect(typeof trace[0]).toBe("string");
 
       // ts should be a number (timestamp)
-      expect(typeof trace.ts).toBe("number");
+      expect(typeof trace[1]).toBe("number");
 
       // data should be an object
-      expect(typeof trace.data).toBe("object");
+      expect(typeof trace[3]).toBe("object");
     }
   });
 
@@ -328,18 +328,18 @@ describe("--trace flag", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
     expect(fsTraces.length).toBeGreaterThan(0);
 
     // Check for writeFile
-    const writeCalls = fsTraces.filter(t => t.data.call === "writeFile");
+    const writeCalls = fsTraces.filter(t => t[2] === "writeFile");
     expect(writeCalls.length).toBeGreaterThan(0);
-    expect(writeCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+    expect(writeCalls.some(t => t[3].path && t[3].path.includes("test.txt"))).toBe(true);
 
     // Check for readFile
-    const readCalls = fsTraces.filter(t => t.data.call === "readFile");
+    const readCalls = fsTraces.filter(t => t[2] === "readFile");
     expect(readCalls.length).toBeGreaterThan(0);
-    expect(readCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+    expect(readCalls.some(t => t[3].path && t[3].path.includes("test.txt"))).toBe(true);
   });
 
   test("trace stat operations", async () => {
@@ -373,12 +373,12 @@ describe("--trace flag", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
 
     // Check for stat
-    const statCalls = fsTraces.filter(t => t.data.call === "stat");
+    const statCalls = fsTraces.filter(t => t[2] === "stat");
     expect(statCalls.length).toBeGreaterThan(0);
-    expect(statCalls.some(t => t.data.path && t.data.path.includes("test.txt"))).toBe(true);
+    expect(statCalls.some(t => t[3].path && t[3].path.includes("test.txt"))).toBe(true);
   });
 
   test("trace directory operations", async () => {
@@ -415,22 +415,22 @@ describe("--trace flag", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
 
     // Check for mkdir
-    const mkdirCalls = fsTraces.filter(t => t.data.call === "mkdir");
+    const mkdirCalls = fsTraces.filter(t => t[2] === "mkdir");
     expect(mkdirCalls.length).toBeGreaterThan(0);
 
     // Check for readdir
-    const readdirCalls = fsTraces.filter(t => t.data.call === "readdir");
+    const readdirCalls = fsTraces.filter(t => t[2] === "readdir");
     expect(readdirCalls.length).toBeGreaterThan(0);
 
     // Check for unlink
-    const unlinkCalls = fsTraces.filter(t => t.data.call === "unlink");
+    const unlinkCalls = fsTraces.filter(t => t[2] === "unlink");
     expect(unlinkCalls.length).toBeGreaterThan(0);
 
     // Check for rmdir
-    const rmdirCalls = fsTraces.filter(t => t.data.call === "rmdir");
+    const rmdirCalls = fsTraces.filter(t => t[2] === "rmdir");
     expect(rmdirCalls.length).toBeGreaterThan(0);
   });
 
@@ -466,10 +466,10 @@ describe("--trace flag", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
 
     // Check for rename
-    const renameCalls = fsTraces.filter(t => t.data.call === "rename");
+    const renameCalls = fsTraces.filter(t => t[2] === "rename");
     expect(renameCalls.length).toBeGreaterThan(0);
   });
 });

@@ -1349,17 +1349,51 @@ fn Tracer(comptime ns: []const u8) type {
             // Get timestamp
             const timestamp = std.time.milliTimestamp();
 
-            // Write line-delimited JSON: {"ns":"namespace","ts":123,"data":{...}}
+            // Extract the "call" field from args to use as operation name
+            const ArgsType = @TypeOf(args);
+            const args_info = @typeInfo(ArgsType);
+
+            // Write array format: [namespace, timestamp, operation, data]
             var buffered = std.io.bufferedWriter(file.writer());
             const w = buffered.writer();
 
-            w.writeAll("{\"ns\":\"") catch return;
+            w.writeAll("[\"") catch return;
             w.writeAll(ns) catch return;
-            w.writeAll("\",\"ts\":") catch return;
+            w.writeAll("\",") catch return;
             w.print("{d}", .{timestamp}) catch return;
-            w.writeAll(",\"data\":") catch return;
-            std.json.stringify(args, .{}, w) catch return;
-            w.writeAll("}\n") catch return;
+            w.writeAll(",\"") catch return;
+
+            // Write the operation name from the "call" field
+            if (args_info == .@"struct") {
+                inline for (args_info.@"struct".fields) |field| {
+                    if (comptime std.mem.eql(u8, field.name, "call")) {
+                        const call_value = @field(args, "call");
+                        w.writeAll(call_value) catch return;
+                        break;
+                    }
+                }
+            }
+
+            w.writeAll("\",") catch return;
+
+            // Write the data (args minus the "call" field)
+            w.writeAll("{") catch return;
+            if (args_info == .@"struct") {
+                var first = true;
+                inline for (args_info.@"struct".fields) |field| {
+                    if (comptime !std.mem.eql(u8, field.name, "call")) {
+                        if (!first) {
+                            w.writeAll(",") catch return;
+                        }
+                        first = false;
+                        w.writeAll("\"") catch return;
+                        w.writeAll(field.name) catch return;
+                        w.writeAll("\":") catch return;
+                        std.json.stringify(@field(args, field.name), .{}, w) catch return;
+                    }
+                }
+            }
+            w.writeAll("}]\n") catch return;
             buffered.flush() catch return;
         }
     };

@@ -38,21 +38,21 @@ describe("subprocess tracing", () => {
       .map(l => JSON.parse(l));
 
     // Should have subprocess namespace entries
-    const subprocessTraces = traces.filter(t => t.ns === "subprocess");
+    const subprocessTraces = traces.filter(t => t[0] === "subprocess");
     expect(subprocessTraces.length).toBeGreaterThan(0);
 
     // Check for spawn
-    const spawnCalls = subprocessTraces.filter(t => t.data.call === "spawn");
+    const spawnCalls = subprocessTraces.filter(t => t[2] === "spawn");
     expect(spawnCalls.length).toBeGreaterThan(0);
-    expect(spawnCalls[0].data.cmd).toBe("echo");
-    expect(spawnCalls[0].data).toHaveProperty("pid");
-    expect(spawnCalls[0].data).toHaveProperty("cwd");
+    expect(spawnCalls[0][3].cmd).toBe("echo");
+    expect(spawnCalls[0][3]).toHaveProperty("pid");
+    expect(spawnCalls[0][3]).toHaveProperty("cwd");
 
     // Check for exit
-    const exitCalls = subprocessTraces.filter(t => t.data.call === "exit");
+    const exitCalls = subprocessTraces.filter(t => t[2] === "exit");
     expect(exitCalls.length).toBeGreaterThan(0);
-    expect(exitCalls[0].data).toHaveProperty("pid");
-    expect(exitCalls[0].data.exit_code).toBe(0);
+    expect(exitCalls[0][3]).toHaveProperty("pid");
+    expect(exitCalls[0][3].exit_code).toBe(0);
   });
 
   test("trace child_process spawn", async () => {
@@ -87,11 +87,11 @@ describe("subprocess tracing", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const subprocessTraces = traces.filter(t => t.ns === "subprocess");
+    const subprocessTraces = traces.filter(t => t[0] === "subprocess");
     expect(subprocessTraces.length).toBeGreaterThan(0);
 
     // Check for spawn with echo command
-    const spawnCalls = subprocessTraces.filter(t => t.data.call === "spawn" && t.data.cmd === "echo");
+    const spawnCalls = subprocessTraces.filter(t => t[2] === "spawn" && t[3].cmd === "echo");
     expect(spawnCalls.length).toBeGreaterThan(0);
   });
 
@@ -125,11 +125,11 @@ describe("subprocess tracing", () => {
       .filter(l => l.length > 0)
       .map(l => JSON.parse(l));
 
-    const subprocessTraces = traces.filter(t => t.ns === "subprocess");
-    const spawnCalls = subprocessTraces.filter(t => t.data.call === "spawn");
+    const subprocessTraces = traces.filter(t => t[0] === "subprocess");
+    const spawnCalls = subprocessTraces.filter(t => t[2] === "spawn");
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     // Check that args count is tracked (4 args: echo, arg1, arg2, arg3)
-    expect(spawnCalls[0].data.args || spawnCalls[0].data.args_count).toBeGreaterThanOrEqual(4);
+    expect(spawnCalls[0][3].args || spawnCalls[0][3].args_count).toBeGreaterThanOrEqual(4);
   });
 });

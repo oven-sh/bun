@@ -55,43 +55,43 @@ describe("extensive tracing", () => {
       .map(l => JSON.parse(l));
 
     // Should have fs namespace
-    const fsTraces = traces.filter(t => t.ns === "fs");
+    const fsTraces = traces.filter(t => t[0] === "fs");
     expect(fsTraces.length).toBeGreaterThan(0);
 
     // Check we have open operations
-    const opens = fsTraces.filter(t => t.data.call === "open");
+    const opens = fsTraces.filter(t => t[2] === "open");
     expect(opens.length).toBeGreaterThanOrEqual(3);
 
     // Verify open trace has required fields
-    expect(opens[0].data).toHaveProperty("path");
-    expect(opens[0].data).toHaveProperty("flags");
-    expect(opens[0].data).toHaveProperty("mode");
-    expect(opens[0].data).toHaveProperty("fd");
+    expect(opens[0][3]).toHaveProperty("path");
+    expect(opens[0][3]).toHaveProperty("flags");
+    expect(opens[0][3]).toHaveProperty("mode");
+    expect(opens[0][3]).toHaveProperty("fd");
 
     // Check we have write operations
-    const writes = fsTraces.filter(t => t.data.call === "write");
+    const writes = fsTraces.filter(t => t[2] === "write");
     expect(writes.length).toBeGreaterThanOrEqual(4);
 
     // Verify write trace has required fields
-    expect(writes[0].data).toHaveProperty("fd");
-    expect(writes[0].data).toHaveProperty("length");
-    expect(writes[0].data).toHaveProperty("bytes_written");
+    expect(writes[0][3]).toHaveProperty("fd");
+    expect(writes[0][3]).toHaveProperty("length");
+    expect(writes[0][3]).toHaveProperty("bytes_written");
 
     // Check we have read operations
-    const reads = fsTraces.filter(t => t.data.call === "read");
+    const reads = fsTraces.filter(t => t[2] === "read");
     expect(reads.length).toBeGreaterThanOrEqual(1);
 
     // Verify read trace has required fields
-    expect(reads[0].data).toHaveProperty("fd");
-    expect(reads[0].data).toHaveProperty("length");
-    expect(reads[0].data).toHaveProperty("bytes_read");
+    expect(reads[0][3]).toHaveProperty("fd");
+    expect(reads[0][3]).toHaveProperty("length");
+    expect(reads[0][3]).toHaveProperty("bytes_read");
 
     // Check we have close operations
-    const closes = fsTraces.filter(t => t.data.call === "close");
+    const closes = fsTraces.filter(t => t[2] === "close");
     expect(closes.length).toBeGreaterThanOrEqual(3);
 
     // Verify close trace has required fields
-    expect(closes[0].data).toHaveProperty("fd");
+    expect(closes[0][3]).toHaveProperty("fd");
   });
 
   test("comprehensive fetch/HTTP tracing", async () => {
@@ -133,33 +133,33 @@ describe("extensive tracing", () => {
       .map(l => JSON.parse(l));
 
     // Should have fetch namespace
-    const fetchTraces = traces.filter(t => t.ns === "fetch");
+    const fetchTraces = traces.filter(t => t[0] === "fetch");
     expect(fetchTraces.length).toBeGreaterThan(0);
 
     // Check we have request initiations
-    const requests = fetchTraces.filter(t => t.data.call === "request");
+    const requests = fetchTraces.filter(t => t[2] === "request");
     expect(requests.length).toBeGreaterThanOrEqual(2);
 
     // Verify request trace has required fields
-    expect(requests[0].data).toHaveProperty("url");
-    expect(requests[0].data).toHaveProperty("method");
-    expect(requests[0].data.method).toBe("GET");
+    expect(requests[0][3]).toHaveProperty("url");
+    expect(requests[0][3]).toHaveProperty("method");
+    expect(requests[0][3].method).toBe("GET");
 
     // Check we have responses
-    const responses = fetchTraces.filter(t => t.data.call === "response");
+    const responses = fetchTraces.filter(t => t[2] === "response");
     expect(responses.length).toBeGreaterThanOrEqual(2);
 
     // Verify response trace has required fields
-    expect(responses[0].data).toHaveProperty("url");
-    expect(responses[0].data).toHaveProperty("status");
-    expect(responses[0].data).toHaveProperty("body_size");
+    expect(responses[0][3]).toHaveProperty("url");
+    expect(responses[0][3]).toHaveProperty("status");
+    expect(responses[0][3]).toHaveProperty("body_size");
 
     // Should have response_body namespace
-    const bodyTraces = traces.filter(t => t.ns === "response_body");
+    const bodyTraces = traces.filter(t => t[0] === "response_body");
     expect(bodyTraces.length).toBeGreaterThan(0);
 
     // Check body consumption
-    const textCalls = bodyTraces.filter(t => t.data.call === "text");
+    const textCalls = bodyTraces.filter(t => t[2] === "text");
     expect(textCalls.length).toBeGreaterThanOrEqual(2);
   }, 10_000);
 
@@ -210,30 +210,29 @@ describe("extensive tracing", () => {
       .map(l => JSON.parse(l));
 
     // Should have both fs and fetch traces
-    const namespaces = new Set(traces.map(t => t.ns));
+    const namespaces = new Set(traces.map(t => t[0]));
     expect(namespaces.has("fs")).toBe(true);
     expect(namespaces.has("fetch")).toBe(true);
     expect(namespaces.has("response_body")).toBe(true);
 
     // All traces should have timestamp
     traces.forEach(t => {
-      expect(t).toHaveProperty("ts");
-      expect(typeof t.ts).toBe("number");
-      expect(t.ts).toBeGreaterThan(0);
+      expect(t[1]).toBeDefined();
+      expect(typeof t[1]).toBe("number");
+      expect(t[1]).toBeGreaterThan(0);
     });
 
     // All traces should have namespace
     traces.forEach(t => {
-      expect(t).toHaveProperty("ns");
-      expect(typeof t.ns).toBe("string");
-      expect(t.ns.length).toBeGreaterThan(0);
+      expect(t[0]).toBeDefined();
+      expect(typeof t[0]).toBe("string");
+      expect(t[0].length).toBeGreaterThan(0);
     });
 
     // All traces should have data
     traces.forEach(t => {
-      expect(t).toHaveProperty("data");
-      expect(typeof t.data).toBe("object");
-      expect(t.data).toHaveProperty("call");
+      expect(t[3]).toBeDefined();
+      expect(typeof t[3]).toBe("object");
     });
   });
 
@@ -270,18 +269,18 @@ describe("extensive tracing", () => {
       .map(l => JSON.parse(l));
 
     // Can filter by namespace
-    const fsOnly = traces.filter(t => t.ns === "fs");
-    const fetchOnly = traces.filter(t => t.ns === "fetch");
-    const bodyOnly = traces.filter(t => t.ns === "response_body");
+    const fsOnly = traces.filter(t => t[0] === "fs");
+    const fetchOnly = traces.filter(t => t[0] === "fetch");
+    const bodyOnly = traces.filter(t => t[0] === "response_body");
 
     expect(fsOnly.length).toBeGreaterThan(0);
     expect(fetchOnly.length).toBeGreaterThan(0);
     expect(bodyOnly.length).toBeGreaterThan(0);
 
     // Each namespace should only have its own traces
-    fsOnly.forEach(t => expect(t.ns).toBe("fs"));
-    fetchOnly.forEach(t => expect(t.ns).toBe("fetch"));
-    bodyOnly.forEach(t => expect(t.ns).toBe("response_body"));
+    fsOnly.forEach(t => expect(t[0]).toBe("fs"));
+    fetchOnly.forEach(t => expect(t[0]).toBe("fetch"));
+    bodyOnly.forEach(t => expect(t[0]).toBe("response_body"));
   });
 
   test("trace chronological ordering", async () => {
@@ -328,7 +327,7 @@ describe("extensive tracing", () => {
 
     // Timestamps should be monotonically increasing
     for (let i = 1; i < traces.length; i++) {
-      expect(traces[i].ts).toBeGreaterThanOrEqual(traces[i - 1].ts);
+      expect(traces[i][1]).toBeGreaterThanOrEqual(traces[i - 1][1]);
     }
   });
 });

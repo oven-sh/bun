@@ -1382,14 +1382,36 @@ fn Tracer(comptime ns: []const u8) type {
                 var first = true;
                 inline for (args_info.@"struct".fields) |field| {
                     if (comptime !std.mem.eql(u8, field.name, "call")) {
-                        if (!first) {
-                            w.writeAll(",") catch return;
+                        const field_value = @field(args, field.name);
+                        const FieldType = @TypeOf(field_value);
+                        const field_info = @typeInfo(FieldType);
+
+                        // Skip fields that can't be serialized (function pointers, opaque pointers, etc.)
+                        const should_skip = comptime blk: {
+                            if (field_info == .pointer) {
+                                // Skip if pointing to opaque or function types
+                                const child_info = @typeInfo(field_info.pointer.child);
+                                if (child_info == .@"opaque" or child_info == .@"fn") {
+                                    break :blk true;
+                                }
+                            } else if (field_info == .@"fn") {
+                                break :blk true;
+                            }
+                            break :blk false;
+                        };
+
+                        if (!should_skip) {
+                            if (!first) {
+                                w.writeAll(",") catch return;
+                            }
+                            first = false;
+                            w.writeAll("\"") catch return;
+                            w.writeAll(field.name) catch return;
+                            w.writeAll("\":") catch return;
+
+                            // Stringify the field value - should be safe now
+                            std.json.stringify(field_value, .{}, w) catch return;
                         }
-                        first = false;
-                        w.writeAll("\"") catch return;
-                        w.writeAll(field.name) catch return;
-                        w.writeAll("\":") catch return;
-                        std.json.stringify(@field(args, field.name), .{}, w) catch return;
                     }
                 }
             }

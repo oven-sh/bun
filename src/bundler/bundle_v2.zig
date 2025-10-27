@@ -1322,6 +1322,10 @@ pub const BundleV2 = struct {
         task.io_task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = known_target;
+        {
+            const bundler = this.transpilerForTarget(known_target);
+            task.jsx.development = computeJSXDevelopment(bundler.options.force_node_env, task.jsx.development);
+        }
 
         this.incrementScanCounter();
 
@@ -1376,6 +1380,10 @@ pub const BundleV2 = struct {
         };
         task.task.node.next = null;
         task.io_task.node.next = null;
+        {
+            const bundler = this.transpilerForTarget(known_target);
+            task.jsx.development = computeJSXDevelopment(bundler.options.force_node_env, task.jsx.development);
+        }
 
         this.incrementScanCounter();
 

@@ -541,6 +541,19 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     return result;
 }
 
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* sourceProvider, JSC::LineColumn& lineColumn)
+{
+    ZigStackFrame frame = {};
+    frame.position.line_zero_based = lineColumn.line - 1;
+    frame.position.column_zero_based = lineColumn.column - 1;
+    frame.source_url = Bun::toStringRef(sourceProvider->sourceURL());
+    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
+    if (frame.remapped) {
+        lineColumn.line = frame.position.line().oneBasedInt();
+        lineColumn.column = frame.position.column().oneBasedInt();
+    }
+}
+
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);

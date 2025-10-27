@@ -5,13 +5,18 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { PassThrough, Readable } from "node:stream";
 import { test } from "node:test";
 
-// Focused regression test: Standalone ServerResponse.writableNeedDrain should be false
-test("Standalone ServerResponse.writableNeedDrain is false", () => {
-  const mockReq = Object.assign(Readable.from([]), {
-    url: "/need-drain",
+// Helper to create mock IncomingMessage
+function createMockIncomingMessage(url: string): IncomingMessage {
+  return Object.assign(Readable.from([]), {
+    url,
     method: "GET",
     headers: {},
   }) as IncomingMessage;
+}
+
+// Focused regression test: Standalone ServerResponse.writableNeedDrain should be false
+test("Standalone ServerResponse.writableNeedDrain is false", () => {
+  const mockReq = createMockIncomingMessage("/need-drain");
   const res = new ServerResponse(mockReq);
 
   // Regression for #19111: previously true due to defaulting bufferedAmount to 1
@@ -33,7 +38,7 @@ function createServerResponse(incomingMessage: IncomingMessage) {
       if (resolved) return;
       resolved = true;
       resolve({
-        readable: Readable.from(passThrough),
+        readable: passThrough,
         headers: res.getHeaders(),
         statusCode: res.statusCode,
       });
@@ -80,12 +85,7 @@ function createServerResponse(incomingMessage: IncomingMessage) {
 }
 
 test("Readable.pipe(ServerResponse) flows without stalling (regression for #19111)", async () => {
-  const mockReq = Object.assign(Readable.from([]), {
-    url: "/pipe",
-    method: "GET",
-    headers: {},
-  }) as IncomingMessage;
-
+  const mockReq = createMockIncomingMessage("/pipe");
   const { res, onReadable } = createServerResponse(mockReq);
 
   // Pipe a readable source into ServerResponse; should not stall

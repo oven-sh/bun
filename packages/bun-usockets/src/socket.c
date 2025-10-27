@@ -369,7 +369,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length);
     }
 #endif
-    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s) || !s->flags.is_writable) {
         return 0;
     }
 
@@ -395,7 +395,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */
 int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
-    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
+    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s) || !s->flags.is_writable) {
         return 0;
     }
 

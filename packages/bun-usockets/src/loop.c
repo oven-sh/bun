@@ -433,6 +433,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                 if (!flags->writable_emitted) {
                     flags->writable_emitted = true;
+                    // In KQUEUE will be oneshot so we need to reset the flag here
                     #ifdef LIBUS_USE_KQUEUE
                     p->state.poll_type = (is_readable ? POLL_TYPE_POLLING_IN : 0);
                     #endif
@@ -444,7 +445,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
                 #ifndef LIBUS_USE_KQUEUE
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
+                if (!flags->is_writable || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 }
                 #endif
@@ -632,6 +633,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
 
             if (u->is_writable && !has_error && !u->closed && !u->writable_emitted) {
                 u->writable_emitted = true;
+                // In KQUEUE will be oneshot so we need to reset the flag here
                 #ifdef LIBUS_USE_KQUEUE
                 p->state.poll_type = (u->is_readable ? POLL_TYPE_POLLING_IN : 0);
                 #endif

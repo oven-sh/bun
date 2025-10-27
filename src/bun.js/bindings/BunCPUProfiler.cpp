@@ -119,7 +119,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     double lastTime = startTime + stopwatchStart;
 
     // Process each stack trace
-    for (const auto& stackTrace : stackTraces) {
+    for (auto& stackTrace : stackTraces) {
         if (stackTrace.frames.isEmpty()) {
             samples.append(1); // Root node
             // Convert stopwatch time to wall clock time
@@ -134,7 +134,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
         // Process frames from bottom to top (reverse order for Chrome format)
         for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
-            const auto& frame = stackTrace.frames[i];
+            auto& frame = stackTrace.frames[i];
 
             WTF::String functionName;
             WTF::String url;
@@ -142,10 +142,10 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             int columnNumber = -1;
 
             // Get function name - displayName works for all frame types
-            functionName = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->displayName(vm);
+            functionName = frame.displayName(vm);
 
             if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                auto sourceProviderAndID = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->sourceProviderAndID();
+                auto sourceProviderAndID = frame.sourceProviderAndID();
                 auto* provider = std::get<0>(sourceProviderAndID);
                 if (provider) {
                     url = provider->sourceURL();

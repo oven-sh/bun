@@ -25,6 +25,10 @@ void startCPUProfiler(JSC::VM& vm)
     stopwatch->start();
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTFMove(stopwatch));
+
+    // Set sampling interval to 1ms (1000 microseconds) to match Node.js
+    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(1000));
+
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
 }

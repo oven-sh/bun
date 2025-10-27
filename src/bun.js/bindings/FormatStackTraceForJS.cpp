@@ -541,7 +541,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     return result;
 }
 
-void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* sourceProvider, JSC::LineColumn& lineColumn)
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn)
 {
     auto sourceURL = sourceProvider->sourceURL();
     if (sourceURL.isEmpty()) {

@@ -130,6 +130,15 @@ pub const WriteFile = struct {
             // non-seekable file.
             bun.sys.write(fd, buffer);
 
+        // Trace the write operation
+        if (Output.trace_enabled) {
+            const tracer = Output.tracer("bun_write");
+            switch (result) {
+                .result => |bytes| tracer.trace(.{ .call = "write", .fd = fd.cast(), .length = buffer.len, .bytes_written = bytes }),
+                .err => |err| tracer.trace(.{ .call = "write", .fd = fd.cast(), .length = buffer.len, .errno = err.errno }),
+            }
+        }
+
         while (true) {
             switch (result) {
                 .result => |res| {

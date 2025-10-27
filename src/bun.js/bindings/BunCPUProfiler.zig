@@ -1,19 +1,7 @@
-pub const CPUProfilerConfig = extern struct {
+pub const CPUProfilerConfig = struct {
     enabled: bool,
-    name_ptr: [*]const u8,
-    name_len: usize,
-    dir_ptr: [*]const u8,
-    dir_len: usize,
-
-    pub inline fn name(this: *const CPUProfilerConfig) []const u8 {
-        if (this.name_len == 0) return "";
-        return this.name_ptr[0..this.name_len];
-    }
-
-    pub inline fn dir(this: *const CPUProfilerConfig) []const u8 {
-        if (this.dir_len == 0) return "";
-        return this.dir_ptr[0..this.dir_len];
-    }
+    name: []const u8,
+    dir: []const u8,
 };
 
 // C++ function declarations
@@ -53,9 +41,8 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         const errno = err.getErrno();
         if (errno == .NOENT or errno == .PERM or errno == .ACCES) {
-            const dir_str = config.dir();
-            if (dir_str.len > 0) {
-                bun.makePath(std.fs.cwd(), dir_str) catch {};
+            if (config.dir.len > 0) {
+                bun.makePath(std.fs.cwd(), config.dir) catch {};
                 // Retry write
                 const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
                 if (retry_result.asErr()) |_| {
@@ -71,13 +58,10 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
 }
 
 fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 {
-    const name_str = config.name();
-    const dir_str = config.dir();
-
     // Generate filename
     var filename_buf: bun.PathBuffer = undefined;
-    const filename = if (name_str.len > 0)
-        name_str
+    const filename = if (config.name.len > 0)
+        config.name
     else
         try generateDefaultFilename(&filename_buf);
 
@@ -85,9 +69,9 @@ fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 
     const cwd = bun.fs.FileSystem.instance.top_level_dir;
 
     // Join directory and filename if directory is specified
-    if (dir_str.len > 0) {
+    if (config.dir.len > 0) {
         // Use bun.path.joinAbsStringBufZ to join cwd, dir, and filename
-        return bun.path.joinAbsStringBufZ(cwd, buf, &.{ dir_str, filename }, .auto);
+        return bun.path.joinAbsStringBufZ(cwd, buf, &.{ config.dir, filename }, .auto);
     } else {
         // Just join cwd and filename
         return bun.path.joinAbsStringBufZ(cwd, buf, &.{filename}, .auto);

@@ -809,7 +809,8 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which
     // access GC'd values during the finalizer
-    this.this_value.finalize();
+    if (is_sync) 
+      this.this_value.downgrade();
 
     this.clearAbortSignal();
 

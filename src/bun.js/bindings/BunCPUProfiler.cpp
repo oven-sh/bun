@@ -13,6 +13,7 @@
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/URL.h>
 #include <algorithm>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
@@ -39,6 +40,7 @@ struct ProfileNode {
     int id;
     WTF::String functionName;
     WTF::String url;
+    int scriptId;
     int lineNumber;
     int columnNumber;
     int hitCount;
@@ -79,6 +81,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     rootNode.id = 1;
     rootNode.functionName = "(root)"_s;
     rootNode.url = ""_s;
+    rootNode.scriptId = 0;
     rootNode.lineNumber = -1;
     rootNode.columnNumber = -1;
     rootNode.hitCount = 0;
@@ -132,6 +135,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
             WTF::String functionName;
             WTF::String url;
+            int scriptId = 0;
             int lineNumber = -1;
             int columnNumber = -1;
 
@@ -143,6 +147,33 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 auto* provider = std::get<0>(sourceProviderAndID);
                 if (provider) {
                     url = provider->sourceURL();
+                    scriptId = static_cast<int>(provider->asID());
+
+                    // Convert absolute paths to file:// URLs
+                    // Check for:
+                    // - Unix absolute path: /path/to/file
+                    // - Windows drive letter: C:\path or C:/path
+                    // - Windows UNC path: \\server\share
+                    bool isAbsolutePath = false;
+                    if (!url.isEmpty()) {
+                        if (url[0] == '/') {
+                            // Unix absolute path
+                            isAbsolutePath = true;
+                        } else if (url.length() >= 2 && url[1] == ':') {
+                            // Windows drive letter (e.g., C:\)
+                            char firstChar = url[0];
+                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z')) {
+                                isAbsolutePath = true;
+                            }
+                        } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\') {
+                            // Windows UNC path (e.g., \\server\share)
+                            isAbsolutePath = true;
+                        }
+                    }
+
+                    if (isAbsolutePath) {
+                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    }
                 }
 
                 if (frame.hasExpressionInfo()) {
@@ -170,6 +201,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             keyBuilder.append(':');
             keyBuilder.append(url);
             keyBuilder.append(':');
+            keyBuilder.append(scriptId);
+            keyBuilder.append(':');
             keyBuilder.append(lineNumber);
             keyBuilder.append(':');
             keyBuilder.append(columnNumber);
@@ -187,6 +220,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 node.id = nodeId;
                 node.functionName = functionName;
                 node.url = url;
+                node.scriptId = scriptId;
                 node.lineNumber = lineNumber;
                 node.columnNumber = columnNumber;
                 node.hitCount = 0;
@@ -236,7 +270,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
         auto callFrame = JSON::Object::create();
         callFrame->setString("functionName"_s, node.functionName);
-        callFrame->setString("scriptId"_s, "0"_s);
+        callFrame->setString("scriptId"_s, WTF::String::number(node.scriptId));
         callFrame->setString("url"_s, node.url);
         callFrame->setInteger("lineNumber"_s, node.lineNumber);
         callFrame->setInteger("columnNumber"_s, node.columnNumber);
